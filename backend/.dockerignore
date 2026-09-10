@@ -1,0 +1,12 @@
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+trading_app.db
+.env
+.env.*
+*.db
+.venv-research
+research_runs

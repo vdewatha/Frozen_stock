@@ -1,0 +1,96 @@
+databases:
+  - name: trading-app-postgres
+    databaseName: trading_app
+    user: trading_app
+
+services:
+  - type: redis
+    name: trading-app-redis
+    ipAllowList: []
+    plan: starter
+
+  - type: web
+    name: trading-app-backend
+    runtime: docker
+    rootDir: backend
+    plan: starter
+    preDeployCommand: alembic upgrade head
+    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: AUTH_VIEWER_KEY
+        sync: false
+      - key: AUTH_RESEARCHER_KEY
+        sync: false
+      - key: AUTH_OPERATOR_KEY
+        sync: false
+      - key: AUTH_ADMIN_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trading-app-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: trading-app-redis
+          property: connectionString
+      - key: ALLOW_LIVE_TRADING
+        value: "false"
+      - key: ENVIRONMENT
+        value: production
+
+  - type: worker
+    name: trading-app-learning-worker
+    runtime: docker
+    rootDir: backend
+    plan: starter
+    dockerCommand: sh -c 'python -m app.db.schema && exec celery -A app.tasks.celery_app worker --loglevel=INFO -Q learning --concurrency=2'
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trading-app-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: trading-app-redis
+          property: connectionString
+      - key: ALLOW_LIVE_TRADING
+        value: "false"
+      - key: ENVIRONMENT
+        value: production
+
+  - type: worker
+    name: trading-app-scheduler
+    runtime: docker
+    rootDir: backend
+    plan: starter
+    dockerCommand: sh -c 'python -m app.db.schema && exec celery -A app.tasks.celery_app beat --loglevel=INFO'
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trading-app-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: trading-app-redis
+          property: connectionString
+      - key: ALLOW_LIVE_TRADING
+        value: "false"
+      - key: ENVIRONMENT
+        value: production
+
+  - type: web
+    name: trading-app-frontend
+    runtime: docker
+    rootDir: frontend
+    plan: starter
+    envVars:
+      - key: NEXT_PUBLIC_API_BASE_URL
+        fromService:
+          type: web
+          name: trading-app-backend
+          property: host

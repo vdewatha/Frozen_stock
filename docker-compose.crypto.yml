@@ -1,0 +1,16 @@
+# Optional override: docker compose -f docker-compose.yml -f docker-compose.crypto.yml --profile crypto up crypto-pipeline
+services:
+  crypto-pipeline:
+    build:
+      context: ./backend
+    profiles: [crypto]
+    environment:
+      DATABASE_URL: postgresql+psycopg://trading_app:trading_app@postgres:5432/trading_app
+      ALLOW_LIVE_TRADING: "false"
+      ENVIRONMENT: docker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: python scripts/run_crypto_pipeline.py --continuous --interval-seconds 60
+    restart: unless-stopped
+    stop_grace_period: 30s

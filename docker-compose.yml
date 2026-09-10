@@ -1,0 +1,157 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: trading_app
+      POSTGRES_USER: trading_app
+      POSTGRES_PASSWORD: trading_app
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading_app -d trading_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  migrate:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://trading_app:trading_app@postgres:5432/trading_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c 'alembic upgrade head && python -m app.db.schema'
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://trading_app:trading_app@postgres:5432/trading_app
+      REDIS_URL: redis://redis:6379/0
+      ALLOW_LIVE_TRADING: "false"
+      ENVIRONMENT: docker
+      AUTH_VIEWER_KEY: ${AUTH_VIEWER_KEY:?Set a unique viewer secret of at least 32 characters}
+      AUTH_RESEARCHER_KEY: ${AUTH_RESEARCHER_KEY:?Set a unique researcher secret of at least 32 characters}
+      AUTH_OPERATOR_KEY: ${AUTH_OPERATOR_KEY:?Set a unique operator secret of at least 32 characters}
+      AUTH_ADMIN_KEY: ${AUTH_ADMIN_KEY:?Set a unique admin secret of at least 32 characters}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  celery-worker:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://trading_app:trading_app@postgres:5432/trading_app
+      REDIS_URL: redis://redis:6379/0
+      ALLOW_LIVE_TRADING: "false"
+      ENVIRONMENT: docker
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+    command: sh -c 'python -m app.db.schema && exec celery -A app.tasks.celery_app worker --loglevel=INFO -Q default --concurrency=1'
+
+  celery-learning-worker:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://trading_app:trading_app@postgres:5432/trading_app
+      REDIS_URL: redis://redis:6379/0
+      ALLOW_LIVE_TRADING: "false"
+      ENVIRONMENT: docker
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+    command: sh -c 'python -m app.db.schema && exec celery -A app.tasks.celery_app worker --loglevel=INFO -Q learning --concurrency=4'
+
+  celery-market-worker:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://trading_app:trading_app@postgres:5432/trading_app
+      REDIS_URL: redis://redis:6379/0
+      ALLOW_LIVE_TRADING: "false"
+      ENVIRONMENT: docker
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+    command: sh -c 'python -m app.db.schema && exec celery -A app.tasks.celery_app worker --loglevel=INFO -Q market_data --concurrency=2'
+
+  celery-paper-worker:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://trading_app:trading_app@postgres:5432/trading_app
+      REDIS_URL: redis://redis:6379/0
+      ALLOW_LIVE_TRADING: "false"
+      ENVIRONMENT: docker
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+    command: sh -c 'python -m app.db.schema && exec celery -A app.tasks.celery_app worker --loglevel=INFO -Q paper_trading,risk --concurrency=1'
+
+  celery-beat:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://trading_app:trading_app@postgres:5432/trading_app
+      REDIS_URL: redis://redis:6379/0
+      ALLOW_LIVE_TRADING: "false"
+      ENVIRONMENT: docker
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_started
+    command: sh -c 'python -m app.db.schema && exec celery -A app.tasks.celery_app beat --loglevel=INFO'
+
+  deployment-monitor:
+    build:
+      context: ./backend
+    profiles:
+      - monitor
+    environment:
+      API_URL: http://backend:8000
+      AUTH_VIEWER_KEY: ${AUTH_VIEWER_KEY:?Set a unique viewer secret of at least 32 characters}
+    depends_on:
+      backend:
+        condition: service_started
+    command: python scripts/check_deployment_monitor.py --api-url http://backend:8000 --jsonl /tmp/deployment-monitor.jsonl
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  postgres_data:

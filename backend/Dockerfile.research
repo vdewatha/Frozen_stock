@@ -1,0 +1,8 @@
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY requirements-research-test.txt ./
+RUN pip install --no-cache-dir -r requirements-research-test.txt
+COPY app/services/feature_pipeline.py app/services/probabilistic_model.py app/services/research_training.py ./app/services/
+COPY scripts/train_research.py ./scripts/
+ENTRYPOINT ["python", "scripts/train_research.py"]
