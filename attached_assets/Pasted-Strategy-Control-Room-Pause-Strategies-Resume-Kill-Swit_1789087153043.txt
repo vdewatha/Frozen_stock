@@ -1,0 +1,581 @@
+Strategy Control Room
+Pause Strategies
+Resume
+Kill Switch
+Reset
+Safety controls ready
+Paper Account
+Unavailable
+Kill switch disabled. Paper-only. Regime: unclassified.
+Daily P/L
+Unavailable
+Verified account cash, costs, fills and equity snapshots are not yet available. Recorded trades below are not qualification evidence.
+Total P/L
+Unavailable
+Verified account cash, costs, fills and equity snapshots are not yet available. Recorded trades below are not qualification evidence.
+Open Trades
+0
+1 active strategies
+Paper Equity Curve
+Generated 2026-09-11
+Equity history is unavailable until reconciled account snapshots have been recorded.
+
+Risk Settings
+Save
+Minimum confidence
+0.58
+Max daily drawdown
+0.03
+Max strategy drawdown
+0.1
+Max open positions
+10
+Max per strategy
+5
+Max symbol exposure
+0.1
+Max risk per trade
+0.01
+Loss pause count
+5
+Review score gate
+0.7
+Activation score gate
+0.72
+Memory review cap
+0.03
+Memory sizing cap
+0.2
+Replay sample gate
+10
+Replay return gate
+0
+Replay hit-rate gate
+0
+Paper-only lock
+Enabled
+Risk settings ready
+Kill switch off
+System Readiness
+Updated 12:38:45 AM
+Refresh Data
+Refresh
+Overall blocked
+Ready 4
+Warnings 1
+Blocked 2
+Paper runs gated
+Market data
+Market data is missing, stale, or not from a trusted provider for one or more active assets.
+blocked
+active assets: 4 | invalid histories: [object Object] | missing assets: 4
+Model freshness
+No recent stored model predictions.
+warning
+Broker safety
+Version 1 routes broker-shaped orders to paper only. Live order placement is blocked.
+ready
+paper broker: internal_paper_stub | paper trading enabled: true | live trading enabled: false
+Risk state
+Risk state permits paper signals.
+ready
+risk rule present: true | kill switch enabled: false | breach alerts: 0
+Strategy availability
+At least one strategy is active for paper trading.
+ready
+active strategies: 1 | candidate strategies: 2
+Critical notifications
+Critical notifications need review.
+blocked
+unresolved critical: 1
+Scheduler health
+Celery workers and exactly one beat scheduler are evidenced.
+ready
+configured jobs: 15 | workers: 1 | worker count: 1
+Deployment Monitor
+Updated 12:38:47 AM
+Refresh
+Not deployable
+Environment local
+Readiness blocked
+Paper runs gated
+Live trading locked
+Blockers
+Trusted market data
+Readiness Blockers
+Market data, Critical notifications
+Database
+Database connection succeeded.
+ready
+Redis
+Redis connection succeeded.
+ready
+Trusted market data
+Active assets need a fresh trusted market import before deployment can be trusted.
+blocked
+missing assets: AAPL, MSFT, QQQ, SPY | stale assets: none | untrusted assets: none
+Scheduled job definitions
+Required scheduled jobs are defined.
+ready
+missing required jobs: none
+Celery workers
+Celery workers responded to ping.
+ready
+Celery beat scheduler
+Exactly one Celery beat scheduler is evidenced by a Redis lease/heartbeat.
+ready
+Live trading safety
+Live trading is disabled and paper trading is the only allowed broker mode.
+ready
+Prediction Scanner
+0 positive candidates from 0 scans | cached
+Rescan
+Scan Result
+Positive 0
+Total 0
+Status cached
+Learning Scorecard
+Journaled 0
+Scored 0
+Hit rate pending
+Avg return pending
+No trade candidates loaded.
+Company Opportunity Radar
+Permission required for this action.
+Refresh News
+Import Large Caps
+No active company opportunities loaded yet.
+Predictive Trade Scorecard
+Updated 12:38:43 AM
+Refresh
+Paper Trade Evidence
+Open 0
+Closed 0
+Positive open 0
+Realized win n/a
+Open avg n/a
+No paper trades to score yet.
+Memory Replay Evaluator
+Updated 12:38:43 AM
+Refresh
+Replay Coverage
+Rows 0
+Complete 0
+Pending 0
+Top 3 per event
+Memory Delta
+Avg return pending
+Hit rate pending
+Cumulative pending
+Drawdown pending
+Replay Gate closed
+0 / 10 complete samples
+Avg delta pending
+Hit delta pending
+Only 0 completed replay sample(s); requires 10.
+Average-return delta is pending.
+Gate Alerts
+Open gates 0
+New alerts 0
+Refreshed 0
+Resolved 0
+No setup is approved for memory sizing yet.
+Baseline
+Selected
+0
+Complete
+0
+Hit rate
+pending
+Avg return
+pending
+Cumulative
+pending
+Max drawdown
+pending
+Memory Adjusted
+Selected
+0
+Complete
+0
+Hit rate
+pending
+Avg return
+pending
+Cumulative
+pending
+Max drawdown
+pending
+By Setup
+By Strategy
+By Symbol
+By Regime
+No replay rows available yet.
+Notification Center
+1 open notifications
+open
+acknowledged
+resolved
+All
+
+All
+Refresh
+Severity Mix
+Critical 1
+Warning 0
+Info 0
+Deployment monitor blocked
+deployment monitor | deployment_monitor | 9/11/2026, 12:35:32 AM
+critical
+Deployment monitor blocked: Trusted market data. Readiness blockers: Market data.
+open
+Acknowledge
+Resolve
+Market Data & Backtest Lab
+Ready
+Symbol
+SPY
+Strategy
+
+Moving Average
+Import
+History
+Backtest
+SPY Close History
+No history loaded
+Import Result
+No import run yet
+Backtest Result
+No backtest run yet
+Probabilistic Model Lab
+Ready
+Symbol
+SPY
+Run Model
+Run the model to generate 1D, 5D, and 20D probability forecasts.
+Walk-Forward Validation
+No validation folds yet
+Latest Feature Snapshot
+No feature snapshot yet
+Offline Research Registry
+Refresh
+Experimental models only. Brier score measures probability error (lower is better), not profit. Registration never authorizes trading.
+
+No registered runs in this database. Train and register an offline artifact using the documented CLI.
+
+Model Performance Tracker
+Ready
+Symbol
+SPY
+Save Run
+Score
+Refresh
+Stored
+0
+Realized
+0
+Hit Rate
+n/a
+Avg Brier
+n/a
+Last Saved Run
+No run saved from this panel yet
+Stored Prediction Rows
+No stored predictions yet
+News Sentiment Context
+Ready
+Symbol
+SPY
+Provider
+
+Auto
+Import
+Refresh
+Sentiment Summary
+negative
+Articles
+3
+Avg Sentiment
+-0.56
+SPY news tone is negative across 3 stored items; average sentiment -0.56.
+News informs explanations only. Deterministic risk rules still approve or block paper trades.
+Stored Headlines
+SPY holds gains as investors weigh resilient earnings growth
+Market participants focused on recent earnings resilience and broad risk appetite.
+mock_news | 9/11/2026, 12:38:34 AM
+0.33
+Rel 0.90
+SPY faces pressure as rate-cut timing remains uncertain
+Macro commentary pointed to uncertainty around rates and near-term valuation pressure.
+mock_news | 9/10/2026, 6:38:34 PM
+-1.00
+Rel 0.82
+Analysts flag balanced setup for SPY after latest data
+The latest setup is mixed, with trend strength offset by policy and volatility risks.
+mock_news | 9/10/2026, 12:38:34 PM
+-1.00
+Rel 0.74
+Economic Context
+Ready
+Import
+Refresh
+Macro Summary
+mixed macro
+Rates
+neutral
+Inflation
+sticky
+Labor
+steady
+Volatility
+elevated
+Macro backdrop is mixed_macro: 10Y 4.20%, inflation 3.05%, unemployment 4.10%, VIX proxy 20.0.
+Macro context informs regime/model explanations only. It never approves trades.
+Latest Indicator Observations
+fed funds
+2026-09-11 | mock_macro
+4.75
+percent
+inflation yoy
+2026-09-11 | mock_macro
+3.05
+percent
+treasury 10y
+2026-09-11 | mock_macro
+4.20
+percent
+unemployment rate
+2026-09-11 | mock_macro
+4.10
+percent
+vix proxy
+2026-09-11 | mock_macro
+20.0
+index
+fed funds
+2026-08-12 | mock_macro
+4.75
+percent
+inflation yoy
+2026-08-12 | mock_macro
+3.09
+percent
+treasury 10y
+2026-08-12 | mock_macro
+4.17
+percent
+unemployment rate
+2026-08-12 | mock_macro
+4.08
+percent
+vix proxy
+2026-08-12 | mock_macro
+19.3
+index
+Market Regime Monitor
+Ready
+Proxy
+SPY
+Detect
+Refresh
+Latest Regime
+unclassified
+Run detection to classify the current market regime.
+Regime History
+No regime rows stored yet
+Broker Safety Adapter
+Ready
+Manual broker orders and live-order guard tests are intentionally unavailable here. A direct order request returns a deliberate 409 conflict because this research system is paper-only. Use the risk-gated Paper Trading Simulator below to generate paper signals instead.
+Adapter Status
+live blocked
+Paper broker
+internal_paper_stub
+Paper enabled
+Yes
+Live enabled
+No
+Version 1 routes broker-shaped orders to paper only. Live order placement is blocked.
+Last Broker Event
+No manual broker event is recorded. Paper signals remain subject to readiness and portfolio risk gates.
+Portfolio Risk Monitor
+Permission required for this action.
+Refresh
+Dry Run
+Run Actions
+Replay Approval Queue
+0 open gate alerts | 0 dry-run ready
+Loading replay approval queue
+Allocation Plan
+0 positive candidates
+Dry Run
+Execute
+Loading allocation plan
+Gross Exposure
+0%
+$0.00 notional
+Open Positions
+0
+Limit 0
+Unrealized P/L
+$0.00
+0%
+Risk Alerts
+Loading alerts
+Symbol Exposure
+No open symbol exposure.
+Strategy Concentration
+No open strategy exposure.
+Open Position Ledger
+Symbol	Strategy	Qty	Exposure	Entry	Latest	Unrealized	Action
+No open paper positions.
+Paper Trading Simulator
+Permission required for this action.
+Symbol
+SPY
+Strategy
+
+Moving Average
+Run Signal
+Reconcile
+Refresh
+Paper Ledger
+0 open, 0 closed
+No paper trades yet
+Last Signal
+No signal run yet
+Strategy Memory
+Memory updates after closed paper trades
+Paper-only lock active
+Experiment Manager
+Ready
+Symbol
+SPY
+Strategy
+
+Moving Average
+Apply winner
+Run
+Refresh
+No persisted experiments yet
+Strategy Governance
+Ready
+Evaluate
+Audit Log
+Lifecycle Decisions
+Run evaluation to review strategy lifecycle status.
+Recent Audit Events
+news ingestion
+complete
+Stored 3 mock_news news items for SPY.
+import_mock_news | 9/11/2026, 12:38:34 AM
+deployment monitor
+blocked
+Deployment monitor blocked: Trusted market data. Readiness blockers: Market data.
+deployment_monitor_job | 9/11/2026, 12:35:32 AM
+trade candidate scan
+complete
+Refreshed trade candidate scanner with 0 positive candidates.
+refresh | 9/11/2026, 12:11:19 AM
+economic data
+complete
+Stored 30 fallback economic indicator observations.
+import_fallback_macro | 9/11/2026, 12:11:19 AM
+Strategy Improvement Queue
+0 weak strategies queued | 0 paused | 0 retired
+Refresh
+No paused or retired strategies need improvement experiments right now.
+Reactivation Review
+2 strategies awaiting review
+Refresh
+MACD Momentum
+paper trading candidate
+Blocked
+macd_momentum | no symbol | unclassified
+Hold
+Reject
+Approve
+Samples 0
+Win 0%
+PF 0.00
+Draw 0%
+Conf 0.00
+Insufficient closed paper-trade sample.
+Paper win rate below reactivation threshold.
+Paper profit factor below reactivation threshold.
+Strategy confidence score below reactivation threshold.
+Model Predictive Long
+paper trading candidate
+Blocked
+model_predictive_long | no symbol | unclassified
+Hold
+Reject
+Approve
+Samples 0
+Win 0%
+PF 0.00
+Draw 0%
+Conf 0.00
+Insufficient closed paper-trade sample.
+Paper win rate below reactivation threshold.
+Paper profit factor below reactivation threshold.
+Strategy confidence score below reactivation threshold.
+Audit History
+4 events loaded
+All
+Readiness
+Risk Settings
+Safety
+Lifecycle
+Refresh
+Current View
+All
+Loaded Mix
+Risk 0
+Readiness 0
+Safety 0
+Lifecycle 0
+import mock news
+news ingestion | 9/11/2026, 12:38:34 AM
+complete
+Stored 3 mock_news news items for SPY.
+deployment monitor job
+deployment monitor | 9/11/2026, 12:35:32 AM
+blocked
+Deployment monitor blocked: Trusted market data. Readiness blockers: Market data.
+refresh
+trade candidate scan | 9/11/2026, 12:11:19 AM
+complete
+Refreshed trade candidate scanner with 0 positive candidates.
+import fallback macro
+economic data | 9/11/2026, 12:11:19 AM
+complete
+Stored 30 fallback economic indicator observations.
+Strategy Library
+Strategy	Status	Score	Win Rate	Drawdown	Profit Factor
+Bollinger Mean Reversion	research	Unavailable	Unavailable	Unavailable	Unavailable
+Channel Breakout	research	Unavailable	Unavailable	Unavailable	Unavailable
+Ensemble Strategy	research	Unavailable	Unavailable	Unavailable	Unavailable
+MACD Momentum	paper trading candidate	Unavailable	Unavailable	Unavailable	Unavailable
+Model Predictive Long	paper trading candidate	Unavailable	Unavailable	Unavailable	Unavailable
+Moving Average Crossover	paper trading active	Unavailable	Unavailable	Unavailable	Unavailable
+RSI Mean Reversion	research	Unavailable	Unavailable	Unavailable	Unavailable
+Trend Pullback	research	Unavailable	Unavailable	Unavailable	Unavailable
+Learning Lab
+No recorded paper trades.
+
+MA 10/30
+queued
+Different trend windows may reduce whipsaw losses while preserving upside capture.
+
+MA 20/50
+queued
+Different trend windows may reduce whipsaw losses while preserving upside capture.
+
+MA 50/200
+queued
+Different trend windows may reduce whipsaw losses while preserving upside capture.
+
+AI Review Boundary
+Allowed: summarize news, explain performance, suggest controlled experiments.
+Blocked: direct order placement, bypassing risk rules, changing strategy code without tests.
+Recent Paper Trades
