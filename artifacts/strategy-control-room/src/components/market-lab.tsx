@@ -1,10 +1,10 @@
 
 
 import { useMemo, useState } from "react";
-import { Database, Play, RefreshCw } from "lucide-react";
+import { Activity, Database, Play, RefreshCw } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { BacktestResponse, MarketImportResponse, PriceHistoryResponse, getPriceHistory, importMarketData, runBacktest } from "@/lib/api";
+import { BacktestResponse, MarketDataHealth, MarketImportResponse, PriceHistoryResponse, getMarketDataHealth, getPriceHistory, importIntradayMarketData, importMarketData, runBacktest } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -26,6 +26,7 @@ export function MarketLab() {
   const [importResult, setImportResult] = useState<MarketImportResponse | null>(null);
   const [prices, setPrices] = useState<PriceHistoryResponse | null>(null);
   const [backtest, setBacktest] = useState<BacktestResponse | null>(null);
+  const [health, setHealth] = useState<MarketDataHealth | null>(null);
   const [status, setStatus] = useState("Ready");
   const [isBusy, setIsBusy] = useState(false);
 
@@ -64,6 +65,34 @@ export function MarketLab() {
     }
   }
 
+  async function handleIntradayImport() {
+    setIsBusy(true);
+    setStatus("Importing Alpaca SIP 1-minute bars");
+    try {
+      const result = await importIntradayMarketData(symbol);
+      const imported = result.results.reduce((total, row) => total + (row.rows_imported ?? 0), 0);
+      setStatus(`Imported ${imported} completed regular-session bars`);
+      setHealth(await getMarketDataHealth(symbol));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Intraday import failed");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleLoadHealth() {
+    setIsBusy(true);
+    setStatus("Checking market feed health");
+    try {
+      setHealth(await getMarketDataHealth(symbol));
+      setStatus("Market feed health updated");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Market health unavailable");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleRunBacktest() {
     setIsBusy(true);
     setStatus("Running backtest");
@@ -88,7 +117,7 @@ export function MarketLab() {
           </div>
           <div className="mt-1 text-sm text-slate-500">{status}</div>
         </div>
-        <div className="grid gap-2 sm:grid-cols-[120px_190px_auto_auto_auto]">
+        <div className="grid gap-2 sm:grid-cols-[120px_190px_auto_auto_auto_auto]">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">Symbol</span>
             <input className="focus-ring h-10 rounded-md border border-line px-3 uppercase" value={symbol} onChange={(event) => setSymbol(event.target.value.toUpperCase())} />
@@ -105,10 +134,18 @@ export function MarketLab() {
             <RefreshCw size={16} />
             Import
           </button></RoleGate>
+           <RoleGate requires="researcher" className="self-end"><button data-testid="button-import-intraday" className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={handleIntradayImport}>
+             <Activity size={16} />
+             Intraday
+           </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={handleLoadHistory}>
             <Database size={16} />
             History
           </button>
+           <button data-testid="button-refresh-feed-health" className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={handleLoadHealth}>
+             <Activity size={16} />
+             Feed health
+           </button>
           <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={handleRunBacktest}>
             <Play size={16} />
             Backtest
@@ -141,6 +178,24 @@ export function MarketLab() {
             <div className="mt-2 text-sm">
               {importResult ? `${importResult.rows_imported} rows, ${importResult.start_date} to ${importResult.end_date}` : "No import run yet"}
             </div>
+          </div>
+          <div className="rounded-md border border-line p-3" data-testid="market-data-health">
+            <div className="flex items-center justify-between gap-2 text-xs font-semibold uppercase text-slate-500">
+              <span>Feed health · completed 1-minute regular session</span>
+              <span className="rounded border border-line px-2 py-1 normal-case">{health?.data_mode ?? "Unavailable"}</span>
+            </div>
+            {health ? (
+              <div className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+                <span>Provider / feed</span><strong className="text-right">{health.provider ?? "Unavailable"} / {health.feed ?? health.feed_class ?? "Unavailable"}</strong>
+                <span>Entitlement / config</span><strong className="text-right">{health.entitlement_state ?? (health.provider ? "reported by provider" : "Unavailable")} · {health.entitlement_configured === undefined ? "Unavailable" : health.entitlement_configured ? "configured" : "not configured"}</strong>
+                <span>Exchange timestamp</span><strong className="text-right">{health.exchange_timestamp ?? "Unavailable"}</strong>
+                <span>Ingestion time</span><strong className="text-right">{health.ingestion_timestamp ?? health.ingestion_time ?? "Unavailable"}</strong>
+                <span>Latency</span><strong className="text-right">{health.latency_seconds === null ? "Unavailable" : `${health.latency_seconds.toFixed(1)}s`}</strong>
+                <span>Missing intervals</span><strong className="text-right">{health.missing_intervals.length ? health.missing_intervals.join(", ") : "None reported"}</strong>
+                <span>State</span><strong className={`text-right ${health.is_stale || health.is_incomplete || health.status === "stale" || health.status === "unavailable" ? "text-coral" : "text-mint"}`}>{health.is_stale || health.status === "stale" ? "Stale" : health.is_incomplete ? "Incomplete" : health.status === "unavailable" ? "Unavailable" : "Current"}</strong>
+                {health.unavailable_reason ? <span className="sm:col-span-2 text-coral">Unavailable reason: {health.unavailable_reason}</span> : null}
+              </div>
+            ) : <div className="mt-2 text-sm text-slate-500">No real-time health result yet. Historical data and delayed data are not substitutes for the Alpaca SIP feed.</div>}
           </div>
           <div className="rounded-md border border-line p-3">
             <div className="text-xs font-semibold uppercase text-slate-500">Backtest Result</div>

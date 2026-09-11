@@ -16,7 +16,7 @@ from app.services.news_sentiment import summarize_news_context
 from app.services.probabilistic_model import predict_probabilities
 from app.services.readiness import readiness_snapshot
 from app.services.risk import DEFAULT_RISK_RULES, PortfolioState, StrategyState, approve_trade
-from app.services.trusted_data import trusted_history, UntrustedMarketData, TRUSTED_SOURCES
+from app.services.trusted_data import trusted_history, trusted_intraday_observation, UntrustedMarketData, TRUSTED_SOURCES
 from app.services.strategies.registry import get_strategy
 
 DEFAULT_PAPER_EQUITY = 100_000.0
@@ -145,6 +145,9 @@ def clamp_like(value: float) -> float:
 def _trusted_regime(db):
     regime = latest_market_regime(db, auto_detect=False)
     source = (regime or {}).get("features", {}).get("source")
+    macro = (regime or {}).get("features", {}).get("macro_context") or {}
+    if macro and macro.get("status") != "excluded":
+        return None
     if source not in TRUSTED_SOURCES and source not in {f"database:{s}" for s in TRUSTED_SOURCES}:
         return None
     return regime
@@ -152,6 +155,15 @@ def _trusted_regime(db):
 
 def run_paper_signal(db: Session, symbol: str, strategy_slug: str) -> dict:
     symbol = symbol.upper()
+    try:
+        intraday_observation = trusted_intraday_observation(db, symbol)
+    except UntrustedMarketData as exc:
+        return {
+            "symbol": symbol, "strategy": strategy_slug, "action": "BLOCKED",
+            "approved": False, "reason": str(exc), "signal_id": None,
+            "paper_trade_id": None, "price": 0.0, "quantity": 0.0,
+            "confidence": 0.0, "broker_order": None,
+        }
     strategy_row = db.query(Strategy).filter(Strategy.strategy_type == strategy_slug).one_or_none()
     if not strategy_row:
         raise ValueError(f"Unknown strategy: {strategy_slug}")
@@ -189,13 +201,14 @@ def run_paper_signal(db: Session, symbol: str, strategy_slug: str) -> dict:
     prices, source = trusted_history(db, symbol)
     current_regime = _trusted_regime(db)
     regime_name = (current_regime or {}).get("market_regime", "unclassified")
-    news_context = summarize_news_context(db, symbol)
-    macro_context = summarize_macro_context(db)
+    # Mock news and fallback macro data are display-only, never paper-decision evidence.
+    news_context = {"status": "excluded", "summary": "News context excluded from paper decisions."}
+    macro_context = {"status": "excluded", "summary": "Macro context excluded from paper decisions."}
     strategy = get_strategy(strategy_slug, strategy_row.parameters)
     signal = strategy.generate_signal(symbol, prices)
     predictive_evidence = _predictive_trade_evidence(symbol, prices, source)
     model_action, model_probability_up, model_confidence, model_reason = _model_informed_signal(signal, predictive_evidence)
-    price = float(prices.iloc[-1]["close"])
+    price = intraday_observation["close"]
     signal_payload = {
         "symbol": symbol,
         "strategy": str(strategy_row.id),
@@ -206,6 +219,7 @@ def run_paper_signal(db: Session, symbol: str, strategy_slug: str) -> dict:
         "features": signal.features
         | {
             "data_source": source,
+            "execution_observation": intraday_observation,
             "raw_strategy_action": signal.action,
             "raw_strategy_confidence": signal.confidence,
             "confidence": model_confidence,
@@ -338,14 +352,13 @@ def reconcile_open_paper_trades(db: Session) -> dict:
     blocked_ids: list[int] = []
     for trade in open_trades:
         try:
-            prices, _source = _latest_price_frame(db, trade.symbol)
+            observation = trusted_intraday_observation(db, trade.symbol)
         except UntrustedMarketData as exc:
             blocked_ids.append(trade.id)
             write_audit_log(db, event_type="market_data_gate", entity_type="paper_trade", entity_id=trade.id,
                             action="reconcile_close", status="blocked", message=str(exc), payload={"symbol": trade.symbol})
             continue
-        latest = prices.iloc[-1]
-        current_price = float(latest["close"])
+        current_price = observation["close"]
         entry_price = float(trade.entry_price or 0)
         if entry_price <= 0:
             continue
@@ -380,7 +393,12 @@ def reconcile_open_paper_trades(db: Session) -> dict:
                 action="reconcile_close",
                 status="closed",
                 message=exit_reason,
-                payload={"symbol": trade.symbol, "profit_loss": profit_loss, "profit_loss_pct": pnl_pct},
+                payload={
+                    "symbol": trade.symbol,
+                    "profit_loss": profit_loss,
+                    "profit_loss_pct": pnl_pct,
+                    "execution_observation": observation,
+                },
             )
 
     db.commit()

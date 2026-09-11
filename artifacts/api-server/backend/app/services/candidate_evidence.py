@@ -65,14 +65,38 @@ def candidate_evidence_drilldown(db: Session, symbol: str, strategy: str) -> dic
         raise ValueError(f"Unknown strategy: {strategy}")
 
     prices, source = trusted_history(db, symbol, 420, minimum=140)
-    cached_candidate = _find_cached_candidate(db, symbol, strategy)
+    cached = _find_cached_candidate(db, symbol, strategy)
+    # Scanner caches may predate the trusted-evidence boundary. Expose only
+    # market/model fields that cannot contain mock news or macro summaries.
+    cached_candidate = {
+        key: cached.get(key)
+        for key in (
+            "symbol", "strategy", "strategy_name", "strategy_status",
+            "candidate_status", "score", "action", "probability_up",
+            "expected_return", "scanner_cache_status", "scanner_generated_at",
+        )
+    }
 
     model = predict_probabilities(symbol, prices, source)
     signal = get_strategy(strategy_row.strategy_type, strategy_row.parameters).generate_signal(symbol, prices)
     backtest = run_backtest(symbol, strategy_row.strategy_type, prices.tail(320), BacktestConfig(), strategy_row.parameters)
-    news = summarize_news_context(db, symbol)
-    macro = summarize_macro_context(db)
+    # Qualification evidence must not silently seed mock context.
+    stored_news = summarize_news_context(db, symbol, auto_seed=False)
+    trusted_headlines = [
+        item for item in stored_news.get("top_headlines", [])
+        if item.get("source") not in {"mock_news", "mock_news_fallback"}
+    ]
+    news = {
+        "status": "available" if trusted_headlines else "excluded",
+        "reason": None if trusted_headlines else "Mock news is not qualification evidence.",
+        "top_headlines": trusted_headlines,
+        "article_count": len(trusted_headlines),
+    }
+    macro = {"status": "excluded", "reason": "Synthetic macro context is not qualification evidence."}
     regime = latest_market_regime(db, auto_detect=False) or {}
+    regime_macro = regime.get("features", {}).get("macro_context") or {}
+    if regime_macro and regime_macro.get("status") != "excluded":
+        regime = {"status": "excluded", "reason": "Legacy synthetic macro-derived regime excluded."}
 
     return jsonable_encoder(
         {

@@ -17,6 +17,7 @@ celery_app.conf.task_queues = (
 celery_app.conf.task_default_queue = "default"
 celery_app.conf.task_routes = {
     "app.tasks.jobs.daily_market_data_import": {"queue": "market_data"},
+    "app.tasks.jobs.intraday_market_data_import": {"queue": "market_data"},
     "app.tasks.jobs.daily_economic_data_import": {"queue": "market_data"},
     "app.tasks.jobs.daily_news_import": {"queue": "market_data"},
     "app.tasks.jobs.daily_feature_generation": {"queue": "market_data"},
@@ -35,6 +36,7 @@ celery_app.conf.task_routes = {
 }
 celery_app.conf.beat_schedule = {
     "daily-market-data-import": {"task": "app.tasks.jobs.daily_market_data_import", "schedule": 60 * 60 * 24},
+    "intraday-market-data-import": {"task": "app.tasks.jobs.intraday_market_data_import", "schedule": 60},
     "daily-economic-data-import": {"task": "app.tasks.jobs.daily_economic_data_import", "schedule": 60 * 60 * 24},
     "daily-news-import": {"task": "app.tasks.jobs.daily_news_import", "schedule": 60 * 60 * 24},
     "daily-feature-generation": {"task": "app.tasks.jobs.daily_feature_generation", "schedule": 60 * 60 * 24},

@@ -39,7 +39,7 @@ READ_PATHS = {
 }
 RESEARCH_POSTS = {
     "/crypto/collect",
-    "/market-data/import", "/backtests", "/signals", "/models/predict",
+    "/market-data/import", "/market-data/intraday/ingest", "/backtests", "/signals", "/models/predict",
     "/models/run", "/models/score-realized", "/news/import", "/economic/import",
     "/market-regimes/detect", "/trade-candidates/refresh-jobs",
     "/trade-candidates/decision-journal", "/trade-candidates/decision-scorecard/update-memory",
@@ -77,6 +77,7 @@ def required_role(method: str, path: str) -> str:
         return "viewer"
     if method == "GET" and (
         re.fullmatch(r"/market-data/[^/]+", path)
+        or re.fullmatch(r"/market-data/intraday/[^/]+(?:/status)?", path)
         or re.fullmatch(r"/news/[^/]+/summary", path)
         or re.fullmatch(r"/learning/workers/[^/]+", path)
     ):

@@ -10,6 +10,7 @@ from app.services.deployment_monitor import run_deployment_monitor
 from app.services.experiments import run_strategy_experiments
 from app.services.governance import evaluate_strategy_governance
 from app.services.market_data import import_market_prices
+from app.services.intraday_data import ingest_corporate_actions, ingest_intraday
 from app.services.market_regime import detect_and_store_market_regime
 from app.services.memory_replay import run_memory_replay_gate_monitor
 from app.services.model_tracking import run_and_persist_model_predictions, score_realized_predictions
@@ -47,17 +48,25 @@ def daily_market_data_import() -> dict:
     def work(db):
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
         results = [import_market_prices(db, asset.symbol, "2y") for asset in assets]
+        corporate_actions = ingest_corporate_actions(
+            db, [asset.symbol for asset in assets if asset.symbol in {"AAPL", "MSFT", "QQQ", "SPY"}]
+        )
         journal = refresh_decision_journal_outcomes(db, source="daily_market_data_import", notify=True)
         replay_monitor = run_memory_replay_gate_monitor(db, source="daily_market_data_import", limit=60, top_k=3)
         return {
             "status": "complete",
             "job": "daily_market_data_import",
             "results": results,
+            "corporate_actions": corporate_actions,
             "decision_journal": journal,
             "memory_replay_gate_monitor": replay_monitor,
         }
 
     return _run_job("daily_market_data_import", work)
+
+@celery_app.task
+def intraday_market_data_import() -> dict:
+    return _run_job("intraday_market_data_import", lambda db: ingest_intraday(db))
 
 
 @celery_app.task

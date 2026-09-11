@@ -23,7 +23,8 @@ def run_and_persist_model_predictions(db: Session, symbol: str) -> dict:
     symbol = symbol.upper()
     prices, source = trusted_history(db, symbol, 420, minimum=140)
     result = predict_probabilities(symbol, prices, source)
-    macro_context = summarize_macro_context(db)
+    # The only current macro source is synthetic fallback data. Keep it display-only.
+    macro_context = {"status": "excluded", "reason": "Synthetic macro context is not model evidence."}
     result["macro_context"] = macro_context
     prediction_date = date.fromisoformat(result.get("prediction_date")) if result.get("prediction_date") else None
     if not prediction_date:

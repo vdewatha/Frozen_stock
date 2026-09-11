@@ -4,14 +4,51 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from app.models import Asset
+from app.models import Asset, IntradayBar
 from app.services.market_data import get_price_history
+from app.services.intraday_data import feed_status
 
 TRUSTED_SOURCES = frozenset({"yfinance", "yahoo_chart"})
 
 
 class UntrustedMarketData(ValueError):
     pass
+
+def validate_intraday_readiness(db, symbol: str, *, now: datetime | None = None, max_age_seconds: int = 120) -> dict:
+    """Require a complete current or most-recent regular session."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        status = feed_status(db, symbol, now=now)
+    except ValueError as exc:
+        raise UntrustedMarketData(str(exc)) from exc
+    if status["status"] not in {"ready", "market_closed"}:
+        reason = status.get("unavailable_reason") or "Intraday feed is not ready."
+        raise UntrustedMarketData(f"{reason}; paper decisions are blocked.")
+    return status
+
+
+def trusted_intraday_observation(db, symbol: str, *, now: datetime | None = None) -> dict:
+    """Return the exact completed SIP bar eligible for a paper decision."""
+    status = validate_intraday_readiness(db, symbol, now=now)
+    row = (
+        db.query(IntradayBar)
+        .filter(IntradayBar.symbol == symbol.strip().upper(), IntradayBar.timeframe == "1m")
+        .order_by(IntradayBar.opened_at.desc())
+        .first()
+    )
+    if row is None:
+        raise UntrustedMarketData("Intraday feed has no eligible completed observation.")
+    return {
+        "provider": row.provider,
+        "feed_class": row.feed_class,
+        "timeframe": row.timeframe,
+        "opened_at": row.opened_at,
+        "exchange_timestamp": row.exchange_timestamp,
+        "ingested_at": row.ingested_at,
+        "close": float(row.close),
+        "status": status["status"],
+        "adjustment_policy": "raw current-session execution observation",
+    }
 
 
 def validate_history(prices: pd.DataFrame, minimum: int = 60, max_age_days: int = 7) -> None:
@@ -41,4 +78,14 @@ def trusted_history(db, symbol: str, limit: int = 260, minimum: int = 60, requir
         raise UntrustedMarketData(f"Requested instrument {symbol} is not active.")
     prices, source = get_price_history(db, symbol, limit, auto_seed=False)
     validate_history(prices, minimum=minimum)
+    if "adjusted_close" in prices:
+        adjusted = pd.to_numeric(prices["adjusted_close"], errors="coerce")
+        raw_close = pd.to_numeric(prices["close"], errors="coerce")
+        factor = adjusted / raw_close
+        if not np.isfinite(factor).all() or (factor <= 0).any():
+            raise UntrustedMarketData("Corporate-action adjustment factors are invalid.")
+        prices = prices.copy()
+        for column in ("open", "high", "low", "close"):
+            prices[column] = pd.to_numeric(prices[column], errors="coerce") * factor
+        prices["adjustment_policy"] = "yahoo_adjusted_close_factor"
     return prices, source

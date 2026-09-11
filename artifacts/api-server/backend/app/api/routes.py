@@ -63,6 +63,7 @@ from app.schemas.trading import (
     PortfolioRiskActionResponse,
     PortfolioRiskResponse,
     PriceHistoryResponse,
+    IntradayBarRead, FeedStatusResponse, IntradayImportRequest,
     ReadinessResponse,
     RiskRuleRead,
     RiskSettingsUpdateRequest,
@@ -101,6 +102,8 @@ from app.services.experiments import list_strategy_experiments, run_strategy_exp
 from app.services.governance import evaluate_strategy_governance, latest_strategy_governance_scorecard
 from app.services.learning import propose_parameter_experiments
 from app.services.market_data import get_price_points, import_market_prices
+from app.services.intraday_data import feed_status, ingest_intraday
+from app.models import IntradayBar
 from app.services.trusted_data import trusted_history, UntrustedMarketData
 from app.services.market_regime import detect_and_store_market_regime, latest_market_regime, list_market_regimes
 from app.services.memory_replay import memory_replay_evaluation, run_memory_replay_gate_monitor
@@ -316,6 +319,18 @@ def import_prices(payload: MarketImportRequest, db: Session = Depends(get_db)) -
 def price_history(symbol: str, limit: int = 260, db: Session = Depends(get_db)) -> dict:
     rows, source = get_price_points(db, symbol, limit=limit)
     return {"symbol": symbol.upper(), "source": source, "rows": rows}
+
+@router.get("/market-data/intraday/{symbol}", response_model=list[IntradayBarRead])
+def intraday_history(symbol: str, limit: int = 390, db: Session = Depends(get_db)):
+    return db.query(IntradayBar).filter(IntradayBar.symbol == symbol.upper()).order_by(IntradayBar.opened_at.desc()).limit(min(limit, 2000)).all()
+
+@router.get("/market-data/intraday/{symbol}/status", response_model=FeedStatusResponse)
+def intraday_feed_status(symbol: str, db: Session = Depends(get_db)):
+    return feed_status(db, symbol)
+
+@router.post("/market-data/intraday/ingest")
+def ingest_intraday_route(payload: IntradayImportRequest, db: Session = Depends(get_db)):
+    return ingest_intraday(db, payload.symbols)
 
 
 def _research_prices(db, symbol, limit, minimum):

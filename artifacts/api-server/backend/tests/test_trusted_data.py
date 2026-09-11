@@ -39,6 +39,15 @@ def test_trusted_read_never_fetches_or_seeds():
         read.assert_called_once_with(db, "SPY", 260, auto_seed=False)
 
 
+def test_trusted_history_applies_adjusted_close_factor_to_ohlc():
+    frame = history()
+    frame["adjusted_close"] = frame["close"] * 0.5
+    with patch("app.services.trusted_data.get_price_history", return_value=(frame, "database:yfinance")):
+        normalized, _ = trusted_history(MagicMock(), "SPY")
+    assert normalized.iloc[-1]["close"] == frame.iloc[-1]["adjusted_close"]
+    assert normalized.iloc[-1]["open"] == frame.iloc[-1]["open"] * 0.5
+
+
 def test_inactive_symbol_rejected_before_read():
     db = MagicMock()
     db.query.return_value.filter.return_value.one_or_none.return_value = None
@@ -80,6 +89,13 @@ def test_synthetic_regime_cannot_inform_execution():
     with patch.object(paper_trading, "latest_market_regime", return_value={"features": {"source": "synthetic_fallback"}}) as regime:
         assert paper_trading._trusted_regime(db) is None
         regime.assert_called_once_with(db, auto_detect=False)
+
+
+def test_legacy_macro_derived_regime_cannot_inform_execution():
+    db = MagicMock()
+    legacy = {"features": {"source": "yfinance", "macro_context": {"rate_regime": "restrictive"}}}
+    with patch.object(paper_trading, "latest_market_regime", return_value=legacy):
+        assert paper_trading._trusted_regime(db) is None
 
 
 def test_mixed_provenance_requires_normalization():

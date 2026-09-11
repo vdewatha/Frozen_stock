@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 from app.models import Asset, MarketPrice, ModelPrediction, Notification, RiskRule, Strategy
 from app.core.config import settings
 from app.services.broker import broker_status
+from app.services.intraday_data import feed_status, ALLOWED_SYMBOLS
 from app.services.portfolio_risk import portfolio_risk_snapshot
 from app.tasks.celery_app import celery_app
-from app.services.trusted_data import trusted_history, UntrustedMarketData, TRUSTED_SOURCES
+from app.services.trusted_data import trusted_history, validate_intraday_readiness, UntrustedMarketData, TRUSTED_SOURCES
 
 
 def _check(name: str, status: str, message: str, details: Optional[dict] = None) -> dict:
@@ -117,6 +118,44 @@ def readiness_snapshot(db: Session) -> dict:
             },
         )
     )
+    intraday_failures = {}
+    intraday_status = {}
+    intraday_assets = [asset for asset in active_assets if asset.symbol in ALLOWED_SYMBOLS]
+    unsupported_intraday_assets = [
+        asset.symbol for asset in active_assets if asset.symbol not in ALLOWED_SYMBOLS
+    ]
+    for asset in intraday_assets:
+        try:
+            intraday_status[asset.symbol] = validate_intraday_readiness(db, asset.symbol)
+        except UntrustedMarketData as exc:
+            intraday_failures[asset.symbol] = str(exc)
+            try:
+                intraday_status[asset.symbol] = feed_status(db, asset.symbol)
+            except ValueError as status_exc:
+                intraday_status[asset.symbol] = {
+                    "status": "unavailable",
+                    "unavailable_reason": str(status_exc),
+                }
+    representative = next(iter(intraday_status.values()), {})
+    checks.append(_check(
+        "Intraday feed",
+        "blocked" if intraday_failures else "ready",
+        "Completed Alpaca SIP bars are fresh." if not intraday_failures else "Fresh complete intraday data is required for paper decisions.",
+        {
+            "data_mode": "real-time",
+            "provider": "alpaca",
+            "feed_class": "sip",
+            "cadence": "1m",
+            "exchange_timestamp": representative.get("exchange_timestamp"),
+            "ingestion_time": representative.get("ingestion_timestamp"),
+            "latency_seconds": representative.get("latency_seconds"),
+            "missing_intervals": representative.get("missing_intervals", []),
+            "unavailable_reason": representative.get("unavailable_reason"),
+            "failures": intraday_failures,
+            "symbols": intraday_status,
+            "unsupported_active_assets": unsupported_intraday_assets,
+        },
+    ))
 
     latest_model = db.query(func.max(ModelPrediction.created_at)).filter(
         ModelPrediction.source.in_(list(TRUSTED_SOURCES) + [f"database:{source}" for source in TRUSTED_SOURCES])

@@ -34,7 +34,7 @@ class WatchlistDiscoveryResponse(BaseModel):
 
 
 class WatchlistImportRequest(BaseModel):
-    symbols: list[str] = []
+    symbols: list[str] = Field(default_factory=list)
     limit: int = Field(default=6, ge=1, le=10)
     period: str = "2y"
     import_prices: bool = True
@@ -73,6 +73,9 @@ class MarketImportRequest(BaseModel):
     symbol: str = "SPY"
     period: str = "2y"
 
+class IntradayImportRequest(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+
 
 class MarketImportResponse(BaseModel):
     symbol: str
@@ -99,6 +102,39 @@ class PriceHistoryResponse(BaseModel):
     symbol: str
     source: str
     rows: list[PricePoint]
+
+class IntradayBarRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    symbol: str
+    timeframe: str
+    opened_at: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+    provider: str
+    feed_class: str
+    exchange_timestamp: datetime
+    ingested_at: datetime
+
+class FeedStatusResponse(BaseModel):
+    symbol: str
+    status: str
+    provider: Optional[str] = None
+    feed_class: Optional[str] = None
+    data_mode: Optional[str] = None
+    timeframe: Optional[str] = None
+    session: Optional[str] = None
+    entitlement_configured: Optional[bool] = None
+    entitlement_state: Optional[str] = None
+    exchange_timestamp: Optional[datetime] = None
+    ingestion_timestamp: Optional[datetime] = None
+    latency_seconds: Optional[float] = None
+    missing_intervals: list[str] = Field(default_factory=list)
+    unavailable_reason: Optional[str] = None
+    checked_at: Optional[datetime] = None
+    adjustment_policy: Optional[str] = None
 
 
 class SignalResponse(BaseModel):
@@ -657,7 +693,7 @@ class TradeCandidateEvidenceResponse(BaseModel):
 class ScannerRefreshJobRequest(BaseModel):
     trigger: str = Field(default="manual", max_length=64)
     limit: int = Field(default=50, ge=1, le=50)
-    context: dict = {}
+    context: dict = Field(default_factory=dict)
 
 
 class ScannerRefreshJobResponse(BaseModel):
@@ -675,7 +711,7 @@ class CompanyOpportunityRadarResponse(BaseModel):
     generated_at: datetime
     asset_count: int
     scanner_cache_status: Optional[str] = None
-    news_imports: list[dict] = []
+    news_imports: list[dict] = Field(default_factory=list)
     opportunities: list[dict]
 
 

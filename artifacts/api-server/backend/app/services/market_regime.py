@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.models import MarketRegime
 from app.services.audit import write_audit_log
-from app.services.economic_data import summarize_macro_context
 from app.services.trusted_data import trusted_history
 
 
@@ -66,8 +65,8 @@ def classify_market_regime(prices: pd.DataFrame, macro_context: Optional[dict] =
     spy_trend, ma_50, ma_200 = _trend_label(close)
     volatility_regime, realized_volatility = _volatility_label(close)
     rate_regime, sixty_day_return = _rate_proxy_label(close)
-    if macro_context:
-        rate_regime = macro_context.get("rate_regime") or rate_regime
+    # Macro data is display-only until a trusted entitled source is configured.
+    # Retain the argument for API compatibility, but never use it as evidence.
 
     if spy_trend == "uptrend" and volatility_regime != "high_volatility" and rate_regime != "restrictive":
         market_regime = "bull_trend"
@@ -96,7 +95,7 @@ def classify_market_regime(prices: pd.DataFrame, macro_context: Optional[dict] =
             "ma_50_vs_200": round(ma_50 / ma_200 - 1 if ma_200 else 0.0, 6),
             "realized_volatility_20d": round(realized_volatility, 6),
             "return_60d": round(sixty_day_return, 6),
-            "macro_context": macro_context or {},
+            "macro_context": {"status": "excluded", "reason": "No trusted macro feed configured."},
         },
     }
 
@@ -104,8 +103,7 @@ def classify_market_regime(prices: pd.DataFrame, macro_context: Optional[dict] =
 def detect_and_store_market_regime(db: Session, symbol: str = "SPY") -> dict:
     symbol = symbol.strip().upper()
     prices, source = trusted_history(db, symbol, 320, minimum=220)
-    macro_context = summarize_macro_context(db)
-    result = classify_market_regime(prices, macro_context)
+    result = classify_market_regime(prices)
     regime_date: date = result["regime_date"]
     row = db.query(MarketRegime).filter(MarketRegime.regime_date == regime_date).one_or_none()
     if not row:

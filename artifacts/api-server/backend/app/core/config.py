@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     auth_researcher_key: SecretStr = SecretStr("")
     auth_operator_key: SecretStr = SecretStr("")
     auth_admin_key: SecretStr = SecretStr("")
+    alpaca_api_key: SecretStr = SecretStr("")
+    alpaca_api_secret: SecretStr = SecretStr("")
+    alpaca_data_url: str = "https://data.alpaca.markets"
+    alpaca_feed: str = "sip"
+    intraday_enabled: bool = True
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

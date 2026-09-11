@@ -69,6 +69,44 @@ export type MarketImportResponse = {
   source: string;
 };
 
+export type IntradayImportResponse = {
+  provider: string;
+  feed_class: string;
+  data_mode?: string;
+  cadence: string;
+  session?: string;
+  adjustment_policy?: string;
+  results: Array<{
+    symbol: string;
+    status: string;
+    rows_imported?: number;
+    unavailable_reason?: string;
+    missing_intervals?: string[];
+  }>;
+};
+
+export type MarketDataHealth = {
+  symbol: string;
+  provider: string;
+  feed?: string;
+  feed_class?: string;
+  entitlement_configured?: boolean;
+  entitlement_state?: string;
+  exchange_timestamp: string | null;
+  ingestion_time?: string | null;
+  ingestion_timestamp?: string | null;
+  latency_seconds: number | null;
+  missing_intervals: string[];
+  is_stale?: boolean;
+  is_incomplete?: boolean;
+  status: string;
+  unavailable_reason: string | null;
+  data_mode?: "historical" | "delayed" | "real-time" | string;
+  timeframe?: string;
+  session?: string;
+  checked_at?: string;
+};
+
 export type BacktestResponse = {
   symbol: string;
   strategy: string;
@@ -1301,6 +1339,16 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
 
 export async function importMarketData(symbol: string, period = "2y"): Promise<MarketImportResponse> {
   return postJson<MarketImportResponse>("/market-data/import", { symbol, period });
+}
+
+/** Imports completed regular-session one-minute bars; intentionally separate from Yahoo history. */
+export async function importIntradayMarketData(symbol: string): Promise<IntradayImportResponse> {
+  return postJson<IntradayImportResponse>("/market-data/intraday/ingest", { symbols: [symbol] });
+}
+
+export async function getMarketDataHealth(symbol: string): Promise<MarketDataHealth> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/market-data/intraday/${encodeURIComponent(symbol)}/status`, { cache: "no-store" });
+  return handleResponse<MarketDataHealth>(response);
 }
 
 export async function getWatchlistDiscovery(limit = 10): Promise<WatchlistDiscovery> {

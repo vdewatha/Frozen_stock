@@ -39,6 +39,37 @@ class MarketPrice(Base):
     imported_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class IntradayBar(Base):
+    __tablename__ = "intraday_bars"
+    __table_args__ = (UniqueConstraint("symbol", "timeframe", "opened_at", name="uq_intraday_bar"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    timeframe: Mapped[str] = mapped_column(String(8), default="1m")
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    open: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    high: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    low: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    close: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    volume: Mapped[int] = mapped_column(BigInteger)
+    provider: Mapped[str] = mapped_column(String(32), default="alpaca")
+    feed_class: Mapped[str] = mapped_column(String(32), default="sip")
+    exchange_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CorporateAction(Base):
+    __tablename__ = "corporate_actions"
+    __table_args__ = (UniqueConstraint("symbol", "action_type", "ex_date", "value", name="uq_corporate_action"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    action_type: Mapped[str] = mapped_column(String(32))
+    ex_date: Mapped[date] = mapped_column(Date, index=True)
+    value: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    provider: Mapped[str] = mapped_column(String(32), default="alpaca")
+    raw_payload: Mapped[Optional[dict]] = mapped_column(JSON)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class NewsArticle(Base):
     __tablename__ = "news_articles"
 

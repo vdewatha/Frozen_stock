@@ -1,9 +1,9 @@
 
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Database, RefreshCw, ShieldAlert, TriangleAlert } from "lucide-react";
+import { Activity, CheckCircle2, Database, RefreshCw, ShieldAlert, TriangleAlert } from "lucide-react";
 
-import { ReadinessSnapshot, getReadiness, importMarketData } from "@/lib/api";
+import { IntradayImportResponse, MarketImportResponse, ReadinessSnapshot, getReadiness, importIntradayMarketData, importMarketData } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
 
 function statusClasses(status: string): string {
@@ -79,7 +79,7 @@ export function ReadinessChecklist() {
     setIsBusy(true);
     setStatus(`Refreshing market data for ${symbols.join(", ")}`);
     try {
-      const results = [];
+      const results: MarketImportResponse[] = [];
       for (const symbol of symbols) {
         results.push(await importMarketData(symbol));
       }
@@ -88,6 +88,33 @@ export function ReadinessChecklist() {
       await refresh();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Market data refresh failed");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function refreshIntradayData() {
+    const symbols = marketDataRepairSymbols(snapshot);
+    if (!symbols.length) {
+      setStatus("No stale or missing active assets to refresh");
+      return;
+    }
+    setIsBusy(true);
+    setStatus(`Refreshing Alpaca SIP intraday data for ${symbols.join(", ")}`);
+    try {
+      const results: IntradayImportResponse[] = [];
+      for (const symbol of symbols) {
+        results.push(await importIntradayMarketData(symbol));
+      }
+      const imported = results.reduce(
+        (total, result) =>
+          total + result.results.reduce((subtotal, row) => subtotal + (row.rows_imported ?? 0), 0),
+        0,
+      );
+      setStatus(`Imported ${imported} completed 1-minute bars; readiness refreshed`);
+      await refresh();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Intraday refresh failed");
     } finally {
       setIsBusy(false);
     }
@@ -122,6 +149,10 @@ export function ReadinessChecklist() {
             <Database size={16} />
             Refresh Data
           </button></RoleGate>
+           <RoleGate requires="researcher"><button data-testid="button-refresh-intraday" className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy || !repairSymbols.length} onClick={refreshIntradayData} type="button">
+             <Activity size={16} />
+             Refresh intraday
+           </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={refresh} type="button">
             <RefreshCw size={16} />
             Refresh
@@ -141,7 +172,7 @@ export function ReadinessChecklist() {
         </div>
 
         <div className="grid gap-2 md:grid-cols-2">
-          {snapshot?.checks.map((check) => (
+           {snapshot?.checks.map((check) => (
             <div className="rounded-md border border-line p-3 text-sm" key={check.name}>
               <div className="flex items-start justify-between gap-2">
                 <div>
@@ -153,11 +184,30 @@ export function ReadinessChecklist() {
                   {check.status}
                 </span>
               </div>
-              <div className="mt-2 text-xs text-slate-500">{detailText(check.details)}</div>
+               <div className="mt-2 text-xs text-slate-500">{detailText(check.details)}</div>
+               {check.name.toLowerCase().includes("market") ? <MarketFeedDetails details={check.details} /> : null}
             </div>
           )) ?? <div className="text-sm text-slate-600">Loading checks</div>}
         </div>
       </div>
     </section>
+  );
+}
+
+function MarketFeedDetails({ details }: { details: Record<string, unknown> }) {
+  const value = (key: string): string => {
+    const item = details[key];
+    if (item === null || typeof item === "undefined") return "Unavailable";
+    if (Array.isArray(item)) return item.length ? item.join(", ") : "None";
+    return String(item);
+  };
+  return (
+    <div className="mt-2 grid gap-1 rounded border border-line bg-panel p-2 text-xs" data-testid="market-feed-readiness-details">
+      <div className="font-semibold text-slate-600">Data provenance</div>
+      <div>Mode: {value("data_mode")} · Provider: {value("provider")} · Feed: {value("feed") === "Unavailable" ? value("feed_class") : value("feed")} · Cadence: {value("cadence")}</div>
+      <div>Exchange timestamp: {value("exchange_timestamp")} · Ingestion: {value("ingestion_time")}</div>
+      <div>Latency: {value("latency_seconds")} · Missing intervals: {value("missing_intervals")}</div>
+      <div className="text-coral">Unavailable reason: {value("unavailable_reason")}</div>
+    </div>
   );
 }
