@@ -21,7 +21,7 @@ class MonitorSecurityTests(unittest.TestCase):
         self.assertEqual(result["status"], "ready")
 
     def test_redis_distinguishes_configuration_and_reachability(self):
-        with patch.object(deployment_monitor.settings, "redis_url", ""):
+        with patch.dict("os.environ", {}, clear=True), patch.object(deployment_monitor.settings, "redis_url", ""):
             result = deployment_monitor._check_redis()
         self.assertEqual(result["status"], "blocked")
         self.assertFalse(result["details"]["configured"])

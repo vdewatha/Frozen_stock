@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "cd backend && python3.11 -m alembic upgrade head && python3.11 -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:?PORT environment variable is required}",
+    "dev": "cd backend && bash scripts/run_local_stack.sh",
     "build": "python3.11 -m compileall -q backend/app",
-    "start": "cd backend && python3.11 -m alembic upgrade head && python3.11 -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:?PORT environment variable is required}",
+    "start": "cd backend && bash scripts/run_local_stack.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

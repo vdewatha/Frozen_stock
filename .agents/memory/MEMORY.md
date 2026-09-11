@@ -1,0 +1,1 @@
+- [Ephemeral local Redis](ephemeral-local-redis.md) — use non-persistent localhost Redis for this app; do not replace it with managed Redis.
