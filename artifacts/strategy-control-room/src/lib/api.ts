@@ -1326,6 +1326,23 @@ export type RiskSettingsUpdate = {
   reason?: string;
 };
 
+/**
+ * Stock training is deliberately a separate API surface from the legacy
+ * experimental research endpoints above.  These types mirror the durable
+ * job/report contract and keep all identifiers opaque to the UI.
+ */
+export type StockTrainingJobStatus =
+  | "queued"
+  | "running"
+  | "complete"
+  | "completed"
+  | "failed"
+  | "succeeded"
+  | "cancel_requested"
+  | "cancelled"
+  | "canceled"
+  | "pending"
+  | string;
 const configuredApi = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const API_BASE_URL = configuredApi.replace(/\/$/, "");
 
@@ -1827,3 +1844,297 @@ export async function getRiskSettings(): Promise<RiskRule> {
 export async function updateRiskSettings(settings: RiskSettingsUpdate): Promise<RiskRule> {
   return patchJson<RiskRule>("/risk/settings", settings);
 }
+
+const STOCK_TRAINING_PATH = "/stock/training";
+
+export type StockTrainingReport = {
+  run_id?: string | null;
+  job_id?: string | number | null;
+  status: StockTrainingJobStatus;
+  trigger?: "manual" | "scheduled" | string;
+  dataset_snapshot?: StockDatasetSnapshot | null;
+  snapshot?: StockDatasetSnapshot | null;
+  model?: StockModelArtifact | null;
+  report_hash?: string | null;
+  hash?: string | null;
+  provenance?: Record<string, unknown> | null;
+  validation?: StockValidationSummary | null;
+  holdout?: StockValidationSummary | null;
+  comparisons?: StockTrainingComparison[];
+  baselines?: StockTrainingComparison[];
+  failures?: string[];
+  failure_reasons?: string[];
+  message?: string | null;
+  created_at?: string | null;
+  completed_at?: string | null;
+  selected_model?: string | null;
+  dataset_snapshot_id?: string | null;
+  dataset_sha256?: string | null;
+  dataset_artifact_sha256?: string | null;
+  artifact_path?: string | null;
+  provider?: string | null;
+  universe?: string[] | null;
+  cutoff_date?: string | null;
+  feature_config_id?: string | null;
+  folds?: number | null;
+  embargo_days?: number | null;
+  final_holdout_rows?: number | null;
+  final_holdout_start?: string | null;
+  final_holdout_end?: string | null;
+  walkforward_metrics?: Record<string, StockTrainingMetric> | null;
+  calibration_metrics?: Record<string, StockTrainingMetric> | null;
+  final_holdout_metrics?: StockTrainingMetric | null;
+  final_holdout_baseline?: StockTrainingMetric | null;
+  versions?: Record<string, string> | null;
+  code_sha256?: string | null;
+  assumptions?: Record<string, unknown> | null;
+  eligible_for_binding?: boolean;
+  binding_blockers?: string[];
+};
+
+export type StockModelBinding = {
+  id?: string | number | null;
+  binding_id?: string | number | null;
+  model_run_id?: string | null;
+  model_id?: string | null;
+  model_version?: string | null;
+  dataset_snapshot_id?: string | null;
+  snapshot_id?: string | null;
+  report_hash?: string | null;
+  binding_sha256?: string | null;
+  binding_hash?: string | null;
+  purpose?: string | null;
+  paper_only: boolean;
+  live_authorized?: boolean;
+  frozen?: boolean;
+  active?: boolean;
+  integrity_valid?: boolean;
+  integrity_error?: string | null;
+  bound_at?: string | null;
+  created_at?: string | null;
+  bound_by?: string | null;
+  confirmation?: string | null;
+  reason?: string | null;
+  message?: string | null;
+};
+
+export type StockDatasetSnapshot = {
+  snapshot_id: string;
+  version?: string | null;
+  status?: "verified" | "invalid" | "pending" | string;
+  verified: boolean;
+  provider: string;
+  provider_version?: string | null;
+  source?: string | null;
+  cutoff_at: string;
+  universe: string[];
+  features: string[];
+  label_definition?: string | null;
+  rows?: number | null;
+  hash?: string | null;
+  sha256?: string | null;
+  provenance?: Record<string, unknown> | null;
+  created_at?: string | null;
+  captured_at?: string | null;
+  binding_eligible?: boolean;
+  binding_eligibility_reason?: string | null;
+  adjustments_point_in_time?: boolean;
+};
+
+export type StockModelArtifact = {
+  model_id?: string | null;
+  model_version: string;
+  status?: "challenger" | "frozen" | "failed" | "candidate" | string;
+  hash?: string | null;
+  sha256?: string | null;
+  artifact_hash?: string | null;
+  created_at?: string | null;
+  scheduled?: boolean;
+  eligible_for_binding?: boolean;
+  binding_blockers?: string[];
+  temporal_caveat?: string | null;
+};
+
+export type BindStockModelRequest = {
+  model_id: string;
+  snapshot_id: string;
+  confirmation: "PAPER_ONLY_FROZEN_BINDING";
+  purpose: string;
+  reason: string;
+};
+
+export type StockTrainingJobDetail = StockTrainingJob & {
+  report?: StockTrainingReport | null;
+  snapshot?: StockDatasetSnapshot | null;
+  model?: StockModelArtifact | null;
+};
+
+export type StockTrainingComparison = {
+  name: string;
+  phase?: "purged_walkforward" | "calibration" | "final_untouched_holdout" | string;
+  kind?: "model" | "baseline" | string;
+  calibration?: number | null;
+  brier_score?: number | null;
+  log_loss?: number | null;
+  ece?: number | null;
+  gross_return?: number | null;
+  net_return?: number | null;
+  cost_adjusted_return?: number | null;
+  max_drawdown?: number | null;
+  drawdown?: number | null;
+  count?: number | null;
+  sample_count?: number | null;
+  losing_count?: number | null;
+  losses?: number | null;
+  metrics?: StockTrainingMetric;
+};
+
+function asStockJobsPage(payload: StockTrainingJobsPage | StockTrainingJob[]): StockTrainingJobsPage {
+  if (Array.isArray(payload)) {
+    return { items: payload, total: payload.length };
+  }
+  return {
+    items: Array.isArray(payload?.items) ? payload.items : [],
+    total: typeof payload?.total === "number" ? payload.total : payload?.items?.length ?? 0,
+    limit: payload?.limit,
+    offset: payload?.offset,
+  };
+}
+
+export async function startStockTraining(request: StartStockTrainingRequest): Promise<StockTrainingJob> {
+  return postJson<StockTrainingJob>(`${STOCK_TRAINING_PATH}/jobs`, {
+    ...request,
+  });
+}
+
+export async function cancelStockTraining(jobId: string | number): Promise<StockTrainingJob> {
+  return postJson<StockTrainingJob>(`${STOCK_TRAINING_PATH}/jobs/${encodeURIComponent(String(jobId))}/cancel`, {});
+}
+
+export type StockValidationSummary = {
+  status?: "passed" | "failed" | "warning" | string;
+  phase?: string;
+  selected_model?: string | null;
+  chosen_model?: string | null;
+  chosen_model_metrics?: StockTrainingComparison | null;
+  baseline_metrics?: StockTrainingComparison | null;
+  walkforward_comparisons?: StockTrainingComparison[];
+  calibration_comparisons?: StockTrainingComparison[];
+  folds?: number | null;
+  purged_rows?: number | null;
+  embargo_rows?: number | null;
+  train_rows?: number | null;
+  validation_rows?: number | null;
+  holdout_rows?: number | null;
+  holdout_start?: string | null;
+  holdout_end?: string | null;
+  repeated_holdout_uses?: number | null;
+  failures?: string[];
+  failure_reasons?: string[];
+  [key: string]: unknown;
+};
+
+export async function getStockTrainingReport(runId: string | number): Promise<StockTrainingReport> {
+  const response = await authenticatedFetch(`${API_BASE_URL}${STOCK_TRAINING_PATH}/runs/${encodeURIComponent(String(runId))}/report`, { cache: "no-store" });
+  return handleResponse<StockTrainingReport>(response);
+}
+
+export async function getActiveStockModelBinding(): Promise<StockModelBinding | null> {
+  const response = await authenticatedFetch(`${API_BASE_URL}${STOCK_TRAINING_PATH}/binding`, { cache: "no-store" });
+  return handleResponse<StockModelBinding | null>(response);
+}
+
+export async function bindStockModel(request: BindStockModelRequest): Promise<StockModelBinding> {
+  return postJson<StockModelBinding>(`${STOCK_TRAINING_PATH}/binding`, request);
+}
+
+export async function getStockTrainingJobs(limit = 50, offset = 0): Promise<StockTrainingJobsPage> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  const response = await authenticatedFetch(`${API_BASE_URL}${STOCK_TRAINING_PATH}/jobs?${params.toString()}`, { cache: "no-store" });
+  const payload = await handleResponse<StockTrainingJobsPage | StockTrainingJob[]>(response);
+  return asStockJobsPage(payload);
+}
+
+export type StockTrainingMetric = {
+  calibration?: number | null;
+  brier_score?: number | null;
+  log_loss?: number | null;
+  ece?: number | null;
+  return?: number | null;
+  gross_return?: number | null;
+  net_return?: number | null;
+  cost_adjusted_return?: number | null;
+  max_drawdown?: number | null;
+  drawdown?: number | null;
+  count?: number | null;
+  sample_count?: number | null;
+  losing_count?: number | null;
+  losses?: number | null;
+  cost_aware_nonoverlapping_returns?: {
+    sample_count?: number | null;
+    wins?: number | null;
+    losses?: number | null;
+    total_return?: number | null;
+    mean_return?: number | null;
+    max_drawdown?: number | null;
+    [key: string]: number | boolean | string | null | undefined;
+  } | null;
+  [key: string]: unknown;
+};
+
+export type StockTrainingJobsPage = {
+  items: StockTrainingJob[];
+  total: number;
+  limit?: number;
+  offset?: number;
+};
+
+export type StockTrainingJob = {
+  id: string | number;
+  job_id?: string;
+  run_id?: string | null;
+  result_run_id?: string | null;
+  status: StockTrainingJobStatus;
+  trigger?: "manual" | "scheduled" | string;
+  requested_by?: string | null;
+  request?: {
+    symbols?: string[];
+    horizon_bars?: number;
+    seed?: number;
+    paper_only?: boolean;
+    [key: string]: unknown;
+  } | null;
+  dataset_snapshot_id?: string | null;
+  holdout_reservation_id?: number | null;
+  attempts?: number;
+  queue_error?: string | null;
+  failure_code?: string | null;
+  failure_detail?: string | null;
+  paper_only?: boolean;
+  live_authorized?: boolean;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  snapshot_id?: string | null;
+  model_id?: string | null;
+  model_version?: string | null;
+  message?: string | null;
+  error?: string | null;
+  failure_reason?: string | null;
+  report_available?: boolean;
+};
+
+export async function getStockTrainingJob(jobId: string | number): Promise<StockTrainingJobDetail> {
+  const response = await authenticatedFetch(`${API_BASE_URL}${STOCK_TRAINING_PATH}/jobs/${encodeURIComponent(String(jobId))}`, { cache: "no-store" });
+  return handleResponse<StockTrainingJobDetail>(response);
+}
+
+export type StartStockTrainingRequest = {
+  symbols: string[];
+  cutoff_at: string;
+  horizon_bars: number;
+  provider?: "yfinance" | "yahoo_chart";
+  trigger?: "manual" | "scheduled";
+  seed?: number;
+};

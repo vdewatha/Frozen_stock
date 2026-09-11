@@ -1,3 +1,4 @@
 - [Ephemeral local Redis](ephemeral-local-redis.md) — use non-persistent localhost Redis for this app; do not replace it with managed Redis.
 - [Equity feed entitlement](equity-feed-entitlement.md) — Alpaca SIP was selected, but purchasing was not authorized; verify account entitlement after secure credential setup.
 - [Stock sandbox accounting](stock-sandbox-accounting.md) — use Alpaca paper-reported balances without resets; unknown costs must remain unknown.
+- [Stock holdout governance](stock-holdout-governance.md) — prefer deferred challengers over reused holdouts; extraction-time histories are not historical point-in-time evidence.

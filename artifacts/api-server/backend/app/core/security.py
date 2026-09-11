@@ -32,8 +32,9 @@ READ_PATHS = {
     "/assets", "/strategies", "/market-regimes", "/news", "/paper-trades",
     "/audit-logs", "/notifications", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
-    "/stock-paper/status",
     "/economic/indicators", "/system/readiness", "/system/deployment-monitor", "/research/runs",
+    "/stock/training/jobs", "/stock/training/binding",
+    "/stock-paper/status",
     "/trade-candidates/refresh-jobs/latest",
     "/market-data/{symbol}", "/news/{symbol}/summary", "/economic/context",
     "/learning/workers/{task_id}",
@@ -46,21 +47,24 @@ RESEARCH_POSTS = {
     "/trade-candidates/decision-journal", "/trade-candidates/decision-scorecard/update-memory",
     "/trade-candidates/memory-replay/monitor", "/trade-candidates/activation-review",
     "/watchlist/import", "/experiments/run",
+    "/stock/training/jobs",
 }
 OPERATOR_POSTS = {
     "/crypto/paper/intents", "/crypto/paper/kill-switch/enable",
     "/crypto/paper/recover",
-    "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal",
     "/paper-trading/run-signal", "/paper-trading/reconcile", "/broker/paper/orders",
     "/safety/kill-switch/enable", "/safety/strategies/pause",
     "/portfolio/allocation-review-queue/review", "/portfolio/allocation-review-queue/dry-run",
     "/portfolio/allocation-plan/execute", "/portfolio/risk/actions",
+    "/stock/training/binding",
+    "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal",
 }
 ADMIN_POSTS = {
     "/system/deployment-monitor/run", "/notifications/{notification_id}/acknowledge",
     "/notifications/{notification_id}/resolve", "/strategies/evaluate",
     "/strategies/reactivation-review", "/risk/settings", "/safety/kill-switch/disable",
     "/safety/strategies/resume", "/broker/live/orders",
+    "/stock/training/jobs/recover",
     "/stock-paper/initialize", "/stock-paper/resume",
 }
 
@@ -69,6 +73,13 @@ def required_role(method: str, path: str) -> str:
     if method == "GET" and re.fullmatch(r"/crypto/bindings/[1-9][0-9]*/evidence", path):
         return "viewer"
     if method == "POST" and re.fullmatch(r"/crypto/bindings/[1-9][0-9]*/observe", path):
+        return "researcher"
+    if method == "GET" and (
+        re.fullmatch(r"/stock/training/jobs/[0-9a-f-]{36}", path)
+        or re.fullmatch(r"/stock/training/runs/[0-9a-f]{64}/report", path)
+    ):
+        return "viewer"
+    if method == "POST" and re.fullmatch(r"/stock/training/jobs/[0-9a-f-]{36}/cancel", path):
         return "researcher"
     if method == "POST" and re.fullmatch(r"/crypto/paper/intents/[1-9][0-9]*/(dispatch|reconcile|abandon)", path):
         return "operator"

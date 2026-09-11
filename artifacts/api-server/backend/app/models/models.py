@@ -360,3 +360,118 @@ class ResearchModelRun(Base):
     eligible_for_trading: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     training_metadata: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class StockDatasetSnapshot(Base):
+    __tablename__ = "stock_dataset_snapshots"
+
+    snapshot_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # The bytes can legitimately be identical under distinct cutoff/horizon
+    # snapshot identities; snapshot_id, not content hash, is immutable identity.
+    dataset_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    cutoff_date: Mapped[date] = mapped_column(Date, nullable=False)
+    universe: Mapped[list] = mapped_column(JSON, nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    feature_config_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    horizon_days: Mapped[int] = mapped_column(nullable=False)
+    artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockHoldoutReservation(Base):
+    __tablename__ = "stock_holdout_reservations"
+    __table_args__ = (UniqueConstraint("snapshot_id", "horizon_days", name="uq_stock_holdout_snapshot_horizon"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    universe_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    universe: Mapped[list] = mapped_column(JSON, nullable=False)
+    horizon_days: Mapped[int] = mapped_column(nullable=False, index=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("stock_dataset_snapshots.snapshot_id"), nullable=False)
+    reserved_by_job_id: Mapped[Optional[str]] = mapped_column(String(36), unique=True)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False, default="model_selection")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockHoldoutConsumption(Base):
+    """Append-only, fenced proof that a reserved holdout may be scored once."""
+    __tablename__ = "stock_holdout_consumptions"
+    __table_args__ = (
+        UniqueConstraint("reservation_id", name="uq_stock_holdout_consumption_reservation"),
+        UniqueConstraint("claim_sha256", name="uq_stock_holdout_consumption_claim"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reservation_id: Mapped[int] = mapped_column(
+        ForeignKey("stock_holdout_reservations.id"), nullable=False
+    )
+    job_id: Mapped[str] = mapped_column(ForeignKey("stock_training_jobs.id"), nullable=False)
+    attempt: Mapped[int] = mapped_column(nullable=False)
+    claim_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    consumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StockModelRegistry(Base):
+    __tablename__ = "stock_model_registry"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("stock_dataset_snapshots.snapshot_id"), nullable=False)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
+    training_metadata: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockTrainingJob(Base):
+    __tablename__ = "stock_training_jobs"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_stock_training_job_dedupe"),
+        CheckConstraint("status IN ('queued', 'running', 'cancel_requested', 'cancelled', 'succeeded', 'failed', 'deferred')", name="ck_stock_training_job_status"),
+        CheckConstraint("attempts >= 0 AND attempts <= 3", name="ck_stock_training_job_attempts"),
+        CheckConstraint("delivery_attempts >= 0 AND delivery_attempts <= 3", name="ck_stock_training_job_deliveries"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    trigger: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    requested_by: Mapped[str] = mapped_column(String(32), nullable=False)
+    request_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("stock_dataset_snapshots.snapshot_id"), nullable=False)
+    holdout_reservation_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_holdout_reservations.id"))
+    celery_task_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
+    attempts: Mapped[int] = mapped_column(nullable=False, default=0)
+    delivery_attempts: Mapped[int] = mapped_column(nullable=False, default=0)
+    queue_error: Mapped[Optional[str]] = mapped_column(Text)
+    failure_code: Mapped[Optional[str]] = mapped_column(String(96))
+    failure_detail: Mapped[Optional[str]] = mapped_column(Text)
+    result_run_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_model_registry.run_id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    recovery_attempted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
+class StockPaperModelBinding(Base):
+    __tablename__ = "stock_paper_model_bindings"
+    __table_args__ = (
+        CheckConstraint("paper_only = true", name="ck_stock_binding_paper_only"),
+        CheckConstraint("live_authorized = false", name="ck_stock_binding_live_disabled"),
+        UniqueConstraint("binding_sha256", name="uq_stock_binding_digest"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_run_id: Mapped[str] = mapped_column(ForeignKey("stock_model_registry.run_id"), nullable=False)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("stock_dataset_snapshots.snapshot_id"), nullable=False)
+    binding_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    paper_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    bound_by: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

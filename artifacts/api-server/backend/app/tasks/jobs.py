@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Callable
 
 from app.db.session import SessionLocal
@@ -19,6 +20,13 @@ from app.services.notifications import create_notification
 from app.services.paper_trading import reconcile_open_paper_trades, run_paper_signal, update_all_strategy_memory
 from app.services.risk_actions import evaluate_portfolio_risk_actions
 from app.services.trade_candidates import get_trade_candidate_snapshot
+from app.services.stock_training_jobs import (
+    StockTrainingError,
+    create_stock_training_job,
+    enqueue_stock_training_job,
+    recover_stock_training_jobs,
+    run_stock_training_job,
+)
 from app.tasks.celery_app import celery_app
 
 
@@ -285,3 +293,61 @@ def risk_monitor_job() -> dict:
                 "reason": "Legacy paper-trade risk monitoring cannot mutate stock-paper kill or strategy state."}
 
     return _run_job("risk_monitor_job", work)
+
+@celery_app.task
+def stock_training_job(job_id: str) -> dict:
+    """Execute a persisted stock-training intent; Redis state is never queried."""
+    db = SessionLocal()
+    try:
+        return run_stock_training_job(db, job_id)
+    finally:
+        db.close()
+
+@celery_app.task
+def recover_stock_training_jobs_job() -> dict:
+    def work(db):
+        recovered = recover_stock_training_jobs(db)
+        db.commit()
+        return {
+            "status": "complete",
+            "job": "recover_stock_training_jobs_job",
+            "recovered_job_ids": [item.id for item in recovered],
+            "paper_only": True,
+            "live_authorized": False,
+        }
+
+    return _run_job("recover_stock_training_jobs_job", work)
+
+@celery_app.task
+def scheduled_stock_challenger_retraining_job() -> dict:
+    """Schedule challengers only; this task never creates a paper binding."""
+    def work(db):
+        assets = db.query(Asset).filter(Asset.is_active.is_(True), Asset.asset_type == "stock").order_by(Asset.symbol).limit(5).all()
+        queued, deferred, blocked = [], [], []
+        for asset in assets:
+            try:
+                job, duplicate = create_stock_training_job(
+                    db, symbols=[asset.symbol], cutoff_at=date.today(), horizon_bars=5, seed=42,
+                    actor="scheduler", trigger="scheduled"
+                )
+                db.commit()
+                if not duplicate and job.status == "queued":
+                    enqueue_stock_training_job(db, job)
+                    db.commit()
+                item = {"symbol": asset.symbol, "job_id": job.id, "status": job.status, "deduplicated": duplicate}
+                (deferred if job.status == "deferred" else queued).append(item)
+            except StockTrainingError as exc:
+                db.rollback()
+                blocked.append({"symbol": asset.symbol, "reason": str(exc)})
+        return {
+            "status": "complete",
+            "job": "scheduled_stock_challenger_retraining_job",
+            "challengers": queued,
+            "deferred": deferred,
+            "blocked": blocked,
+            "paper_only": True,
+            "live_authorized": False,
+            "binding_changed": False,
+        }
+
+    return _run_job("scheduled_stock_challenger_retraining_job", work)
