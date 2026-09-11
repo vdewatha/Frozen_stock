@@ -30,7 +30,7 @@ import { SafetyControlBar } from "@/components/safety-control-bar";
 import { StatusPill } from "@/components/status-pill";
 import { StrategyImprovementQueuePanel } from "@/components/strategy-improvement-queue";
 import { TradeScorecard } from "@/components/trade-scorecard";
-import { getDashboard, setAccessToken, type DashboardSnapshot } from "@/lib/api";
+import { getDashboard, getErrorMessage, setAccessToken, type DashboardSnapshot } from "@/lib/api";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -43,9 +43,8 @@ export default function Login() {
   if (dashboard) return <><button className="p-4" onClick={() => { setAccessToken(""); setDashboard(null); setToken(""); }}>Sign out</button><Home dashboard={dashboard} /></>;
   return <main className="mx-auto max-w-lg p-8"><h1>Trading research sign in</h1>
     <p>Enter your API access key. It is held only in this tab’s memory and cleared when you sign out or reload.</p>
-    {import.meta.env.DEV && <p className="mt-3 rounded-md border border-line bg-panel p-3 text-sm">Preview key: <code>paper-preview-operator-key-7f3b1a9c5d8e2f6a4b0c9d1e3f5a7b9c</code></p>}
     <form onSubmit={async event => { event.preventDefault(); setBusy(true); setError(""); setAccessToken(token.trim());
-      try { setDashboard(await getDashboard()); setToken(""); } catch (failure) { setAccessToken(""); setError(failure instanceof Error ? failure.message : "Sign in failed"); }
+      try { setDashboard(await getDashboard()); setToken(""); } catch (failure) { setAccessToken(""); setError(getErrorMessage(failure, "Sign in failed")); }
       finally { setBusy(false); }
     }}><label>Access key<input className="m-4 border p-2" type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} /></label>
     <button disabled={busy || !token.trim()} type="submit">{busy ? "Connecting…" : "Sign in"}</button></form>

@@ -13,6 +13,57 @@ spec.loader.exec_module(monitor)
 
 
 class MonitorSecurityTests(unittest.TestCase):
+    def test_schedule_definition_returns_explicit_result(self):
+        result = deployment_monitor._check_celery_schedule()
+        self.assertIn("configured_jobs", result["details"])
+        self.assertIn("missing_required_jobs", result["details"])
+        self.assertTrue(result["details"]["configured_jobs"])
+        self.assertEqual(result["status"], "ready")
+
+    def test_redis_distinguishes_configuration_and_reachability(self):
+        with patch.object(deployment_monitor.settings, "redis_url", ""):
+            result = deployment_monitor._check_redis()
+        self.assertEqual(result["status"], "blocked")
+        self.assertFalse(result["details"]["configured"])
+        self.assertFalse(result["details"]["reachable"])
+
+        with patch.dict("os.environ", {"REDIS_URL": "redis://unreachable"}), patch.object(
+            deployment_monitor.settings, "redis_url", "redis://unreachable"
+        ), patch.object(
+            deployment_monitor.redis.Redis,
+            "from_url",
+            side_effect=ConnectionError("unreachable"),
+        ):
+            result = deployment_monitor._check_redis()
+        self.assertEqual(result["status"], "blocked")
+        self.assertTrue(result["details"]["configured"])
+        self.assertFalse(result["details"]["reachable"])
+
+    def test_worker_evidence_requires_a_ping_response(self):
+        inspector = MagicMock()
+        with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):
+            for responses, healthy in (({}, False), ({"worker-a": {"ok": "pong"}}, True), ({"worker-a": {}, "worker-b": {}}, True)):
+                with self.subTest(responses=responses):
+                    inspector.ping.return_value = responses
+                    result = deployment_monitor._check_celery_workers()
+                    self.assertEqual(result["status"] == "ready", healthy)
+                    self.assertEqual(result["details"]["worker_count"], len(responses))
+
+            inspector.ping.side_effect = RuntimeError("worker unavailable")
+            result = deployment_monitor._check_celery_workers()
+            self.assertEqual(result["status"], "blocked")
+            self.assertEqual(result["details"]["workers"], [])
+
+    def test_scheduler_evidence_requires_exactly_one_heartbeat(self):
+        client = MagicMock()
+        with patch.object(deployment_monitor.redis.Redis, "from_url", return_value=client):
+            for evidence, healthy in (([], False), (["celery:beat:lease:one"], True), (["celery:beat:lease:one", "celery:beat:lease:two"], False)):
+                with self.subTest(evidence=evidence):
+                    client.scan_iter.return_value = evidence
+                    result = deployment_monitor._check_celery_beat()
+                    self.assertEqual(result["status"] == "ready", healthy)
+                    self.assertEqual(result["details"]["count"], len(evidence))
+
     def test_real_viewer_monitor_route_never_creates_risk_settings(self):
         import tempfile
         from alembic import command
@@ -32,7 +83,16 @@ class MonitorSecurityTests(unittest.TestCase):
             config.set_main_option("sqlalchemy.url", str(engine.url))
             command.upgrade(config, "head")
             app = FastAPI()
-            app.add_middleware(AuthenticationMiddleware, configuration=Settings(_env_file=None, auth_viewer_key="v" * 32))
+            app.add_middleware(
+                AuthenticationMiddleware,
+                configuration=Settings(
+                    _env_file=None,
+                    auth_viewer_key="v" * 32,
+                    auth_researcher_key="r" * 32,
+                    auth_operator_key="o" * 32,
+                    auth_admin_key="a" * 32,
+                ),
+            )
             app.include_router(router)
             def session():
                 with Session(engine) as db:

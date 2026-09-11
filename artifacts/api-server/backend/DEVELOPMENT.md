@@ -1,10 +1,9 @@
 # Local preview authentication
 
-When `ENVIRONMENT` is not `production` and no `AUTH_*_KEY` values are
-configured, the API accepts this fixed demo credential:
+The API always requires four distinct, random role keys of at least 32
+characters: `AUTH_VIEWER_KEY`, `AUTH_RESEARCHER_KEY`, `AUTH_OPERATOR_KEY`,
+and `AUTH_ADMIN_KEY`. This applies to local preview and production.
 
-`paper-preview-operator-key-7f3b1a9c5d8e2f6a4b0c9d1e3f5a7b9c`
-
-This fallback is intended only for local preview. Configure distinct,
-random role keys (each at least 32 characters) for every deployed
-environment. Live trading remains disabled by default.
+Store these values only in Replit Secrets. Never put them in browser
+environment variables, source files, logs, or documentation. Live trading
+remains disabled by default.

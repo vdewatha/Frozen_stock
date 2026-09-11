@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 
 import redis
 from fastapi.encoders import jsonable_encoder
@@ -34,6 +35,14 @@ def _check_database(db: Session) -> dict:
 
 
 def _check_redis() -> dict:
+    configured = bool(os.environ.get("REDIS_URL", "").strip())
+    if not configured:
+        return {
+            "name": "Redis",
+            "status": "blocked",
+            "message": "Redis is not configured. Workers and scheduled jobs cannot be trusted.",
+            "details": {"configured": False, "reachable": False},
+        }
     try:
         client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
         pong = bool(client.ping())
@@ -42,13 +51,13 @@ def _check_redis() -> dict:
             "name": "Redis",
             "status": "blocked",
             "message": "Redis connection failed. Workers and scheduled jobs cannot be trusted.",
-            "details": {"error_type": exc.__class__.__name__},
+            "details": {"configured": True, "reachable": False, "error_type": exc.__class__.__name__},
         }
     return {
         "name": "Redis",
         "status": _status(pong),
         "message": "Redis connection succeeded." if pong else "Redis did not respond to ping.",
-        "details": {},
+        "details": {"configured": True, "reachable": pong},
     }
 
 
@@ -86,11 +95,57 @@ def _check_celery_schedule() -> dict:
     }
     missing = sorted(required_jobs - set(job_names))
     return {
-        "name": "Scheduled jobs",
+        "name": "Scheduled job definitions",
         "status": _status(not missing),
-        "message": "Required scheduled jobs are configured." if not missing else "Required scheduled jobs are missing.",
+        "message": "Required scheduled jobs are defined." if not missing else "Required scheduled job definitions are missing.",
         "details": {"configured_jobs": job_names, "missing_required_jobs": missing},
     }
+
+
+def _check_celery_workers() -> dict:
+    """Require an actual Celery broadcast response, never configuration alone."""
+    try:
+        responses = celery_app.control.inspect(timeout=2).ping() or {}
+        workers = sorted(responses)
+    except Exception as exc:
+        return {
+            "name": "Celery workers",
+            "status": "blocked",
+            "message": "Celery worker ping failed; worker availability is unconfirmed.",
+            "details": {"workers": [], "error_type": exc.__class__.__name__},
+        }
+    return {
+        "name": "Celery workers",
+        "status": _status(bool(workers)),
+        "message": "Celery workers responded to ping." if workers else "No Celery workers responded to ping.",
+        "details": {"workers": workers, "worker_count": len(workers)},
+    }
+
+
+def _check_celery_beat() -> dict:
+    """A configured beat schedule is not proof that exactly one beat is running."""
+    try:
+        client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+        keys = sorted(
+            key.decode() if isinstance(key, bytes) else key
+            for pattern in ("celery:beat:heartbeat*", "celery:beat:lease*", "celerybeat-heartbeat*")
+            for key in client.scan_iter(match=pattern)
+        )
+        keys = sorted(set(keys))
+    except Exception as exc:
+        return {
+            "name": "Celery beat scheduler",
+            "status": "blocked",
+            "message": "Celery beat heartbeat/lease is unavailable.",
+            "details": {"evidence": [], "error_type": exc.__class__.__name__},
+        }
+    status = "ready" if len(keys) == 1 else "blocked"
+    message = (
+        "Exactly one Celery beat scheduler is evidenced by a Redis lease/heartbeat."
+        if len(keys) == 1
+        else "Exactly one Celery beat scheduler could not be evidenced by a Redis lease/heartbeat."
+    )
+    return {"name": "Celery beat scheduler", "status": status, "message": message, "details": {"evidence": keys, "count": len(keys)}}
 
 
 def _check_live_trading_safety() -> dict:
@@ -113,6 +168,8 @@ def deployment_monitor_snapshot(db: Session) -> dict:
         _check_redis(),
         _check_market_readiness(readiness),
         _check_celery_schedule(),
+        _check_celery_workers(),
+        _check_celery_beat(),
         _check_live_trading_safety(),
     ]
     blockers = [check["name"] for check in checks if check["status"] == "blocked"]

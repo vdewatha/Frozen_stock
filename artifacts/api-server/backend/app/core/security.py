@@ -22,10 +22,6 @@ from app.core.config import settings
 
 logger = logging.getLogger("trading.security")
 logger.setLevel(logging.INFO)
-# This is intentionally a fixed, non-secret development convenience credential.
-# It is only selected when no deployment auth keys are configured and ENVIRONMENT
-# is not production. Deployments must always provide role-specific keys.
-DEMO_OPERATOR_KEY = "paper-preview-operator-key-7f3b1a9c5d8e2f6a4b0c9d1e3f5a7b9c"
 ROLES = {"viewer": 0, "researcher": 1, "operator": 2, "admin": 3}
 READ_PATHS = {
     "/crypto/status", "/crypto/bindings", "/crypto/decisions", "/crypto/shadow-audits",
@@ -36,19 +32,32 @@ READ_PATHS = {
     "/audit-logs", "/notifications", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
     "/economic/indicators", "/system/readiness", "/system/deployment-monitor", "/research/runs",
-    "/trade-candidates/refresh-jobs/latest", "/trade-candidates/decision-journal",
+    "/trade-candidates/refresh-jobs/latest",
+    "/market-data/{symbol}", "/news/{symbol}/summary", "/economic/context",
+    "/learning/workers/{task_id}",
 }
 RESEARCH_POSTS = {
     "/crypto/collect",
     "/market-data/import", "/backtests", "/signals", "/models/predict",
     "/models/run", "/models/score-realized", "/news/import", "/economic/import",
     "/market-regimes/detect", "/trade-candidates/refresh-jobs",
+    "/trade-candidates/decision-journal", "/trade-candidates/decision-scorecard/update-memory",
+    "/trade-candidates/memory-replay/monitor", "/trade-candidates/activation-review",
+    "/watchlist/import", "/experiments/run",
 }
 OPERATOR_POSTS = {
     "/crypto/paper/intents", "/crypto/paper/kill-switch/enable",
     "/crypto/paper/recover",
     "/paper-trading/run-signal", "/paper-trading/reconcile", "/broker/paper/orders",
     "/safety/kill-switch/enable", "/safety/strategies/pause",
+    "/portfolio/allocation-review-queue/review", "/portfolio/allocation-review-queue/dry-run",
+    "/portfolio/allocation-plan/execute", "/portfolio/risk/actions",
+}
+ADMIN_POSTS = {
+    "/system/deployment-monitor/run", "/notifications/{notification_id}/acknowledge",
+    "/notifications/{notification_id}/resolve", "/strategies/evaluate",
+    "/strategies/reactivation-review", "/risk/settings", "/safety/kill-switch/disable",
+    "/safety/strategies/resume", "/broker/live/orders",
 }
 
 
@@ -65,13 +74,31 @@ def required_role(method: str, path: str) -> str:
     # Other nested research routes retain the default admin requirement.
     if method == "GET" and re.fullmatch(r"/research/runs/[^/]+", path):
         return "viewer"
+    if method == "GET" and (
+        re.fullmatch(r"/market-data/[^/]+", path)
+        or re.fullmatch(r"/news/[^/]+/summary", path)
+        or re.fullmatch(r"/learning/workers/[^/]+", path)
+    ):
+        return "viewer"
     # These GETs can populate caches or persist derived state even without refresh.
-    if method == "GET" and path in {"/trade-candidates", "/opportunity-radar"}:
+    if method == "GET" and path in {
+        "/trade-candidates", "/opportunity-radar", "/trade-candidates/decision-journal",
+        "/trade-candidates/decision-scorecard", "/trade-candidates/memory-replay",
+        "/trade-scorecard", "/strategies/governance-scorecard",
+        "/strategies/reactivation-queue", "/strategies/improvement-queue",
+        "/portfolio/allocation-plan", "/portfolio/allocation-review-queue",
+    }:
         return "researcher"
     if method == "POST" and path in RESEARCH_POSTS:
         return "researcher"
     if method == "POST" and (path in OPERATOR_POSTS or path.startswith(("/paper-trading/close/", "/paper-trading/reduce/"))):
         return "operator"
+    if method in {"POST", "PATCH"} and (
+        path in ADMIN_POSTS
+        or path.startswith("/notifications/")
+        or path == "/risk/settings"
+    ):
+        return "admin"
     return "admin"
 
 
@@ -101,11 +128,9 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         status = 500
         try:
             configured = [(role, getattr(self.configuration, f"auth_{role}_key").get_secret_value()) for role in ROLES]
-            keys = [key for _, key in configured if key]
-            if not keys and self.configuration.environment.lower() != "production":
-                configured = [("viewer", ""), ("researcher", ""), ("operator", ""), ("admin", DEMO_OPERATOR_KEY)]
-                keys = [DEMO_OPERATOR_KEY]
-            if not keys or any(len(key) < 32 for key in keys) or len(set(keys)) != len(keys):
+            keys = [key for _, key in configured]
+            # Every environment is fail-closed: each role has its own secret.
+            if any(len(key) < 32 for key in keys) or len(set(keys)) != len(keys):
                 status = 503
                 return JSONResponse({"detail": "Authentication is not configured", "request_id": correlation}, status_code=status)
             token = request.headers.get("authorization", "")

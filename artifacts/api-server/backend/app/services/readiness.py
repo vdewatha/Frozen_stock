@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+import redis
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import Asset, MarketPrice, ModelPrediction, Notification, RiskRule, Strategy
+from app.core.config import settings
 from app.services.broker import broker_status
 from app.services.portfolio_risk import portfolio_risk_snapshot
 from app.tasks.celery_app import celery_app
@@ -23,6 +25,44 @@ def _status_from_count(failing: int, warning: int = 0) -> str:
     if warning:
         return "warning"
     return "ready"
+
+
+def _scheduler_health() -> dict:
+    """Configuration is informational; health requires worker and beat evidence."""
+    job_names = sorted(celery_app.conf.beat_schedule.keys())
+    try:
+        workers = celery_app.control.inspect(timeout=2).ping() or {}
+        worker_names = sorted(workers)
+    except Exception as exc:
+        worker_names = []
+        worker_error = exc.__class__.__name__
+    else:
+        worker_error = None
+    evidence: list[str] = []
+    beat_error = None
+    try:
+        client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+        for pattern in ("celery:beat:heartbeat*", "celery:beat:lease*", "celerybeat-heartbeat*"):
+            evidence.extend(
+                key.decode() if isinstance(key, bytes) else key
+                for key in client.scan_iter(match=pattern)
+            )
+        evidence = sorted(set(evidence))
+    except Exception as exc:
+        beat_error = exc.__class__.__name__
+    recent_job_failures = None
+    return {
+        "configured_jobs": job_names,
+        "workers": worker_names,
+        "worker_count": len(worker_names),
+        "worker_error": worker_error,
+        "beat_evidence": evidence,
+        "beat_count": len(evidence),
+        "beat_error": beat_error,
+        "configuration_only": True,
+        "healthy": bool(worker_names) and len(evidence) == 1,
+        "recent_unresolved_failures": recent_job_failures,
+    }
 
 
 def readiness_snapshot(db: Session) -> dict:
@@ -140,7 +180,6 @@ def readiness_snapshot(db: Session) -> dict:
         )
     )
 
-    job_names = sorted(celery_app.conf.beat_schedule.keys())
     recent_job_failures = (
         db.query(Notification)
         .filter(
@@ -150,12 +189,17 @@ def readiness_snapshot(db: Session) -> dict:
         )
         .count()
     )
+    scheduler = _scheduler_health()
+    scheduler["recent_unresolved_failures"] = recent_job_failures
+    scheduler_ok = scheduler["healthy"] and not recent_job_failures
     checks.append(
         _check(
             "Scheduler health",
-            "blocked" if recent_job_failures else "ready",
-            "Scheduled jobs are configured with no unresolved recent failures." if not recent_job_failures else "Recent scheduled job failures are unresolved.",
-            {"configured_jobs": job_names, "recent_unresolved_failures": recent_job_failures},
+            "ready" if scheduler_ok else "blocked",
+            "Celery workers and exactly one beat scheduler are evidenced."
+            if scheduler_ok
+            else "Worker ping and exactly one beat lease/heartbeat are required; configured schedules alone are insufficient.",
+            scheduler,
         )
     )
 

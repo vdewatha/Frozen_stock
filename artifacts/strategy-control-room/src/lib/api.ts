@@ -1193,17 +1193,65 @@ const API_BASE_URL = configuredApi.replace(/\/$/, "");
 
 let accessToken = "";
 export function setAccessToken(value: string) { accessToken = value; }
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail: string | null;
+
+  constructor(status: number, detail: string | null = null) {
+    super(apiErrorMessage(status, detail));
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+function apiErrorMessage(status: number, detail: string | null): string {
+  if (status === 401) return "Your sign-in has expired or is invalid. Please sign in again.";
+  if (status === 403) return "Permission required for this action.";
+  if (status === 503) return "A required dependency or configuration is unavailable. Try again later.";
+  if (status === 409) return detail || "This action conflicts with the current safety state.";
+  return detail || `Request could not be completed (${status}).`;
+}
+
+export function getErrorMessage(error: unknown, fallback = "Something went wrong."): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error && error.message && error.message !== "[object Object]") return error.message;
+  return fallback;
+}
+
+async function responseDetail(response: Response): Promise<string | null> {
+  try {
+    const payload: unknown = await response.clone().json();
+    if (typeof payload === "string") return payload;
+    if (payload && typeof payload === "object") {
+      const record = payload as Record<string, unknown>;
+      for (const key of ["detail", "reason", "message", "error"]) {
+        if (typeof record[key] === "string") return record[key] as string;
+      }
+    }
+  } catch {
+    // Non-JSON error bodies are intentionally not surfaced.
+  }
+  return null;
+}
+
+async function handleResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) throw new ApiError(response.status, await responseDetail(response));
+  return response.json() as Promise<T>;
+}
+
 async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   if (!accessToken) throw new Error("Sign in to access the trading service.");
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${accessToken}`);
-  return globalThis.fetch(input, { ...init, headers, cache: "no-store", credentials: "omit" });
+  const response = await globalThis.fetch(input, { ...init, headers, cache: "no-store", credentials: "omit" });
+  if (!response.ok) throw new ApiError(response.status, await responseDetail(response));
+  return response;
 }
 
 export async function getDashboard(): Promise<DashboardSnapshot> {
   const response = await authenticatedFetch(`${API_BASE_URL}/dashboard`);
-  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
-  return response.json();
+  return handleResponse<DashboardSnapshot>(response);
 }
 
 export type ResearchRunSummary = {
@@ -1222,8 +1270,7 @@ export type ResearchRunSummary = {
 
 export async function getResearchRuns(): Promise<{ items: ResearchRunSummary[]; total: number }> {
   const response = await authenticatedFetch(`${API_BASE_URL}/research/runs?limit=20`);
-  if (!response.ok) throw new Error(`Research registry request failed: ${response.status}`);
-  return response.json();
+  return handleResponse<{ items: ResearchRunSummary[]; total: number }>(response);
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
@@ -1232,10 +1279,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<T>(response);
 }
 
 async function patchJson<T>(path: string, body: unknown): Promise<T> {
@@ -1244,10 +1288,7 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<T>(response);
 }
 
 export async function importMarketData(symbol: string, period = "2y"): Promise<MarketImportResponse> {
@@ -1256,10 +1297,7 @@ export async function importMarketData(symbol: string, period = "2y"): Promise<M
 
 export async function getWatchlistDiscovery(limit = 10): Promise<WatchlistDiscovery> {
   const response = await authenticatedFetch(`${API_BASE_URL}/watchlist/discover?limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<WatchlistDiscovery>(response);
 }
 
 export async function importWatchlist(limit = 6, newsProvider: "auto" | "yfinance" | "nasdaq_rss" | "mock" = "auto", refreshCandidates = false): Promise<WatchlistImportResponse> {
@@ -1276,10 +1314,7 @@ export async function importWatchlist(limit = 6, newsProvider: "auto" | "yfinanc
 
 export async function getPriceHistory(symbol: string, limit = 260): Promise<PriceHistoryResponse> {
   const response = await authenticatedFetch(`${API_BASE_URL}/market-data/${encodeURIComponent(symbol)}?limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<PriceHistoryResponse>(response);
 }
 
 export async function runBacktest(symbol: string, strategy: string): Promise<BacktestResponse> {
@@ -1308,34 +1343,22 @@ export async function reducePaperTrade(tradeId: number, reducePct: number, reaso
 
 export async function getPaperTrades(): Promise<PaperTrade[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/paper-trades`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<PaperTrade[]>(response);
 }
 
 export async function getPortfolioRisk(): Promise<PortfolioRiskSnapshot> {
   const response = await authenticatedFetch(`${API_BASE_URL}/portfolio/risk`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<PortfolioRiskSnapshot>(response);
 }
 
 export async function getPortfolioAllocationPlan(limit = 20): Promise<PortfolioAllocationPlan> {
   const response = await authenticatedFetch(`${API_BASE_URL}/portfolio/allocation-plan?limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<PortfolioAllocationPlan>(response);
 }
 
 export async function getAllocationReviewQueue(limit = 20): Promise<AllocationReviewQueue> {
   const response = await authenticatedFetch(`${API_BASE_URL}/portfolio/allocation-review-queue?limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<AllocationReviewQueue>(response);
 }
 
 export async function reviewAllocationQueueItem(
@@ -1375,10 +1398,7 @@ export async function runPortfolioRiskActions(requirePersistence = true, dryRun 
 
 export async function getStrategyMemory(): Promise<StrategyMemory[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/strategy-memory`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<StrategyMemory[]>(response);
 }
 
 export async function evaluateStrategies(): Promise<StrategyGovernanceResponse> {
@@ -1387,26 +1407,17 @@ export async function evaluateStrategies(): Promise<StrategyGovernanceResponse> 
 
 export async function getLatestStrategyGovernanceScorecard(): Promise<StrategyGovernanceScorecardSnapshot> {
   const response = await authenticatedFetch(`${API_BASE_URL}/strategies/governance-scorecard`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<StrategyGovernanceScorecardSnapshot>(response);
 }
 
 export async function getStrategyImprovementQueue(): Promise<StrategyImprovementQueue> {
   const response = await authenticatedFetch(`${API_BASE_URL}/strategies/improvement-queue`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<StrategyImprovementQueue>(response);
 }
 
 export async function getStrategyReactivationQueue(): Promise<StrategyReactivationQueue> {
   const response = await authenticatedFetch(`${API_BASE_URL}/strategies/reactivation-queue`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<StrategyReactivationQueue>(response);
 }
 
 export async function reviewStrategyReactivation(strategyId: number, decision: "approve" | "reject" | "hold", reason: string): Promise<StrategyReactivationReviewResponse> {
@@ -1421,10 +1432,7 @@ export async function getAuditLogs(limit = 25, filters: AuditLogFilters = {}): P
     }
   });
   const response = await authenticatedFetch(`${API_BASE_URL}/audit-logs?${params.toString()}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<AuditLog[]>(response);
 }
 
 export async function getNotifications(limit = 25, status = "open", category = ""): Promise<NotificationItem[]> {
@@ -1436,26 +1444,17 @@ export async function getNotifications(limit = 25, status = "open", category = "
     params.set("category", category);
   }
   const response = await authenticatedFetch(`${API_BASE_URL}/notifications?${params.toString()}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<NotificationItem[]>(response);
 }
 
 export async function getReadiness(): Promise<ReadinessSnapshot> {
   const response = await authenticatedFetch(`${API_BASE_URL}/system/readiness`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<ReadinessSnapshot>(response);
 }
 
 export async function getDeploymentMonitor(): Promise<DeploymentMonitorSnapshot> {
   const response = await authenticatedFetch(`${API_BASE_URL}/system/deployment-monitor`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<DeploymentMonitorSnapshot>(response);
 }
 
 export async function getTradeCandidates(limit = 12, refresh = false): Promise<TradeCandidateResponse> {
@@ -1464,19 +1463,13 @@ export async function getTradeCandidates(limit = 12, refresh = false): Promise<T
     params.set("refresh", "true");
   }
   const response = await authenticatedFetch(`${API_BASE_URL}/trade-candidates?${params.toString()}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<TradeCandidateResponse>(response);
 }
 
 export async function getTradeCandidateEvidence(symbol: string, strategy: string): Promise<TradeCandidateEvidence> {
   const params = new URLSearchParams({ symbol, strategy });
   const response = await authenticatedFetch(`${API_BASE_URL}/trade-candidates/evidence?${params.toString()}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<TradeCandidateEvidence>(response);
 }
 
 export async function getCandidateDecisionJournal(limit = 10, symbol?: string, strategy?: string): Promise<CandidateDecisionJournalEntry[]> {
@@ -1488,10 +1481,7 @@ export async function getCandidateDecisionJournal(limit = 10, symbol?: string, s
     params.set("strategy", strategy);
   }
   const response = await authenticatedFetch(`${API_BASE_URL}/trade-candidates/decision-journal?${params.toString()}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<CandidateDecisionJournalEntry[]>(response);
 }
 
 export async function createCandidateDecisionJournalEntry(symbol: string, strategy: string, decision: "approve" | "reject" | "skip" | "review" | "activate" | "candidate", status: string, reason: string): Promise<CandidateDecisionJournalEntry> {
@@ -1500,18 +1490,12 @@ export async function createCandidateDecisionJournalEntry(symbol: string, strate
 
 export async function getCandidateDecisionScorecard(limit = 50): Promise<CandidateDecisionScorecard> {
   const response = await authenticatedFetch(`${API_BASE_URL}/trade-candidates/decision-scorecard?limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<CandidateDecisionScorecard>(response);
 }
 
 export async function getMemoryReplay(limit = 50, topK = 3): Promise<MemoryReplayResponse> {
   const response = await authenticatedFetch(`${API_BASE_URL}/trade-candidates/memory-replay?limit=${limit}&top_k=${topK}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<MemoryReplayResponse>(response);
 }
 
 export async function startTradeCandidateRefreshJob(trigger = "manual", context: Record<string, unknown> = {}, limit = 50): Promise<ScannerRefreshJob> {
@@ -1520,27 +1504,18 @@ export async function startTradeCandidateRefreshJob(trigger = "manual", context:
 
 export async function getLatestTradeCandidateRefreshJob(): Promise<ScannerRefreshJob | null> {
   const response = await authenticatedFetch(`${API_BASE_URL}/trade-candidates/refresh-jobs/latest`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<ScannerRefreshJob | null>(response);
 }
 
 export async function getTradeScorecard(limit = 50): Promise<TradeScorecardResponse> {
   const response = await authenticatedFetch(`${API_BASE_URL}/trade-scorecard?limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<TradeScorecardResponse>(response);
 }
 
 export async function getOpportunityRadar(limit = 8, refreshNews = false, newsProvider: "auto" | "yfinance" | "nasdaq_rss" | "mock" = "auto"): Promise<CompanyOpportunityRadar> {
   const params = new URLSearchParams({ limit: String(limit), refresh_news: String(refreshNews), news_provider: newsProvider });
   const response = await authenticatedFetch(`${API_BASE_URL}/opportunity-radar?${params.toString()}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<CompanyOpportunityRadar>(response);
 }
 
 export async function reviewCandidateActivation(symbol: string, strategy: string, decision: "activate" | "candidate" | "reject", reason: string): Promise<CandidateActivationResponse> {
@@ -1565,10 +1540,7 @@ export async function scoreRealizedModelPredictions(symbol: string): Promise<Mod
 
 export async function getModelPerformance(symbol = "SPY", limit = 50): Promise<ModelPerformanceResponse> {
   const response = await authenticatedFetch(`${API_BASE_URL}/models/performance?symbol=${encodeURIComponent(symbol)}&limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<ModelPerformanceResponse>(response);
 }
 
 export async function runStrategyExperiments(symbol: string, strategy: string, applyPromotions: boolean): Promise<StrategyExperimentRunResponse> {
@@ -1577,10 +1549,7 @@ export async function runStrategyExperiments(symbol: string, strategy: string, a
 
 export async function getStrategyExperiments(symbol = "SPY", strategy = "moving_average_crossover", limit = 25): Promise<StrategyExperiment[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/experiments?symbol=${encodeURIComponent(symbol)}&strategy=${encodeURIComponent(strategy)}&limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<StrategyExperiment[]>(response);
 }
 
 export async function detectMarketRegime(symbol = "SPY"): Promise<MarketRegime> {
@@ -1589,10 +1558,7 @@ export async function detectMarketRegime(symbol = "SPY"): Promise<MarketRegime> 
 
 export async function getMarketRegimes(limit = 20): Promise<MarketRegime[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/market-regimes?limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<MarketRegime[]>(response);
 }
 
 export async function importNews(symbol = "SPY", provider: "auto" | "yfinance" | "nasdaq_rss" | "mock" = "auto"): Promise<NewsImportResponse> {
@@ -1601,18 +1567,12 @@ export async function importNews(symbol = "SPY", provider: "auto" | "yfinance" |
 
 export async function getNewsSummary(symbol = "SPY", limit = 10): Promise<NewsSentimentSummary> {
   const response = await authenticatedFetch(`${API_BASE_URL}/news/${encodeURIComponent(symbol)}/summary?limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<NewsSentimentSummary>(response);
 }
 
 export async function getNewsArticles(symbol = "SPY", limit = 10): Promise<NewsArticle[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/news?symbol=${encodeURIComponent(symbol)}&limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<NewsArticle[]>(response);
 }
 
 export async function importEconomicData(): Promise<EconomicImportResponse> {
@@ -1621,34 +1581,17 @@ export async function importEconomicData(): Promise<EconomicImportResponse> {
 
 export async function getMacroContext(): Promise<MacroContextSummary> {
   const response = await authenticatedFetch(`${API_BASE_URL}/economic/context`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<MacroContextSummary>(response);
 }
 
 export async function getEconomicIndicators(limit = 50): Promise<EconomicIndicator[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/economic/indicators?limit=${limit}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<EconomicIndicator[]>(response);
 }
 
 export async function getBrokerStatus(): Promise<BrokerStatus> {
   const response = await authenticatedFetch(`${API_BASE_URL}/broker/status`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
-}
-
-export async function submitPaperBrokerOrder(symbol: string, quantity: number): Promise<BrokerOrderResponse> {
-  return postJson<BrokerOrderResponse>("/broker/paper/orders", { symbol, side: "buy", quantity, order_type: "market", time_in_force: "day" });
-}
-
-export async function submitBlockedLiveOrder(symbol: string, quantity: number): Promise<BrokerOrderResponse> {
-  return postJson<BrokerOrderResponse>("/broker/live/orders", { symbol, side: "buy", quantity, order_type: "market", time_in_force: "day" });
+  return handleResponse<BrokerStatus>(response);
 }
 
 export async function enableKillSwitch(reason = "Manual kill switch from control room."): Promise<SafetyControlResponse> {
@@ -1669,10 +1612,7 @@ export async function resumeStrategies(reason = "Manual resume from control room
 
 export async function getRiskSettings(): Promise<RiskRule> {
   const response = await authenticatedFetch(`${API_BASE_URL}/risk/settings`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
-  }
-  return response.json();
+  return handleResponse<RiskRule>(response);
 }
 
 export async function updateRiskSettings(settings: RiskSettingsUpdate): Promise<RiskRule> {

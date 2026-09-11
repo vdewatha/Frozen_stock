@@ -22,3 +22,8 @@ timeoutMs = 20000
 [nix]
 channel = "stable-25_05"
 packages = ["glibcLocales", "libxcrypt", "postgresql"]
+
+[userenv]
+
+[userenv.shared]
+ALLOW_LIVE_TRADING = "false"

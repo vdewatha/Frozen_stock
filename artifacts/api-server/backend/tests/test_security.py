@@ -5,10 +5,40 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
-from app.core.security import AuthenticationMiddleware
+from app.core.security import AuthenticationMiddleware, required_role
 
 
 class SecurityTests(unittest.TestCase):
+    def test_required_role_frontend_route_matrix(self):
+        cases = {
+            ("GET", "/dashboard"): "viewer",
+            ("GET", "/market-data/SPY"): "viewer",
+            ("GET", "/news/SPY/summary"): "viewer",
+            ("GET", "/learning/workers/abc-123"): "viewer",
+            ("GET", "/trade-candidates"): "researcher",
+            ("GET", "/trade-candidates/decision-journal"): "researcher",
+            ("GET", "/opportunity-radar"): "researcher",
+            ("GET", "/portfolio/allocation-plan"): "researcher",
+            ("POST", "/market-data/import"): "researcher",
+            ("POST", "/models/run"): "researcher",
+            ("POST", "/trade-candidates/activation-review"): "researcher",
+            ("POST", "/paper-trading/run-signal"): "operator",
+            ("POST", "/paper-trading/close/42"): "operator",
+            ("POST", "/portfolio/allocation-plan/execute"): "operator",
+            ("POST", "/safety/kill-switch/enable"): "operator",
+            ("POST", "/risk/settings"): "admin",
+            ("PATCH", "/risk/settings"): "admin",
+            ("POST", "/safety/kill-switch/disable"): "admin",
+            ("POST", "/safety/strategies/resume"): "admin",
+            ("POST", "/notifications/7/acknowledge"): "admin",
+            ("POST", "/system/deployment-monitor/run"): "admin",
+            ("POST", "/broker/live/orders"): "admin",
+            ("GET", "/unclassified/frontend-route"): "admin",
+        }
+        for (method, path), expected in cases.items():
+            with self.subTest(method=method, path=path):
+                self.assertEqual(required_role(method, path), expected)
+
     def test_manual_broker_cannot_bypass_risk(self):
         from app.api.routes import submit_manual_paper_order
         from fastapi import HTTPException

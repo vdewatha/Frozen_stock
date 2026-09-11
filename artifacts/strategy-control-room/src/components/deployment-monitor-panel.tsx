@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Cloud, Lock, RefreshCw, TriangleAlert } from "lucide-react";
 
-import { DeploymentMonitorSnapshot, getDeploymentMonitor } from "@/lib/api";
+import { DeploymentMonitorSnapshot, getDeploymentMonitor, getErrorMessage } from "@/lib/api";
 
 function statusClasses(status: string): string {
   if (status === "blocked") {
@@ -35,6 +35,7 @@ function compactDetails(details: Record<string, unknown>): string {
       if (Array.isArray(value)) {
         return `${key.replaceAll("_", " ")}: ${value.length ? value.join(", ") : "none"}`;
       }
+      if (value && typeof value === "object") return `${key.replaceAll("_", " ")}: unavailable`;
       return `${key.replaceAll("_", " ")}: ${String(value)}`;
     })
     .join(" | ");
@@ -52,7 +53,7 @@ export function DeploymentMonitorPanel() {
       setSnapshot(data);
       setStatus(`Updated ${new Date(data.generated_at).toLocaleTimeString()}`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Deployment monitor failed");
+      setStatus(getErrorMessage(error, "Deployment monitor failed"));
     } finally {
       setIsBusy(false);
     }
@@ -64,7 +65,7 @@ export function DeploymentMonitorPanel() {
       if (!active) return;
       setSnapshot(data);
       setStatus(`Updated ${new Date(data.generated_at).toLocaleTimeString()}`);
-    }).catch(error => { if (active) setStatus(error instanceof Error ? error.message : "Deployment monitor failed"); })
+    }).catch(error => { if (active) setStatus(getErrorMessage(error, "Deployment monitor failed")); })
       .finally(() => { if (active) setIsBusy(false); });
     return () => { active = false; };
   }, []);
