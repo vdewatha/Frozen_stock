@@ -168,7 +168,11 @@ def readiness_snapshot(db: Session) -> dict:
 
     open_critical_notifications = (
         db.query(Notification)
-        .filter(Notification.status != "resolved", Notification.severity == "critical")
+        .filter(
+            Notification.status != "resolved",
+            Notification.severity == "critical",
+            Notification.category != "deployment_monitor",
+        )
         .count()
     )
     checks.append(

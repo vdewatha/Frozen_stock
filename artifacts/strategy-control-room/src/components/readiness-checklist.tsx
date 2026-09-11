@@ -23,10 +23,23 @@ function iconFor(status: string) {
 }
 
 function detailText(details: Record<string, unknown>): string {
+  function readable(value: unknown): string {
+    if (Array.isArray(value)) {
+      return value.length ? value.map(readable).join(", ") : "none";
+    }
+    if (value && typeof value === "object") {
+      const entries = Object.entries(value as Record<string, unknown>);
+      return entries.length
+        ? entries.map(([key, nested]) => `${key}: ${readable(nested)}`).join("; ")
+        : "none";
+    }
+    return String(value);
+  }
+
   const entries = Object.entries(details)
     .filter(([, value]) => value !== null && typeof value !== "undefined")
     .slice(0, 3)
-    .map(([key, value]) => `${key.replaceAll("_", " ")}: ${Array.isArray(value) ? value.length : String(value)}`);
+    .map(([key, value]) => `${key.replaceAll("_", " ")}: ${readable(value)}`);
   return entries.join(" | ");
 }
 
