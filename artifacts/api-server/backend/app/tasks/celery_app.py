@@ -36,6 +36,9 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.stock_training_job": {"queue": "learning"},
     "app.tasks.jobs.recover_stock_training_jobs_job": {"queue": "learning"},
     "app.tasks.jobs.scheduled_stock_challenger_retraining_job": {"queue": "learning"},
+    "app.tasks.jobs.stock_forward_trial_observe_job": {"queue": "paper_trading"},
+    "app.tasks.jobs.stock_forward_trial_reconcile_job": {"queue": "paper_trading"},
+    "app.tasks.jobs.stock_forward_trial_evaluate_job": {"queue": "paper_trading"},
 }
 celery_app.conf.beat_schedule = {
     "daily-market-data-import": {"task": "app.tasks.jobs.daily_market_data_import", "schedule": 60 * 60 * 24},
@@ -56,6 +59,8 @@ celery_app.conf.beat_schedule = {
     "risk-monitor-job": {"task": "app.tasks.jobs.risk_monitor_job", "schedule": 60 * 5},
     "stock-training-recovery-job": {"task": "app.tasks.jobs.recover_stock_training_jobs_job", "schedule": 60 * 5},
     "scheduled-stock-challenger-retraining": {"task": "app.tasks.jobs.scheduled_stock_challenger_retraining_job", "schedule": 60 * 60 * 24},
+    "stock-forward-trial-reconcile": {"task": "app.tasks.jobs.stock_forward_trial_reconcile_job", "schedule": 60},
+    "stock-forward-trial-observe": {"task": "app.tasks.jobs.stock_forward_trial_observe_job", "schedule": 60},
 }
 
 celery_app.autodiscover_tasks(["app.tasks.jobs"])

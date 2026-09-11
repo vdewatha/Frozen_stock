@@ -35,6 +35,7 @@ READ_PATHS = {
     "/economic/indicators", "/system/readiness", "/system/deployment-monitor", "/research/runs",
     "/stock/training/jobs", "/stock/training/binding",
     "/stock-paper/status",
+    "/stock/forward-trials", "/stock/forward-trials/bindings/eligible",
     "/trade-candidates/refresh-jobs/latest",
     "/market-data/{symbol}", "/news/{symbol}/summary", "/economic/context",
     "/learning/workers/{task_id}",
@@ -81,6 +82,10 @@ def required_role(method: str, path: str) -> str:
         return "viewer"
     if method == "POST" and re.fullmatch(r"/stock/training/jobs/[0-9a-f-]{36}/cancel", path):
         return "researcher"
+    if method == "GET" and re.fullmatch(r"/stock/forward-trials/[0-9a-f-]{36}(?:/(decisions|metrics))?", path):
+        return "viewer"
+    if method == "POST" and re.fullmatch(r"/stock/forward-trials/[0-9a-f-]{36}/(start|pause|resume|stop)", path):
+        return "operator"
     if method == "POST" and re.fullmatch(r"/crypto/paper/intents/[1-9][0-9]*/(dispatch|reconcile|abandon)", path):
         return "operator"
     if method == "GET" and path in READ_PATHS:

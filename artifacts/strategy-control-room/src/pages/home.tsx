@@ -16,6 +16,7 @@ import { ModelPerformanceLab } from "@/components/model-performance-lab";
 import { NewsSentimentLab } from "@/components/news-sentiment-lab";
 import { NotificationCenter } from "@/components/notification-center";
 import { OpportunityRadar } from "@/components/opportunity-radar";
+import { ForwardPaperEvaluationPanel } from "@/components/forward-paper-evaluation-panel";
 import { PredictionScanner } from "@/components/prediction-scanner";
 import { ResearchRunsPanel } from "@/components/research-runs-panel";
 import { ReadinessChecklist } from "@/components/readiness-checklist";
@@ -128,6 +129,8 @@ function Home({ dashboard, role, onSignOut }: { dashboard: DashboardSnapshot; ro
         </RoleGate>
 
         <RoleGate requires="researcher"><MemoryReplayPanel /></RoleGate>
+
+        <ForwardPaperEvaluationPanel />
 
         <NotificationCenter />
 

@@ -24,6 +24,9 @@ from app.models.models import (
     StockHoldoutReservation,
     StockModelRegistry,
     StockPaperModelBinding,
+    StockPaperTrial,
+    StockPaperTrialDecision,
+    StockPaperTrialMetric,
     StockTrainingJob,
     ScannerRefreshJob,
     Strategy,
@@ -42,6 +45,7 @@ from app.models.stock_paper import (
     StockPaperOrder,
     StockPaperPosition,
     StockPaperStrategyEvidence,
+    StockPaperTrialLot,
 )
 
 __all__ = [
@@ -65,6 +69,9 @@ __all__ = [
     "StockHoldoutReservation",
     "StockModelRegistry",
     "StockPaperModelBinding",
+    "StockPaperTrial",
+    "StockPaperTrialDecision",
+    "StockPaperTrialMetric",
     "StockTrainingJob",
     "ScannerRefreshJob",
     "Strategy",

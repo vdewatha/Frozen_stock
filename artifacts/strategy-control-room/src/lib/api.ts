@@ -2138,3 +2138,113 @@ export type StartStockTrainingRequest = {
   trigger?: "manual" | "scheduled";
   seed?: number;
 };
+
+export type ForwardTrialBindingEligible = {
+  binding_id: number;
+  model_run_id: string | null;
+  snapshot_id: string | null;
+  eligible: boolean;
+  reason: string | null;
+  paper_only: boolean;
+  live_authorized: boolean;
+};
+
+export type ForwardTrial = {
+  id: string;
+  status: "approved" | "blocked" | "paused" | "running" | "stopped" | "completed" | string;
+  binding_id: number;
+  policy: Record<string, unknown>;
+  lineage: Record<string, unknown>;
+  blocked_reason: string | null;
+  pause_reason: string | null;
+  started_at: string | null;
+  stopped_at: string | null;
+  strategy_name?: string;
+  symbol?: string;
+  model_hash?: string;
+  model_cutoff?: string;
+  universe?: string;
+  paper_only?: boolean;
+  live_disabled?: boolean;
+};
+
+export type ForwardTrialDecision = {
+  id: string;
+  symbol: string;
+  bar_timestamp: string;
+  action: string;
+  qualifying: boolean;
+  rejection_reason: string | null;
+  lineage: Record<string, unknown>;
+  order_id: string | null;
+};
+
+export type ForwardTrialMetricHistoryItem = {
+  as_of: string;
+  classification: string;
+  payload: {
+    observed_sessions?: number;
+    expected_observations?: number;
+    observed_observations?: number;
+    decision_coverage?: number;
+    closed_trades?: number;
+    provisional_gross_pnl?: number;
+    gross_pnl?: number;
+    net_pnl?: number;
+    expectancy?: number;
+    win_rate?: number;
+    max_drawdown?: number;
+    benchmark_buy_hold?: number;
+    costs_known?: boolean;
+    [key: string]: unknown;
+  };
+};
+
+export async function getForwardTrialsEligibleBindings(): Promise<ForwardTrialBindingEligible[]> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/bindings/eligible`, { cache: "no-store" });
+  const data = await handleResponse<{items: ForwardTrialBindingEligible[]}>(response);
+  return data.items;
+}
+
+export async function getForwardTrials(): Promise<ForwardTrial[]> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials`, { cache: "no-store" });
+  const data = await handleResponse<{items: ForwardTrial[]}>(response);
+  return data.items;
+}
+
+export async function createForwardTrial(bindingId: number): Promise<ForwardTrial> {
+  return postJson<ForwardTrial>(`/stock/forward-trials`, { binding_id: bindingId });
+}
+
+export async function getForwardTrialDetail(id: string): Promise<ForwardTrial> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}`, { cache: "no-store" });
+  return handleResponse<ForwardTrial>(response);
+}
+
+export async function getForwardTrialDecisions(id: string): Promise<ForwardTrialDecision[]> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/decisions`, { cache: "no-store" });
+  const data = await handleResponse<{items: ForwardTrialDecision[]}>(response);
+  return data.items;
+}
+
+export async function getForwardTrialMetrics(id: string): Promise<ForwardTrialMetricHistoryItem[]> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/metrics`, { cache: "no-store" });
+  const data = await handleResponse<{items: ForwardTrialMetricHistoryItem[]}>(response);
+  return data.items;
+}
+
+export async function startForwardTrial(id: string): Promise<ForwardTrial> {
+  return postJson<ForwardTrial>(`/stock/forward-trials/${encodeURIComponent(id)}/start`, {});
+}
+
+export async function pauseForwardTrial(id: string, reason: string): Promise<ForwardTrial> {
+  return postJson<ForwardTrial>(`/stock/forward-trials/${encodeURIComponent(id)}/pause`, { reason });
+}
+
+export async function resumeForwardTrial(id: string): Promise<ForwardTrial> {
+  return postJson<ForwardTrial>(`/stock/forward-trials/${encodeURIComponent(id)}/resume`, {});
+}
+
+export async function stopForwardTrial(id: string): Promise<ForwardTrial> {
+  return postJson<ForwardTrial>(`/stock/forward-trials/${encodeURIComponent(id)}/stop`, {});
+}

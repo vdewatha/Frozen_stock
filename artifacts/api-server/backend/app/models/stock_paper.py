@@ -170,3 +170,27 @@ class StockPaperStrategyEvidence(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     provenance: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class StockPaperTrialLot(Base):
+    """Immutable ownership record for a trial entry and its risk-reducing exit."""
+    __tablename__ = "stock_paper_trial_lots"
+    __table_args__ = (UniqueConstraint("entry_decision_id", name="uq_stock_trial_lot_decision"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trial_id: Mapped[str] = mapped_column(ForeignKey("stock_paper_trials.id"), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    entry_decision_id: Mapped[int] = mapped_column(ForeignKey("stock_paper_trial_decisions.id"), nullable=False)
+    entry_order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_orders.id"))
+    entry_fill_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_fills.id"))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    entry_session: Mapped[str] = mapped_column(String(32), nullable=False)
+    planned_horizon_sessions: Mapped[int] = mapped_column(nullable=False, default=5)
+    stop_fraction: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False, default=Decimal("0.02"))
+    exit_order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_orders.id"))
+    exit_status: Mapped[Optional[str]] = mapped_column(String(32))
+    exited_quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    exit_reason: Mapped[Optional[str]] = mapped_column(String(24))
+    exit_decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    exit_reference_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

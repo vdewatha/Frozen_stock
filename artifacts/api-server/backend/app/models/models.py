@@ -475,3 +475,58 @@ class StockPaperModelBinding(Base):
     bound_by: Mapped[str] = mapped_column(String(32), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockPaperTrial(Base):
+    """Immutable, separately governed controlled forward-paper trial."""
+    __tablename__ = "stock_paper_trials"
+    __table_args__ = (
+        CheckConstraint("status IN ('approved','blocked','paused','running','stopped','completed')", name="ck_stock_trial_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    binding_id: Mapped[int] = mapped_column(ForeignKey("stock_paper_model_bindings.id"), nullable=False)
+    strategy_id: Mapped[Optional[int]] = mapped_column(ForeignKey("strategies.id"), index=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="approved", index=True)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    policy: Mapped[dict] = mapped_column(JSON, nullable=False)
+    lineage: Mapped[dict] = mapped_column(JSON, nullable=False)
+    blocked_reason: Mapped[Optional[str]] = mapped_column(Text)
+    pause_reason: Mapped[Optional[str]] = mapped_column(Text)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    baseline_equity: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    baseline_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    peak_equity: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    stopped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockPaperTrialDecision(Base):
+    """Deduplicated completed-bar decision, including rejected decisions."""
+    __tablename__ = "stock_paper_trial_decisions"
+    __table_args__ = (
+        UniqueConstraint("trial_id", "symbol", "bar_timestamp", name="uq_stock_trial_decision_bar"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trial_id: Mapped[str] = mapped_column(ForeignKey("stock_paper_trials.id"), nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    bar_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decision_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text)
+    qualifying: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    lineage: Mapped[dict] = mapped_column(JSON, nullable=False)
+    order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_orders.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockPaperTrialMetric(Base):
+    __tablename__ = "stock_paper_trial_metrics"
+    __table_args__ = (UniqueConstraint("trial_id", "as_of", name="uq_stock_trial_metric_asof"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trial_id: Mapped[str] = mapped_column(ForeignKey("stock_paper_trials.id"), nullable=False, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    classification: Mapped[str] = mapped_column(String(24), nullable=False, default="accumulating")
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)

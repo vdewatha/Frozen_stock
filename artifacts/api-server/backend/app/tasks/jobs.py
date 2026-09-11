@@ -27,6 +27,8 @@ from app.services.stock_training_jobs import (
     recover_stock_training_jobs,
     run_stock_training_job,
 )
+from app.services.stock_forward_trial import observe_trial, execute_pending_decisions, start_trial, evaluate_trial
+from app.models import StockPaperTrial
 from app.tasks.celery_app import celery_app
 
 
@@ -351,3 +353,41 @@ def scheduled_stock_challenger_retraining_job() -> dict:
         }
 
     return _run_job("scheduled_stock_challenger_retraining_job", work)
+
+@celery_app.task
+def stock_forward_trial_observe_job(trial_id: str | None = None) -> dict:
+    """Process explicitly running trials; approval alone never starts execution."""
+    def work(db):
+        rows = (
+            [db.get(StockPaperTrial, trial_id)]
+            if trial_id
+            else db.query(StockPaperTrial).filter(StockPaperTrial.status != "completed").all()
+        )
+        if trial_id and not rows[0]:
+            return {"status": "missing", "trial_id": trial_id}
+        results = []
+        for row in rows:
+            if row:
+                observe_trial(db, row.id)
+                execute_pending_decisions(db, row.id)
+                metric = evaluate_trial(db, row.id)
+                results.append({"trial_id": row.id, "status": row.status, "classification": metric.classification})
+        db.commit()
+        return {"status": "complete", "trials": results, "paper_only": True}
+    return _run_job("stock_forward_trial_observe_job", work)
+
+@celery_app.task
+def stock_forward_trial_reconcile_job() -> dict:
+    from app.services.stock_paper_ledger import reconcile_stock_paper_account
+    return _run_job("stock_forward_trial_reconcile_job", lambda db: reconcile_stock_paper_account(db))
+
+@celery_app.task
+def stock_forward_trial_evaluate_job(trial_id: str) -> dict:
+    def work(db):
+        row = db.get(StockPaperTrial, trial_id)
+        if not row:
+            return {"status": "missing", "trial_id": trial_id}
+        metric = evaluate_trial(db, trial_id)
+        db.commit()
+        return {"status": metric.classification, "trial_id": trial_id, **metric.payload}
+    return _run_job("stock_forward_trial_evaluate_job", work)
