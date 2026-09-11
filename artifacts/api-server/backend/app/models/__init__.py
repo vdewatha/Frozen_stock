@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.models.crypto_data import CryptoCandle, CollectionRun
-from app.models import shadow, execution  # Register priority-package tables with Base.
+from app.models import shadow, execution, stock_paper  # Register priority-package tables with Base.
 
 from app.models.models import (
     Asset,
@@ -27,6 +27,16 @@ from app.models.models import (
     StrategySignal,
     TradeCandidateSnapshot,
 )
+from app.models.stock_paper import (
+    StockPaperAccount,
+    StockPaperBrokerActivity,
+    StockPaperEquitySnapshot,
+    StockPaperFill,
+    StockPaperLedgerEvent,
+    StockPaperOrder,
+    StockPaperPosition,
+    StockPaperStrategyEvidence,
+)
 
 __all__ = [
     "Asset",
@@ -51,4 +61,12 @@ __all__ = [
     "StrategyMemory",
     "StrategySignal",
     "TradeCandidateSnapshot",
+    "StockPaperAccount",
+    "StockPaperBrokerActivity",
+    "StockPaperEquitySnapshot",
+    "StockPaperFill",
+    "StockPaperLedgerEvent",
+    "StockPaperOrder",
+    "StockPaperPosition",
+    "StockPaperStrategyEvidence",
 ]

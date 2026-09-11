@@ -213,9 +213,8 @@ def strategy_learning_batch_job(limit_symbols: int = 8, limit_strategies: int = 
 @celery_app.task
 def nightly_strategy_learning_job() -> dict:
     def work(db):
-        updated = update_all_strategy_memory(db)
-        journal_memory = update_strategy_memory_from_journal(db)
-        return {"status": "complete", "job": "nightly_strategy_learning_job", "memory_rows_updated": updated, "journal_memory": journal_memory}
+        return {"status": "quarantined", "job": "nightly_strategy_learning_job",
+                "reason": "Legacy PaperTrade/StrategyMemory evidence is nonqualifying for stock-paper execution."}
 
     return _run_job("nightly_strategy_learning_job", work)
 
@@ -238,46 +237,8 @@ def trade_candidate_scan_job() -> dict:
 @celery_app.task
 def paper_trading_signal_job() -> dict:
     def work(db):
-        snapshot = get_trade_candidate_snapshot(db, limit=10, refresh=False)
-        candidates = [
-            candidate
-            for candidate in snapshot["candidates"]
-            if candidate["candidate_status"] == "positive_candidate" and candidate["strategy_status"] == "paper_trading_active"
-        ]
-        selected = []
-        skipped_open = []
-        for candidate in candidates:
-            strategy = db.query(Strategy).filter(Strategy.strategy_type == candidate["strategy"]).one_or_none()
-            has_open_trade = (
-                db.query(PaperTrade)
-                .filter(
-                    PaperTrade.symbol == candidate["symbol"],
-                    PaperTrade.strategy_id == (strategy.id if strategy else None),
-                    PaperTrade.status == "open",
-                )
-                .count()
-                > 0
-            )
-            if has_open_trade:
-                skipped_open.append({"symbol": candidate["symbol"], "strategy": candidate["strategy"]})
-                continue
-            selected.append(candidate)
-            if len(selected) >= 3:
-                break
-        results = [run_paper_signal(db, candidate["symbol"], candidate["strategy"]) for candidate in selected]
-        return {
-            "status": "complete" if results else "skipped",
-            "job": "paper_trading_signal_job",
-            "source": "trade_candidate_snapshot",
-            "candidate_count": snapshot["candidate_count"],
-            "positive_count": snapshot["positive_count"],
-            "selected_candidates": [
-                {"symbol": candidate["symbol"], "strategy": candidate["strategy"], "score": candidate["score"]}
-                for candidate in selected
-            ],
-            "skipped_open": skipped_open,
-            "results": results,
-        }
+        return {"status": "quarantined", "job": "paper_trading_signal_job",
+                "reason": "Legacy local simulator cannot create stock-paper orders."}
 
     return _run_job("paper_trading_signal_job", work)
 
@@ -285,10 +246,8 @@ def paper_trading_signal_job() -> dict:
 @celery_app.task
 def paper_trade_reconciliation_job() -> dict:
     def work(db):
-        result = reconcile_open_paper_trades(db)
-        journal = refresh_decision_journal_outcomes(db, source="paper_trade_reconciliation_job", notify=True)
-        replay_monitor = run_memory_replay_gate_monitor(db, source="paper_trade_reconciliation_job", limit=60, top_k=3)
-        return {"status": "complete", "job": "paper_trade_reconciliation_job", **result, "decision_journal": journal, "memory_replay_gate_monitor": replay_monitor}
+        return {"status": "quarantined", "job": "paper_trade_reconciliation_job",
+                "reason": "Legacy simulator outcomes cannot update qualifying stock-paper evidence."}
 
     return _run_job("paper_trade_reconciliation_job", work)
 
@@ -296,8 +255,8 @@ def paper_trade_reconciliation_job() -> dict:
 @celery_app.task
 def memory_replay_gate_monitor_job() -> dict:
     def work(db):
-        result = run_memory_replay_gate_monitor(db, source="memory_replay_gate_monitor_job", limit=60, top_k=3)
-        return {"status": "complete", "job": "memory_replay_gate_monitor_job", **result}
+        return {"status": "quarantined", "job": "memory_replay_gate_monitor_job",
+                "reason": "Legacy memory replay cannot mutate stock-paper eligibility."}
 
     return _run_job("memory_replay_gate_monitor_job", work)
 
@@ -313,8 +272,8 @@ def deployment_monitor_job() -> dict:
 @celery_app.task
 def strategy_promotion_job() -> dict:
     def work(db):
-        result = evaluate_strategy_governance(db)
-        return {"status": "complete", "job": "strategy_promotion_job", **result}
+        return {"status": "quarantined", "job": "strategy_promotion_job",
+                "reason": "Legacy governance must not mutate stock-paper strategy eligibility."}
 
     return _run_job("strategy_promotion_job", work)
 
@@ -322,8 +281,7 @@ def strategy_promotion_job() -> dict:
 @celery_app.task
 def risk_monitor_job() -> dict:
     def work(db):
-        model_scores = score_realized_predictions(db)
-        portfolio_actions = evaluate_portfolio_risk_actions(db)
-        return {"status": "complete", "job": "risk_monitor_job", "model_scores": model_scores, "portfolio_actions": portfolio_actions}
+        return {"status": "quarantined", "job": "risk_monitor_job",
+                "reason": "Legacy paper-trade risk monitoring cannot mutate stock-paper kill or strategy state."}
 
     return _run_job("risk_monitor_job", work)

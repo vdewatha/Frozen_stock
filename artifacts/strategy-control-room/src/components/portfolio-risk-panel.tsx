@@ -1,9 +1,9 @@
 
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, ListChecks, MinusCircle, Play, RefreshCw, Scale, ShieldCheck, TrendingDown, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ListChecks, Play, RefreshCw, Scale, ShieldCheck, TrendingDown, X } from "lucide-react";
 
-import { AllocationReviewQueue, PortfolioAllocationExecution, PortfolioAllocationPlan, PortfolioRiskActionResponse, PortfolioRiskSnapshot, dryRunApprovedAllocationReview, executePortfolioAllocationPlan, getAllocationReviewQueue, getPortfolioAllocationPlan, getPortfolioRisk, reducePaperTrade, reviewAllocationQueueItem, runPortfolioRiskActions } from "@/lib/api";
+import { AllocationReviewQueue, PortfolioAllocationExecution, PortfolioAllocationPlan, PortfolioRiskActionResponse, PortfolioRiskSnapshot, dryRunApprovedAllocationReview, executePortfolioAllocationPlan, getAllocationReviewQueue, getPortfolioAllocationPlan, getPortfolioRisk, reviewAllocationQueueItem, runPortfolioRiskActions } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -94,32 +94,6 @@ export function PortfolioRiskPanel() {
     }
   }
 
-  async function reducePosition(tradeId: number, reducePct: number) {
-    setIsBusy(true);
-    try {
-      const response = await reducePaperTrade(
-        tradeId,
-        reducePct,
-        reducePct >= 1 ? "Manual paper position close from portfolio risk monitor." : "Manual 50% paper exposure reduction from portfolio risk monitor."
-      );
-      const data = await getPortfolioRisk();
-      const plan = await getPortfolioAllocationPlan();
-      const queue = await getAllocationReviewQueue();
-      setSnapshot(data);
-      setAllocation(plan);
-      setReviewQueue(queue);
-      setStatus(
-        response.status === "closed"
-          ? `Closed paper trade ${tradeId} at ${currency.format(response.exit_price)}`
-          : `Reduced trade ${tradeId}; ${response.remaining_quantity.toFixed(4)} shares remain`
-      );
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Paper position reduction failed");
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
   async function runAllocationExecutor(dryRun: boolean) {
     setIsBusy(true);
     try {
@@ -203,7 +177,7 @@ export function PortfolioRiskPanel() {
         <div>
           <div className="flex items-center gap-2">
             <ShieldCheck size={19} className={riskTone === "bad" ? "text-coral" : riskTone === "warn" ? "text-amber-600" : "text-mint"} />
-            <h2 className="text-base font-semibold">Portfolio Risk Monitor</h2>
+            <h2 className="text-base font-semibold">Legacy Simulator Risk Context</h2>
           </div>
           <div className="mt-1 text-sm text-slate-500">{status}</div>
         </div>
@@ -221,6 +195,11 @@ export function PortfolioRiskPanel() {
             Run Actions
           </button></RoleGate>
         </div>
+      </div>
+
+      <div className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900" data-testid="alert-legacy-portfolio-risk">
+        This risk context reads legacy local simulator rows and is nonqualifying evidence. It does not establish Alpaca paper
+        cash, equity, fills, or P/L; use the Alpaca Paper Ledger above for broker-reported accounting.
       </div>
 
       <div className="border-b border-line p-4">
@@ -447,7 +426,6 @@ export function PortfolioRiskPanel() {
                 <th className="px-3 py-2 text-right">Entry</th>
                 <th className="px-3 py-2 text-right">Latest</th>
                 <th className="px-3 py-2 text-right">Unrealized</th>
-                <th className="px-3 py-2 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -460,22 +438,10 @@ export function PortfolioRiskPanel() {
                   <td className="px-3 py-2 text-right">{currency.format(position.entry_price)}</td>
                   <td className="px-3 py-2 text-right">{currency.format(position.latest_price)}</td>
                   <td className={(position.unrealized_pl >= 0 ? "px-3 py-2 text-right font-semibold text-mint" : "px-3 py-2 text-right font-semibold text-coral")}>{currency.format(position.unrealized_pl)}</td>
-                  <td className="px-3 py-2">
-                    <RoleGate requires="operator" className="flex justify-end gap-2">
-                      <button className="focus-ring inline-flex h-8 items-center justify-center gap-1 rounded-md border border-line px-2 text-xs font-medium disabled:opacity-60" disabled={isBusy} onClick={() => reducePosition(position.paper_trade_id, 0.5)} title="Reduce paper position by 50%" type="button">
-                        <MinusCircle size={14} />
-                        50%
-                      </button>
-                      <button className="focus-ring inline-flex h-8 items-center justify-center gap-1 rounded-md bg-coral px-2 text-xs font-semibold text-white disabled:opacity-60" disabled={isBusy} onClick={() => reducePosition(position.paper_trade_id, 1)} title="Close paper position" type="button">
-                        <X size={14} />
-                        Close
-                      </button>
-                    </RoleGate>
-                  </td>
                 </tr>
               )) : (
                 <tr className="border-t border-line">
-                  <td className="px-3 py-3 text-slate-600" colSpan={8}>No open paper positions.</td>
+                  <td className="px-3 py-3 text-slate-600" colSpan={7}>No open paper positions.</td>
                 </tr>
               )}
             </tbody>

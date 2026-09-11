@@ -368,6 +368,29 @@ class BrokerStatusResponse(BaseModel):
     message: str
 
 
+class StockPaperHaltRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class StockPaperOrderRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=32)
+    side: str = Field(pattern="^(buy|sell)$")
+    quantity: Decimal = Field(gt=0)
+    reference_price: Decimal = Field(gt=0)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    source: str = Field(default="manual_control_room", min_length=3, max_length=64)
+    signal_id: Optional[int] = Field(default=None, gt=0)
+
+
+class StockPaperReduceRequest(BaseModel):
+    reduce_pct: Decimal = Field(gt=0, le=1)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
+class StockPaperCloseRequest(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+
 class PaperTradingRunResponse(BaseModel):
     symbol: str
     strategy: str

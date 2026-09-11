@@ -8,7 +8,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import inspect
 
 from app.db.base import Base
-from app.models import models  # noqa: F401
+from app.models import models, stock_paper  # noqa: F401
 
 
 def migration_config() -> Config:

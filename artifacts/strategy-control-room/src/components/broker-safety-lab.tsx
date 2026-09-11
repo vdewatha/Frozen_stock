@@ -30,7 +30,8 @@ export function BrokerSafetyLab() {
           <div className="mt-1 text-sm text-slate-500">{status}</div>
         </div>
         <div className="max-w-xl text-sm text-slate-600">
-          Manual broker orders and live-order guard tests are intentionally unavailable here. A direct order request returns a deliberate <strong>409 conflict</strong> because this research system is paper-only. Use the risk-gated <strong>Paper Trading Simulator</strong> below to generate paper signals instead.
+          Raw broker orders and live-order guard tests are intentionally unavailable here. Direct BUY reservation without a
+          stored validated signal returns a deliberate <strong>409 conflict</strong>. Use the signal-gated <strong>Alpaca Paper Ledger</strong> above to generate/evaluate a signal, reserve once, and dispatch once.
         </div>
       </div>
 
@@ -51,7 +52,8 @@ export function BrokerSafetyLab() {
         <div className="rounded-md border border-line p-3">
           <div className="text-sm font-semibold">Last Broker Event</div>
           <div className="mt-3 text-sm text-slate-600">
-            No manual broker event is recorded. Paper signals remain subject to readiness and portfolio risk gates.
+            No manual broker event is recorded here. Signal-bound reservations remain subject to reconciliation, market-data,
+            cash, and portfolio risk gates.
           </div>
         </div>
       </div>

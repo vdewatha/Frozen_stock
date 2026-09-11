@@ -112,6 +112,7 @@ from app.services.news_sentiment import import_company_news, list_news_articles,
 from app.services.notifications import acknowledge_notification, list_notifications, resolve_notification
 from app.services.opportunity_radar import company_opportunity_radar
 from app.services.paper_trading import close_paper_trade, reconcile_open_paper_trades, reduce_paper_trade, run_paper_signal
+from app.services.stock_paper_ledger import stock_paper_status
 from app.services.portfolio_allocation import allocation_plan, allocation_review_queue, dry_run_approved_allocation_review, execute_allocation_plan, review_allocation_queue_item
 from app.services.risk_actions import evaluate_portfolio_risk_actions
 from app.services.portfolio_risk import portfolio_risk_snapshot
@@ -131,6 +132,10 @@ from app.tasks.celery_app import celery_app
 from app.tasks.jobs import strategy_learning_batch_job, strategy_learning_scope_job
 
 router = APIRouter()
+LEGACY_STOCK_EVIDENCE_QUARANTINE = (
+    "Legacy simulator paper_trades/StrategyMemory are quarantined and cannot be "
+    "used for stock risk, scoring, allocation, or governance."
+)
 
 
 @router.get("/health")
@@ -254,7 +259,7 @@ def activate_trade_candidate(payload: CandidateActivationRequest, db: Session = 
 
 @router.get("/trade-scorecard", response_model=TradeScorecardResponse)
 def trade_scorecard(limit: int = 50, db: Session = Depends(get_db)) -> dict:
-    return predictive_trade_scorecard(db, limit)
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.get("/assets", response_model=list[AssetRead])
@@ -455,56 +460,37 @@ def list_paper_trades(db: Session = Depends(get_db)) -> list[PaperTrade]:
 
 @router.get("/portfolio/risk", response_model=PortfolioRiskResponse)
 def get_portfolio_risk(db: Session = Depends(get_db)) -> dict:
-    return portfolio_risk_snapshot(db)
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.get("/portfolio/allocation-plan", response_model=PortfolioAllocationResponse)
 def get_portfolio_allocation_plan(limit: int = 20, db: Session = Depends(get_db)) -> dict:
-    return allocation_plan(db, limit=limit)
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.get("/portfolio/allocation-review-queue", response_model=dict)
 def get_portfolio_allocation_review_queue(limit: int = 20, db: Session = Depends(get_db)) -> dict:
-    return allocation_review_queue(db, limit=limit)
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.post("/portfolio/allocation-review-queue/review", response_model=dict)
 def review_portfolio_allocation_queue_item(payload: AllocationReviewRequest, db: Session = Depends(get_db)) -> dict:
-    try:
-        return review_allocation_queue_item(
-            db,
-            notification_id=payload.notification_id,
-            symbol=payload.symbol,
-            strategy=payload.strategy,
-            decision=payload.decision,
-            reason=payload.reason,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.post("/portfolio/allocation-review-queue/dry-run", response_model=dict)
 def dry_run_portfolio_allocation_review_item(payload: AllocationReviewDryRunRequest, db: Session = Depends(get_db)) -> dict:
-    try:
-        return dry_run_approved_allocation_review(
-            db,
-            symbol=payload.symbol,
-            strategy=payload.strategy,
-            journal_entry_id=payload.journal_entry_id,
-            limit=payload.limit,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.post("/portfolio/allocation-plan/execute", response_model=PortfolioAllocationExecuteResponse)
 def run_portfolio_allocation_plan(payload: PortfolioAllocationExecuteRequest, db: Session = Depends(get_db)) -> dict:
-    return execute_allocation_plan(db, dry_run=payload.dry_run, max_actions=payload.max_actions, limit=payload.limit)
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.post("/portfolio/risk/actions", response_model=PortfolioRiskActionResponse)
 def run_portfolio_risk_actions(payload: PortfolioRiskActionRequest, db: Session = Depends(get_db)) -> dict:
-    return evaluate_portfolio_risk_actions(db, require_persistence=payload.require_persistence, dry_run=payload.dry_run)
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.post("/paper-trading/run-signal", response_model=PaperTradingRunResponse)
@@ -517,10 +503,9 @@ def run_paper_trading_signal(payload: PaperTradingSignalRequest, db: Session = D
 
 @router.post("/paper-trading/reconcile", response_model=PaperTradeReconcileResponse)
 def reconcile_paper_trading(db: Session = Depends(get_db)) -> dict:
-    result = reconcile_open_paper_trades(db)
-    result["decision_journal"] = refresh_decision_journal_outcomes(db, source="paper_trading_reconcile", notify=True)
-    result["memory_replay_gate_monitor"] = run_memory_replay_gate_monitor(db, source="paper_trading_reconcile", limit=60, top_k=3)
-    return result
+    # Legacy simulator reconciliation must not mutate simulator rows or promote
+    # them into decision evidence. Broker reconciliation lives at /stock-paper.
+    return reconcile_open_paper_trades(db)
 
 
 @router.post("/paper-trading/close/{trade_id}", response_model=PaperTradeCloseResponse)
@@ -541,9 +526,7 @@ def reduce_paper_trading_trade(trade_id: int, payload: PaperTradeReduceRequest, 
 
 @router.get("/strategy-memory", response_model=list[StrategyMemoryRead])
 def list_strategy_memory(db: Session = Depends(get_db)) -> list:
-    from app.models import StrategyMemory
-
-    return db.query(StrategyMemory).order_by(StrategyMemory.last_updated.desc()).limit(50).all()
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.get("/audit-logs", response_model=list[AuditLogRead])
@@ -595,25 +578,22 @@ def resolve_notification_route(notification_id: int, db: Session = Depends(get_d
 
 @router.post("/strategies/evaluate", response_model=StrategyGovernanceResponse)
 def evaluate_strategies(db: Session = Depends(get_db)) -> dict:
-    return evaluate_strategy_governance(db)
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.get("/strategies/reactivation-queue", response_model=StrategyReactivationQueueResponse)
 def get_reactivation_queue(db: Session = Depends(get_db)) -> dict:
-    return reactivation_queue(db)
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.get("/strategies/improvement-queue", response_model=StrategyImprovementQueueResponse)
 def get_strategy_improvement_queue(db: Session = Depends(get_db)) -> dict:
-    return strategy_improvement_queue(db)
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.post("/strategies/reactivation-review", response_model=StrategyReactivationReviewResponse)
 def review_reactivation(payload: StrategyReactivationReviewRequest, db: Session = Depends(get_db)) -> dict:
-    try:
-        return review_strategy_reactivation(db, payload.strategy_id, payload.decision, payload.reason)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)
 
 
 @router.post("/risk/approve")
@@ -775,9 +755,30 @@ def learning_worker_status(task_id: str) -> dict:
 def dashboard(db: Session = Depends(get_db)) -> DashboardSnapshot:
     strategies = db.query(Strategy).order_by(Strategy.name).all()
     risk_rule = db.query(RiskRule).first()
-    # The legacy paper rows do not establish opening cash, external fills,
-    # fees or a complete marked-to-market equity history. Do not infer these.
-    equity_curve = []
+    try:
+        stock_ledger = stock_paper_status(db)
+    except KeyError:
+        # Isolated dashboard unit doubles may not register stock-ledger models;
+        # production database failures are deliberately not hidden.
+        stock_ledger = {"status": "uninitialized", "account": None, "positions": [], "equity_snapshots": []}
+    ledger_account = stock_ledger.get("account") if isinstance(stock_ledger, dict) else None
+    ledger_ready = bool(
+        isinstance(ledger_account, dict)
+        and stock_ledger.get("status") == "reconciled"
+        and ledger_account.get("equity") is not None
+    )
+    accounting_verified = bool(ledger_ready and ledger_account.get("accounting_verified") and stock_ledger.get("costs_known"))
+    snapshots = list(reversed(stock_ledger.get("equity_snapshots") or [])) if ledger_ready else []
+    equity_curve = [
+        {"date": snapshot["observed_at"], "equity": float(snapshot["equity"])}
+        for snapshot in snapshots
+    ]
+    paper_account_value = float(ledger_account["equity"]) if ledger_ready else None
+    # Observation-to-observation changes are not necessarily calendar-day P/L or
+    # a funding-adjusted total return. Keep both absent until full flows/costs are
+    # verified by a future broker-complete accounting integration.
+    daily_pl = None
+    total_pl = None
     strategy_cards = [
         {
             "id": strategy.id,
@@ -792,34 +793,28 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSnapshot:
         }
         for strategy in strategies
     ]
-    trade_rows = db.query(PaperTrade).order_by(PaperTrade.created_at.desc()).limit(8).all()
-    recent_trades = [
-        {
-            "id": trade.id,
-            "symbol": trade.symbol,
-            "side": trade.side,
-            "status": trade.status or "unknown",
-            "profit_loss": float(trade.profit_loss) if trade.profit_loss is not None else None,
-            "confidence": (trade.features_at_entry or {}).get("confidence"),
-            "reason": trade.reason_exited or trade.reason_entered or "Paper trade",
-        }
-        for trade in trade_rows
-    ]
+    # Legacy simulator records are quarantined and never presented as trades
+    # supporting stock-paper performance/governance.
+    recent_trades = []
     stored_experiments = list_strategy_experiments(db, strategy_slug="moving_average_crossover", limit=3)
     proposed_experiments = propose_parameter_experiments("moving_average_crossover", {"short_window": 20, "long_window": 50})
     current_regime = latest_market_regime(db, auto_detect=False)
     kill_switch_enabled = bool(((risk_rule.value if risk_rule else {}) or {}).get("kill_switch_enabled", False))
     return DashboardSnapshot(
-        paper_account_value=None,
-        daily_pl=None,
-        total_pl=None,
-        metrics_status="unavailable",
-        performance_note="Verified account cash, costs, fills and equity snapshots are not yet available. Recorded trades below are not qualification evidence.",
+        paper_account_value=paper_account_value,
+        daily_pl=daily_pl,
+        total_pl=total_pl,
+        metrics_status="reconciled" if accounting_verified else "unavailable",
+        performance_note=(
+            "Broker account balance is reconciled, but P/L is unavailable until complete flows and costs are verified."
+            if ledger_ready else
+            "Verified broker paper account is not reconciled. Legacy recorded trades below are nonqualifying evidence."
+        ),
         active_strategies=sum(1 for strategy in strategies if strategy.current_status == "paper_trading_active"),
         paused_strategies=sum(1 for strategy in strategies if strategy.current_status == "paused"),
         best_strategy=None,
         worst_strategy=None,
-        open_paper_trades=db.query(PaperTrade).filter(PaperTrade.status == "open").count(),
+        open_paper_trades=len(stock_ledger.get("positions") or []) if ledger_ready else 0,
         risk_state=(
             f"Kill switch {'enabled' if kill_switch_enabled else 'disabled'}. "
             f"Paper-only. Regime: {(current_regime or {}).get('market_regime', 'unclassified')}."

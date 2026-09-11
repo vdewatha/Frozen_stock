@@ -10,7 +10,7 @@ export type DashboardSnapshot = {
   worst_strategy: string | null;
   open_paper_trades: number;
   risk_state: string;
-  equity_curve: { date: string; value: number }[];
+  equity_curve: { date: string; value?: number; equity?: number }[];
   strategies: {
     id: number;
     name: string;
@@ -43,6 +43,91 @@ export type DashboardSnapshot = {
 
 export type AccessRole = "viewer" | "researcher" | "operator" | "admin";
 export type AuthSession = { role: AccessRole };
+
+export type StockPaperStatusValue = "uninitialized" | "reconciled" | "halted" | "drift" | "uncertain" | "unavailable";
+
+export type StockPaperAccount = {
+  broker: "alpaca_paper" | string;
+  account_id: string;
+  currency: string;
+  cash: string | null;
+  buying_power: string | null;
+  equity: string | null;
+  last_equity: string | null;
+  initialized_at: string;
+  last_reconciled_at: string | null;
+  source_timestamp: string | null;
+  reconciliation_required: boolean;
+  halt_reason: string | null;
+};
+
+export type StockPaperPosition = {
+  symbol: string;
+  quantity: string | null;
+  average_entry_price: string | null;
+  current_price: string | null;
+  market_value: string | null;
+  cost_basis: string | null;
+  unrealized_pl: string | null;
+  observed_at: string;
+};
+
+export type StockPaperOrder = {
+  id: number;
+  client_order_id: string;
+  broker_order_id: string | null;
+  symbol: string;
+  side: string;
+  quantity: string | null;
+  order_type?: string;
+  limit_price?: string | null;
+  signal_id?: number | null;
+  strategy_id?: number | null;
+  evidence_id?: string | null;
+  status: string;
+  reserved_cash: string | null;
+  uncertain_submission: boolean;
+  submitted_at?: string | null;
+};
+
+export type StockPaperOrderActionResponse = {
+  mode: "paper";
+  action: "reserved" | "submitted" | "halted_uncertain" | "reserved_close" | "reserved_reduce" | string;
+  order: StockPaperOrder;
+};
+
+export type StockPaperFill = {
+  broker_activity_id: string;
+  broker_order_id: string | null;
+  symbol: string;
+  side: string;
+  quantity: string | null;
+  price: string | null;
+  fee: string | null;
+  cost_known: boolean;
+  filled_at: string;
+};
+
+export type StockPaperEquitySnapshot = {
+  cash: string | null;
+  equity: string | null;
+  last_equity: string | null;
+  buying_power: string | null;
+  observed_at: string;
+};
+
+export type StockPaperStatus = {
+  status: StockPaperStatusValue;
+  reason: string;
+  mode: "paper";
+  legacy_nonqualifying: true;
+  costs_known: boolean;
+  account: StockPaperAccount | null;
+  positions: StockPaperPosition[];
+  orders: StockPaperOrder[];
+  fills: StockPaperFill[];
+  equity_snapshots: StockPaperEquitySnapshot[];
+};
 
 export type PricePoint = {
   date: string;
@@ -1175,6 +1260,18 @@ export type BrokerStatus = {
   message: string;
 };
 
+export type StockPaperSignalResponse = {
+  mode: "paper";
+  action: string;
+  signal_id: number;
+  symbol: string;
+  strategy: string;
+  signal_action: string;
+  confidence: string;
+  reference_price: string;
+  execution_created: false;
+};
+
 export type BrokerOrderResponse = {
   broker: string;
   broker_order_id: string | null;
@@ -1381,6 +1478,10 @@ export async function runModelPrediction(symbol: string): Promise<ModelPredictio
   return postJson<ModelPredictionResponse>("/models/predict", { symbol });
 }
 
+export async function generateStockPaperSignal(symbol: string, strategy: string): Promise<StockPaperSignalResponse> {
+  return postJson<StockPaperSignalResponse>("/stock-paper/signal", { symbol, strategy });
+}
+
 export async function runPaperSignal(symbol: string, strategy: string): Promise<PaperTradingRunResponse> {
   return postJson<PaperTradingRunResponse>("/paper-trading/run-signal", { symbol, strategy });
 }
@@ -1400,6 +1501,58 @@ export async function reducePaperTrade(tradeId: number, reducePct: number, reaso
 export async function getPaperTrades(): Promise<PaperTrade[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/paper-trades`, { cache: "no-store" });
   return handleResponse<PaperTrade[]>(response);
+}
+
+export async function getStockPaperStatus(): Promise<StockPaperStatus> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/status`, { cache: "no-store" });
+  return handleResponse<StockPaperStatus>(response);
+}
+
+export async function initializeStockPaperAccount(): Promise<StockPaperStatus> {
+  return postJson<StockPaperStatus>("/stock-paper/initialize", {});
+}
+
+export async function reconcileStockPaperAccount(): Promise<StockPaperStatus> {
+  return postJson<StockPaperStatus>("/stock-paper/reconcile", {});
+}
+
+export async function haltStockPaperAccount(reason: string): Promise<StockPaperStatus> {
+  return postJson<StockPaperStatus>("/stock-paper/halt", { reason });
+}
+
+export async function resumeStockPaperAccount(): Promise<StockPaperStatus> {
+  return postJson<StockPaperStatus>("/stock-paper/resume", {});
+}
+
+export type StockPaperOrderRequest = {
+  symbol: string;
+  side: "buy" | "sell";
+  quantity: string;
+  reference_price: string;
+  idempotency_key: string;
+  signal_id?: number;
+  source?: string;
+};
+
+export async function reserveStockPaperOrder(request: StockPaperOrderRequest): Promise<StockPaperOrderActionResponse> {
+  return postJson<StockPaperOrderActionResponse>("/stock-paper/orders", request);
+}
+
+export async function dispatchStockPaperOrder(orderId: number): Promise<StockPaperOrderActionResponse> {
+  return postJson<StockPaperOrderActionResponse>(`/stock-paper/orders/${orderId}/dispatch`, {});
+}
+
+export async function closeStockPaperPosition(symbol: string, idempotencyKey: string): Promise<StockPaperOrderActionResponse> {
+  return postJson<StockPaperOrderActionResponse>(`/stock-paper/positions/${encodeURIComponent(symbol)}/close`, {
+    idempotency_key: idempotencyKey,
+  });
+}
+
+export async function reduceStockPaperPosition(symbol: string, reducePct: string, idempotencyKey: string): Promise<StockPaperOrderActionResponse> {
+  return postJson<StockPaperOrderActionResponse>(`/stock-paper/positions/${encodeURIComponent(symbol)}/reduce`, {
+    reduce_pct: reducePct,
+    idempotency_key: idempotencyKey,
+  });
 }
 
 export async function getPortfolioRisk(): Promise<PortfolioRiskSnapshot> {

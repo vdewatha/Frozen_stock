@@ -300,33 +300,15 @@ def sync_memory_replay_gate_notifications(db: Session, replay: Optional[dict] = 
 
 
 def run_memory_replay_gate_monitor(db: Session, *, source: str = "manual", limit: int = 60, top_k: int = 3) -> dict:
-    replay = memory_replay_evaluation(db, limit=limit, top_k=top_k, notify_gate_opens=False)
-    approval_alerts = sync_memory_replay_gate_notifications(db, replay)
-    status = "opened" if approval_alerts["created"] else "updated" if approval_alerts["updated"] else "resolved" if approval_alerts["resolved"] else "unchanged"
-    result = {
-        "status": status,
+    return {
+        "status": "quarantined",
         "source": source,
-        "generated_at": replay["generated_at"],
-        "evaluated_rows": replay["evaluated_rows"],
-        "complete_rows": replay["complete_rows"],
-        "pending_rows": replay["pending_rows"],
-        "replay_gate": replay["replay_gate"],
-        "approval_alerts": approval_alerts,
+        "reason": "Legacy memory replay cannot create stock-paper gate state or notifications.",
+        "evaluated_rows": 0,
+        "complete_rows": 0,
+        "pending_rows": 0,
+        "approval_alerts": {"checked_open_gates": 0, "created": 0, "updated": 0, "resolved": 0, "open_gates": []},
     }
-    write_audit_log(
-        db,
-        event_type="memory_replay_gate_monitor",
-        entity_type="memory_replay_gate",
-        action="sync_gate_notifications",
-        status=status,
-        message=(
-            f"Memory replay gate monitor checked {approval_alerts['checked_open_gates']} open gate(s); "
-            f"created {approval_alerts['created']}, updated {approval_alerts['updated']}, resolved {approval_alerts['resolved']}."
-        ),
-        payload=result,
-    )
-    db.commit()
-    return jsonable_encoder(result)
 
 
 def _cached_prices(db: Session, cache: dict[str, tuple], symbol: str, lookback: int) -> tuple:
@@ -571,7 +553,7 @@ def memory_replay_evaluation(db: Session, *, limit: int = 50, top_k: int = 3, no
             "rows": rows[: min(limit, 100)],
         }
     )
-    response["approval_alerts"] = sync_memory_replay_gate_notifications(db, response) if notify_gate_opens else {
+    response["approval_alerts"] = {
         "checked_open_gates": 0,
         "created": 0,
         "updated": 0,

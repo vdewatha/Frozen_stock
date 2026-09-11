@@ -23,6 +23,10 @@ DEFAULT_PAPER_EQUITY = 100_000.0
 STOP_LOSS_PCT = 0.03
 TAKE_PROFIT_PCT = 0.06
 MAX_HOLDING_DAYS = 20
+LEGACY_SIMULATOR_BLOCK = (
+    "Legacy stock simulator mutations are blocked. Use the reconciled Alpaca paper "
+    "ledger; legacy paper_trades are nonqualifying evidence."
+)
 
 
 def _decimal(value: float) -> Decimal:
@@ -155,6 +159,15 @@ def _trusted_regime(db):
 
 def run_paper_signal(db: Session, symbol: str, strategy_slug: str) -> dict:
     symbol = symbol.upper()
+    # This formerly opened a local PaperTrade then fabricated a broker-shaped order.
+    # It must not mutate the simulator now that stock accounting is broker-observed.
+    return {
+        "symbol": symbol, "strategy": strategy_slug, "action": "BLOCKED",
+        "approved": False, "reason": LEGACY_SIMULATOR_BLOCK, "signal_id": None,
+        "paper_trade_id": None, "price": 0.0, "quantity": 0.0,
+        "confidence": 0.0, "broker_order": None,
+    }
+    # Kept below temporarily for historical code review; unreachable by design.
     try:
         intraday_observation = trusted_intraday_observation(db, symbol)
     except UntrustedMarketData as exc:
@@ -347,6 +360,10 @@ def run_paper_signal(db: Session, symbol: str, strategy_slug: str) -> dict:
 
 
 def reconcile_open_paper_trades(db: Session) -> dict:
+    return {
+        "checked": 0, "closed": 0, "closed_trade_ids": [], "blocked_trade_ids": [],
+        "reason": LEGACY_SIMULATOR_BLOCK,
+    }
     open_trades = _open_positions(db)
     closed_ids: list[int] = []
     blocked_ids: list[int] = []
@@ -406,6 +423,10 @@ def reconcile_open_paper_trades(db: Session) -> dict:
 
 
 def close_paper_trade(db: Session, trade_id: int, reason: str = "Manual paper close.") -> dict:
+    return {
+        "paper_trade_id": trade_id, "status": "blocked", "profit_loss": 0.0,
+        "profit_loss_pct": 0.0, "reason": LEGACY_SIMULATOR_BLOCK,
+    }
     trade = db.query(PaperTrade).filter(PaperTrade.id == trade_id).one_or_none()
     if not trade:
         raise ValueError(f"Unknown paper trade: {trade_id}")
@@ -455,6 +476,12 @@ def close_paper_trade(db: Session, trade_id: int, reason: str = "Manual paper cl
 
 
 def reduce_paper_trade(db: Session, trade_id: int, reduce_pct: float, reason: str = "Manual paper exposure reduction.") -> dict:
+    return {
+        "paper_trade_id": trade_id, "status": "blocked", "reduced_quantity": 0.0,
+        "remaining_quantity": 0.0, "realized_profit_loss": 0.0,
+        "realized_profit_loss_pct": 0.0, "exit_price": 0.0,
+        "reason": LEGACY_SIMULATOR_BLOCK, "broker_order": None,
+    }
     if reduce_pct <= 0 or reduce_pct > 1:
         raise ValueError("Reduction percent must be greater than 0 and at most 1.")
 

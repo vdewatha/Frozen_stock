@@ -63,6 +63,21 @@ def review_candidate_activation(db: Session, symbol: str, strategy_type: str, de
     strategy = db.query(Strategy).filter(Strategy.strategy_type == strategy_type).one_or_none()
     if not strategy:
         raise ValueError(f"Unknown strategy: {strategy_type}")
+    return {
+        "symbol": symbol.upper(),
+        "strategy": strategy.strategy_type,
+        "strategy_name": strategy.name,
+        "decision": decision,
+        "status": "quarantined",
+        "message": "Legacy candidate activation cannot mutate stock-paper strategy state.",
+        "old_status": strategy.current_status,
+        "new_status": strategy.current_status,
+        "eligible": False,
+        "blockers": ["Legacy candidate activation is quarantined from stock-paper execution."],
+        "candidate": {},
+        "review_context": {"status": "quarantined"},
+        "journal_entry_id": None,
+    }
 
     snapshot = get_trade_candidate_snapshot(db, limit=50, refresh=False)
     candidate = _find_candidate(snapshot, symbol, strategy_type)

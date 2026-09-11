@@ -32,6 +32,7 @@ READ_PATHS = {
     "/assets", "/strategies", "/market-regimes", "/news", "/paper-trades",
     "/audit-logs", "/notifications", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
+    "/stock-paper/status",
     "/economic/indicators", "/system/readiness", "/system/deployment-monitor", "/research/runs",
     "/trade-candidates/refresh-jobs/latest",
     "/market-data/{symbol}", "/news/{symbol}/summary", "/economic/context",
@@ -49,6 +50,7 @@ RESEARCH_POSTS = {
 OPERATOR_POSTS = {
     "/crypto/paper/intents", "/crypto/paper/kill-switch/enable",
     "/crypto/paper/recover",
+    "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal",
     "/paper-trading/run-signal", "/paper-trading/reconcile", "/broker/paper/orders",
     "/safety/kill-switch/enable", "/safety/strategies/pause",
     "/portfolio/allocation-review-queue/review", "/portfolio/allocation-review-queue/dry-run",
@@ -59,6 +61,7 @@ ADMIN_POSTS = {
     "/notifications/{notification_id}/resolve", "/strategies/evaluate",
     "/strategies/reactivation-review", "/risk/settings", "/safety/kill-switch/disable",
     "/safety/strategies/resume", "/broker/live/orders",
+    "/stock-paper/initialize", "/stock-paper/resume",
 }
 
 
@@ -93,7 +96,9 @@ def required_role(method: str, path: str) -> str:
         return "researcher"
     if method == "POST" and path in RESEARCH_POSTS:
         return "researcher"
-    if method == "POST" and (path in OPERATOR_POSTS or path.startswith(("/paper-trading/close/", "/paper-trading/reduce/"))):
+    if method == "POST" and (path in OPERATOR_POSTS or path.startswith((
+        "/paper-trading/close/", "/paper-trading/reduce/", "/stock-paper/orders/", "/stock-paper/positions/",
+    ))):
         return "operator"
     if method in {"POST", "PATCH"} and (
         path in ADMIN_POSTS

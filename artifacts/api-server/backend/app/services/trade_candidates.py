@@ -28,61 +28,16 @@ def _best_positive_prediction(predictions: list[dict]) -> Optional[dict]:
 
 
 def _journal_feedback_adjustment(db: Session, strategy_row: Strategy, symbol: str) -> dict:
-    memory = (
-        db.query(StrategyMemory)
-        .filter(StrategyMemory.strategy_id == strategy_row.id)
-        .filter(StrategyMemory.market_regime == "journal_feedback")
-        .filter(StrategyMemory.symbol == symbol)
-        .order_by(StrategyMemory.last_updated.desc())
-        .first()
-    )
-    if not memory:
-        return {
-            "source": "journal_feedback",
-            "status": "not_enough_feedback",
-            "sample_size": 0,
-            "score_adjustment": 0.0,
-            "review_threshold_adjustment": 0.0,
-            "confidence_score": None,
-            "avg_return": None,
-            "win_rate": None,
-            "notes": "No scored journal feedback for this symbol and strategy yet.",
-        }
-
-    confidence = float(memory.confidence_score or 0)
-    avg_return = float(memory.avg_return or 0)
-    sample_size = int(memory.sample_size or 0)
-    notes = memory.notes or ""
-    note_lower = notes.lower()
-    feedback_bias = 0.0
-    review_threshold_adjustment = 0.0
-    status = "neutral"
-    if "missed gains" in note_lower or "later gained" in note_lower:
-        feedback_bias = 0.025
-        review_threshold_adjustment = -0.02
-        status = "raise_priority"
-    elif "bad approvals" in note_lower or "later lost" in note_lower:
-        feedback_bias = -0.025
-        review_threshold_adjustment = 0.02
-        status = "lower_priority"
-    elif "avoided losses" in note_lower:
-        feedback_bias = -0.015
-        status = "validated_caution"
-
-    raw_adjustment = (confidence - 0.5) * 0.08 + avg_return * 0.25 + feedback_bias
-    sample_scale = min(1.0, max(0.35, sample_size / 5)) if sample_size else 0.0
-    score_adjustment = max(-0.08, min(0.08, raw_adjustment * sample_scale))
-
     return {
         "source": "journal_feedback",
-        "status": status,
-        "sample_size": sample_size,
-        "score_adjustment": round(score_adjustment, 4),
-        "review_threshold_adjustment": round(review_threshold_adjustment, 4),
-        "confidence_score": round(confidence, 4),
-        "avg_return": round(avg_return, 4),
-        "win_rate": round(float(memory.win_rate or 0), 4),
-        "notes": notes,
+        "status": "quarantined",
+        "sample_size": 0,
+        "score_adjustment": 0.0,
+        "review_threshold_adjustment": 0.0,
+        "confidence_score": None,
+        "avg_return": None,
+        "win_rate": None,
+        "notes": "Legacy journal/StrategyMemory feedback is excluded from stock-paper decisions.",
     }
 
 

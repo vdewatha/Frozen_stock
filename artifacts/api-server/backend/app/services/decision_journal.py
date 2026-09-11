@@ -320,60 +320,13 @@ def decision_journal_scorecard(db: Session, *, limit: int = 100, refresh_outcome
 
 
 def update_strategy_memory_from_journal(db: Session) -> dict:
-    scorecard = decision_journal_scorecard(db, limit=250, refresh_outcomes=False)
-    rows = [row for row in scorecard["rows"] if row.get("outcome_return") is not None]
-    strategies = {strategy.strategy_type: strategy for strategy in db.query(Strategy).all()}
-    grouped: dict[tuple[int, str, str], list[dict]] = {}
-    for row in rows:
-        strategy = strategies.get(row["strategy_type"])
-        if not strategy:
-            continue
-        key = (strategy.id, row["symbol"], "journal_feedback")
-        grouped.setdefault(key, []).append(row)
-
-    updated = 0
-    for (strategy_id, symbol, regime), group in grouped.items():
-        returns = [float(row["outcome_return"] or 0) for row in group]
-        positives = [value for value in returns if value > 0]
-        negatives = [value for value in returns if value <= 0]
-        missed_gains = [row for row in group if row["quality"] == "missed_gain"]
-        avoided_losses = [row for row in group if row["quality"] == "avoided_loss"]
-        bad_approvals = [row for row in group if row["quality"] == "bad_approval"]
-        good_approvals = [row for row in group if row["quality"] == "good_approval"]
-        avg_return = sum(returns) / len(returns)
-        win_rate = len(positives) / len(group)
-        profit_factor = (sum(positives) / abs(sum(negatives))) if negatives and sum(negatives) else (3.0 if positives else 0.0)
-        penalty = len(bad_approvals) * 0.08 + len(missed_gains) * 0.04
-        bonus = len(good_approvals) * 0.06 + len(avoided_losses) * 0.04
-        confidence_score = max(0.0, min(1.0, 0.50 + avg_return * 2 + win_rate * 0.20 + bonus - penalty))
-        if missed_gains and not bad_approvals:
-            guidance = "Journal feedback: skipped/rejected candidates later gained; consider lowering review friction for similar setups."
-        elif bad_approvals:
-            guidance = "Journal feedback: approved/reviewed candidates later lost; consider stricter thresholds for similar setups."
-        elif avoided_losses:
-            guidance = "Journal feedback: skipped/rejected candidates avoided losses; current caution helped."
-        else:
-            guidance = "Journal feedback: scored decisions are broadly aligned with outcomes."
-
-        memory = (
-            db.query(StrategyMemory)
-            .filter(StrategyMemory.strategy_id == strategy_id, StrategyMemory.symbol == symbol, StrategyMemory.market_regime == regime)
-            .one_or_none()
-        )
-        if not memory:
-            memory = StrategyMemory(strategy_id=strategy_id, symbol=symbol, market_regime=regime)
-            db.add(memory)
-        memory.sample_size = len(group)
-        memory.avg_return = Decimal(str(round(avg_return, 6)))
-        memory.avg_drawdown = Decimal(str(round(min(returns), 6)))
-        memory.win_rate = Decimal(str(round(win_rate, 6)))
-        memory.profit_factor = Decimal(str(round(profit_factor, 6)))
-        memory.confidence_score = Decimal(str(round(confidence_score, 6)))
-        memory.notes = (
-            f"{guidance} "
-            f"good approvals={len(good_approvals)}, bad approvals={len(bad_approvals)}, "
-            f"avoided losses={len(avoided_losses)}, missed gains={len(missed_gains)}."
-        )
-        updated += 1
-    db.commit()
-    return {"updated": updated, "groups": len(grouped), "scored_rows": len(rows)}
+    # Candidate journal outcomes and StrategyMemory predate the broker-observed
+    # stock-paper ledger. They may be displayed as historical research, but can
+    # never mutate execution eligibility, allocation, or strategy state.
+    return {
+        "status": "quarantined",
+        "updated": 0,
+        "groups": 0,
+        "scored_rows": 0,
+        "reason": "Legacy journal feedback cannot mutate stock-paper strategy memory.",
+    }
