@@ -13,6 +13,7 @@ import {
   reconcilePaperTrades,
   runPaperSignal
 } from "@/lib/api";
+import { RoleGate } from "@/components/access-control";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -93,7 +94,7 @@ export function PaperTradingLab() {
               {strategies.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
+          <RoleGate requires="operator" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Generating signal and checking risk");
             const result = await runPaperSignal(symbol, strategy);
             setLastRun(result);
@@ -101,15 +102,15 @@ export function PaperTradingLab() {
           })}>
             <Play size={16} />
             Run Signal
-          </button>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
+          </button></RoleGate>
+          <RoleGate requires="operator" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Reconciling open trades");
             const result = await reconcilePaperTrades();
             setStatus(`Checked ${result.checked}, closed ${result.closed}`);
           })}>
             <RefreshCw size={16} />
             Reconcile
-          </button>
+          </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Refreshing paper ledger");
           })}>
@@ -143,13 +144,13 @@ export function PaperTradingLab() {
                     {currency.format(numberValue(trade.profit_loss))}
                   </span>
                   {trade.status === "open" ? (
-                    <button className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-md border border-line" disabled={isBusy} title="Close paper trade" onClick={() => runAction(async () => {
+                    <RoleGate requires="operator"><button className="focus-ring inline-flex h-8 w-8 items-center justify-center rounded-md border border-line" disabled={isBusy} title="Close paper trade" onClick={() => runAction(async () => {
                       setStatus(`Closing trade ${trade.id}`);
                       await closePaperTrade(trade.id);
                       setStatus(`Closed trade ${trade.id}`);
                     })}>
                       <X size={15} />
-                    </button>
+                    </button></RoleGate>
                   ) : null}
                 </div>
               </div>

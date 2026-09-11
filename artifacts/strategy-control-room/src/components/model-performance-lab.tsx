@@ -10,6 +10,7 @@ import {
   runAndPersistModel,
   scoreRealizedModelPredictions
 } from "@/lib/api";
+import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 
@@ -67,7 +68,7 @@ export function ModelPerformanceLab() {
             <span className="font-medium">Symbol</span>
             <input className="focus-ring h-10 rounded-md border border-line px-3 uppercase" value={symbol} onChange={(event) => setSymbol(event.target.value.toUpperCase())} />
           </label>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
+          <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Persisting model run");
             const response = await runAndPersistModel(symbol);
             setLastRun(response);
@@ -75,15 +76,15 @@ export function ModelPerformanceLab() {
           })}>
             <Play size={16} />
             Save Run
-          </button>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
+          </button></RoleGate>
+          <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Scoring realized predictions");
             const response = await scoreRealizedModelPredictions(symbol);
             setStatus(`Checked ${response.checked}, scored ${response.scored}`);
           })}>
             <RefreshCw size={16} />
             Score
-          </button>
+          </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Refreshing model performance");
           })}>

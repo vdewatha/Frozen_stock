@@ -5,6 +5,7 @@ import { Landmark, RefreshCw, UploadCloud } from "lucide-react";
 
 import { EconomicIndicator, MacroContextSummary, getEconomicIndicators, getMacroContext, importEconomicData } from "@/lib/api";
 import { StatusPill } from "@/components/status-pill";
+import { RoleGate } from "@/components/access-control";
 
 function numberValue(value: string | number | null | undefined) {
   return Number(value ?? 0);
@@ -61,14 +62,14 @@ export function EconomicContextLab() {
           <div className="mt-1 text-sm text-slate-500">{status}</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
+          <RoleGate requires="researcher"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Importing fallback macro series");
             const response = await importEconomicData();
             setStatus(`Stored ${response.indicator_ids.length} ${response.source} observations`);
           })}>
             <UploadCloud size={16} />
             Import
-          </button>
+          </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Refreshing macro context");
           })}>

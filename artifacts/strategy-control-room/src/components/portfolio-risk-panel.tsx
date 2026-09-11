@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, ListChecks, MinusCircle, Play, RefreshCw, Scale, ShieldCheck, TrendingDown, X } from "lucide-react";
 
 import { AllocationReviewQueue, PortfolioAllocationExecution, PortfolioAllocationPlan, PortfolioRiskActionResponse, PortfolioRiskSnapshot, dryRunApprovedAllocationReview, executePortfolioAllocationPlan, getAllocationReviewQueue, getPortfolioAllocationPlan, getPortfolioRisk, reducePaperTrade, reviewAllocationQueueItem, runPortfolioRiskActions } from "@/lib/api";
+import { RoleGate } from "@/components/access-control";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -211,14 +212,14 @@ export function PortfolioRiskPanel() {
             <RefreshCw size={16} />
             Refresh
           </button>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => evaluateActions(true)} type="button">
+          <RoleGate requires="operator"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => evaluateActions(true)} type="button">
             <Play size={16} />
             Dry Run
-          </button>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={isBusy} onClick={() => evaluateActions(false)} type="button">
+          </button></RoleGate>
+          <RoleGate requires="operator"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white disabled:opacity-60" disabled={isBusy} onClick={() => evaluateActions(false)} type="button">
             <AlertTriangle size={16} />
             Run Actions
-          </button>
+          </button></RoleGate>
         </div>
       </div>
 
@@ -251,7 +252,7 @@ export function PortfolioRiskPanel() {
                     <span>Up {percent.format(item.probability_up)} | ER {percent.format(item.expected_return)}</span>
                   </div>
                   <div className="mt-2 text-slate-700">{item.reason}</div>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <RoleGate requires="operator" className="mt-3 flex flex-wrap gap-2">
                     <button className="focus-ring inline-flex h-8 items-center gap-1 rounded-md bg-mint px-2 text-xs font-semibold text-white disabled:opacity-60" disabled={isBusy} onClick={() => reviewQueueItem(item, "approve")} type="button">
                       <CheckCircle2 size={13} />
                       Approve
@@ -266,7 +267,7 @@ export function PortfolioRiskPanel() {
                       <X size={13} />
                       Skip
                     </button>
-                  </div>
+                  </RoleGate>
                 </div>
               ))}
             </div>
@@ -282,14 +283,14 @@ export function PortfolioRiskPanel() {
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="text-xs text-slate-500">{allocation?.positive_candidates ?? 0} positive candidates</div>
-            <button className="focus-ring inline-flex h-8 items-center justify-center gap-1 rounded-md border border-line px-2 text-xs font-medium disabled:opacity-60" disabled={isBusy} onClick={() => runAllocationExecutor(true)} type="button">
+            <RoleGate requires="operator"><button className="focus-ring inline-flex h-8 items-center justify-center gap-1 rounded-md border border-line px-2 text-xs font-medium disabled:opacity-60" disabled={isBusy} onClick={() => runAllocationExecutor(true)} type="button">
               <Play size={13} />
               Dry Run
-            </button>
-            <button className="focus-ring inline-flex h-8 items-center justify-center gap-1 rounded-md bg-mint px-2 text-xs font-semibold text-white disabled:opacity-60" disabled={isBusy} onClick={() => runAllocationExecutor(false)} type="button">
+            </button></RoleGate>
+            <RoleGate requires="operator"><button className="focus-ring inline-flex h-8 items-center justify-center gap-1 rounded-md bg-mint px-2 text-xs font-semibold text-white disabled:opacity-60" disabled={isBusy} onClick={() => runAllocationExecutor(false)} type="button">
               <CheckCircle2 size={13} />
               Execute
-            </button>
+            </button></RoleGate>
           </div>
         </div>
         {lastAllocationRun ? (
@@ -460,7 +461,7 @@ export function PortfolioRiskPanel() {
                   <td className="px-3 py-2 text-right">{currency.format(position.latest_price)}</td>
                   <td className={(position.unrealized_pl >= 0 ? "px-3 py-2 text-right font-semibold text-mint" : "px-3 py-2 text-right font-semibold text-coral")}>{currency.format(position.unrealized_pl)}</td>
                   <td className="px-3 py-2">
-                    <div className="flex justify-end gap-2">
+                    <RoleGate requires="operator" className="flex justify-end gap-2">
                       <button className="focus-ring inline-flex h-8 items-center justify-center gap-1 rounded-md border border-line px-2 text-xs font-medium disabled:opacity-60" disabled={isBusy} onClick={() => reducePosition(position.paper_trade_id, 0.5)} title="Reduce paper position by 50%" type="button">
                         <MinusCircle size={14} />
                         50%
@@ -469,7 +470,7 @@ export function PortfolioRiskPanel() {
                         <X size={14} />
                         Close
                       </button>
-                    </div>
+                    </RoleGate>
                   </td>
                 </tr>
               )) : (

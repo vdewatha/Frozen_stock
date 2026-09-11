@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Activity, BarChart3, BrainCircuit, FlaskConical, ShieldCheck } from "lucide-react";
 
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
+import { AccessRoleProvider, RoleGate } from "@/components/access-control";
 import { BrokerSafetyLab } from "@/components/broker-safety-lab";
 import { DeploymentMonitorPanel } from "@/components/deployment-monitor-panel";
 import { EconomicContextLab } from "@/components/economic-context-lab";
@@ -30,7 +31,7 @@ import { SafetyControlBar } from "@/components/safety-control-bar";
 import { StatusPill } from "@/components/status-pill";
 import { StrategyImprovementQueuePanel } from "@/components/strategy-improvement-queue";
 import { TradeScorecard } from "@/components/trade-scorecard";
-import { getDashboard, getErrorMessage, setAccessToken, type DashboardSnapshot } from "@/lib/api";
+import { getAuthSession, getDashboard, getErrorMessage, setAccessToken, type AccessRole, type DashboardSnapshot } from "@/lib/api";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -38,20 +39,21 @@ const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFracti
 export default function Login() {
   const [token, setToken] = useState("");
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
+  const [role, setRole] = useState<AccessRole | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  if (dashboard) return <><button className="p-4" onClick={() => { setAccessToken(""); setDashboard(null); setToken(""); }}>Sign out</button><Home dashboard={dashboard} /></>;
+  if (dashboard && role) return <AccessRoleProvider role={role}><Home dashboard={dashboard} role={role} onSignOut={() => { setAccessToken(""); setDashboard(null); setRole(null); setToken(""); }} /></AccessRoleProvider>;
   return <main className="mx-auto max-w-lg p-8"><h1>Trading research sign in</h1>
     <p>Enter your API access key. It is held only in this tab’s memory and cleared when you sign out or reload.</p>
     <form onSubmit={async event => { event.preventDefault(); setBusy(true); setError(""); setAccessToken(token.trim());
-      try { setDashboard(await getDashboard()); setToken(""); } catch (failure) { setAccessToken(""); setError(getErrorMessage(failure, "Sign in failed")); }
+      try { const [nextDashboard, session] = await Promise.all([getDashboard(), getAuthSession()]); setDashboard(nextDashboard); setRole(session.role); setToken(""); } catch (failure) { setAccessToken(""); setError(getErrorMessage(failure, "Sign in failed")); }
       finally { setBusy(false); }
     }}><label>Access key<input className="m-4 border p-2" type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} /></label>
     <button disabled={busy || !token.trim()} type="submit">{busy ? "Connecting…" : "Sign in"}</button></form>
     {error && <p role="alert">{error}</p>}</main>;
 }
 
-function Home({ dashboard }: { dashboard: DashboardSnapshot }) {
+function Home({ dashboard, role, onSignOut }: { dashboard: DashboardSnapshot; role: AccessRole; onSignOut: () => void }) {
 
   return (
     <main className="min-h-screen">
@@ -64,7 +66,13 @@ function Home({ dashboard }: { dashboard: DashboardSnapshot }) {
             </div>
             <h1 className="mt-1 text-2xl font-semibold text-ink">Strategy Control Room</h1>
           </div>
-          <SafetyControlBar />
+          <div className="grid gap-2 md:justify-items-end">
+            <div className="flex items-center gap-2">
+              <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold capitalize text-mint">{role}</span>
+              <button className="focus-ring rounded-md border border-line px-3 py-1 text-sm font-medium" onClick={onSignOut}>Sign out</button>
+            </div>
+            <SafetyControlBar />
+          </div>
         </div>
       </header>
 
@@ -95,19 +103,19 @@ function Home({ dashboard }: { dashboard: DashboardSnapshot }) {
 
         <DeploymentMonitorPanel />
 
-        <PredictionScanner />
+        <RoleGate requires="researcher"><PredictionScanner /></RoleGate>
 
-        <OpportunityRadar />
+        <RoleGate requires="researcher"><OpportunityRadar /></RoleGate>
 
-        <TradeScorecard />
+        <RoleGate requires="researcher"><TradeScorecard /></RoleGate>
 
-        <MemoryReplayPanel />
+        <RoleGate requires="researcher"><MemoryReplayPanel /></RoleGate>
 
         <NotificationCenter />
 
         <MarketLab />
 
-        <ModelLab />
+        <RoleGate requires="researcher"><ModelLab /></RoleGate>
 
         <ResearchRunsPanel />
 
@@ -121,17 +129,17 @@ function Home({ dashboard }: { dashboard: DashboardSnapshot }) {
 
         <BrokerSafetyLab />
 
-        <PortfolioRiskPanel />
+        <RoleGate requires="researcher"><PortfolioRiskPanel /></RoleGate>
 
         <PaperTradingLab />
 
         <ExperimentManagerLab />
 
-        <GovernanceLab />
+        <RoleGate requires="researcher"><GovernanceLab /></RoleGate>
 
-        <StrategyImprovementQueuePanel />
+        <RoleGate requires="researcher"><StrategyImprovementQueuePanel /></RoleGate>
 
-        <ReactivationReviewPanel />
+        <RoleGate requires="researcher"><ReactivationReviewPanel /></RoleGate>
 
         <AuditHistoryPanel />
 

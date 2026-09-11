@@ -5,6 +5,7 @@ import { Newspaper, RefreshCw, UploadCloud } from "lucide-react";
 
 import { NewsArticle, NewsSentimentSummary, getNewsArticles, getNewsSummary, importNews } from "@/lib/api";
 import { StatusPill } from "@/components/status-pill";
+import { RoleGate } from "@/components/access-control";
 
 function numberValue(value: string | number | null | undefined) {
   return Number(value ?? 0);
@@ -82,14 +83,14 @@ export function NewsSentimentLab() {
               <option value="mock">Fallback</option>
             </select>
           </label>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
+          <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus(`Importing ${provider} news`);
             const response = await importNews(symbol, provider);
             setStatus(`Stored ${response.article_ids.length} ${response.source} items${response.error ? " with fallback" : ""}`);
           })}>
             <UploadCloud size={16} />
             Import
-          </button>
+          </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Refreshing news context");
           })}>

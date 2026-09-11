@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BookOpenCheck, BrainCircuit, CheckCircle2, FileSearch, RefreshCw, Target } from "lucide-react";
 
 import { CandidateDecisionJournalEntry, CandidateDecisionScorecard, ScannerRefreshJob, TradeCandidateEvidence, TradeCandidateResponse, createCandidateDecisionJournalEntry, getCandidateDecisionJournal, getCandidateDecisionScorecard, getLatestTradeCandidateRefreshJob, getTradeCandidateEvidence, getTradeCandidates, reviewCandidateActivation, startTradeCandidateRefreshJob } from "@/lib/api";
+import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 const number = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -333,10 +334,10 @@ export function PredictionScanner() {
               )}
               {candidate.candidate_status === "positive_candidate" && candidate.strategy_status !== "paper_trading_active" ? (
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-xs font-semibold" disabled={isBusy} onClick={() => loadEvidence(candidate.symbol, candidate.strategy)} type="button">
+                  <RoleGate requires="admin"><button className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-xs font-semibold" disabled={isBusy} onClick={() => loadEvidence(candidate.symbol, candidate.strategy)} type="button">
                     <FileSearch size={15} />
                     Evidence
-                  </button>
+                  </button></RoleGate>
                   <button className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-xs font-semibold" disabled={isBusy} onClick={() => moveToCandidate(candidate.symbol, candidate.strategy)} type="button">
                     <CheckCircle2 size={15} />
                     Review for Paper
@@ -351,10 +352,10 @@ export function PredictionScanner() {
               ) : null}
               {candidate.candidate_status !== "positive_candidate" || candidate.strategy_status === "paper_trading_active" ? (
                 <div className="mt-3">
-                  <button className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-xs font-semibold" disabled={isBusy} onClick={() => loadEvidence(candidate.symbol, candidate.strategy)} type="button">
+                  <RoleGate requires="admin"><button className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-xs font-semibold" disabled={isBusy} onClick={() => loadEvidence(candidate.symbol, candidate.strategy)} type="button">
                     <FileSearch size={15} />
                     Evidence
-                  </button>
+                  </button></RoleGate>
                 </div>
               ) : null}
             </div>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ClipboardList, Play, RefreshCw } from "lucide-react";
 
 import { StatusPill } from "@/components/status-pill";
+import { RoleGate } from "@/components/access-control";
 import { AuditLog, StrategyGovernanceResponse, evaluateStrategies, getAuditLogs, getLatestStrategyGovernanceScorecard } from "@/lib/api";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -152,7 +153,7 @@ export function GovernanceLab() {
           <div className="mt-1 text-sm text-slate-500">{status}</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
+          <RoleGate requires="admin"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Evaluating lifecycle rules");
             const response = await evaluateStrategies();
             setResult(response);
@@ -165,7 +166,7 @@ export function GovernanceLab() {
           })}>
             <Play size={16} />
             Evaluate
-          </button>
+          </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Refreshing audit log");
           })}>

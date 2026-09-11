@@ -5,6 +5,7 @@ import { FlaskConical, Play, RefreshCw } from "lucide-react";
 
 import { StrategyExperiment, getStrategyExperiments, runStrategyExperiments } from "@/lib/api";
 import { StatusPill } from "@/components/status-pill";
+import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 
@@ -86,7 +87,7 @@ export function ExperimentManagerLab() {
             <input checked={applyPromotions} className="h-4 w-4 accent-mint" type="checkbox" onChange={(event) => setApplyPromotions(event.target.checked)} />
             Apply winner
           </label>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
+          <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Running parameter comparisons");
             const response = await runStrategyExperiments(symbol, strategy, applyPromotions);
             const promoted = response.experiments.filter((experiment) => experiment.decision === "promoted").length;
@@ -95,7 +96,7 @@ export function ExperimentManagerLab() {
           })}>
             <Play size={16} />
             Run
-          </button>
+          </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Refreshing experiments");
           })}>

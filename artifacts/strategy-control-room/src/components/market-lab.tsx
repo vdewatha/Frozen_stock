@@ -5,6 +5,7 @@ import { Database, Play, RefreshCw } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { BacktestResponse, MarketImportResponse, PriceHistoryResponse, getPriceHistory, importMarketData, runBacktest } from "@/lib/api";
+import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 
@@ -100,18 +101,18 @@ export function MarketLab() {
               ))}
             </select>
           </label>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={handleImport}>
+          <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={handleImport}>
             <RefreshCw size={16} />
             Import
-          </button>
+          </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={handleLoadHistory}>
             <Database size={16} />
             History
           </button>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={handleRunBacktest}>
+          <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={handleRunBacktest}>
             <Play size={16} />
             Backtest
-          </button>
+          </button></RoleGate>
         </div>
       </div>
 

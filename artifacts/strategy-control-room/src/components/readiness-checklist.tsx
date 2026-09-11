@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Database, RefreshCw, ShieldAlert, TriangleAlert } from "lucide-react";
 
 import { ReadinessSnapshot, getReadiness, importMarketData } from "@/lib/api";
+import { RoleGate } from "@/components/access-control";
 
 function statusClasses(status: string): string {
   if (status === "blocked") {
@@ -117,10 +118,10 @@ export function ReadinessChecklist() {
           <div className="mt-1 text-sm text-slate-500">{status}</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy || !repairSymbols.length} onClick={refreshMarketData} type="button">
+          <RoleGate requires="researcher"><button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy || !repairSymbols.length} onClick={refreshMarketData} type="button">
             <Database size={16} />
             Refresh Data
-          </button>
+          </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={refresh} type="button">
             <RefreshCw size={16} />
             Refresh

@@ -41,6 +41,9 @@ export type DashboardSnapshot = {
   generated_at: string;
 };
 
+export type AccessRole = "viewer" | "researcher" | "operator" | "admin";
+export type AuthSession = { role: AccessRole };
+
 export type PricePoint = {
   date: string;
   open: number;
@@ -1252,6 +1255,11 @@ async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = 
 export async function getDashboard(): Promise<DashboardSnapshot> {
   const response = await authenticatedFetch(`${API_BASE_URL}/dashboard`);
   return handleResponse<DashboardSnapshot>(response);
+}
+
+export async function getAuthSession(): Promise<AuthSession> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/auth/session`);
+  return handleResponse<AuthSession>(response);
 }
 
 export type ResearchRunSummary = {

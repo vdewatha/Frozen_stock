@@ -24,6 +24,7 @@ logger = logging.getLogger("trading.security")
 logger.setLevel(logging.INFO)
 ROLES = {"viewer": 0, "researcher": 1, "operator": 2, "admin": 3}
 READ_PATHS = {
+    "/auth/session",
     "/crypto/status", "/crypto/bindings", "/crypto/decisions", "/crypto/shadow-audits",
     "/crypto/paper/account", "/crypto/paper/intents",
     "/crypto/paper/external-fills",

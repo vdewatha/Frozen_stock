@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -133,6 +133,12 @@ router = APIRouter()
 @router.get("/health")
 def health() -> dict:
     return {"status": "ok", "paper_only": True, "live_trading": False}
+
+
+@router.get("/auth/session")
+def auth_session(request: Request) -> dict:
+    """Return the service principal's role, never its credential."""
+    return {"role": request.state.actor}
 
 
 @router.get("/system/readiness", response_model=ReadinessResponse)

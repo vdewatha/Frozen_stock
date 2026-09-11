@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bell, CheckCheck, ExternalLink, RefreshCw, ShieldAlert } from "lucide-react";
 
 import { NotificationItem, acknowledgeNotification, getNotifications, resolveNotification } from "@/lib/api";
+import { RoleGate } from "@/components/access-control";
 
 function tone(severity: string): string {
   if (severity === "critical") {
@@ -168,15 +169,15 @@ export function NotificationCenter() {
                     </a>
                   ) : null}
                   {item.status === "open" ? (
-                    <button className="focus-ring inline-flex h-8 items-center gap-2 rounded-md border border-line px-2 text-xs font-medium" disabled={isBusy} onClick={() => runAction(() => acknowledgeNotification(item.id))} type="button">
+                    <RoleGate requires="admin"><button className="focus-ring inline-flex h-8 items-center gap-2 rounded-md border border-line px-2 text-xs font-medium" disabled={isBusy} onClick={() => runAction(() => acknowledgeNotification(item.id))} type="button">
                       <CheckCheck size={14} />
                       Acknowledge
-                    </button>
+                    </button></RoleGate>
                   ) : null}
                   {item.status !== "resolved" ? (
-                    <button className="focus-ring inline-flex h-8 items-center gap-2 rounded-md bg-mint px-2 text-xs font-semibold text-white" disabled={isBusy} onClick={() => runAction(() => resolveNotification(item.id))} type="button">
+                    <RoleGate requires="admin"><button className="focus-ring inline-flex h-8 items-center gap-2 rounded-md bg-mint px-2 text-xs font-semibold text-white" disabled={isBusy} onClick={() => runAction(() => resolveNotification(item.id))} type="button">
                       Resolve
-                    </button>
+                    </button></RoleGate>
                   ) : null}
                 </div>
               </div>

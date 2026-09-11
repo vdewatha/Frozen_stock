@@ -12,6 +12,7 @@ class SecurityTests(unittest.TestCase):
     def test_required_role_frontend_route_matrix(self):
         cases = {
             ("GET", "/dashboard"): "viewer",
+            ("GET", "/auth/session"): "viewer",
             ("GET", "/market-data/SPY"): "viewer",
             ("GET", "/news/SPY/summary"): "viewer",
             ("GET", "/learning/workers/abc-123"): "viewer",
@@ -61,7 +62,7 @@ class SecurityTests(unittest.TestCase):
         config.update(overrides)
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware, configuration=Settings(_env_file=None, **config))
-        for path, method in [("/health", "GET"), ("/dashboard", "GET"), ("/trade-candidates", "GET"),
+        for path, method in [("/health", "GET"), ("/dashboard", "GET"), ("/auth/session", "GET"), ("/trade-candidates", "GET"),
                              ("/models/run", "POST"), ("/paper-trading/run-signal", "POST"),
                              ("/safety/kill-switch/disable", "POST"), ("/new-route", "GET")]:
             app.add_api_route(path, lambda: {"ok": True}, methods=[method])
@@ -87,6 +88,24 @@ class SecurityTests(unittest.TestCase):
                 with self.subTest(role=role, path=path):
                     response = client.request(method, path, headers=self.headers(role))
                     self.assertEqual(response.status_code, 200 if level >= required else 403)
+
+    def test_authenticated_role_is_available_without_credential_material(self):
+        from starlette.requests import Request
+
+        app = FastAPI()
+        config = {f"auth_{role}_key": role.ljust(40, "-") for role in ("viewer", "researcher", "operator", "admin")}
+        app.add_middleware(AuthenticationMiddleware, configuration=Settings(_env_file=None, **config))
+
+        @app.get("/auth/session")
+        def session(request: Request):
+            return {"role": request.state.actor}
+
+        client = TestClient(app)
+        for role in ("viewer", "researcher", "operator", "admin"):
+            response = client.get("/auth/session", headers=self.headers(role))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"role": role})
+            self.assertNotIn(role.ljust(40, "-"), response.text)
 
     def test_configuration_fails_closed(self):
         for config in ({"auth_admin_key": "short"}, {"auth_admin_key": "viewer".ljust(40, "-")}):

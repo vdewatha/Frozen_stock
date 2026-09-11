@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Save, ShieldCheck } from "lucide-react";
 
 import { RiskRule, RiskSettingsUpdate, updateRiskSettings } from "@/lib/api";
+import { RoleGate } from "@/components/access-control";
 
 type FieldKey = Exclude<keyof RiskSettingsUpdate, "reason">;
 
@@ -111,7 +112,7 @@ export function RiskSettingsPanel({ initialRule }: { initialRule: RiskRule | nul
           <ShieldCheck size={19} className="text-mint" />
           <h2 className="text-base font-semibold">Risk Settings</h2>
         </div>
-        <button
+        <RoleGate requires="admin"><button
           className="focus-ring inline-flex h-9 items-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white disabled:opacity-60"
           disabled={isSaving}
           onClick={saveSettings}
@@ -119,9 +120,9 @@ export function RiskSettingsPanel({ initialRule }: { initialRule: RiskRule | nul
         >
           <Save size={16} />
           Save
-        </button>
+        </button></RoleGate>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <RoleGate requires="admin"><div className="grid gap-3 sm:grid-cols-2">
         {fields.map((field) => (
           <label className="grid gap-1 text-sm" key={field.key}>
             <span className="font-medium">{field.label}</span>
@@ -136,7 +137,7 @@ export function RiskSettingsPanel({ initialRule }: { initialRule: RiskRule | nul
             />
           </label>
         ))}
-      </div>
+      </div></RoleGate>
       <div className="mt-3 grid gap-2 text-sm">
         <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-mint">
           <span className="font-semibold">Paper-only lock</span>

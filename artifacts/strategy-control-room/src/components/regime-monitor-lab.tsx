@@ -5,6 +5,7 @@ import { CloudSun, Play, RefreshCw } from "lucide-react";
 
 import { MarketRegime, detectMarketRegime, getMarketRegimes } from "@/lib/api";
 import { StatusPill } from "@/components/status-pill";
+import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 
@@ -65,14 +66,14 @@ export function RegimeMonitorLab() {
             <span className="font-medium">Proxy</span>
             <input className="focus-ring h-10 rounded-md border border-line px-3 uppercase" value={symbol} onChange={(event) => setSymbol(event.target.value.toUpperCase())} />
           </label>
-          <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
+          <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Detecting market regime");
             const response = await detectMarketRegime(symbol);
             setStatus(`Detected ${regimeLabel(response.market_regime)} for ${response.regime_date}`);
           })}>
             <Play size={16} />
             Detect
-          </button>
+          </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Refreshing regimes");
           })}>

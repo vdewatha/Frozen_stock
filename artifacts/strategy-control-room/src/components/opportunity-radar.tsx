@@ -5,6 +5,7 @@ import { BarChart3, Database, Newspaper, RefreshCw, Target } from "lucide-react"
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { CompanyOpportunityRadar, getLatestTradeCandidateRefreshJob, getOpportunityRadar, getWatchlistDiscovery, importWatchlist, startTradeCandidateRefreshJob, WatchlistDiscovery } from "@/lib/api";
+import { canAccess, RoleGate, useAccessRole } from "@/components/access-control";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -27,6 +28,8 @@ function badgeClass(value: string): string {
 }
 
 export function OpportunityRadar() {
+  const role = useAccessRole();
+  const canDiscover = canAccess(role, "admin");
   const [radar, setRadar] = useState<CompanyOpportunityRadar | null>(null);
   const [discovery, setDiscovery] = useState<WatchlistDiscovery | null>(null);
   const [status, setStatus] = useState("Loading company opportunity radar");
@@ -35,9 +38,12 @@ export function OpportunityRadar() {
   async function refresh(refreshNews = false) {
     setIsBusy(true);
     try {
-      const [response, discovered] = await Promise.all([getOpportunityRadar(8, refreshNews, "auto"), getWatchlistDiscovery(10)]);
+      const [response, discovered] = await Promise.all([
+        getOpportunityRadar(8, refreshNews, "auto"),
+        canDiscover ? getWatchlistDiscovery(10) : Promise.resolve(null),
+      ]);
       setRadar(response);
-      setDiscovery(discovered);
+      if (discovered) setDiscovery(discovered);
       const importNote = response.news_imports.length ? `; refreshed ${response.news_imports.length} news feeds` : "";
       setStatus(`Ranked ${response.asset_count} symbols from charts, news, and scanner evidence${importNote}`);
     } catch (error) {
@@ -67,9 +73,9 @@ export function OpportunityRadar() {
         }
       }
       const radarResponse = await getOpportunityRadar(8, false, "auto");
-      const discovered = await getWatchlistDiscovery(10);
+      const discovered = canDiscover ? await getWatchlistDiscovery(10) : null;
       setRadar(radarResponse);
-      setDiscovery(discovered);
+      if (discovered) setDiscovery(discovered);
       const scanNote = completedJob.status === "complete"
         ? `; scanner refreshed ${completedJob.payload.candidate_count ?? 0} strategy checks with ${completedJob.payload.positive_count ?? 0} positives`
         : "";
@@ -83,16 +89,19 @@ export function OpportunityRadar() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([getOpportunityRadar(8, false, "auto"), getWatchlistDiscovery(10)]).then(([response, discovered]) => {
+    Promise.all([
+      getOpportunityRadar(8, false, "auto"),
+      canDiscover ? getWatchlistDiscovery(10) : Promise.resolve(null),
+    ]).then(([response, discovered]) => {
       if (!active) return;
       setRadar(response);
-      setDiscovery(discovered);
+      if (discovered) setDiscovery(discovered);
       const importNote = response.news_imports.length ? `; refreshed ${response.news_imports.length} news feeds` : "";
       setStatus(`Ranked ${response.asset_count} symbols from charts, news, and scanner evidence${importNote}`);
     }).catch(error => { if (active) setStatus(error instanceof Error ? error.message : "Opportunity radar refresh failed"); })
       .finally(() => { if (active) setIsBusy(false); });
     return () => { active = false; };
-  }, []);
+  }, [canDiscover]);
 
   return (
     <section className="rounded-md border border-line bg-white">
@@ -116,11 +125,13 @@ export function OpportunityRadar() {
         </div>
       </div>
 
+      <RoleGate requires="admin">
       {discovery ? (
         <div className="border-b border-line px-4 py-3 text-sm text-slate-600">
           Discovery queue: {discovery.candidates.filter((candidate) => !candidate.already_active).slice(0, 6).map((candidate) => candidate.symbol).join(", ") || "all curated large caps are active"}
         </div>
       ) : null}
+      </RoleGate>
 
       <div className="grid gap-3 p-4 xl:grid-cols-2">
         {radar?.opportunities.length ? radar.opportunities.map((row) => (

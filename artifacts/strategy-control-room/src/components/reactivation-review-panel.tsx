@@ -11,6 +11,7 @@ import {
   reviewStrategyReactivation
 } from "@/lib/api";
 import { StatusPill } from "@/components/status-pill";
+import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 
@@ -102,7 +103,7 @@ export function ReactivationReviewPanel() {
                 </div>
                 <div className="mt-1 text-xs text-slate-500">{candidate.strategy_type} | {candidate.memory.symbol ?? "no symbol"} | {candidate.memory.market_regime ?? "unclassified"}</div>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <RoleGate requires="admin" className="flex flex-wrap gap-2">
                 <button className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => submitReview(candidate, "hold")} type="button">
                   <CirclePause size={15} />
                   Hold
@@ -115,7 +116,7 @@ export function ReactivationReviewPanel() {
                   <CheckCircle2 size={15} />
                   Approve
                 </button>
-              </div>
+              </RoleGate>
             </div>
 
             <div className="grid gap-3 p-3 lg:grid-cols-[1fr_1.2fr]">
