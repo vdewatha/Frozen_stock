@@ -1,0 +1,22 @@
+[project]
+name = "repl-nix-workspace"
+version = "0.1.0"
+description = "Python runtime dependencies for the imported paper-trading API"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "alembic==1.13.2",
+    "celery==5.4.0",
+    "fastapi==0.112.0",
+    "httpx==0.27.2",
+    "numpy==2.0.1",
+    "pandas==2.2.2",
+    "psycopg[binary]==3.2.13",
+    "pydantic==2.8.2",
+    "pydantic-settings==2.4.0",
+    "python-dotenv==1.0.1",
+    "redis==5.0.8",
+    "scikit-learn==1.5.1",
+    "sqlalchemy==2.0.32",
+    "uvicorn[standard]==0.30.5",
+    "yfinance==0.2.41",
+]

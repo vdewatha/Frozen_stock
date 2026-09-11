@@ -1,0 +1,6 @@
+# Minimal isolated environment for the initial research integrations.
+# Application-wide validation still requires requirements.txt.
+numpy==2.0.1
+pandas==2.2.2
+scikit-learn==1.5.1
+httpx==0.27.2

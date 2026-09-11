@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
-    "build": "node ./build.mjs",
-    "start": "node --enable-source-maps ./dist/index.mjs",
+    "dev": "cd backend && python3.11 -m alembic upgrade head && python3.11 -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:?PORT environment variable is required}",
+    "build": "python3.11 -m compileall -q backend/app",
+    "start": "cd backend && python3.11 -m alembic upgrade head && python3.11 -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:?PORT environment variable is required}",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

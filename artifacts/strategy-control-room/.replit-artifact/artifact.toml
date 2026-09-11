@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Strategy Control Room"
+description = "A paper-only trading research dashboard for monitoring strategies, risk controls, market signals, experiments, and simulated portfolio performance."
+version = "1.0.0"
+id = "artifacts/strategy-control-room"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18936
+
+[services.development]
+run = "pnpm --filter @workspace/strategy-control-room run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/strategy-control-room", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/strategy-control-room/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18936"
+BASE_PATH = "/"

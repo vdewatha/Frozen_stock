@@ -1,0 +1,8 @@
+FROM trading-paper-comparison:20260906-gaps
+WORKDIR /app
+COPY app /app/app
+COPY scripts /app/scripts
+ENV ALLOW_LIVE_TRADING=false
+ENV OPENBLAS_NUM_THREADS=1
+ENV OMP_NUM_THREADS=1
+ENTRYPOINT ["python", "scripts/run_forward_experiment.py"]
