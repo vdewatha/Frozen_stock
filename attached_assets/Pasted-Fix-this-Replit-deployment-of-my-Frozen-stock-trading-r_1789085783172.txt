@@ -1,0 +1,84 @@
+Fix this Replit deployment of my Frozen_stock trading-research application. Diagnose the actual deployed code and configuration, implement the fixes, test them, and report what works versus what remains blocked.
+
+Repository: https://github.com/vdewatha/Frozen_stock
+
+Current symptoms:
+- Numerous dashboard panels show “Request failed: 403.”
+- Deployment Monitor reports Redis connection failed.
+- Trusted market data is missing for AAPL, MSFT, QQQ and SPY.
+- No registered research models or verified account/equity history.
+- Broker test returns 409.
+- The sign-in page publicly displays a preview operator key.
+- Scheduler Health says jobs are configured, but this does not prove workers are running.
+
+Important boundaries:
+- Keep ALLOW_LIVE_TRADING=false.
+- Do not place real orders, connect real capital, weaken authentication, grant everyone admin access, or bypass risk controls.
+- Do not fabricate prices, predictions, trades, balances, performance, or successful health checks.
+- Do not reset databases or delete evidence. Back up existing state before migrations.
+- Never print credentials or commit secrets.
+- Do not claim this hosted stock dashboard is connected to the separate frozen BTC/USD experiment unless that connection is actually verified.
+
+Work through these steps:
+
+1. Inspect and establish the deployment state
+- Compare deployed code with the GitHub repository and identify Replit-specific changes.
+- Identify the frontend, backend, database, Redis, workers, scheduler, API URL and authentication configuration.
+- Record a baseline of failing requests and their backend error details without exposing secrets.
+- Distinguish an inaccessible endpoint, insufficient permissions, missing infrastructure and unavailable data.
+
+2. Secure authentication
+- Remove the publicly displayed preview key.
+- Treat that key as exposed: revoke/rotate its backend configuration through Replit Secrets. Ask me to complete any credential step you cannot perform securely.
+- Verify the old key is rejected after rotation.
+- Preserve separate viewer/researcher/operator/admin permissions.
+- Never put private keys in NEXT_PUBLIC variables, browser bundles, logs or Git.
+
+3. Fix the 403 failures properly
+- Audit every dashboard request against backend authorization rules.
+- Explicitly classify legitimate endpoints using least privilege.
+- Inspect GET endpoints for database writes before granting read-only access.
+- Keep administrative mutations restricted.
+- Make the frontend show only authorized actions, with clear “permission required” messages instead of generic failures.
+- Add tests proving both allowed access and forbidden actions for each role. Do not solve this by using an admin key everywhere.
+
+4. Fix background infrastructure
+- Configure a reachable Redis instance through REDIS_URL.
+- Start the required Celery workers and exactly one scheduler using a hosting-supported process setup.
+- Verify actual worker heartbeats, queue consumption and completed scheduled jobs.
+- Make readiness distinguish “configured” from “running and healthy.”
+- Surface failures clearly.
+- If this Replit environment cannot reliably run the required processes or persistent storage, explain that limitation and propose a supported deployment arrangement. Do not purchase services without approval.
+
+5. Restore trusted data and clarify research state
+- Run supported real market-data imports for active assets and verify freshness, provenance and required history.
+- Show provider failures honestly; do not substitute synthetic data as trusted.
+- Clearly label fallback economic data and keep it out of evidence that requires real observations.
+- Do not invent or recreate the private local trained models or experiment ledger.
+- If those artifacts are required, list exactly what must be transferred securely and how their hashes will be verified.
+- Keep the stock dashboard and the separate frozen crypto experiment clearly distinguished.
+
+6. Repair misleading dashboard behavior
+- Keep unavailable account balances/P&L visibly unavailable until backed by verified evidence.
+- Replace [object Object] with readable asset-specific diagnostics.
+- Distinguish loading, empty, permission denied, dependency unavailable and failed states.
+- Explain the intentional 409 for disabled manual broker orders; remove or disable incompatible controls rather than bypassing the backend.
+- Verify the deployed frontend uses the correct HTTPS API URL, including Next.js build-time configuration and CORS.
+
+7. Verify and deliver
+- Run backend tests, frontend type checking, lint and production build.
+- Add regression tests for the issues fixed.
+- Test the deployed UI with appropriate roles.
+- Confirm unauthenticated requests fail, prohibited actions stay prohibited, Redis/workers genuinely function, and data-dependent panels use real data.
+- Independently review the changes if another agent is available; fix actionable findings.
+- Preserve my existing work. Commit source/configuration templates only, never secrets or private research artifacts.
+
+Provide a final checklist:
+- Root causes found
+- Files and configuration changed
+- Tests and deployed checks performed
+- Features now working
+- Remaining blockers and exact actions needed from me
+- Confirmation that live trading remains disabled
+
+Do not report “everything fixed” merely because the page loads.
