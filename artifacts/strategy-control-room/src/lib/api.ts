@@ -2186,13 +2186,13 @@ export type ForwardTrialMetricHistoryItem = {
     observed_sessions?: number;
     expected_observations?: number;
     observed_observations?: number;
-    decision_coverage?: number;
+    decision_coverage?: string | number;
     closed_trades?: number;
     provisional_gross_pnl?: number;
     gross_pnl?: number;
     net_pnl?: number;
     expectancy?: number;
-    win_rate?: number;
+    win_rate?: string | number | null;
     max_drawdown?: number;
     benchmark_buy_hold?: number;
     costs_known?: boolean;

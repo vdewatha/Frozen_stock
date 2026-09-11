@@ -1,4 +1,6 @@
+import json
 import unittest
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -28,12 +30,21 @@ from app.services.stock_forward_trial import (
     execute_pending_decisions, _trial_allocated_notional, stop_trial,
     _trial_equity_curve_max_drawdown, _evidence_allows_trade,
 )
+from app.services.stock_paper_ledger import reserve_stock_paper_order
 from app.tasks.jobs import stock_forward_trial_observe_job
 from app.services.stock_training_jobs import StockTrainingError
 from app.services.stock_training import FEATURES
 
 
 class ForwardTrialTests(unittest.TestCase):
+    def _mock_exit_order(self, db, kwargs):
+        order = StockPaperOrder(account_id=1, client_order_id=kwargs["idempotency_key"],
+            symbol=kwargs["symbol"], side=kwargs["side"], quantity=kwargs["quantity"],
+            status="reserved", source="manual_control_room")
+        db.add(order)
+        db.flush()
+        return order
+
     def setUp(self):
         self.tmp = TemporaryDirectory()
         self.engine = create_engine("sqlite:///" + str(Path(self.tmp.name) / "trial.sqlite"))
@@ -176,7 +187,7 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(db.query(StockPaperTrialDecision).count(), 0)
             self.assertEqual(db.query(StockPaperOrder).count(), 0)
 
-    def _post_close_patches(self, db, row, probability):
+    def _post_close_patches(self, db, row, probability, feature_date=date(2025, 1, 2)):
         """Return exact-artifact/model/calibrator patches plus a no-network order mock."""
         root = Path(self.tmp.name) / "selected"
         root.mkdir()
@@ -196,7 +207,7 @@ class ForwardTrialTests(unittest.TestCase):
             open=Decimal("100"), close=Decimal("100"), adjusted_close=Decimal("100"),
             high=Decimal("101"), low=Decimal("99"), volume=100, source="yfinance"))
         db.flush()
-        featured = pd.DataFrame([{**{name: 1.0 for name in FEATURES}, "date": date(2025, 1, 1)}])
+        featured = pd.DataFrame([{**{name: 1.0 for name in FEATURES}, "date": feature_date}])
         model = MagicMock()
         model.predict_proba.return_value = np.array([[1 - probability, probability]])
         calibrator = MagicMock()
@@ -241,7 +252,7 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(decision.action, "buy")
             self.assertEqual(decision.lineage["execution_reference_timestamp"], opened.isoformat())
             self.assertEqual(decision.lineage["observation_timestamp"], now.isoformat())
-            self.assertEqual(decision.lineage["feature_timestamp"], "2025-01-01T00:00:00+00:00")
+            self.assertEqual(decision.lineage["feature_timestamp"], "2025-01-02T00:00:00+00:00")
             self.assertEqual(db.query(StockPaperOrder).count(), 0)
 
     def enter_contexts(self, patches):
@@ -261,6 +272,27 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(decision.action, "reject")
             self.assertEqual(decision.rejection_reason, "model_signal_not_qualifying")
             self.assertEqual(db.query(StockPaperOrder).count(), 0)
+
+    def test_prior_session_daily_features_are_rejected_without_order(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            patches, _, _, _ = self._post_close_patches(db, row, 0.8, date(2025, 1, 1))
+            with self.enter_contexts(patches):
+                observe_trial(db, row.id)
+            self.assertEqual(db.query(StockPaperTrialDecision).count(), 0)
+            self.assertEqual(db.query(StockPaperOrder).count(), 0)
+
+    def test_multi_day_stale_daily_features_do_not_count_for_coverage(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            row.policy = {**row.policy, "regular_sessions": 1}
+            patches, _, _, _ = self._post_close_patches(db, row, 0.8, date(2024, 12, 29))
+            with self.enter_contexts(patches):
+                observe_trial(db, row.id)
+                metric = evaluate_trial(db, row.id)
+            self.assertEqual(db.query(StockPaperTrialDecision).count(), 0)
+            self.assertEqual(db.query(StockPaperOrder).count(), 0)
+            self.assertEqual(metric.payload["decision_coverage"], "0")
 
     def test_pending_decision_executes_next_session_once_with_shared_risk_cap(self):
         with Session(self.engine) as db:
@@ -391,7 +423,8 @@ class ForwardTrialTests(unittest.TestCase):
             account.accounting_verified = True
             now = datetime.now(timezone.utc)
             with patch("app.services.stock_paper_ledger.session_bounds",
-                       return_value=(now.replace(hour=14), now.replace(hour=21))), \
+                       return_value=(now - pd.Timedelta(minutes=1),
+                                     now + pd.Timedelta(minutes=1))), \
                  patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}), \
                  patch("app.services.stock_paper_ledger._validate_reference_price"), \
                  patch("app.services.stock_paper_ledger._validate_signal_buy",
@@ -600,7 +633,7 @@ class ForwardTrialTests(unittest.TestCase):
                                               datetime(d.year, d.month, d.day, 21, tzinfo=timezone.utc))):
                 metric = evaluate_trial(db, row.id)
             self.assertEqual(metric.payload["observed_sessions"], 20)
-            self.assertGreaterEqual(metric.payload["decision_coverage"], Decimal("0.90"))
+            self.assertGreaterEqual(Decimal(metric.payload["decision_coverage"]), Decimal("0.90"))
             self.assertEqual(metric.classification, "insufficient")
 
     def test_drawdown_pauses_before_model_or_order(self):
@@ -995,6 +1028,9 @@ class ForwardTrialTests(unittest.TestCase):
                 broker_activity_id="partial-entry-fill", broker_order_id="partial-entry-broker",
                 symbol="SPY", side="buy", quantity=Decimal("2"), price=Decimal("100"),
                 fee=Decimal("0"), cost_known=True, filled_at=datetime(2025, 1, 2, 15), raw_payload={}))
+            db.add(IntradayBar(symbol="SPY", timeframe="1m", opened_at=datetime(2025, 1, 3, 20, 59),
+                open=100, high=100, low=100, close=100, volume=1, provider="alpaca",
+                feed_class="sip", exchange_timestamp=datetime(2025, 1, 3, 20, 59)))
             db.flush()
             lot.exit_status = "filled"
             lot.exited_quantity = Decimal("1")
@@ -1003,6 +1039,235 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(row.status, "stopped")
             self.assertNotEqual(row.status, "completed")
 
+    def test_operator_stop_marks_open_lot_and_links_next_session_exit(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="running")
+            self.account(db)
+            entry = StockPaperOrder(account_id=1, client_order_id="operator-entry",
+                symbol="SPY", side="buy", quantity=Decimal("1"), status="filled",
+                source="manual_control_room")
+            db.add(entry); db.flush()
+            decision = StockPaperTrialDecision(trial_id=row.id, symbol="SPY",
+                bar_timestamp=datetime(2025, 1, 2), decision_timestamp=datetime(2025, 1, 2),
+                action="buy", qualifying=True, lineage=row.lineage, order_id=entry.id)
+            db.add(decision); db.flush()
+            lot = StockPaperTrialLot(trial_id=row.id, symbol="SPY",
+                entry_decision_id=decision.id, entry_order_id=entry.id, quantity=Decimal("1"),
+                entry_session="2025-01-02", planned_horizon_sessions=5)
+            db.add(lot)
+            db.add(StockPaperFill(account_id=1, order_id=entry.id,
+                broker_activity_id="operator-entry-fill", broker_order_id="operator-entry-broker",
+                symbol="SPY", side="buy", quantity=Decimal("1"), price=Decimal("100"),
+                fee=Decimal("0"), cost_known=True, filled_at=datetime(2025, 1, 2, 15), raw_payload={}))
+            db.flush()
+            stop_trial(db, row.id)
+            self.assertEqual(lot.exit_reason, "operator_stop")
+            with patch("app.services.stock_forward_trial._now",
+                       return_value=datetime(2025, 1, 3, 15, tzinfo=timezone.utc)), \
+                 patch("app.services.stock_forward_trial.session_bounds",
+                       return_value=(datetime(2025, 1, 3, 14, 30, tzinfo=timezone.utc),
+                                     datetime(2025, 1, 3, 21, tzinfo=timezone.utc))), \
+                 patch("app.services.stock_forward_trial.reserve_stock_paper_order",
+                       side_effect=lambda db, **kwargs: self._mock_exit_order(db, kwargs)), \
+                 patch("app.services.stock_forward_trial.dispatch_reserved_order") as dispatch:
+                execute_pending_decisions(db, row.id)
+            self.assertEqual(lot.exit_reason, "operator_stop")
+
+    def test_closed_known_cost_winner_payload_is_json_serializable(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="stopped")
+            entry = StockPaperOrder(account_id=1, client_order_id="metric-entry",
+                symbol="SPY", side="buy", quantity=Decimal("1"), status="filled",
+                source="manual_control_room")
+            exit_order = StockPaperOrder(account_id=1, client_order_id="trial-exit:1:attempt-1",
+                symbol="SPY", side="sell", quantity=Decimal("1"), status="filled",
+                source="manual_control_room")
+            db.add_all([entry, exit_order]); db.flush()
+            decision = StockPaperTrialDecision(trial_id=row.id, symbol="SPY",
+                bar_timestamp=datetime(2025, 1, 2), decision_timestamp=datetime(2025, 1, 2),
+                action="buy", qualifying=True, lineage=row.lineage, order_id=entry.id)
+            db.add(decision); db.flush()
+            lot = StockPaperTrialLot(trial_id=row.id, symbol="SPY",
+                entry_decision_id=decision.id, entry_order_id=entry.id, quantity=Decimal("1"),
+                entry_session="2025-01-02", planned_horizon_sessions=5,
+                exit_order_id=exit_order.id, exit_status="closed")
+            db.add(lot); db.flush()
+            exit_order.trial_lot_id = lot.id
+            db.add_all([
+                StockPaperFill(account_id=1, order_id=entry.id, broker_activity_id="metric-in",
+                    broker_order_id="metric-in-b", symbol="SPY", side="buy", quantity=Decimal("1"),
+                    price=Decimal("100"), fee=Decimal("1"), cost_known=True,
+                    filled_at=datetime(2025, 1, 2, 15), raw_payload={}),
+                StockPaperFill(account_id=1, order_id=exit_order.id, broker_activity_id="metric-out",
+                    broker_order_id="metric-out-b", symbol="SPY", side="sell", quantity=Decimal("1"),
+                    price=Decimal("110"), fee=Decimal("1"), cost_known=True,
+                    filled_at=datetime(2025, 1, 3, 15), raw_payload={}),
+            ])
+            metric = evaluate_trial(db, row.id)
+            db.commit()
+            json.dumps(metric.payload)
+            self.assertIsInstance(metric.payload["win_rate"], str)
+
+    def test_stale_daily_features_defer_until_exact_session_features_arrive(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            patches, _, _, _ = self._post_close_patches(db, row, 0.8, date(2025, 1, 1))
+            patches[5] = patch("app.services.stock_forward_trial.generate_features",
+                side_effect=[
+                    pd.DataFrame([{**{name: 1.0 for name in FEATURES},
+                                   "date": date(2025, 1, 1)}]),
+                    pd.DataFrame([{**{name: 1.0 for name in FEATURES},
+                                   "date": date(2025, 1, 2)}])])
+            with self.enter_contexts(patches):
+                observe_trial(db, row.id)
+                self.assertEqual(db.query(StockPaperTrialDecision).count(), 0)
+                observe_trial(db, row.id)
+            self.assertEqual(db.query(StockPaperTrialDecision).count(), 1)
+            self.assertEqual(db.query(StockPaperTrialDecision).one().action, "buy")
+
+    def test_blocked_unstarted_trial_job_remains_restartable_with_zero_sessions(self):
+        from app.tasks import jobs
+        with Session(self.engine) as db:
+            row = self.trial(db, status="blocked")
+            trial_id = row.id
+            db.commit()
+        metric = MagicMock(classification="insufficient")
+        def run_job(_name, work):
+            with Session(self.engine) as db:
+                return work(db)
+        with patch.object(jobs, "_run_job", side_effect=run_job), \
+             patch.object(jobs, "observe_trial"), \
+             patch.object(jobs, "execute_pending_decisions"), \
+             patch.object(jobs, "evaluate_trial", return_value=metric):
+            result = stock_forward_trial_observe_job.run()
+        with Session(self.engine) as db:
+            refreshed = db.get(StockPaperTrial, trial_id)
+            self.assertEqual(refreshed.status, "blocked")
+            self.assertIsNone(refreshed.started_at)
+        self.assertEqual(result["trials"][0]["status"], "blocked")
+
+    def test_curve_drawdown_pause_sets_lot_exit_intent(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            patches, _, _, _ = self._post_close_patches(db, row, 0.2)
+            with patch("app.services.stock_forward_trial._trial_equity_curve_max_drawdown",
+                       return_value=Decimal("0.02")):
+                with self.enter_contexts(patches):
+                    result = observe_trial(db, row.id)
+            self.assertEqual(row.pause_reason, "trial_drawdown_limit_2_percent")
+            self.assertEqual(result["status"], "paused")
+
+    def test_partial_lot_cannot_change_closed_trade_metrics(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="stopped")
+            entry = StockPaperOrder(account_id=1, client_order_id="metric-full-in",
+                symbol="SPY", side="buy", quantity=Decimal("1"), status="filled",
+                source="manual_control_room")
+            exit_order = StockPaperOrder(account_id=1, client_order_id="trial-exit:1:attempt-1",
+                symbol="SPY", side="sell", quantity=Decimal("1"), status="filled",
+                source="manual_control_room")
+            db.add_all([entry, exit_order]); db.flush()
+            decision = StockPaperTrialDecision(trial_id=row.id, symbol="SPY",
+                bar_timestamp=datetime(2025, 1, 2), decision_timestamp=datetime(2025, 1, 2),
+                action="buy", qualifying=True, lineage=row.lineage, order_id=entry.id)
+            db.add(decision); db.flush()
+            lot = StockPaperTrialLot(trial_id=row.id, symbol="SPY",
+                entry_decision_id=decision.id, entry_order_id=entry.id, quantity=Decimal("1"),
+                entry_session="2025-01-02", exit_order_id=exit_order.id, exit_status="closed")
+            db.add(lot); db.flush()
+            exit_order.trial_lot_id = lot.id
+            db.add_all([
+                StockPaperFill(account_id=1, order_id=entry.id, broker_activity_id="mi",
+                    broker_order_id="mi", symbol="SPY", side="buy", quantity=Decimal("1"),
+                    price=Decimal("100"), fee=Decimal("1"), cost_known=True,
+                    filled_at=datetime(2025, 1, 2, 15), raw_payload={}),
+                StockPaperFill(account_id=1, order_id=exit_order.id, broker_activity_id="mo",
+                    broker_order_id="mo", symbol="SPY", side="sell", quantity=Decimal("1"),
+                    price=Decimal("110"), fee=Decimal("1"), cost_known=True,
+                    filled_at=datetime(2025, 1, 3, 15), raw_payload={})])
+            db.flush()
+            metric = evaluate_trial(db, row.id)
+            self.assertEqual(metric.payload["closed_trades"], 1)
+            self.assertEqual(Decimal(metric.payload["gross_pnl"]), Decimal("10"))
+            self.assertEqual(Decimal(metric.payload["net_pnl"]), Decimal("8"))
+
+    def test_real_ledger_exit_order_uses_trial_lot_link_with_hashed_client_id(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="stopped")
+            self.account(db)
+            account = db.query(StockPaperAccount).one()
+            now = datetime.now(timezone.utc)
+            account.source_timestamp = now
+            account.last_reconciled_at = now
+            order = StockPaperOrder(account_id=1, client_order_id="entry-ledger",
+                symbol="SPY", side="buy", quantity=Decimal("1"), status="filled",
+                source="manual_control_room")
+            db.add(order); db.flush()
+            decision = StockPaperTrialDecision(trial_id=row.id, symbol="SPY",
+                bar_timestamp=now, decision_timestamp=now, action="buy",
+                qualifying=True, lineage=row.lineage, order_id=order.id)
+            db.add(decision); db.flush()
+            lot = StockPaperTrialLot(trial_id=row.id, symbol="SPY",
+                entry_decision_id=decision.id, entry_order_id=order.id, quantity=Decimal("1"),
+                entry_session="2025-01-02", exit_reason="operator_stop")
+            db.add(lot); db.flush()
+            from app.models import StockPaperPosition
+            db.add(StockPaperPosition(account_id=1, symbol="SPY", quantity=Decimal("1"),
+                average_entry_price=Decimal("100"), current_price=Decimal("100"),
+                market_value=Decimal("100"), observed_at=now, raw_payload={}))
+            db.flush()
+            with patch("app.services.stock_paper_ledger.session_bounds",
+                       return_value=(now - pd.Timedelta(minutes=1), now + pd.Timedelta(minutes=1))), \
+                 patch("app.services.stock_paper_ledger.feed_status",
+                       return_value={"status": "ready"}), \
+                 patch("app.services.stock_paper_ledger._validate_reference_price"), \
+                 patch("app.services.stock_paper_ledger._validate_signal_buy",
+                       return_value=(None, None)):
+                sell = reserve_stock_paper_order(db, symbol="SPY", side="sell",
+                    quantity=Decimal("1"), reference_price=Decimal("100"),
+                    idempotency_key=f"trial-exit:{lot.id}:attempt-1",
+                    source="manual_control_room")
+            sell.trial_lot_id = lot.id
+            db.flush()
+            self.assertTrue(sell.client_order_id.startswith("sp-"))
+            self.assertEqual(sell.trial_lot_id, lot.id)
+
+    def test_metric_payload_is_json_serializable(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused")
+            metric = evaluate_trial(db, row.id)
+            json.dumps(metric.payload)
+
+
+    def test_stopped_trial_is_monotonic_under_feed_and_account_uncertainty(self):
+        from app.services.stock_training_jobs import StockTrainingError
+        with Session(self.engine) as db:
+            row = self.trial(db, status="stopped")
+            with patch("app.services.stock_forward_trial.feed_status", return_value={"status": "stale"}):
+                observe_trial(db, row.id)
+                execute_pending_decisions(db, row.id)
+            self.assertEqual(row.status, "stopped")
+            with self.assertRaises(StockTrainingError):
+                start_trial(db, row.id)
+
+    def test_stopped_unfilled_entry_gets_stop_intent_and_later_fill_dispatches_exit(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            order = StockPaperOrder(account_id=1, client_order_id="pending-entry",
+                symbol="SPY", side="buy", quantity=Decimal("1"), status="accepted",
+                source="manual_control_room")
+            db.add(order); db.flush()
+            decision = StockPaperTrialDecision(trial_id=row.id, symbol="SPY",
+                bar_timestamp=datetime(2025, 1, 2), decision_timestamp=datetime(2025, 1, 2),
+                action="buy", qualifying=True, lineage=row.lineage, order_id=order.id)
+            db.add(decision); db.flush()
+            lot = StockPaperTrialLot(trial_id=row.id, symbol="SPY",
+                entry_decision_id=decision.id, entry_order_id=order.id, quantity=Decimal("1"),
+                entry_session="2025-01-02", planned_horizon_sessions=5)
+            db.add(lot); db.flush()
+            stop_trial(db, row.id)
+            self.assertEqual(lot.exit_reason, "operator_stop")
+            self.assertEqual(row.status, "stopped")
 
 if __name__ == "__main__":
     unittest.main()

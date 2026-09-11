@@ -141,7 +141,7 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
               </div>
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Win Rate</div>
-                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.win_rate as number, percent)}</div>
+                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.win_rate == null ? null : Number(payload.win_rate), percent)}</div>
               </div>
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Net PnL</div>
@@ -173,7 +173,7 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
               </div>
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Decision Coverage</div>
-                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.decision_coverage as number, percent)}</div>
+                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.decision_coverage == null ? null : Number(payload.decision_coverage), percent)}</div>
               </div>
               {payload.costs_known === false && (
                 <div className="col-span-2 xl:col-span-3 text-amber-600 text-[11px] bg-amber-50 border border-amber-200 p-1.5 rounded mt-1">

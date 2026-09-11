@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import logging
 import unittest
@@ -34,6 +35,42 @@ class MigrationTests(unittest.TestCase):
         columns = {c["name"]: c for c in inspector.get_columns("market_prices")}
         self.assertFalse(columns["source"]["nullable"])
         self.assertFalse(columns["imported_at"]["nullable"])
+
+    def test_trial_exit_order_link_backfills_hashed_legacy_attempt(self):
+        command.upgrade(self.config, "0020_trial_baseline_equity")
+        raw_key = "trial-exit:7:attempt-1"
+        client_order_id = "sp-" + hashlib.sha256(raw_key.encode()).hexdigest()[:45]
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO stock_paper_trials "
+                "(id,binding_id,status,actor,policy,lineage) "
+                "VALUES ('trial-1',1,'stopped','test','{}','{}')"
+            ))
+            connection.execute(text(
+                "INSERT INTO stock_paper_trial_decisions "
+                "(id,trial_id,symbol,bar_timestamp,decision_timestamp,action,qualifying,lineage) "
+                "VALUES (11,'trial-1','SPY','2025-01-02','2025-01-02','buy',1,'{}')"
+            ))
+            connection.execute(text(
+                "INSERT INTO stock_paper_trial_lots "
+                "(id,trial_id,symbol,entry_decision_id,quantity,entry_session,"
+                "planned_horizon_sessions,stop_fraction) "
+                "VALUES (7,'trial-1','SPY',11,1,'2025-01-02',5,0.02)"
+            ))
+            connection.execute(text(
+                "INSERT INTO stock_paper_orders "
+                "(id,account_id,client_order_id,symbol,side,quantity,order_type,time_in_force,"
+                "reserved_cash,status,uncertain_submission,source) "
+                "VALUES (13,1,:client_id,'SPY','sell',1,'market','day',0,'filled',0,'manual_control_room')"
+            ), {"client_id": client_order_id})
+        command.upgrade(self.config, "head")
+        with self.engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(text(
+                    "SELECT trial_lot_id FROM stock_paper_orders WHERE id = 13"
+                )).scalar(),
+                7,
+            )
 
     def test_legacy_provenance_absent_preserves_prices(self):
         command.upgrade(self.config, "0001_initial_schema")

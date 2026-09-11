@@ -2,3 +2,4 @@
 - [Equity feed entitlement](equity-feed-entitlement.md) — Alpaca SIP was selected, but purchasing was not authorized; verify account entitlement after secure credential setup.
 - [Stock sandbox accounting](stock-sandbox-accounting.md) — use Alpaca paper-reported balances without resets; unknown costs must remain unknown.
 - [Stock holdout governance](stock-holdout-governance.md) — prefer deferred challengers over reused holdouts; extraction-time histories are not historical point-in-time evidence.
+- [Forward-trial feature alignment](forward-trial-feature-alignment.md) — daily features must match the decision session; stale-data rejections never count toward coverage.

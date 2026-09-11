@@ -54,7 +54,8 @@ def _trial_equity_curve_max_drawdown(db: Session, trial: StockPaperTrial, as_of:
     for lot in lots:
         ids = [lot.entry_order_id] if lot.entry_order_id else []
         ids += [o.id for o in db.scalars(select(StockPaperOrder).where(
-            StockPaperOrder.client_order_id.like(f"trial-exit:{lot.id}:attempt-%"))).all()]
+            StockPaperOrder.trial_lot_id == lot.id,
+            StockPaperOrder.side == "sell")).all()]
         fills += db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id.in_(ids))).all() if ids else []
     peak = trial.baseline_equity
@@ -139,7 +140,8 @@ def _lot_outcomes(db: Session, lots: list[StockPaperTrialLot]) -> list[dict]:
         entries = db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id == lot.entry_order_id, StockPaperFill.side == "buy")).all()
         exit_ids = [o.id for o in db.scalars(select(StockPaperOrder).where(
-            StockPaperOrder.client_order_id.like(f"trial-exit:{lot.id}:attempt-%"))).all()]
+            StockPaperOrder.trial_lot_id == lot.id,
+            StockPaperOrder.side == "sell")).all()]
         exits = db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id.in_(exit_ids), StockPaperFill.side == "sell")).all() if exit_ids else []
         entry_qty = sum((f.quantity for f in entries), Decimal("0"))
@@ -148,9 +150,15 @@ def _lot_outcomes(db: Session, lots: list[StockPaperTrialLot]) -> list[dict]:
             continue
         remaining = entry_qty
         matched_proceeds = Decimal("0")
+        matched_exit_fees = Decimal("0")
+        costs_known = all(f.cost_known and f.fee is not None for f in entries)
         for fill in sorted(exits, key=lambda x: x.filled_at):
             qty = min(remaining, fill.quantity)
             matched_proceeds += qty * fill.price
+            if not fill.cost_known or fill.fee is None:
+                costs_known = False
+            elif fill.quantity:
+                matched_exit_fees += fill.fee * qty / fill.quantity
             remaining -= qty
             if remaining <= 0:
                 break
@@ -162,8 +170,15 @@ def _lot_outcomes(db: Session, lots: list[StockPaperTrialLot]) -> list[dict]:
             remaining -= qty
             if remaining <= 0:
                 break
-        result.append({"closed": True, "outcome": matched_proceeds - matched_cost,
-                       "close_at": max(f.filled_at for f in exits)})
+        gross_outcome = matched_proceeds - matched_cost
+        entry_fees = sum((f.fee or Decimal("0") for f in entries), Decimal("0"))
+        result.append({
+            "closed": True,
+            "outcome": gross_outcome,
+            "net_outcome": gross_outcome - entry_fees - matched_exit_fees if costs_known else None,
+            "costs_known": costs_known,
+            "close_at": max(f.filled_at for f in exits),
+        })
     return result
 
 def _trial_allocated_notional(db: Session, trial: StockPaperTrial) -> Decimal:
@@ -180,7 +195,8 @@ def _trial_allocated_notional(db: Session, trial: StockPaperTrial) -> Decimal:
             continue
         entry_value = sum((f.quantity * f.price for f in entries), Decimal("0"))
         exit_ids = [o.id for o in db.scalars(select(StockPaperOrder).where(
-            StockPaperOrder.client_order_id.like(f"trial-exit:{lot.id}:attempt-%"))).all()]
+            StockPaperOrder.trial_lot_id == lot.id,
+            StockPaperOrder.side == "sell")).all()]
         exits = db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id.in_(exit_ids), StockPaperFill.side == "sell")).all() if exit_ids else []
         exit_qty = sum((f.quantity for f in exits), Decimal("0"))
@@ -213,7 +229,8 @@ def _sync_trial_lot_state(db: Session, trial: StockPaperTrial) -> list[StockPape
         entry = sum((f.quantity for f in db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id == lot.entry_order_id, StockPaperFill.side == "buy")).all()), Decimal("0"))
         ids = [o.id for o in db.scalars(select(StockPaperOrder).where(
-            StockPaperOrder.client_order_id.like(f"trial-exit:{lot.id}:attempt-%"))).all()]
+            StockPaperOrder.trial_lot_id == lot.id,
+            StockPaperOrder.side == "sell")).all()]
         sold = sum((f.quantity for f in db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id.in_(ids), StockPaperFill.side == "sell")).all()), Decimal("0")) if ids else Decimal("0")
         if entry > 0 and sold >= entry:
@@ -224,11 +241,31 @@ def _sync_trial_lot_state(db: Session, trial: StockPaperTrial) -> list[StockPape
             lot.exited_quantity = sold
     return lots
 
+def _ensure_exit_intents(db: Session, trial: StockPaperTrial, reason: str, now: datetime) -> None:
+    """Create durable risk-reducing intents for every trial-owned open lot."""
+    for lot in _sync_trial_lot_state(db, trial):
+        entry = sum((f.quantity for f in db.scalars(select(StockPaperFill).where(
+            StockPaperFill.order_id == lot.entry_order_id,
+            StockPaperFill.side == "buy",
+        )).all()), Decimal("0"))
+        entry_order = db.get(StockPaperOrder, lot.entry_order_id) if lot.entry_order_id else None
+        entry_can_still_fill = bool(
+            entry_order and entry_order.status not in {"cancelled", "rejected", "failed"}
+        )
+        if entry > (lot.exited_quantity or Decimal("0")) or entry_can_still_fill:
+            lot.exit_reason = lot.exit_reason or reason
+            lot.exit_decided_at = lot.exit_decided_at or now
+
 def _trial_has_managed_exposure(db: Session, trial: StockPaperTrial) -> bool:
     for lot in _sync_trial_lot_state(db, trial):
         entry = sum((f.quantity for f in db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id == lot.entry_order_id, StockPaperFill.side == "buy")).all()), Decimal("0"))
         if entry > (lot.exited_quantity or Decimal("0")):
+            return True
+        pending = db.get(StockPaperOrder, lot.entry_order_id) if lot.entry_order_id else None
+        if pending and pending.status in {"reserved", "submitting", "new", "accepted",
+                                          "pending_new", "partially_filled", "unknown",
+                                          "open", "held"}:
             return True
     if trial.strategy_id and db.query(StockPaperOrder).filter(
         StockPaperOrder.strategy_id == trial.strategy_id,
@@ -340,9 +377,11 @@ def pause_trial(db: Session, trial_id: str, reason: str) -> StockPaperTrial:
 def stop_trial(db: Session, trial_id: str) -> StockPaperTrial:
     row = db.get(StockPaperTrial, trial_id)
     if not row: raise StockTrainingError("Trial not found")
+    now = _now()
+    _ensure_exit_intents(db, row, "operator_stop", now)
     open_lots = _trial_has_managed_exposure(db, row)
     if row.status not in {"stopped", "completed"}:
-        row.status, row.stopped_at = ("stopped", _now()) if open_lots else ("completed", _now())
+        row.status, row.stopped_at = ("stopped", now) if open_lots else ("completed", now)
     return row
 
 def record_decision(db: Session, trial_id: str, *, symbol: str, bar_timestamp: datetime,
@@ -390,19 +429,25 @@ def observe_trial(db: Session, trial_id: str) -> dict:
     if trial.status not in {"running", "paused", "stopped", "blocked"}:
         return {"status": trial.status, "trial_id": trial_id}
     _sync_trial_lot_state(db, trial)
-    manifest = validate_trial_artifact(db, trial)
     now = _now()
+    if trial.status == "stopped":
+        _ensure_exit_intents(db, trial, "operator_stop", now)
+        return {"status": "stopped", "trial_id": trial_id, "decisions": 0,
+                "reason": trial.pause_reason, "paper_only": True}
+    manifest = validate_trial_artifact(db, trial)
     bounds = session_bounds(now.astimezone(timezone.utc).date())
     for symbol in trial.lineage.get("universe", []):
         try:
             status = feed_status(db, symbol, now=now)
         except Exception as exc:
-            trial.status = "paused"
+            if trial.status == "running":
+                trial.status = "paused"
             trial.pause_reason = f"fresh_complete_feed_required:{symbol}:feed_unavailable:{exc}"
             return {"status": "paused", "trial_id": trial_id, "reason": trial.pause_reason}
         if status.get("status") in {"unavailable", "incomplete", "stale"}:
             reason = status.get("unavailable_reason") or status.get("status") or "feed unavailable"
-            trial.status = "paused"
+            if trial.status == "running":
+                trial.status = "paused"
             trial.pause_reason = f"fresh_complete_feed_required:{symbol}:{reason}"
             return {"status": "paused", "trial_id": trial_id, "reason": trial.pause_reason}
     # Daily inference is deliberately gated until the regular session has
@@ -427,10 +472,12 @@ def observe_trial(db: Session, trial_id: str) -> dict:
         trial.peak_equity = account.equity
     if trial.peak_equity > 0 and account.equity <= trial.peak_equity * Decimal("0.98"):
         trial.status, trial.pause_reason = "paused", "drawdown_limit_2_percent"
+        _ensure_exit_intents(db, trial, "drawdown_limit_2_percent", now)
         return {"status": "paused", "trial_id": trial_id, "reason": trial.pause_reason}
     trial_dd = _trial_equity_curve_max_drawdown(db, trial, now)
     if trial_dd is not None and trial_dd >= Decimal("0.02"):
         trial.status, trial.pause_reason = "paused", "trial_drawdown_limit_2_percent"
+        _ensure_exit_intents(db, trial, "trial_drawdown_limit_2_percent", now)
         return {"status": "paused", "trial_id": trial_id, "executed": 0}
     # Risk-reducing exits are evaluated before any new entry.  A trial position
     # is attributable through its order.strategy_id and is never sold short.
@@ -457,7 +504,8 @@ def observe_trial(db: Session, trial_id: str) -> dict:
         buy_filled = sum((f.quantity for f in entries), Decimal("0"))
         entry_price = sum((f.quantity * f.price for f in entries), Decimal("0")) / buy_filled
         exit_ids = [o.id for o in db.scalars(select(StockPaperOrder).where(
-            StockPaperOrder.client_order_id.like(f"trial-exit:{lot.id}:attempt-%"))).all()]
+            StockPaperOrder.trial_lot_id == lot.id,
+            StockPaperOrder.side == "sell")).all()]
         sold = sum((f.quantity for f in db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id.in_(exit_ids), StockPaperFill.side == "sell")).all()), Decimal("0")) if exit_ids else Decimal("0")
         remaining_owned = max(Decimal("0"), buy_filled - sold)
@@ -531,7 +579,10 @@ def observe_trial(db: Session, trial_id: str) -> dict:
             else:
                 latest = featured.iloc[-1]
                 feature_timestamp = pd.Timestamp(latest["date"]).to_pydatetime().replace(tzinfo=timezone.utc)
-                if feature_timestamp >= now:
+                intended_session = bounds[0].astimezone(timezone.utc).date()
+                if feature_timestamp.date() != intended_session:
+                    reason = "daily_feature_session_mismatch"
+                elif feature_timestamp >= now:
                     reason = "feature_timestamp_not_before_decision"
                 else:
                     values = np.asarray([latest[name] for name in FEATURES], dtype=float).reshape(1, -1)
@@ -540,6 +591,16 @@ def observe_trial(db: Session, trial_id: str) -> dict:
                     features = {name: float(latest[name]) for name in FEATURES}
                     if probability < 0.5:
                         reason = "model_signal_not_qualifying"
+        # Daily data arrives independently after the close. Do not consume the
+        # unique session decision key until the exact session feature exists;
+        # the next minute cycle can safely retry.
+        if reason in {
+            "missing_verified_daily_observation",
+            "insufficient_daily_feature_history",
+            "daily_feature_session_mismatch",
+            "feature_timestamp_not_before_decision",
+        }:
+            continue
         lineage = {**trial.lineage, "bar_provider": bar.provider,
                    "bar_exchange_timestamp": bar.exchange_timestamp.isoformat() if bar.exchange_timestamp else None,
                    "execution_reference_timestamp": opened.isoformat(),
@@ -593,13 +654,20 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
         previous_day -= timedelta(days=1)
     account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
     if not account or account.status != "reconciled" or account.reconciliation_required:
-        trial.status, trial.pause_reason = "paused", "account_uncertainty"
-        return {"status": "paused", "trial_id": trial_id, "executed": 0}
+        if trial.status != "stopped":
+            trial.status, trial.pause_reason = "paused", "account_uncertainty"
+        return {"status": trial.status, "trial_id": trial_id, "executed": 0,
+                "reason": "account_uncertainty"}
     if trial.peak_equity is None or account.equity > trial.peak_equity:
         trial.peak_equity = account.equity
-    if trial.peak_equity > 0 and account.equity <= trial.peak_equity * Decimal("0.98"):
-        trial.status, trial.pause_reason = "paused", "drawdown_limit_2_percent"
-        return {"status": "paused", "trial_id": trial_id, "reason": trial.pause_reason}
+    drawdown_blocked = bool(
+        trial.peak_equity > 0 and account.equity <= trial.peak_equity * Decimal("0.98")
+    )
+    if drawdown_blocked:
+        if trial.status != "stopped":
+            trial.status = "paused"
+        trial.pause_reason = "drawdown_limit_2_percent"
+        _ensure_exit_intents(db, trial, "drawdown_limit_2_percent", now)
     # Dispatch durable post-close exit intents first.  Only completed current
     # session references are accepted by the shared ledger.
     for lot in db.scalars(select(StockPaperTrialLot).where(
@@ -612,7 +680,8 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
         entries = db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id == lot.entry_order_id, StockPaperFill.side == "buy")).all()
         exit_ids = [o.id for o in db.scalars(select(StockPaperOrder).where(
-            StockPaperOrder.client_order_id.like(f"trial-exit:{lot.id}:attempt-%"))).all()]
+            StockPaperOrder.trial_lot_id == lot.id,
+            StockPaperOrder.side == "sell")).all()]
         sold = sum((f.quantity for f in db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id.in_(exit_ids), StockPaperFill.side == "sell")).all()), Decimal("0")) if exit_ids else Decimal("0")
         remaining = max(Decimal("0"), sum((f.quantity for f in entries), Decimal("0")) - sold)
@@ -626,19 +695,27 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
         if not reference:
             continue
         attempts = db.scalars(select(StockPaperOrder).where(
-            StockPaperOrder.client_order_id.like(f"trial-exit:{lot.id}:attempt-%"))).all()
+            StockPaperOrder.trial_lot_id == lot.id,
+            StockPaperOrder.side == "sell")).all()
         try:
             close = reserve_stock_paper_order(db, symbol=lot.symbol, side="sell",
                 quantity=remaining, reference_price=reference.close,
                 idempotency_key=f"trial-exit:{lot.id}:attempt-{len(attempts) + 1}",
                 source="manual_control_room")
             close.strategy_id = trial.strategy_id
+            close.trial_lot_id = lot.id
             db.flush()
             lot.exit_order_id, lot.exit_status = close.id, "reserved"
             dispatch_reserved_order(db, close.id)
         except StockPaperError:
-            trial.status, trial.pause_reason = "paused", "exit_dispatch_uncertain"
-            return {"status": "paused", "trial_id": trial_id, "executed": 0}
+            if trial.status != "stopped":
+                if trial.status == "running":
+                    trial.status = "paused"
+            trial.pause_reason = "exit_dispatch_uncertain"
+            return {"status": trial.status, "trial_id": trial_id, "executed": 0}
+    if drawdown_blocked:
+        return {"status": trial.status, "trial_id": trial_id, "executed": 0,
+                "reason": trial.pause_reason}
     executed = 0
     pending = db.scalars(select(StockPaperTrialDecision).where(
         StockPaperTrialDecision.trial_id == trial_id,
@@ -724,7 +801,8 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
             StockPaperFill.order_id == lot.entry_order_id, StockPaperFill.side == "buy"
         )).all()
         exit_ids = [o.id for o in db.scalars(select(StockPaperOrder).where(
-            StockPaperOrder.client_order_id.like(f"trial-exit:{lot.id}:attempt-%"))).all()]
+            StockPaperOrder.trial_lot_id == lot.id,
+            StockPaperOrder.side == "sell")).all()]
         exits = db.scalars(select(StockPaperFill).where(
             StockPaperFill.order_id.in_(exit_ids), StockPaperFill.side == "sell"
         )).all() if exit_ids else []
@@ -749,26 +827,40 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
             net += outcome - sum((f.fee or Decimal("0") for f in entries + exits), Decimal("0"))
     if not fills_seen:
         costs_known = False
+    provisional_gross = gross
     exact_outcomes = sorted(_lot_outcomes(db, lots), key=lambda x: x["close_at"])
     closed = len(exact_outcomes)
     wins = sum(int(x["outcome"] > 0) for x in exact_outcomes)
-    # Keep provisional gross from partials, while closed counts remain exact.
+    gross = sum((x["outcome"] for x in exact_outcomes), Decimal("0"))
+    closed_costs_known = all(x["costs_known"] for x in exact_outcomes)
+    if closed and costs_known and closed_costs_known:
+        net = sum((x["net_outcome"] for x in exact_outcomes), Decimal("0"))
+    else:
+        net = Decimal("0")
     win_rate = (Decimal(wins) / Decimal(closed)) if closed and costs_known else None
-    expectancy = (net / Decimal(closed)) if closed and costs_known else None
+    expectancy = (net / Decimal(closed)) if closed and costs_known and closed_costs_known else None
     universe = trial.lineage.get("universe", [])
     start = trial.started_at
-    cursor = _now().astimezone(timezone.utc).date()
     dates = []
-    for _ in range(60):
-        candidate = session_bounds(cursor)
-        if candidate and candidate[1] <= _now() and (not start or candidate[0] >= start):
-            dates.append(cursor)
-        if len(dates) >= int(trial.policy["regular_sessions"]):
-            break
-        cursor -= timedelta(days=1)
+    if start is not None:
+        cursor = _now().astimezone(timezone.utc).date()
+        for _ in range(60):
+            candidate = session_bounds(cursor)
+            if candidate and candidate[1] <= _now() and candidate[0] >= start:
+                dates.append(cursor)
+            if len(dates) >= int(trial.policy["regular_sessions"]):
+                break
+            cursor -= timedelta(days=1)
     dates = sorted(dates)
+    feature_data_rejections = {
+        "missing_verified_daily_observation",
+        "insufficient_daily_feature_history",
+        "daily_feature_session_mismatch",
+        "feature_timestamp_not_before_decision",
+    }
     observed = {(d.bar_timestamp.date(), d.symbol) for d in decisions
-                if d.bar_timestamp.date() in dates and d.symbol in universe}
+                if d.bar_timestamp.date() in dates and d.symbol in universe
+                and d.rejection_reason not in feature_data_rejections}
     expected = len(dates) * len(universe)
     coverage = (Decimal(len(observed)) / Decimal(expected)) if expected else Decimal("0")
     sessions = len(dates)
@@ -810,10 +902,13 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
                         if account and trial.peak_equity and trial.peak_equity > 0 else None)
     trial_drawdown = _trial_equity_curve_max_drawdown(db, trial, _now())
     payload = {"expected_observations": expected, "observed_observations": len(observed),
-               "observed_sessions": sessions, "decision_coverage": coverage,
-               "closed_trades": closed, "winning_trades": wins, "win_rate": win_rate,
-               "gross_pnl": str(gross) if closed else None, "gross_pnl_provisional": True,
-               "net_pnl": str(net) if costs_known and closed else None,
+               "observed_sessions": sessions, "decision_coverage": str(coverage),
+               "closed_trades": closed, "winning_trades": wins,
+               "win_rate": str(win_rate) if win_rate is not None else None,
+                "gross_pnl": str(gross) if closed else None,
+                "provisional_gross_pnl": str(provisional_gross) if provisional_gross else None,
+                "gross_pnl_provisional": False if closed else True,
+                "net_pnl": str(net) if costs_known and closed and closed_costs_known else None,
                "expectancy": str(expectancy) if expectancy is not None else None,
                "max_drawdown": str(trial_drawdown) if trial_drawdown is not None else None,
                "account_drawdown": str(account_drawdown) if account_drawdown is not None else None,
