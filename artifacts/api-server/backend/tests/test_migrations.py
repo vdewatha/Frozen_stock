@@ -35,6 +35,7 @@ class MigrationTests(unittest.TestCase):
         columns = {c["name"]: c for c in inspector.get_columns("market_prices")}
         self.assertFalse(columns["source"]["nullable"])
         self.assertFalse(columns["imported_at"]["nullable"])
+        self.assertIn("stock_paper_promotion_readiness_reports", inspector.get_table_names())
 
     def test_trial_exit_order_link_backfills_hashed_legacy_attempt(self):
         command.upgrade(self.config, "0020_trial_baseline_equity")

@@ -10,6 +10,7 @@ import {
   getForwardTrialDetail,
   getForwardTrialDecisions,
   getForwardTrialMetrics,
+  getForwardTrialPromotionReadiness,
   startForwardTrial,
   pauseForwardTrial,
   resumeForwardTrial,
@@ -17,7 +18,8 @@ import {
   type ForwardTrial,
   type ForwardTrialBindingEligible,
   type ForwardTrialDecision,
-  type ForwardTrialMetricHistoryItem
+  type ForwardTrialMetricHistoryItem,
+  type PromotionReadinessReport
 } from "@/lib/api";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -32,6 +34,7 @@ function formatNull(val: number | null | undefined, formatter: Intl.NumberFormat
 function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onActionComplete: () => void }) {
   const [latestMetric, setLatestMetric] = useState<ForwardTrialMetricHistoryItem | null>(null);
   const [decisions, setDecisions] = useState<ForwardTrialDecision[]>([]);
+  const [readiness, setReadiness] = useState<PromotionReadinessReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [pauseReason, setPauseReason] = useState("");
@@ -40,12 +43,14 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
   const fetchDetails = useCallback(async () => {
     try {
       setLoading(true);
-      const [m, d] = await Promise.all([
+      const [m, d, r] = await Promise.all([
         getForwardTrialMetrics(trial.id),
-        getForwardTrialDecisions(trial.id)
+        getForwardTrialDecisions(trial.id),
+        getForwardTrialPromotionReadiness(trial.id)
       ]);
       setLatestMetric(m.length > 0 ? m[m.length - 1] : null);
       setDecisions(d);
+      setReadiness(r);
     } catch (e) {
       console.error(e);
     } finally {
@@ -207,6 +212,50 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
             <div className="mt-2 text-xs text-slate-500">No decisions recorded.</div>
           )}
         </div>
+      </div>
+
+      <div className="rounded-md border border-line bg-white p-3" data-testid={`promotion-readiness-${trial.id}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="font-semibold text-sm text-slate-800">Promotion Readiness</div>
+            <div className="mt-0.5 text-xs text-slate-500">Read-only evidence. This report never changes the model, binding, or trading authorization.</div>
+          </div>
+          {readiness && (
+            <span className={`rounded border px-2 py-1 text-xs font-semibold ${
+              readiness.decision === "pass" ? "border-emerald-200 bg-emerald-50 text-emerald-700" :
+              readiness.decision === "fail" ? "border-red-200 bg-red-50 text-red-700" :
+              "border-amber-200 bg-amber-50 text-amber-700"
+            }`}>
+              {readiness.decision === "unknown" ? "INSUFFICIENT EVIDENCE" : readiness.decision.toUpperCase()}
+            </span>
+          )}
+        </div>
+        {readiness ? (
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {Object.entries(readiness.gates).map(([name, gate]) => (
+              <div key={name} className="rounded border border-line bg-panel p-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-slate-700">{name.replaceAll("_", " ")}</span>
+                  <span className={gate.status === "pass" ? "text-emerald-700" : gate.status === "fail" ? "text-red-700" : "text-amber-700"}>
+                    {gate.status}
+                  </span>
+                </div>
+                {gate.value !== undefined && <div className="mt-1 text-slate-600">Observed: {String(gate.value)}{gate.required !== undefined ? ` · Required: ${String(gate.required)}` : ""}</div>}
+                {gate.reason && <div className="mt-1 text-slate-500">{gate.reason}</div>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-3 text-xs text-slate-500">Readiness report unavailable.</div>
+        )}
+        {readiness && (
+          <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-slate-500">
+            <span>Paper only: {readiness.paper_only ? "yes" : "no"}</span>
+            <span>Live authorized: {readiness.live_authorized ? "yes" : "no"}</span>
+            <span>Promotion authorized: no</span>
+            <span>Audit hash: {readiness.report_hash.slice(0, 12)}…</span>
+          </div>
+        )}
       </div>
 
       <RoleGate requires="operator">

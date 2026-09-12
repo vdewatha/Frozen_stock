@@ -2200,6 +2200,28 @@ export type ForwardTrialMetricHistoryItem = {
   };
 };
 
+export type PromotionReadinessGate = {
+  status: "pass" | "fail" | "unknown" | string;
+  value?: string | number | null;
+  required?: string | number | null;
+  reason?: string | null;
+};
+
+export type PromotionReadinessReport = {
+  id: number;
+  trial_id: string;
+  source_metric_id: number | null;
+  report_hash: string;
+  decision: "pass" | "fail" | "unknown" | string;
+  gates: Record<string, PromotionReadinessGate>;
+  lineage: Record<string, unknown>;
+  policy: Record<string, unknown>;
+  paper_only: boolean;
+  live_authorized: boolean;
+  created_at: string;
+  promotion_authorized: false;
+};
+
 export async function getForwardTrialsEligibleBindings(): Promise<ForwardTrialBindingEligible[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/bindings/eligible`, { cache: "no-store" });
   const data = await handleResponse<{items: ForwardTrialBindingEligible[]}>(response);
@@ -2231,6 +2253,11 @@ export async function getForwardTrialMetrics(id: string): Promise<ForwardTrialMe
   const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/metrics`, { cache: "no-store" });
   const data = await handleResponse<{items: ForwardTrialMetricHistoryItem[]}>(response);
   return data.items;
+}
+
+export async function getForwardTrialPromotionReadiness(id: string): Promise<PromotionReadinessReport> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness`, { cache: "no-store" });
+  return handleResponse<PromotionReadinessReport>(response);
 }
 
 export async function startForwardTrial(id: string): Promise<ForwardTrial> {

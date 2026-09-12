@@ -530,3 +530,25 @@ class StockPaperTrialMetric(Base):
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     classification: Mapped[str] = mapped_column(String(24), nullable=False, default="accumulating")
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class StockPaperPromotionReadinessReport(Base):
+    """Append-only, paper-only readiness evidence; never grants promotion."""
+    __tablename__ = "stock_paper_promotion_readiness_reports"
+    __table_args__ = (
+        CheckConstraint("paper_only = true", name="ck_stock_readiness_paper_only"),
+        CheckConstraint("live_authorized = false", name="ck_stock_readiness_live_disabled"),
+        UniqueConstraint("report_hash", name="uq_stock_readiness_report_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trial_id: Mapped[str] = mapped_column(ForeignKey("stock_paper_trials.id"), nullable=False, index=True)
+    source_metric_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_trial_metrics.id"), index=True)
+    report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    gates: Mapped[dict] = mapped_column(JSON, nullable=False)
+    lineage: Mapped[dict] = mapped_column(JSON, nullable=False)
+    policy: Mapped[dict] = mapped_column(JSON, nullable=False)
+    paper_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

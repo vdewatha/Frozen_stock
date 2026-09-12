@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models import StockPaperTrial, StockPaperModelBinding, StockModelRegistry, StockDatasetSnapshot, StockPaperTrialDecision, StockPaperTrialMetric
 from app.services.stock_forward_trial import StockTrainingError, create_trial, start_trial, pause_trial, stop_trial
+from app.services.stock_promotion_readiness import evaluate_promotion_readiness
 
 router = APIRouter(prefix="/stock/forward-trials", tags=["stock forward trials"])
 
@@ -63,6 +64,15 @@ def metrics(trial_id: str, db: Session = Depends(get_db)):
     if not db.get(StockPaperTrial, trial_id): raise HTTPException(404, "Trial not found")
     return {"items": [{"as_of": x.as_of, "classification": x.classification, "payload": x.payload}
                       for x in db.scalars(select(StockPaperTrialMetric).where(StockPaperTrialMetric.trial_id == trial_id).order_by(StockPaperTrialMetric.as_of)).all()]}
+
+@router.get("/{trial_id}/promotion-readiness")
+def promotion_readiness(trial_id: str, db: Session = Depends(get_db)):
+    try:
+        result = evaluate_promotion_readiness(db, trial_id)
+        db.commit()
+        return result
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from None
 
 @router.post("")
 def approve(body: Approve, request: Request, db: Session = Depends(get_db)):

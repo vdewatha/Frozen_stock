@@ -23,6 +23,7 @@ from app.models import (
     IntradayBar, MarketPrice, StockDatasetSnapshot, StockModelRegistry, StockPaperAccount,
     StockPaperModelBinding, StockPaperTrial, StockPaperTrialDecision,
     StockPaperOrder, StockPaperFill, StockPaperTrialLot, Strategy,
+    StockPaperPromotionReadinessReport,
 )
 from app.services.stock_forward_trial import (
     POLICY, _hash, create_trial, evaluate_trial, observe_trial, record_decision,
@@ -30,6 +31,7 @@ from app.services.stock_forward_trial import (
     execute_pending_decisions, _trial_allocated_notional, stop_trial,
     _trial_equity_curve_max_drawdown, _evidence_allows_trade,
 )
+from app.services.stock_promotion_readiness import evaluate_promotion_readiness
 from app.services.stock_paper_ledger import reserve_stock_paper_order
 from app.tasks.jobs import stock_forward_trial_observe_job
 from app.services.stock_training_jobs import StockTrainingError
@@ -88,6 +90,29 @@ class ForwardTrialTests(unittest.TestCase):
             "max_risk_per_trade": "0.0025", "auto_pause_drawdown": "0.02",
             "paper_only": True, "live_authorized": False,
         })
+
+    def test_promotion_readiness_is_unknown_without_evidence_and_idempotent(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused")
+            before = (row.status, row.binding_id, dict(row.policy), dict(row.lineage))
+            first = evaluate_promotion_readiness(db, row.id)
+            db.commit()
+            second = evaluate_promotion_readiness(db, row.id)
+            self.assertEqual(first["decision"], "unknown")
+            self.assertFalse(first["promotion_authorized"])
+            self.assertTrue(first["paper_only"])
+            self.assertFalse(first["live_authorized"])
+            self.assertEqual(first["gates"]["regular_sessions"]["status"], "unknown")
+            self.assertEqual(first["gates"]["closed_trades"]["status"], "unknown")
+            self.assertEqual(first["id"], second["id"])
+            self.assertEqual(db.query(StockPaperPromotionReadinessReport).count(), 1)
+            self.assertEqual(before, (row.status, row.binding_id, dict(row.policy), dict(row.lineage)))
+
+    def test_promotion_readiness_route_is_viewer_only(self):
+        self.assertEqual(
+            required_role("GET", "/stock/forward-trials/00000000-0000-0000-0000-000000000001/promotion-readiness"),
+            "viewer",
+        )
 
     def test_invalid_binding_cannot_create_trial(self):
         with Session(self.engine) as db:
