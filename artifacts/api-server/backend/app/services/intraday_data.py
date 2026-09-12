@@ -343,6 +343,8 @@ def ingest_corporate_actions(db: Session, symbols: list[str] | None = None) -> d
 def _fetch_bars(
     symbol: str, start: datetime, end: datetime, *, max_pages: int = 4
 ) -> tuple[list[dict], int, bool]:
+    if settings.alpaca_feed.strip().lower() != "sip":
+        raise RuntimeError("Alpaca SIP feed is not configured")
     rows: list[dict] = []
     duplicate_count = 0
     out_of_order = False
@@ -462,12 +464,14 @@ def ingest_intraday(
                 }
             )
         except Exception as exc:
+            failure_class, reason = _provider_failure(exc)
             results.append(
                 {
                     "symbol": symbol,
                     "status": "unavailable",
+                    "failure_class": failure_class,
                     "missing_intervals": [],
-                    "unavailable_reason": str(exc),
+                    "unavailable_reason": reason,
                 }
             )
     return {
@@ -477,6 +481,170 @@ def ingest_intraday(
         "cadence": "1m",
         "session": "regular",
         "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
+        "results": results,
+    }
+
+
+def _provider_failure(exc: Exception) -> tuple[str, str]:
+    """Classify provider failures without returning provider or credential details."""
+    message = str(exc).lower()
+    if "credentials" in message or "not configured" in message:
+        return "configuration", "Alpaca credentials are not configured in workspace secrets"
+    if "authentication" in message or "entitlement" in message or "sip feed" in message:
+        return "authentication_or_entitlement", "Authenticated Alpaca SIP entitlement is unavailable"
+    if "invalid alpaca" in message or "incomplete" in message or "pagination" in message:
+        return "data_quality", "Alpaca returned invalid or incomplete bar data"
+    return "availability", "Alpaca data service is unavailable"
+
+
+def preflight_intraday(
+    db: Session,
+    symbols: list[str] | None = None,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    """Run a bounded authenticated SIP ingestion probe and aggregate readiness.
+
+    This deliberately requires an active NYSE regular session. Cached data from a
+    prior session, delayed data, and data from another feed cannot make a resume
+    preflight pass.
+    """
+    selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
+    observed_at = _aware_utc(now or datetime.now(UTC))
+    bounds = session_bounds(observed_at.astimezone(NY).date())
+    base = {
+        "provider": "alpaca",
+        "feed_class": "sip",
+        "data_mode": "real-time",
+        "cadence": "1m",
+        "session": "regular",
+        "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
+        "checked_at": observed_at.isoformat(),
+        "symbols": selected,
+    }
+    if settings.alpaca_feed.strip().lower() != "sip":
+        return {
+            **base,
+            "status": "blocked",
+            "ready": False,
+            "failure_class": "configuration",
+            "reason": "Alpaca SIP feed is not configured",
+            "results": [
+                {
+                    "symbol": symbol,
+                    "status": "unavailable",
+                    "failure_class": "configuration",
+                    "unavailable_reason": "Alpaca SIP feed is not configured",
+                    "missing_intervals": [],
+                }
+                for symbol in selected
+            ],
+        }
+    if not (
+        settings.alpaca_api_key.get_secret_value()
+        and settings.alpaca_api_secret.get_secret_value()
+    ):
+        return {
+            **base,
+            "status": "blocked",
+            "ready": False,
+            "failure_class": "configuration",
+            "reason": "Alpaca credentials are not configured in workspace secrets",
+            "results": [
+                {
+                    "symbol": symbol,
+                    "status": "unavailable",
+                    "failure_class": "configuration",
+                    "unavailable_reason": "Alpaca credentials are not configured in workspace secrets",
+                    "missing_intervals": [],
+                }
+                for symbol in selected
+            ],
+        }
+    if bounds is None or not (bounds[0] <= observed_at < bounds[1]):
+        reason = "Regular-session authenticated preflight is required"
+        return {
+            **base,
+            "status": "blocked",
+            "ready": False,
+            "failure_class": "timing",
+            "reason": reason,
+            "results": [
+                {
+                    "symbol": symbol,
+                    "status": "out_of_session",
+                    "failure_class": "timing",
+                    "unavailable_reason": reason,
+                    "missing_intervals": [],
+                }
+                for symbol in selected
+            ],
+        }
+
+    ingestion = ingest_intraday(db, selected, now=observed_at)
+    ingestion_by_symbol = {item["symbol"]: item for item in ingestion["results"]}
+    results = []
+    for symbol in selected:
+        imported = ingestion_by_symbol.get(symbol, {})
+        try:
+            status = feed_status(db, symbol, now=observed_at)
+            result = {
+                **status,
+                "exchange_timestamp": (
+                    status["exchange_timestamp"].isoformat()
+                    if status.get("exchange_timestamp")
+                    else None
+                ),
+                "ingestion_timestamp": (
+                    status["ingestion_timestamp"].isoformat()
+                    if status.get("ingestion_timestamp")
+                    else None
+                ),
+                "checked_at": (
+                    status["checked_at"].isoformat()
+                    if status.get("checked_at")
+                    else observed_at.isoformat()
+                ),
+                "rows_imported": imported.get("rows_imported", 0),
+            }
+            if imported.get("status") in {"unavailable", "incomplete"}:
+                result["status"] = imported["status"]
+                result["failure_class"] = imported.get(
+                    "failure_class",
+                    "data_quality" if imported["status"] == "incomplete" else "availability",
+                )
+                result["unavailable_reason"] = imported.get(
+                    "unavailable_reason"
+                ) or "Authenticated Alpaca SIP ingestion did not complete"
+            if result["status"] != "ready":
+                result.setdefault(
+                    "failure_class",
+                    "data_quality"
+                    if result["status"] in {"incomplete", "stale"}
+                    else "availability",
+                )
+        except Exception as exc:
+            failure_class, reason = _provider_failure(exc)
+            result = {
+                "symbol": symbol,
+                "status": "unavailable",
+                "failure_class": failure_class,
+                "unavailable_reason": reason,
+                "missing_intervals": imported.get("missing_intervals", []),
+                "rows_imported": imported.get("rows_imported", 0),
+            }
+        results.append(result)
+
+    failed = [item for item in results if item.get("status") != "ready"]
+    return {
+        **base,
+        "status": "ready" if not failed else "blocked",
+        "ready": not failed,
+        "failure_class": failed[0].get("failure_class") if failed else None,
+        "reason": None if not failed else (
+            f"{failed[0]['symbol']}: "
+            f"{failed[0].get('unavailable_reason') or failed[0].get('status')}"
+        ),
         "results": results,
     }
 
@@ -505,6 +673,8 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         .filter(
             IntradayBar.symbol == symbol,
             IntradayBar.timeframe == "1m",
+            IntradayBar.provider == "alpaca",
+            IntradayBar.feed_class == "sip",
             IntradayBar.opened_at >= target_bounds[0],
             IntradayBar.opened_at < target_bounds[1],
         )
@@ -560,6 +730,12 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             **base,
             "status": "unavailable",
             "unavailable_reason": "Alpaca SIP entitlement has not been verified by a recent authenticated ingestion",
+        }
+    if market_open and _aware_utc(latest.opened_at) >= expected_end:
+        return {
+            **base,
+            "status": "stale",
+            "unavailable_reason": "Future regular-session observation cannot satisfy the current bar boundary",
         }
     if missing:
         return {

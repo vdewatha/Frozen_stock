@@ -6,10 +6,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models import StockPaperTrial, StockPaperModelBinding, StockModelRegistry, StockDatasetSnapshot, StockPaperTrialDecision, StockPaperTrialMetric
-from app.services.stock_forward_trial import StockTrainingError, create_trial, start_trial, pause_trial, stop_trial
 from app.services.stock_promotion_readiness import evaluate_promotion_readiness
 
 router = APIRouter(prefix="/stock/forward-trials", tags=["stock forward trials"])
+from app.services.stock_forward_trial import (
+    StockTrainingError,
+    create_trial,
+    start_trial,
+    pause_trial,
+    stop_trial,
+    trial_feed_preflight,
+)
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -65,6 +72,12 @@ def metrics(trial_id: str, db: Session = Depends(get_db)):
     return {"items": [{"as_of": x.as_of, "classification": x.classification, "payload": x.payload}
                       for x in db.scalars(select(StockPaperTrialMetric).where(StockPaperTrialMetric.trial_id == trial_id).order_by(StockPaperTrialMetric.as_of)).all()]}
 
+@router.get("/{trial_id}/preflight")
+def preflight(trial_id: str, db: Session = Depends(get_db)):
+    row = db.get(StockPaperTrial, trial_id)
+    if not row: raise HTTPException(404, "Trial not found")
+    return trial_feed_preflight(db, row)
+
 @router.get("/{trial_id}/promotion-readiness")
 def promotion_readiness(trial_id: str, db: Session = Depends(get_db)):
     try:
@@ -80,16 +93,16 @@ def approve(body: Approve, request: Request, db: Session = Depends(get_db)):
     db.commit(); return _out(row)
 
 @router.post("/{trial_id}/start")
-def start(trial_id: str, db: Session = Depends(get_db)):
-    row = _call(start_trial, db, trial_id); db.commit(); return _out(row)
+def start(trial_id: str, request: Request, db: Session = Depends(get_db)):
+    row = _call(start_trial, db, trial_id, actor=request.state.actor); db.commit(); return _out(row)
 
 @router.post("/{trial_id}/pause")
 def pause(trial_id: str, body: Reason, db: Session = Depends(get_db)):
     row = _call(pause_trial, db, trial_id, body.reason); db.commit(); return _out(row)
 
 @router.post("/{trial_id}/resume")
-def resume(trial_id: str, db: Session = Depends(get_db)):
-    row = _call(start_trial, db, trial_id); db.commit(); return _out(row)
+def resume(trial_id: str, request: Request, db: Session = Depends(get_db)):
+    row = _call(start_trial, db, trial_id, actor=request.state.actor); db.commit(); return _out(row)
 
 @router.post("/{trial_id}/stop")
 def stop(trial_id: str, db: Session = Depends(get_db)):

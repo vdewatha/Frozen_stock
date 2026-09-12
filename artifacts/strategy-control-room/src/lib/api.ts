@@ -170,6 +170,32 @@ export type IntradayImportResponse = {
   }>;
 };
 
+export type IntradayPreflightResponse = {
+  provider: string;
+  feed_class: string;
+  data_mode: string;
+  cadence: string;
+  session: string;
+  adjustment_policy: string;
+  checked_at: string;
+  symbols: string[];
+  status: string;
+  ready: boolean;
+  failure_class: string | null;
+  reason: string | null;
+  results: Array<{
+    symbol: string;
+    status: string;
+    entitlement_state?: string;
+    exchange_timestamp?: string | null;
+    ingestion_timestamp?: string | null;
+    latency_seconds?: number | null;
+    missing_intervals: string[];
+    rows_imported?: number;
+    failure_class?: string;
+    unavailable_reason?: string | null;
+  }>;
+};
 export type MarketDataHealth = {
   symbol: string;
   provider: string;
@@ -1481,6 +1507,9 @@ export async function importIntradayMarketData(symbol: string): Promise<Intraday
   return postJson<IntradayImportResponse>("/market-data/intraday/ingest", { symbols: [symbol] });
 }
 
+export async function runIntradayPreflight(): Promise<IntradayPreflightResponse> {
+  return postJson<IntradayPreflightResponse>("/market-data/intraday/preflight", {});
+}
 export async function getMarketDataHealth(symbol: string): Promise<MarketDataHealth> {
   const response = await authenticatedFetch(`${API_BASE_URL}/market-data/intraday/${encodeURIComponent(symbol)}/status`, { cache: "no-store" });
   return handleResponse<MarketDataHealth>(response);
@@ -2255,6 +2284,26 @@ export type ForwardTrial = {
   live_disabled?: boolean;
 };
 
+export type ForwardTrialPreflight = {
+  status: string;
+  ready: boolean;
+  checked_at: string;
+  regular_session: boolean;
+  symbols: Array<{
+    symbol: string;
+    status: string;
+    entitlement_state?: string;
+    exchange_timestamp: string | null;
+    ingestion_timestamp: string | null;
+    latency_seconds: number | null;
+    missing_intervals: string[];
+    unavailable_reason: string | null;
+  }>;
+  paper_ledger: { status: string; reason: string | null };
+  reason: string | null;
+  paper_only: boolean;
+  live_authorized: boolean;
+};
 export type ForwardTrialDecision = {
   id: string;
   symbol: string;
@@ -2342,6 +2391,10 @@ export async function getForwardTrialMetrics(id: string): Promise<ForwardTrialMe
   return data.items;
 }
 
+export async function getForwardTrialPreflight(id: string): Promise<ForwardTrialPreflight> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/preflight`, { cache: "no-store" });
+  return handleResponse<ForwardTrialPreflight>(response);
+}
 export async function getForwardTrialPromotionReadiness(id: string): Promise<PromotionReadinessReport> {
   const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness`, { cache: "no-store" });
   return handleResponse<PromotionReadinessReport>(response);

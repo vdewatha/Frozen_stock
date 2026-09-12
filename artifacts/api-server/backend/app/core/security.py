@@ -85,7 +85,7 @@ def required_role(method: str, path: str) -> str:
         return "researcher"
     if method == "POST" and re.fullmatch(r"/stock/training/models/[0-9a-f]{64}/lifecycle", path):
         return "operator"
-    if method == "GET" and re.fullmatch(r"/stock/forward-trials/[0-9a-f-]{36}(?:/(decisions|metrics|promotion-readiness))?", path):
+    if method == "GET" and re.fullmatch(r"/stock/forward-trials/[0-9a-f-]{36}(?:/(decisions|metrics|promotion-readiness|preflight))?", path):
         return "viewer"
     if method == "POST" and re.fullmatch(r"/stock/forward-trials/[0-9a-f-]{36}/(start|pause|resume|stop)", path):
         return "operator"

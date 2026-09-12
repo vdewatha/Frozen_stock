@@ -11,6 +11,7 @@ import {
   getForwardTrialDecisions,
   getForwardTrialMetrics,
   getForwardTrialPromotionReadiness,
+  getForwardTrialPreflight,
   startForwardTrial,
   pauseForwardTrial,
   resumeForwardTrial,
@@ -19,7 +20,8 @@ import {
   type ForwardTrialBindingEligible,
   type ForwardTrialDecision,
   type ForwardTrialMetricHistoryItem,
-  type PromotionReadinessReport
+  type PromotionReadinessReport,
+  type ForwardTrialPreflight
 } from "@/lib/api";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -35,6 +37,7 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
   const [latestMetric, setLatestMetric] = useState<ForwardTrialMetricHistoryItem | null>(null);
   const [decisions, setDecisions] = useState<ForwardTrialDecision[]>([]);
   const [readiness, setReadiness] = useState<PromotionReadinessReport | null>(null);
+  const [preflight, setPreflight] = useState<ForwardTrialPreflight | null>(null);
   const [loading, setLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [pauseReason, setPauseReason] = useState("");
@@ -43,14 +46,16 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
   const fetchDetails = useCallback(async () => {
     try {
       setLoading(true);
-      const [m, d, r] = await Promise.all([
+      const [m, d, r, p] = await Promise.all([
         getForwardTrialMetrics(trial.id),
         getForwardTrialDecisions(trial.id),
-        getForwardTrialPromotionReadiness(trial.id)
+        getForwardTrialPromotionReadiness(trial.id),
+        getForwardTrialPreflight(trial.id)
       ]);
       setLatestMetric(m.length > 0 ? m[m.length - 1] : null);
       setDecisions(d);
       setReadiness(r);
+      setPreflight(p);
     } catch (e) {
       console.error(e);
     } finally {
@@ -127,6 +132,48 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
             {trial.pause_reason && <div>Pause Reason: <span className="font-medium text-amber-600" data-testid="forward-trial-pause-reason">{trial.pause_reason}</span></div>}
           </div>
         </div>
+      </div>
+
+      <div className="rounded-md border border-line bg-white p-3" data-testid={`forward-trial-preflight-${trial.id}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="font-semibold text-sm text-slate-800">Alpaca SIP Preflight</div>
+            <div className="mt-0.5 text-xs text-slate-500">Fresh, complete one-minute evidence is required before an operator can resume.</div>
+          </div>
+          <span className={`rounded border px-2 py-1 text-xs font-semibold ${
+            preflight?.ready ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
+          }`}>
+            {preflight?.status?.toUpperCase() || "UNAVAILABLE"}
+          </span>
+        </div>
+        {preflight ? (
+          <>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {preflight.symbols.map((symbol) => (
+                <div key={symbol.symbol} className="rounded border border-line bg-panel p-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-700">{symbol.symbol}</span>
+                    <span className={symbol.status === "ready" ? "text-emerald-700" : "text-amber-700"}>{symbol.status}</span>
+                  </div>
+                  <div className="mt-1 text-slate-500">
+                    {symbol.latency_seconds == null ? "Latency unavailable" : `${Math.round(symbol.latency_seconds)}s latency`}
+                  </div>
+                  {symbol.unavailable_reason && <div className="mt-1 text-slate-500">{symbol.unavailable_reason}</div>}
+                  {symbol.missing_intervals.length > 0 && <div className="mt-1 text-coral">{symbol.missing_intervals.length} missing interval(s)</div>}
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-slate-500">
+              <span>Paper ledger: {preflight.paper_ledger.status}</span>
+              <span>Regular session: {preflight.regular_session ? "yes" : "no"}</span>
+              <span>Paper only: {preflight.paper_only ? "yes" : "no"}</span>
+              <span>Live authorized: {preflight.live_authorized ? "yes" : "no"}</span>
+            </div>
+            {preflight.reason && <div className="mt-2 text-xs font-medium text-amber-700">{preflight.reason}</div>}
+          </>
+        ) : (
+          <div className="mt-3 text-xs text-slate-500">Preflight evidence unavailable.</div>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">

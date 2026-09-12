@@ -23,7 +23,7 @@ from app.models import (
     IntradayBar, MarketPrice, StockDatasetSnapshot, StockModelRegistry, StockPaperAccount,
     StockPaperModelBinding, StockPaperTrial, StockPaperTrialDecision,
     StockPaperOrder, StockPaperFill, StockPaperTrialLot, Strategy,
-    StockPaperPromotionReadinessReport,
+    StockPaperPromotionReadinessReport, AuditLog,
 )
 from app.services.stock_forward_trial import (
     POLICY, _hash, create_trial, evaluate_trial, observe_trial, record_decision,
@@ -160,6 +160,42 @@ class ForwardTrialTests(unittest.TestCase):
                 result = start_trial(db, row.id)
             self.assertEqual(result.status, "blocked")
             self.assertIn("provider outage", result.blocked_reason)
+
+    def test_frozen_universe_cannot_resume_outside_regular_session(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused", universe=("AAPL", "MSFT", "QQQ", "SPY"))
+            self.account(db)
+            with patch("app.services.stock_forward_trial.validate_trial_artifact", return_value={}), \
+                 patch("app.services.stock_forward_trial.session_bounds", return_value=None):
+                result = start_trial(db, row.id, actor="operator")
+            self.assertEqual(result.status, "blocked")
+            self.assertIn("Regular-session", result.blocked_reason)
+            audit = db.query(AuditLog).one()
+            self.assertEqual(audit.action, "resume")
+            self.assertEqual(audit.status, "blocked")
+            self.assertEqual(audit.payload["operator"], "operator")
+
+    def test_successful_resume_audits_operator_and_preflight_without_rebinding(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused")
+            self.account(db)
+            original_lineage = dict(row.lineage)
+            evidence = {
+                "ready": True,
+                "status": "ready",
+                "symbols": [{"symbol": "SPY", "status": "ready"}],
+                "paper_ledger": {"status": "reconciled"},
+            }
+            with patch("app.services.stock_forward_trial.validate_trial_artifact", return_value={}), \
+                 patch("app.services.stock_forward_trial.trial_feed_preflight", return_value=evidence), \
+                 patch("app.services.stock_forward_trial._now", return_value=datetime(2025, 1, 2, 15, tzinfo=timezone.utc)):
+                result = start_trial(db, row.id, actor="operator")
+            self.assertEqual(result.status, "running")
+            self.assertEqual(result.lineage, original_lineage)
+            audit = db.query(AuditLog).one()
+            self.assertEqual(audit.status, "resumed")
+            self.assertEqual(audit.payload["operator"], "operator")
+            self.assertEqual(audit.payload["preflight"], evidence)
 
     def test_transient_block_clears_but_immutable_block_does_not(self):
         with Session(self.engine) as db:

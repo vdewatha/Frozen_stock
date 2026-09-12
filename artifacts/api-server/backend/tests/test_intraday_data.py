@@ -118,6 +118,63 @@ class IntradayDataTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "entitlement denied"):
                 intraday_data._request("/v2/stocks/bars", {})
 
+    def test_future_bar_is_not_current_session_ready(self):
+        now = datetime(2026, 9, 11, 14, 0, tzinfo=UTC)
+        future = IntradayBar(
+            symbol="SPY",
+            timeframe="1m",
+            opened_at=now,
+            open=100,
+            high=101,
+            low=99,
+            close=100,
+            volume=100,
+            provider="alpaca",
+            feed_class="sip",
+            exchange_timestamp=now,
+            ingested_at=now,
+        )
+        self.db.add(future)
+        self.db.commit()
+        with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")), patch.object(
+            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        ):
+            status = intraday_data.feed_status(self.db, "SPY", now=now)
+        self.assertEqual(status["status"], "stale")
+        self.assertIn("Future", status["unavailable_reason"])
+
+    def test_four_symbol_preflight_is_bounded_to_active_regular_session(self):
+        now = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
+        statuses = {
+            symbol: {
+                "symbol": symbol,
+                "status": "ready",
+                "exchange_timestamp": now - timedelta(minutes=2),
+                "ingestion_timestamp": now,
+                "latency_seconds": 60.0,
+                "missing_intervals": [],
+                "unavailable_reason": None,
+            }
+            for symbol in ("AAPL", "MSFT", "QQQ", "SPY")
+        }
+        imported = {
+            "status": "complete",
+            "results": [
+                {"symbol": symbol, "status": "complete", "rows_imported": 1}
+                for symbol in statuses
+            ],
+        }
+        with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")), patch.object(
+            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        ), patch("app.services.intraday_data.ingest_intraday", return_value=imported), patch(
+            "app.services.intraday_data.feed_status", side_effect=lambda db, symbol, now: statuses[symbol]
+        ):
+            result = intraday_data.preflight_intraday(self.db, now=now)
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["symbols"], ["AAPL", "MSFT", "QQQ", "SPY"])
+        self.assertEqual({row["symbol"] for row in result["results"]}, set(statuses))
+
     def test_unsupported_symbol_is_structured_untrusted_data(self):
         with self.assertRaisesRegex(UntrustedMarketData, "must be one of"):
             validate_intraday_readiness(self.db, "TSLA")

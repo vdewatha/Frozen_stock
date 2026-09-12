@@ -1,10 +1,10 @@
 
 
 import { useMemo, useState } from "react";
-import { Activity, Database, Play, RefreshCw } from "lucide-react";
+import { Activity, Database, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { BacktestResponse, MarketDataHealth, MarketImportResponse, PriceHistoryResponse, getMarketDataHealth, getPriceHistory, importIntradayMarketData, importMarketData, runBacktest } from "@/lib/api";
+import { BacktestResponse, IntradayPreflightResponse, MarketDataHealth, MarketImportResponse, PriceHistoryResponse, getMarketDataHealth, getPriceHistory, importIntradayMarketData, importMarketData, runBacktest, runIntradayPreflight } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -27,6 +27,7 @@ export function MarketLab() {
   const [prices, setPrices] = useState<PriceHistoryResponse | null>(null);
   const [backtest, setBacktest] = useState<BacktestResponse | null>(null);
   const [health, setHealth] = useState<MarketDataHealth | null>(null);
+  const [preflight, setPreflight] = useState<IntradayPreflightResponse | null>(null);
   const [status, setStatus] = useState("Ready");
   const [isBusy, setIsBusy] = useState(false);
 
@@ -93,6 +94,19 @@ export function MarketLab() {
     }
   }
 
+  async function handlePreflight() {
+    setIsBusy(true);
+    setStatus("Running four-symbol Alpaca SIP preflight");
+    try {
+      setPreflight(await runIntradayPreflight());
+      setStatus("Alpaca SIP preflight updated");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "SIP preflight failed");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleRunBacktest() {
     setIsBusy(true);
     setStatus("Running backtest");
@@ -146,6 +160,10 @@ export function MarketLab() {
              <Activity size={16} />
              Feed health
            </button>
+           <RoleGate requires="researcher" className="self-end"><button data-testid="button-run-sip-preflight" className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={handlePreflight}>
+             <ShieldCheck size={16} />
+             SIP preflight
+           </button></RoleGate>
           <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={handleRunBacktest}>
             <Play size={16} />
             Backtest
@@ -196,6 +214,26 @@ export function MarketLab() {
                 {health.unavailable_reason ? <span className="sm:col-span-2 text-coral">Unavailable reason: {health.unavailable_reason}</span> : null}
               </div>
             ) : <div className="mt-2 text-sm text-slate-500">No real-time health result yet. Historical data and delayed data are not substitutes for the Alpaca SIP feed.</div>}
+          </div>
+          <div className="rounded-md border border-line p-3" data-testid="sip-preflight">
+            <div className="flex items-center justify-between gap-2 text-xs font-semibold uppercase text-slate-500">
+              <span>Trial feed preflight · AAPL / MSFT / QQQ / SPY</span>
+              <span className={`rounded border px-2 py-1 normal-case ${preflight?.ready ? "border-emerald-200 bg-emerald-50 text-mint" : "border-line"}`}>
+                {preflight ? (preflight.ready ? "Ready" : "Blocked") : "Not checked"}
+              </span>
+            </div>
+            {preflight ? (
+              <div className="mt-2 grid gap-1 text-sm">
+                <div className="flex justify-between gap-3"><span>Session / feed</span><strong>{preflight.session} / {preflight.feed_class}</strong></div>
+                {preflight.results.map((row) => (
+                  <div key={row.symbol} className="flex justify-between gap-3 border-t border-line pt-1">
+                    <span>{row.symbol}</span>
+                    <strong className={row.status === "ready" ? "text-mint" : "text-coral"}>{row.status}{row.latency_seconds == null ? "" : ` · ${row.latency_seconds.toFixed(1)}s`}</strong>
+                  </div>
+                ))}
+                {preflight.reason ? <div className="pt-1 text-coral">{preflight.reason}</div> : null}
+              </div>
+            ) : <div className="mt-2 text-sm text-slate-500">No authenticated four-symbol preflight has run. Delayed or historical data is not a substitute.</div>}
           </div>
           <div className="rounded-md border border-line p-3">
             <div className="text-xs font-semibold uppercase text-slate-500">Backtest Result</div>

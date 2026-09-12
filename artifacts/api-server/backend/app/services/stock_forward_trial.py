@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models import (
     StockDatasetSnapshot, StockModelRegistry, StockPaperModelBinding,
     StockPaperTrial, StockPaperTrialDecision, StockPaperTrialMetric, IntradayBar, MarketPrice,
@@ -27,7 +28,14 @@ from app.services.feature_pipeline import generate_features
 from app.services.stock_training import FEATURES, _calibrated_probability
 from app.services.stock_training_jobs import StockTrainingError, _dataset_from_record, validate_registered_stock_model
 from app.services.stock_paper_ledger import reserve_stock_paper_order, dispatch_reserved_order, StockPaperError
-from app.services.intraday_data import session_bounds, feed_status
+from app.services.audit import write_audit_log
+from app.services.intraday_data import (
+    ALLOWED_SYMBOLS,
+    NY,
+    feed_status,
+    preflight_intraday,
+    session_bounds,
+)
 from app.services.risk import DEFAULT_RISK_RULES
 
 POLICY = {
@@ -35,6 +43,18 @@ POLICY = {
     "max_allocated_notional": "10000", "max_risk_per_trade": "0.0025",
     "auto_pause_drawdown": "0.02", "paper_only": True, "live_authorized": False,
 }
+
+def _json_safe(value):
+    """Keep JSON audit and lineage columns free of database Decimal values."""
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 def _trial_equity_curve_max_drawdown(db: Session, trial: StockPaperTrial, as_of: datetime) -> Decimal | None:
     """Gross trial-only curve, marked at verified regular-session closes."""
@@ -283,7 +303,14 @@ def validate_trial_artifact(db: Session, trial: StockPaperTrial) -> dict:
     binding = db.get(StockPaperModelBinding, trial.binding_id)
     model = db.get(StockModelRegistry, binding.model_run_id) if binding else None
     snapshot = db.get(StockDatasetSnapshot, binding.snapshot_id) if binding else None
-    if not binding or not model or not snapshot or model.snapshot_id != snapshot.snapshot_id:
+    if (
+        not binding
+        or not model
+        or not snapshot
+        or model.snapshot_id != snapshot.snapshot_id
+        or binding.paper_only is False
+        or binding.live_authorized is True
+    ):
         raise StockTrainingError("Trial immutable lineage is unavailable")
     if binding.binding_sha256 != trial.lineage.get("binding_hash"):
         raise StockTrainingError("Trial immutable binding hash has changed")
@@ -296,6 +323,130 @@ def validate_trial_artifact(db: Session, trial: StockPaperTrial) -> dict:
         # Older rows predate the digest; new rows below always carry one.
         if trial.lineage.get("lineage_sha256"): raise StockTrainingError("Trial lineage digest mismatch")
     return manifest
+
+
+def trial_feed_preflight(
+    db: Session,
+    trial: StockPaperTrial,
+    *,
+    now: datetime | None = None,
+    authenticated_probe: bool = False,
+) -> dict:
+    """Return safe, current-session feed and paper-ledger readiness evidence."""
+    observed_at = now or _now()
+    symbols = [str(value).upper() for value in trial.lineage.get("universe", [])]
+    statuses = []
+    bounds = session_bounds(observed_at.astimezone(NY).date())
+    in_session = bool(bounds and bounds[0] <= observed_at < bounds[1])
+    frozen_universe = set(symbols) == set(ALLOWED_SYMBOLS)
+    probe_results = None
+    if frozen_universe and in_session and authenticated_probe:
+        probe = preflight_intraday(db, symbols, now=observed_at)
+        probe_results = {item["symbol"]: item for item in probe.get("results", [])}
+    for symbol in symbols:
+        try:
+            status = (
+                probe_results.get(symbol)
+                if probe_results is not None
+                else feed_status(db, symbol, now=observed_at)
+            )
+            if status is None:
+                raise RuntimeError("Missing authenticated SIP preflight result")
+            statuses.append(
+                {
+                    "symbol": symbol,
+                    "status": status.get("status"),
+                    "entitlement_state": status.get("entitlement_state"),
+                    "exchange_timestamp": (
+                        status["exchange_timestamp"].isoformat()
+                        if isinstance(status.get("exchange_timestamp"), datetime)
+                        else status.get("exchange_timestamp")
+                        if status.get("exchange_timestamp")
+                        else None
+                    ),
+                    "ingestion_timestamp": (
+                        status["ingestion_timestamp"].isoformat()
+                        if isinstance(status.get("ingestion_timestamp"), datetime)
+                        else status.get("ingestion_timestamp")
+                        if status.get("ingestion_timestamp")
+                        else None
+                    ),
+                    "latency_seconds": status.get("latency_seconds"),
+                    "missing_intervals": status.get("missing_intervals", []),
+                    "unavailable_reason": status.get("unavailable_reason"),
+                }
+            )
+        except Exception:
+            statuses.append(
+                {
+                    "symbol": symbol,
+                    "status": "unavailable",
+                    "entitlement_state": "unverified",
+                    "exchange_timestamp": None,
+                    "ingestion_timestamp": None,
+                    "latency_seconds": None,
+                    "missing_intervals": [],
+                    "unavailable_reason": "Authenticated Alpaca SIP feed status unavailable",
+                }
+            )
+    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    ledger_ready = bool(
+        account
+        and account.status == "reconciled"
+        and not account.reconciliation_required
+        and account.accounting_verified
+    )
+    # The approved trial is the four-symbol frozen universe and must only be
+    # resumed from an active regular-session preflight. Older synthetic
+    # one-symbol fixtures remain usable for non-operational unit coverage.
+    legacy_fixture_outside_session = not frozen_universe and not in_session
+    feed_configuration_valid = settings.alpaca_feed.strip().lower() == "sip"
+    feed_ready = (
+        (
+            feed_configuration_valid
+            and in_session
+            and bool(statuses)
+            and all(item["status"] == "ready" for item in statuses)
+        )
+        if frozen_universe
+        else (
+            feed_configuration_valid
+            and (
+                legacy_fixture_outside_session
+                or not statuses
+                or all(item["status"] == "ready" for item in statuses)
+            )
+        )
+    )
+    failures = [
+        f"{item['symbol']}: {item.get('unavailable_reason') or item['status']}"
+        for item in statuses
+        if item["status"] != "ready"
+    ]
+    if not feed_configuration_valid:
+        reason = "Alpaca SIP feed is not configured"
+    elif frozen_universe and not in_session:
+        reason = "Regular-session authenticated preflight is required"
+    elif failures and not legacy_fixture_outside_session:
+        reason = failures[0]
+    elif not ledger_ready:
+        reason = "Alpaca paper ledger is not reconciled"
+    else:
+        reason = None
+    return {
+        "status": "ready" if feed_ready and ledger_ready else "blocked",
+        "ready": feed_ready and ledger_ready,
+        "checked_at": observed_at.isoformat(),
+        "regular_session": in_session,
+        "symbols": statuses,
+        "paper_ledger": {
+            "status": "reconciled" if ledger_ready else "blocked",
+            "reason": None if ledger_ready else "Alpaca paper ledger is not reconciled",
+        },
+        "reason": reason,
+        "paper_only": True,
+        "live_authorized": False,
+    }
 
 def create_trial(db: Session, *, binding_id: int, actor: str) -> StockPaperTrial:
     binding = db.get(StockPaperModelBinding, binding_id)
@@ -324,48 +475,92 @@ def create_trial(db: Session, *, binding_id: int, actor: str) -> StockPaperTrial
     db.add(row)
     return row
 
-def start_trial(db: Session, trial_id: str) -> StockPaperTrial:
+def start_trial(
+    db: Session,
+    trial_id: str,
+    *,
+    actor: str = "system",
+) -> StockPaperTrial:
     row = db.get(StockPaperTrial, trial_id)
     if not row: raise StockTrainingError("Trial not found")
     if row.status not in {"approved", "paused", "blocked"}: raise StockTrainingError("Trial cannot be started")
-    if not row.blocked_reason:
+    immutable_block = bool(
+        row.blocked_reason
+        and not (
+            row.blocked_reason.startswith("Alpaca paper ledger")
+            or row.blocked_reason.startswith("fresh_complete_feed_required")
+            or row.blocked_reason.startswith("Regular-session")
+        )
+    )
+    try:
         validate_trial_artifact(db, row)
+    except StockTrainingError:
+        if immutable_block:
+            return row
+        raise
+    if immutable_block:
+        return row
+    if row.policy.get("paper_only") is not True or row.policy.get("live_authorized") is not False:
+        row.status, row.blocked_reason = "blocked", "Trial policy is not paper-only"
+        write_audit_log(
+            db,
+            event_type="stock_forward_trial",
+            action="resume",
+            status="blocked",
+            message="Trial resume blocked by immutable paper-only policy",
+            entity_type="stock_paper_trial",
+            payload={"trial_id": row.id, "operator": actor, "paper_only": True, "live_authorized": False},
+        )
+        return row
     # Starting is intentionally conservative: observe/reconcile task must establish these facts.
     from app.models.stock_paper import StockPaperAccount
     account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
     if not account or account.status != "reconciled" or account.reconciliation_required:
         row.status, row.blocked_reason = "blocked", "Alpaca paper ledger is not reconciled"
+        write_audit_log(
+            db,
+            event_type="stock_forward_trial",
+            action="resume",
+            status="blocked",
+            message=row.blocked_reason,
+            entity_type="stock_paper_trial",
+            payload={"trial_id": row.id, "operator": actor, "paper_only": True, "live_authorized": False},
+        )
         return row
-    # During a regular session, starting without a verified complete feed is
-    # not an idle mode: it is a safety block.  Outside session hours the trial
-    # may be started and the next worker cycle will wait for a session.
     now = _now()
-    bounds = session_bounds(now.astimezone(timezone.utc).date())
-    if bounds and bounds[0] <= now < bounds[1]:
-        for symbol in row.lineage.get("universe", []):
-            try:
-                status = feed_status(db, symbol, now=now)
-            except Exception as exc:
-                row.status, row.blocked_reason = "blocked", f"fresh_complete_feed_required:{symbol}:feed_unavailable:{exc}"
-                return row
-            if status.get("status") != "ready":
-                reason = status.get("unavailable_reason") or status.get("status") or "feed unavailable"
-                row.status, row.blocked_reason = "blocked", f"fresh_complete_feed_required:{symbol}:{reason}"
-                return row
+    preflight = trial_feed_preflight(db, row, now=now, authenticated_probe=True)
+    if not preflight["ready"]:
+        row.status = "blocked"
+        row.blocked_reason = f"fresh_complete_feed_required:{preflight['reason']}"
+        write_audit_log(
+            db,
+            event_type="stock_forward_trial",
+            action="resume",
+            status="blocked",
+            message=row.blocked_reason,
+            entity_type="stock_paper_trial",
+            payload={"trial_id": row.id, "operator": actor, "preflight": preflight},
+        )
+        return row
     # Binding eligibility blocks are immutable; operational preflight blocks
     # may clear only after every check above succeeds.
-    if row.blocked_reason and not (
-        row.blocked_reason.startswith("Alpaca paper ledger") or
-        row.blocked_reason.startswith("fresh_complete_feed_required")
-    ):
+    if immutable_block:
         return row
     row.blocked_reason = None
-    now = _now()
     if row.baseline_equity is None:
         row.baseline_equity, row.baseline_at, row.peak_equity = account.equity, now, account.equity
     elif row.peak_equity is None or account.equity > row.peak_equity:
         row.peak_equity = account.equity
     row.status, row.started_at, row.pause_reason = "running", row.started_at or now, None
+    write_audit_log(
+        db,
+        event_type="stock_forward_trial",
+        action="resume",
+        status="resumed",
+        message="Operator resumed paper trial after authenticated SIP and ledger preflight",
+        entity_type="stock_paper_trial",
+        payload={"trial_id": row.id, "operator": actor, "preflight": preflight},
+    )
     return row
 
 def pause_trial(db: Session, trial_id: str, reason: str) -> StockPaperTrial:
@@ -398,7 +593,7 @@ def record_decision(db: Session, trial_id: str, *, symbol: str, bar_timestamp: d
     action = "buy" if reason is None else "reject"
     decision = StockPaperTrialDecision(trial_id=trial_id, symbol=symbol.upper(), bar_timestamp=bar_timestamp,
         decision_timestamp=decision_at, action=action, qualifying=reason is None,
-        rejection_reason=reason, lineage=row.lineage)
+        rejection_reason=reason, lineage=_json_safe(row.lineage))
     try:
         with db.begin_nested():
             # Keep both INSERT and constraint handling inside the savepoint;
@@ -601,7 +796,7 @@ def observe_trial(db: Session, trial_id: str) -> dict:
             "feature_timestamp_not_before_decision",
         }:
             continue
-        lineage = {**trial.lineage, "bar_provider": bar.provider,
+        lineage = {**_json_safe(trial.lineage), "bar_provider": bar.provider,
                    "bar_exchange_timestamp": bar.exchange_timestamp.isoformat() if bar.exchange_timestamp else None,
                    "execution_reference_timestamp": opened.isoformat(),
                    "observation_timestamp": now.isoformat(), "feature_timestamp": feature_timestamp.isoformat() if feature_timestamp else None,

@@ -103,7 +103,7 @@ from app.services.experiments import list_strategy_experiments, run_strategy_exp
 from app.services.governance import evaluate_strategy_governance, latest_strategy_governance_scorecard
 from app.services.learning import propose_parameter_experiments
 from app.services.market_data import get_price_points, import_market_prices
-from app.services.intraday_data import feed_status, ingest_intraday
+from app.services.intraday_data import feed_status, ingest_intraday, preflight_intraday
 from app.models import IntradayBar
 from app.services.trusted_data import trusted_history, UntrustedMarketData
 from app.services.market_regime import detect_and_store_market_regime, latest_market_regime, list_market_regimes
@@ -335,6 +335,10 @@ def import_prices(payload: MarketImportRequest, db: Session = Depends(get_db)) -
 def price_history(symbol: str, limit: int = 260, db: Session = Depends(get_db)) -> dict:
     rows, source = get_price_points(db, symbol, limit=limit)
     return {"symbol": symbol.upper(), "source": source, "rows": rows}
+
+@router.post("/market-data/intraday/preflight")
+def intraday_preflight(db: Session = Depends(get_db)):
+    return preflight_intraday(db)
 
 @router.get("/market-data/intraday/{symbol}", response_model=list[IntradayBarRead])
 def intraday_history(symbol: str, limit: int = 390, db: Session = Depends(get_db)):
