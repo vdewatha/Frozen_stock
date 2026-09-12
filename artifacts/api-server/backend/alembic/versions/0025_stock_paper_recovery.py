@@ -1,4 +1,4 @@
-"""Durable stock paper rollback, cancellation, cooldown, and watchdog state."""
+"""Create durable stock paper recovery state."""
 from alembic import op
 import sqlalchemy as sa
 
@@ -34,7 +34,6 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_stock_paper_recovery_state_status", "stock_paper_recovery_state", ["status"])
-
     op.create_table(
         "stock_paper_recovery_events",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -53,9 +52,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_stock_paper_recovery_events_created_at", table_name="stock_paper_recovery_events")
-    op.drop_index("ix_stock_paper_recovery_events_status", table_name="stock_paper_recovery_events")
-    op.drop_index("ix_stock_paper_recovery_events_action", table_name="stock_paper_recovery_events")
-    op.drop_table("stock_paper_recovery_events")
-    op.drop_index("ix_stock_paper_recovery_state_status", table_name="stock_paper_recovery_state")
-    op.drop_table("stock_paper_recovery_state")
+    raise RuntimeError("0025 is forward-only; restore a verified backup to roll back")

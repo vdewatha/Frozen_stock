@@ -6,3 +6,4 @@
 - [Immutable model registry lifecycle](immutable-model-registry-lifecycle.md) — keep mutable champion/challenger state outside append-only registry rows.
 - [Monitoring read safety](monitoring-read-safety.md) — monitoring reads must return unknown before evidence exists and never trigger safety actions.
 - [Independent watchdog launch](independent-watchdog-launch.md) — launch the backend watchdog with the backend directory on PYTHONPATH.
+- [Audit-chain writer serialization](audit-chain-writer-serialization.md) — flush same-transaction audit events before linking digests; never rewrite a detected historical fork.

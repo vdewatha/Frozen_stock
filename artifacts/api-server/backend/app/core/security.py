@@ -32,7 +32,7 @@ READ_PATHS = {
     "/assets", "/strategies", "/market-regimes", "/news", "/paper-trades",
     "/audit-logs", "/notifications", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
-    "/economic/indicators", "/system/readiness", "/system/deployment-monitor", "/research/runs",
+    "/economic/indicators", "/system/readiness", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs",
     "/stock/training/jobs", "/stock/training/binding",
     "/stock-paper/status",
     "/stock/forward-trials", "/stock/forward-trials/bindings/eligible",
@@ -61,7 +61,7 @@ OPERATOR_POSTS = {
     "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal",
 }
 ADMIN_POSTS = {
-    "/system/deployment-monitor/run", "/notifications/{notification_id}/acknowledge",
+    "/system/deployment-monitor/run", "/system/operational-hardening/run", "/notifications/{notification_id}/acknowledge",
     "/notifications/{notification_id}/resolve", "/strategies/evaluate",
     "/strategies/reactivation-review", "/risk/settings", "/safety/kill-switch/disable",
     "/safety/strategies/resume", "/broker/live/orders",

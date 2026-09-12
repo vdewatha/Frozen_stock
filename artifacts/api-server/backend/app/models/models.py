@@ -264,6 +264,8 @@ class AuditLog(Base):
     status: Mapped[str] = mapped_column(String(64))
     message: Mapped[Optional[str]] = mapped_column(Text)
     payload: Mapped[Optional[dict]] = mapped_column(JSON)
+    previous_event_sha256: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    event_sha256: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 

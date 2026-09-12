@@ -97,6 +97,7 @@ from app.services.candidate_activation import review_candidate_activation
 from app.services.candidate_evidence import candidate_evidence_drilldown
 from app.services.decision_journal import decision_journal_scorecard, list_candidate_decisions, record_candidate_decision, refresh_decision_journal_outcomes, update_journal_realized_outcomes, update_strategy_memory_from_journal
 from app.services.deployment_monitor import deployment_monitor_snapshot, run_deployment_monitor
+from app.services.operational_hardening import operational_hardening_snapshot, run_operational_hardening
 from app.services.stock_monitoring import latest_stock_monitoring, run_stock_monitoring
 from app.services.economic_data import import_fallback_economic_indicators, list_economic_indicators, summarize_macro_context
 from app.services.experiments import list_strategy_experiments, run_strategy_experiments
@@ -163,6 +164,16 @@ def system_deployment_monitor(db: Session = Depends(get_db)) -> dict:
 @router.post("/system/deployment-monitor/run", response_model=dict)
 def run_system_deployment_monitor(db: Session = Depends(get_db)) -> dict:
     return run_deployment_monitor(db, source="manual_api")
+
+
+@router.get("/system/operational-hardening", response_model=dict)
+def system_operational_hardening(db: Session = Depends(get_db)) -> dict:
+    return operational_hardening_snapshot(db)
+
+
+@router.post("/system/operational-hardening/run", response_model=dict)
+def run_system_operational_hardening(db: Session = Depends(get_db)) -> dict:
+    return run_operational_hardening(db, source="manual_api")
 
 
 @router.get("/system/stock-monitoring", response_model=dict)

@@ -44,6 +44,23 @@ export type DashboardSnapshot = {
 export type AccessRole = "viewer" | "researcher" | "operator" | "admin";
 export type AuthSession = { role: AccessRole };
 
+export type OperationalHardeningReport = {
+  status: "clear" | "unknown" | "breach" | string;
+  generated_at: string;
+  source: string;
+  checks: Array<{
+    key: string;
+    status: "clear" | "unknown" | "breach" | string;
+    message: string;
+    details: Record<string, unknown>;
+  }>;
+  configuration_digest: {
+    sha256: string;
+    inputs: Record<string, unknown>;
+  };
+  incident_procedure: string;
+};
+
 export type StockPaperStatusValue = "uninitialized" | "reconciled" | "halted" | "drift" | "uncertain" | "unavailable";
 
 export type StockPaperAccount = {
@@ -1766,6 +1783,15 @@ export async function getDeploymentMonitor(): Promise<DeploymentMonitorSnapshot>
 export async function getStockMonitoring(): Promise<StockMonitoringSnapshot> {
   const response = await authenticatedFetch(`${API_BASE_URL}/system/stock-monitoring`, { cache: "no-store" });
   return handleResponse<StockMonitoringSnapshot>(response);
+}
+
+export async function getOperationalHardening(): Promise<OperationalHardeningReport> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/system/operational-hardening`, { cache: "no-store" });
+  return handleResponse<OperationalHardeningReport>(response);
+}
+
+export async function runOperationalHardening(): Promise<OperationalHardeningReport> {
+  return postJson<OperationalHardeningReport>("/system/operational-hardening/run", {});
 }
 
 export async function runStockMonitoring(): Promise<StockMonitoringSnapshot> {

@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from hashlib import sha256
+from decimal import Decimal
 from typing import Callable
+
+from sqlalchemy import text
+from sqlalchemy import inspect as sqlalchemy_inspect
+from sqlalchemy.types import JSON
 
 from app.db.session import SessionLocal
 from app.models import Asset, PaperTrade, Strategy
@@ -34,9 +40,39 @@ from app.models import StockPaperTrial
 from app.tasks.celery_app import celery_app
 
 
+def _json_safe(value):
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _normalize_pending_json(db) -> None:
+    """Prevent provider/lineage JSON columns from receiving Decimal values."""
+    # Include loaded persistent objects because SQLAlchemy's mutable JSON
+    # tracking does not always mark a nested dictionary dirty.
+    for instance in (*db.new, *db.dirty, *db.identity_map.values()):
+        for attribute in sqlalchemy_inspect(instance).mapper.column_attrs:
+            column = attribute.columns[0]
+            if isinstance(column.type, JSON):
+                value = getattr(instance, attribute.key)
+                setattr(instance, attribute.key, _json_safe(value))
+
+
 def _run_job(job_name: str, work: Callable) -> dict:
     db = SessionLocal()
+    lock_key = int.from_bytes(sha256(f"job:{job_name}".encode()).digest()[:8], "big") % 2_147_483_647
+    lock_acquired = False
     try:
+        if db.get_bind().dialect.name == "postgresql":
+            lock_acquired = bool(db.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}))
+            if not lock_acquired:
+                return {"status": "skipped", "job": job_name, "reason": "duplicate worker lease is active"}
         return work(db)
     except Exception as exc:
         create_notification(
@@ -52,6 +88,11 @@ def _run_job(job_name: str, work: Callable) -> dict:
         db.commit()
         raise
     finally:
+        if lock_acquired:
+            try:
+                db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
+            except Exception:
+                db.rollback()
         db.close()
 
 
@@ -379,6 +420,7 @@ def stock_forward_trial_observe_job(trial_id: str | None = None) -> dict:
                 execute_pending_decisions(db, row.id)
                 metric = evaluate_trial(db, row.id)
                 results.append({"trial_id": row.id, "status": row.status, "classification": metric.classification})
+        _normalize_pending_json(db)
         db.commit()
         return {"status": "complete", "trials": results, "paper_only": True}
     return _run_job("stock_forward_trial_observe_job", work)

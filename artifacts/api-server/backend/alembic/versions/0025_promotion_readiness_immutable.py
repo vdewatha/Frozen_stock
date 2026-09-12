@@ -3,7 +3,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0025_promotion_readiness_immutable"
+revision = "0025_promo_immutable"
 down_revision = "0024_stock_continuous_monitoring"
 branch_labels = None
 depends_on = None
