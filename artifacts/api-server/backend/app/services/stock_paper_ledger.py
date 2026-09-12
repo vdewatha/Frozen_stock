@@ -33,7 +33,7 @@ UTC = timezone.utc
 UNKNOWN_COSTS_REASON = "Broker-reported commissions/spread/slippage are incomplete; costs are unknown."
 RECONCILIATION_OVERLAP = timedelta(minutes=10)
 NONTERMINAL_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
-ALLOWED_ORDER_SOURCES = frozenset({"manual_control_room", "manual_close", "manual_reduce", "broker_import"})
+ALLOWED_ORDER_SOURCES = frozenset({"manual_control_room", "manual_close", "manual_reduce", "recovery_flatten", "broker_import"})
 MAX_REFERENCE_PRICE_DEVIATION = Decimal("0.02")
 MAX_BROKER_SNAPSHOT_AGE = timedelta(minutes=5)
 
@@ -52,6 +52,7 @@ class AlpacaPaperGateway(Protocol):
     def orders(self, after: datetime | None = None) -> list[dict]: ...
     def fills(self, after: datetime | None = None) -> list[dict]: ...
     def submit_order(self, payload: dict) -> dict: ...
+    def cancel_order(self, broker_order_id: str) -> None: ...
     def order_by_client_id(self, client_order_id: str) -> dict | None: ...
 
 
@@ -169,6 +170,14 @@ class AlpacaPaperClient:
     def submit_order(self, payload: dict) -> dict:
         # Kept out of all routes; callers must use dispatch_reserved_order.
         return self._request("POST", "/v2/orders", payload=payload)
+
+    def cancel_order(self, broker_order_id: str) -> None:
+        try:
+            self._request("DELETE", f"/v2/orders/{broker_order_id}")
+        except StockPaperUnavailable as exc:
+            if "HTTP 404" in str(exc):
+                return
+            raise
 
     def order_by_client_id(self, client_order_id: str) -> dict | None:
         try:
@@ -613,15 +622,8 @@ def halt_stock_paper_account(db: Session, reason: str) -> dict:
 
 
 def resume_stock_paper_account(db: Session) -> dict:
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
-    if account is None:
-        raise StockPaperError("Stock paper account is not initialized")
-    if account.reconciliation_required or not account.last_reconciled_at or (account.halted_at and account.last_reconciled_at <= account.halted_at):
-        raise StockPaperError("Resume requires a successful reconciliation after the halt")
-    account.status, account.halt_reason = "reconciled", None
-    _event(db, account, "resume", "reconciled", "Admin resumed after reconciliation")
-    db.commit()
-    return stock_paper_status(db)
+    from app.services.stock_recovery import resume_stock_paper_after_revalidation
+    return resume_stock_paper_after_revalidation(db, actor=str(db.info.get("stock_paper_actor", "operator")))
 
 
 def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, signal_id: int | None,
@@ -811,10 +813,11 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     if order.status != "reserved":
         return order
     account = db.query(StockPaperAccount).filter_by(id=order.account_id).with_for_update().one()
-    if account.status != "reconciled" or account.reconciliation_required:
+    recovery_flatten = order.source == "recovery_flatten" and order.side == "sell"
+    if (not recovery_flatten and account.status != "reconciled") or account.reconciliation_required:
         raise StockPaperError("Reserved order cannot dispatch until stock paper account is reconciled")
     rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
-    if bool((rule.value if rule else {}).get("kill_switch_enabled", False)):
+    if not recovery_flatten and bool((rule.value if rule else {}).get("kill_switch_enabled", False)):
         raise StockPaperError("Reserved order blocked by kill switch")
     now = datetime.now(UTC)
     if not account.source_timestamp or _utc(account.source_timestamp) < now - MAX_BROKER_SNAPSHOT_AGE:
@@ -850,6 +853,8 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
             raise StockPaperError("Reserved buy exceeds current symbol exposure limit")
         _validate_signal_buy(db, account, order.symbol, order.signal_id, order.quantity, order.limit_price,
                              DEFAULT_RISK_RULES | (rule.value if rule else {}), now)
+    elif not recovery_flatten and order.source not in ALLOWED_ORDER_SOURCES:
+        raise StockPaperError("Reserved order source is not approved")
     account_id = account.id
     order.status, order.submission_attempted_at = "submitting", datetime.now(UTC)
     db.commit()

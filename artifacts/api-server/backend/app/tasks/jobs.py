@@ -28,6 +28,7 @@ from app.services.stock_training_jobs import (
     run_stock_training_job,
 )
 from app.services.stock_monitoring import run_stock_monitoring
+from app.services.stock_recovery import reconcile_inflight_stock_orders_on_restart
 from app.services.stock_forward_trial import observe_trial, execute_pending_decisions, start_trial, evaluate_trial
 from app.models import StockPaperTrial
 from app.tasks.celery_app import celery_app
@@ -384,8 +385,7 @@ def stock_forward_trial_observe_job(trial_id: str | None = None) -> dict:
 
 @celery_app.task
 def stock_forward_trial_reconcile_job() -> dict:
-    from app.services.stock_paper_ledger import reconcile_stock_paper_account
-    return _run_job("stock_forward_trial_reconcile_job", lambda db: reconcile_stock_paper_account(db))
+    return _run_job("stock_forward_trial_reconcile_job", reconcile_inflight_stock_orders_on_restart)
 
 @celery_app.task
 def stock_forward_trial_evaluate_job(trial_id: str) -> dict:

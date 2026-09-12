@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.trading import PaperTradingSignalRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest
+from app.schemas.trading import PaperTradingSignalRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest
 from app.services.stock_paper_ledger import (
     StockPaperError,
     create_stock_paper_signal,
@@ -18,6 +18,8 @@ from app.services.stock_paper_ledger import (
     resume_stock_paper_account,
     stock_paper_status,
 )
+from app.services.stock_recovery import cancel_open_stock_orders, recovery_status, rollback_to_last_known_good
+from app.services.stock_training_jobs import StockTrainingError
 
 router = APIRouter(prefix="/stock-paper", tags=["stock-paper"])
 
@@ -28,6 +30,38 @@ def _attribute(db: Session, request: Request) -> None:
 @router.get("/status")
 def status(db: Session = Depends(get_db)) -> dict:
     return stock_paper_status(db)
+
+
+@router.get("/recovery")
+def recovery(db: Session = Depends(get_db)) -> dict:
+    return recovery_status(db)
+
+
+@router.post("/recovery/cancel")
+def cancel_recovery(payload: StockPaperRecoveryRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    _attribute(db, request)
+    try:
+        result = cancel_open_stock_orders(
+            db,
+            actor=str(getattr(request.state, "actor", "operator")),
+            flatten_policy=payload.flatten_policy,
+        )
+        return recovery_status(db) | {"action_result": result}
+    except StockPaperError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/recovery/rollback")
+def rollback_recovery(payload: StockPaperRollbackRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    _attribute(db, request)
+    try:
+        return rollback_to_last_known_good(
+            db,
+            actor=str(getattr(request.state, "actor", "operator")),
+            reason=payload.reason,
+        )
+    except (StockPaperError, StockTrainingError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/initialize")

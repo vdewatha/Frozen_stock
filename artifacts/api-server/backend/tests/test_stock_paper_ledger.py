@@ -27,6 +27,7 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
     stock_paper_status,
 )
+from app.services.stock_recovery import run_stock_watchdog, resume_stock_paper_after_revalidation
 
 
 class FakeAlpaca:
@@ -40,6 +41,8 @@ class FakeAlpaca:
         self.lookups = 0
         self.orders_after = []
         self.fills_after = []
+        self.cancelled_order_ids = []
+        self.cancel_error = None
 
     def account(self):
         return self.account_row or {"id": "paper-account", "currency": "USD", "status": "ACTIVE",
@@ -65,6 +68,11 @@ class FakeAlpaca:
     def order_by_client_id(self, client_order_id):
         self.lookups += 1
         return self.lookup_rows.get(client_order_id)
+
+    def cancel_order(self, broker_order_id):
+        if self.cancel_error:
+            raise self.cancel_error
+        self.cancelled_order_ids.append(broker_order_id)
 
 
 class StockPaperLedgerTests(unittest.TestCase):
@@ -674,6 +682,63 @@ class StockPaperLedgerTests(unittest.TestCase):
                 with self.assertRaisesRegex(StockPaperError, "drawdown"):
                     reserve_stock_paper_order(db, symbol="SPY", side="buy", quantity=Decimal("1"),
                         reference_price=Decimal("100"), idempotency_key="signal-buy-drawdown", source="manual_control_room", signal_id=drawdown_signal.id)
+
+
+class StockPaperRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.engine = create_engine("sqlite:///" + str(Path(self.tmp.name) / "recovery.sqlite"))
+        Base.metadata.create_all(self.engine)
+
+    def tearDown(self):
+        self.engine.dispose()
+        self.tmp.cleanup()
+
+    def test_independent_watchdog_pauses_when_monitor_evidence_is_missing(self):
+        from app.models import StockPaperRecoveryState
+
+        with Session(self.engine) as db:
+            result = run_stock_watchdog(db)
+            self.assertEqual(result["status"], "paused")
+            state = db.get(StockPaperRecoveryState, 1)
+            self.assertEqual(state.status, "cooldown")
+            self.assertIn("heartbeat", state.pause_reason)
+
+    def test_resume_requires_cooldown_and_fresh_monitoring_evidence(self):
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            run_stock_watchdog(db)
+            with self.assertRaises(StockPaperError):
+                resume_stock_paper_after_revalidation(db, actor="operator-test")
+
+    def test_broker_cancellation_outage_leaves_paper_account_halted(self):
+        from app.models.stock_paper import StockPaperAccount, StockPaperOrder
+        from app.services.stock_recovery import cancel_open_stock_orders
+
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            account = db.query(StockPaperAccount).one()
+            db.add(StockPaperOrder(
+                account_id=account.id,
+                client_order_id="sp-cancel-outage",
+                broker_order_id="broker-order-1",
+                symbol="SPY",
+                side="sell",
+                quantity=Decimal("1"),
+                order_type="limit",
+                time_in_force="day",
+                limit_price=Decimal("100"),
+                reserved_cash=Decimal("0"),
+                status="accepted",
+                source="manual_close",
+            ))
+            db.commit()
+            gateway = FakeAlpaca()
+            gateway.cancel_error = StockPaperError("broker unavailable")
+            result = cancel_open_stock_orders(db, actor="operator-test", gateway=gateway)
+            self.assertEqual(result["status"], "failed")
+            self.assertTrue(result["failures"])
+            self.assertEqual(db.query(StockPaperAccount).one().status, "halted")
 
 
 class StockPaperLegacyQuarantineTests(unittest.TestCase):

@@ -327,6 +327,52 @@ class StockMonitoringBreach(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class StockPaperRecoveryState(Base):
+    """Singleton coordination state for fail-closed paper recovery."""
+    __tablename__ = "stock_paper_recovery_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_stock_paper_recovery_state_singleton"),
+        CheckConstraint(
+            "status IN ('armed', 'paused', 'cooldown', 'revalidation_required', 'resumable')",
+            name="ck_stock_paper_recovery_status",
+        ),
+        CheckConstraint(
+            "flatten_policy IN ('none', 'positions')",
+            name="ck_stock_paper_recovery_flatten_policy",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="armed", index=True)
+    flatten_policy: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
+    cooldown_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    pause_reason: Mapped[Optional[str]] = mapped_column(Text)
+    last_known_good_model_run_id: Mapped[Optional[str]] = mapped_column(String(64))
+    last_known_good_binding_id: Mapped[Optional[int]] = mapped_column()
+    last_monitor_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_watchdog_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_revalidation_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class StockPaperRecoveryEvent(Base):
+    """Append-only evidence for cancellation, rollback, watchdog, and resume actions."""
+    __tablename__ = "stock_paper_recovery_events"
+    __table_args__ = (
+        UniqueConstraint("event_sha256", name="uq_stock_paper_recovery_event_digest"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    action: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    event_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
 class ModelPrediction(Base):
     __tablename__ = "model_predictions"
 

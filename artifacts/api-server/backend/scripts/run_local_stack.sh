@@ -42,6 +42,9 @@ PY
 
 python3.11 -m alembic upgrade head
 
+PYTHONPATH=. python3.11 scripts/run_stock_watchdog.py &
+pids+=("$!")
+
 python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
   --loglevel=INFO \
   --concurrency=2 &

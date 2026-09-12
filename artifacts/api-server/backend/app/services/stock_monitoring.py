@@ -31,7 +31,7 @@ from app.services.audit import write_audit_log
 from app.services.intraday_data import feed_status
 from app.services.notifications import create_notification
 from app.services.risk import DEFAULT_RISK_RULES
-from app.services.stock_paper_ledger import _halt
+from app.services.stock_recovery import enter_stock_recovery, record_stock_monitor_heartbeat
 from app.services.stock_training_jobs import StockTrainingError, transition_stock_model_lifecycle
 from app.services.trusted_data import TRUSTED_SOURCES, UntrustedMarketData, trusted_history
 
@@ -355,13 +355,7 @@ def _persist_breach(db: Session, check: dict, now: datetime) -> dict:
 
 def _pause_stock_path(db: Session, reasons: list[str], now: datetime) -> dict:
     reason = "Automatic stock-paper pause after persistent monitoring breach: " + ", ".join(reasons)
-    rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
-    if rule:
-        rule.value = DEFAULT_RISK_RULES | (rule.value or {}) | {"kill_switch_enabled": True, "paper_only": True}
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").with_for_update().one_or_none()
-    if account and account.status != "halted":
-        _halt(account, reason)
-        db.add(StockPaperLedgerEvent(account_id=account.id, event_type="monitoring_pause", status="halted", reason=reason, actor="stock_monitor", payload={"reasons": reasons}))
+    enter_stock_recovery(db, reason=reason, actor="stock_monitor", flatten_policy="none")
     write_audit_log(db, event_type="stock_monitoring_action", action="pause_stock_path", status="complete", message=reason, entity_type="stock_paper", payload={"reasons": reasons, "at": now.isoformat()})
     notification = db.query(Notification).filter(
         Notification.category == "stock_monitoring",
@@ -428,6 +422,7 @@ def run_stock_monitoring(db: Session, *, source: str = "stock_monitoring_job") -
         monitor_key=MONITOR_KEY, status=overall, generated_at=now,
         checks=checks, actions=actions, source=source,
     )
+    record_stock_monitor_heartbeat(db, observed_at=now)
     db.add(snapshot)
     write_audit_log(db, event_type="stock_monitoring", action="evaluate", status=overall, message=f"Stock monitoring completed with status {overall}.", entity_type="stock_monitoring", payload={"checks": checks, "actions": actions, "source": source})
     db.commit()

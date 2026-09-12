@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.models import (
     StockDatasetSnapshot, StockHoldoutConsumption, StockHoldoutReservation,
     StockModelLifecycleEvent, StockModelLifecycleState, StockModelRegistry, StockPaperBindingState,
-    StockPaperModelBinding, StockTrainingJob,
+    StockPaperModelBinding, StockPaperRecoveryState, StockTrainingJob,
 )
 from app.services.stock_dataset import (
     StockDataset,
@@ -42,6 +42,7 @@ STOCK_MODEL_LIFECYCLE_ACTIONS = {
     "start_canary": {"challenger": "paper_canary", "eligible": "paper_canary", "demoted": "paper_canary"},
     "promote": {"paper_canary": "champion"},
     "demote": {"paper_canary": "demoted", "champion": "demoted"},
+    "rollback": {"demoted": "champion", "eligible": "champion", "paper_canary": "champion"},
     "retire": {"challenger": "retired", "eligible": "retired", "paper_canary": "retired", "demoted": "retired"},
 }
 
@@ -147,6 +148,15 @@ def _transition_model(
         )
     from_state = current.lifecycle_state
     to_state = allowed[from_state]
+    if action == "demote" and from_state == "champion":
+        recovery = db.get(StockPaperRecoveryState, 1)
+        if recovery is None:
+            recovery = StockPaperRecoveryState(id=1, status="armed", flatten_policy="none", updated_by=actor)
+            db.add(recovery)
+        recovery.last_known_good_model_run_id = model.run_id
+        recovery.last_known_good_binding_id = binding_id
+        recovery.updated_by = actor
+        recovery.updated_at = _now()
     current.lifecycle_state = to_state
     current.updated_by, current.reason, current.updated_at = actor, reason.strip(), _now()
     return _lifecycle_event(
@@ -182,6 +192,10 @@ def transition_stock_model_lifecycle(
         raise StockTrainingError(
             "A paper canary must be created through an active paper binding"
         )
+    if action == "rollback" and (
+        active_binding is None or active_binding.model_run_id != model.run_id
+    ):
+        raise StockTrainingError("Rollback requires the last-known-good binding to be active")
     if action == "promote":
         if active_binding is None or active_binding.model_run_id != model.run_id:
             raise StockTrainingError("Only the active paper canary may be promoted")
@@ -200,7 +214,15 @@ def transition_stock_model_lifecycle(
             binding_id=active_binding.id,
         )
     else:
-        _transition_model(db, model=model, action=action, actor=actor, reason=reason)
+        transition_binding_id = (
+            active_binding.id
+            if active_binding is not None and active_binding.model_run_id == model.run_id
+            else None
+        )
+        _transition_model(
+            db, model=model, action=action, actor=actor, reason=reason,
+            binding_id=transition_binding_id,
+        )
         if action in {"demote", "retire"} and active_binding and active_binding.model_run_id == model.run_id:
             db.delete(state)
             db.flush()

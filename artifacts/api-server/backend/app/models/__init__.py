@@ -41,6 +41,8 @@ from app.models.models import (
     TradeCandidateSnapshot,
     StockMonitoringSnapshot,
     StockMonitoringBreach,
+    StockPaperRecoveryState,
+    StockPaperRecoveryEvent,
 )
 from app.models.stock_paper import (
     StockPaperAccount,
@@ -92,6 +94,8 @@ __all__ = [
     "TradeCandidateSnapshot",
     "StockMonitoringSnapshot",
     "StockMonitoringBreach",
+    "StockPaperRecoveryState",
+    "StockPaperRecoveryEvent",
     "StockPaperAccount",
     "StockPaperBrokerActivity",
     "StockPaperEquitySnapshot",

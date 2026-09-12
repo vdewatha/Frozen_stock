@@ -24,12 +24,13 @@ from app.core.config import settings
 from app.models import (
     Asset, MarketPrice, StockDatasetSnapshot, StockHoldoutReservation,
     StockModelLifecycleEvent, StockModelLifecycleState, StockModelRegistry,
-    StockPaperBindingState, StockPaperModelBinding, StockTrainingJob,
+    StockPaperBindingState, StockPaperModelBinding, StockPaperRecoveryState, StockTrainingJob,
 )
 from app.services.stock_training_jobs import (
     StockTrainingError, create_stock_paper_binding, create_stock_training_job, recover_stock_training_jobs,
     _owned_update, run_stock_training_job, summarize_job, transition_stock_model_lifecycle,
 )
+from app.services.stock_recovery import rollback_to_last_known_good
 
 
 def _snapshot() -> StockDatasetSnapshot:
@@ -280,6 +281,54 @@ def test_model_lifecycle_is_auditable_without_mutating_immutable_registry_rows()
             .where(StockModelLifecycleEvent.model_run_id == model.run_id)
             .order_by(StockModelLifecycleEvent.id)
         ).all()] == ["eligible", "paper_canary", "champion"]
+
+
+def test_last_known_good_rollback_restores_binding_and_lifecycle_atomically():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        model = StockModelRegistry(
+            run_id="e" * 64, snapshot_id="f" * 64, manifest_sha256="1" * 64,
+            artifact_path="/immutable/model", training_metadata={"selected_model": "test"},
+        )
+        db.add(model)
+        db.flush()
+        transition_stock_model_lifecycle(
+            db, model_run_id=model.run_id, action="mark_eligible",
+            actor="operator", reason="Eligible for paper canary",
+        )
+        binding = StockPaperModelBinding(
+            model_run_id=model.run_id, snapshot_id=model.snapshot_id,
+            binding_sha256="2" * 64, purpose="test", paper_only=True,
+            live_authorized=False, bound_by="operator", reason="Canary binding",
+        )
+        db.add(binding)
+        db.flush()
+        db.add(StockPaperBindingState(id=1, active_binding_id=binding.id, changed_by="operator", reason="Canary binding"))
+        db.commit()
+        transition_stock_model_lifecycle(
+            db, model_run_id=model.run_id, action="start_canary",
+            actor="operator", reason="Start canary",
+        )
+        db.commit()
+        transition_stock_model_lifecycle(
+            db, model_run_id=model.run_id, action="promote",
+            actor="operator", reason="Promote canary",
+        )
+        db.commit()
+        transition_stock_model_lifecycle(
+            db, model_run_id=model.run_id, action="demote",
+            actor="monitor", reason="Persistent model breach",
+        )
+        db.commit()
+
+        recovery = db.get(StockPaperRecoveryState, 1)
+        assert recovery.last_known_good_model_run_id == model.run_id
+        assert recovery.last_known_good_binding_id == binding.id
+        rollback_to_last_known_good(db, actor="operator", reason="Restore last-known-good champion")
+
+        assert db.get(StockModelLifecycleState, model.run_id).lifecycle_state == "champion"
+        assert db.get(StockPaperBindingState, 1).active_binding_id == binding.id
 
 
 def test_stock_migration_head_has_the_same_named_constraints(tmp_path):

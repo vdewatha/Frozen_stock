@@ -391,6 +391,15 @@ class StockPaperCloseRequest(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=200)
 
 
+class StockPaperRecoveryRequest(BaseModel):
+    flatten_policy: str = Field(default="none", pattern="^(none|positions)$")
+    reason: str = Field(default="Operator-requested stock-paper recovery", min_length=3, max_length=500)
+
+
+class StockPaperRollbackRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class PaperTradingRunResponse(BaseModel):
     symbol: str
     strategy: str

@@ -5,3 +5,4 @@
 - [Forward-trial feature alignment](forward-trial-feature-alignment.md) — daily features must match the decision session; stale-data rejections never count toward coverage.
 - [Immutable model registry lifecycle](immutable-model-registry-lifecycle.md) — keep mutable champion/challenger state outside append-only registry rows.
 - [Monitoring read safety](monitoring-read-safety.md) — monitoring reads must return unknown before evidence exists and never trigger safety actions.
+- [Independent watchdog launch](independent-watchdog-launch.md) — launch the backend watchdog with the backend directory on PYTHONPATH.

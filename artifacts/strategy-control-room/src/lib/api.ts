@@ -129,6 +129,20 @@ export type StockPaperStatus = {
   equity_snapshots: StockPaperEquitySnapshot[];
 };
 
+export type StockPaperRecoveryStatus = {
+  status: "armed" | "paused" | "cooldown" | "revalidation_required" | "resumable" | string;
+  flatten_policy: "none" | "positions" | string;
+  cooldown_until: string | null;
+  pause_reason: string | null;
+  last_known_good_model_run_id: string | null;
+  last_known_good_binding_id: number | null;
+  last_monitor_heartbeat_at: string | null;
+  last_watchdog_heartbeat_at: string | null;
+  last_revalidation_at: string | null;
+  account_status: string;
+  events: Array<{ id: number; action: string; status: string; actor: string; reason: string; created_at: string | null; payload: Record<string, unknown> }>;
+};
+
 export type PricePoint = {
   date: string;
   open: number;
@@ -1589,6 +1603,22 @@ export async function haltStockPaperAccount(reason: string): Promise<StockPaperS
 
 export async function resumeStockPaperAccount(): Promise<StockPaperStatus> {
   return postJson<StockPaperStatus>("/stock-paper/resume", {});
+}
+
+export async function getStockPaperRecovery(): Promise<StockPaperRecoveryStatus> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/recovery`, { cache: "no-store" });
+  return handleResponse<StockPaperRecoveryStatus>(response);
+}
+
+export async function cancelStockPaperRecovery(flattenPolicy: "none" | "positions", reason: string): Promise<StockPaperRecoveryStatus> {
+  return postJson<StockPaperRecoveryStatus>("/stock-paper/recovery/cancel", {
+    flatten_policy: flattenPolicy,
+    reason,
+  });
+}
+
+export async function rollbackStockPaperToLastKnownGood(reason: string): Promise<StockPaperRecoveryStatus> {
+  return postJson<StockPaperRecoveryStatus>("/stock-paper/recovery/rollback", { reason });
 }
 
 export type StockPaperOrderRequest = {

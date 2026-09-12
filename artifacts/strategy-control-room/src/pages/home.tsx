@@ -28,6 +28,7 @@ import { StockPaperLedgerPanel } from "@/components/stock-paper-ledger-panel";
 import { getAuthSession, getDashboard, getErrorMessage, setAccessToken, type AccessRole, type DashboardSnapshot } from "@/lib/api";
 import { StockTrainingLab } from "@/components/stock-training-lab";
 import { StockMonitoringPanel } from "@/components/stock-monitoring-panel";
+import { StockRecoveryPanel } from "@/components/stock-recovery-panel";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -116,6 +117,8 @@ function Home({ dashboard, role, onSignOut }: { dashboard: DashboardSnapshot; ro
         <ReadinessChecklist />
 
         <StockMonitoringPanel />
+
+        <StockRecoveryPanel />
 
         <DeploymentMonitorPanel />
 
