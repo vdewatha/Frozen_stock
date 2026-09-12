@@ -1916,7 +1916,45 @@ export type StockModelBinding = {
   confirmation?: string | null;
   reason?: string | null;
   message?: string | null;
+  lifecycle_state?: StockModelLifecycleState | null;
+  active_binding_id?: string | number | null;
 };
+
+export type StockModelLifecycleState =
+  | "challenger"
+  | "eligible"
+  | "paper_canary"
+  | "champion"
+  | "demoted"
+  | "retired";
+
+export type StockModelLifecycleEvent = {
+  id: number;
+  binding_id?: number | null;
+  from_state?: StockModelLifecycleState | null;
+  to_state: StockModelLifecycleState;
+  action: string;
+  actor: string;
+  reason: string;
+  event_sha256: string;
+  created_at: string;
+};
+
+export type StockModelLifecycle = {
+  model_id: string;
+  lifecycle_state: StockModelLifecycleState;
+  active_binding_id?: number | null;
+  events: StockModelLifecycleEvent[];
+  paper_only: boolean;
+  live_authorized: boolean;
+};
+
+export type StockModelLifecycleAction =
+  | "mark_eligible"
+  | "start_canary"
+  | "promote"
+  | "demote"
+  | "retire";
 
 export type StockDatasetSnapshot = {
   snapshot_id: string;
@@ -2046,6 +2084,25 @@ export async function getActiveStockModelBinding(): Promise<StockModelBinding | 
 
 export async function bindStockModel(request: BindStockModelRequest): Promise<StockModelBinding> {
   return postJson<StockModelBinding>(`${STOCK_TRAINING_PATH}/binding`, request);
+}
+
+export async function getStockModelLifecycle(modelId: string): Promise<StockModelLifecycle> {
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}${STOCK_TRAINING_PATH}/models/${encodeURIComponent(modelId)}/lifecycle`,
+    { cache: "no-store" },
+  );
+  return handleResponse<StockModelLifecycle>(response);
+}
+
+export async function changeStockModelLifecycle(
+  modelId: string,
+  action: StockModelLifecycleAction,
+  reason: string,
+): Promise<StockModelLifecycle & { lifecycle_event_id?: number | null }> {
+  return postJson<StockModelLifecycle & { lifecycle_event_id?: number | null }>(
+    `${STOCK_TRAINING_PATH}/models/${encodeURIComponent(modelId)}/lifecycle`,
+    { action, reason },
+  );
 }
 
 export async function getStockTrainingJobs(limit = 50, offset = 0): Promise<StockTrainingJobsPage> {

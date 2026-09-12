@@ -10,12 +10,16 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import StockModelRegistry, StockPaperModelBinding, StockTrainingJob
+from app.models import (
+    StockModelLifecycleEvent, StockModelRegistry, StockPaperBindingState,
+    StockPaperModelBinding, StockTrainingJob,
+)
 from app.services.audit import write_audit_log
 from app.services.stock_training_jobs import (
     StockTrainingError, create_stock_paper_binding, create_stock_training_job,
     enqueue_stock_training_job, model_projection, recover_stock_training_jobs,
     report_projection, request_stock_training_cancel, snapshot_projection, summarize_job,
+    get_stock_model_lifecycle_state, transition_stock_model_lifecycle,
     validate_registered_stock_model, _dataset_from_record,
 )
 
@@ -44,6 +48,11 @@ class BindingBody(StrictBody):
     confirmation: Literal["PAPER_ONLY_FROZEN_BINDING"]
     reason: str = Field(min_length=3, max_length=1000)
     purpose: str = Field(default="forward_paper_evaluation", min_length=3, max_length=64)
+
+
+class LifecycleBody(StrictBody):
+    action: Literal["mark_eligible", "start_canary", "promote", "demote", "retire"]
+    reason: str = Field(min_length=3, max_length=1000)
 
 
 def _audit(db: Session, request: Request, action: str, payload: dict, entity_id: int | None = None) -> None:
@@ -130,7 +139,7 @@ def model_report(run_id: str = Path(..., pattern=r"^[0-9a-f]{64}$"), db: Session
         validate_registered_stock_model(model, _dataset_from_record(snapshot))
     except StockTrainingError as exc:
         raise HTTPException(409, f"Stock training report integrity failure: {exc}") from None
-    return report_projection(job, snapshot, model)
+    return report_projection(job, snapshot, model, get_stock_model_lifecycle_state(db, run_id))
 
 
 def _binding(row: StockPaperModelBinding, *, integrity_error: str | None = None) -> dict:
@@ -145,9 +154,10 @@ def _binding(row: StockPaperModelBinding, *, integrity_error: str | None = None)
 
 @router.get("/binding")
 def active_binding(db: Session = Depends(get_db)) -> dict | None:
-    # Bindings are append-only audit events. Selecting the latest is an explicit
-    # read policy only; scheduled retraining never writes this table.
-    row = db.scalar(select(StockPaperModelBinding).order_by(StockPaperModelBinding.id.desc()))
+    # Binding rows are append-only audit events; the singleton pointer is the
+    # authoritative current-binding selection.
+    state = db.get(StockPaperBindingState, 1)
+    row = db.get(StockPaperModelBinding, state.active_binding_id) if state else None
     if row is None:
         return None
     try:
@@ -156,11 +166,88 @@ def active_binding(db: Session = Depends(get_db)) -> dict | None:
         if model is None or snapshot is None:
             raise StockTrainingError("Bound registry references are missing")
         validate_registered_stock_model(model, _dataset_from_record(snapshot))
-        return _binding(row)
+        return _binding(row) | {"lifecycle_state": get_stock_model_lifecycle_state(db, model.run_id)}
     except StockTrainingError as exc:
         # The append-only evidence remains visible, but is explicitly not
         # presented as a usable/active frozen binding.
         return _binding(row, integrity_error=str(exc))
+
+
+@router.get("/models/{run_id}/lifecycle")
+def model_lifecycle(
+    run_id: str = Path(..., pattern=r"^[0-9a-f]{64}$"),
+    db: Session = Depends(get_db),
+) -> dict:
+    model = db.get(StockModelRegistry, run_id)
+    if model is None:
+        raise HTTPException(404, "Stock model not found")
+    active = db.get(StockPaperBindingState, 1)
+    events = db.scalars(
+        select(StockModelLifecycleEvent)
+        .where(StockModelLifecycleEvent.model_run_id == run_id)
+        .order_by(StockModelLifecycleEvent.id)
+    ).all()
+    return {
+        "model_id": model.run_id,
+        "lifecycle_state": get_stock_model_lifecycle_state(db, model.run_id),
+        "active_binding_id": active.active_binding_id if active else None,
+        "events": [
+            {
+                "id": event.id,
+                "binding_id": event.binding_id,
+                "from_state": event.from_state,
+                "to_state": event.to_state,
+                "action": event.action,
+                "actor": event.actor,
+                "reason": event.reason,
+                "event_sha256": event.event_sha256,
+                "created_at": event.created_at,
+            }
+            for event in events
+        ],
+        "paper_only": True,
+        "live_authorized": False,
+    }
+
+
+@router.post("/models/{run_id}/lifecycle")
+def change_model_lifecycle(
+    body: LifecycleBody,
+    run_id: str = Path(..., pattern=r"^[0-9a-f]{64}$"),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        model = transition_stock_model_lifecycle(
+            db, model_run_id=run_id, action=body.action,
+            actor=request.state.actor, reason=body.reason,
+        )
+        event = db.scalar(
+            select(StockModelLifecycleEvent)
+            .where(StockModelLifecycleEvent.model_run_id == run_id)
+            .order_by(StockModelLifecycleEvent.id.desc())
+        )
+        _audit(
+            db, request, f"stock_model_{body.action}",
+            {
+                "model_id": run_id,
+                "from_state": event.from_state if event else None,
+                "to_state": get_stock_model_lifecycle_state(db, model.run_id),
+                "event_id": event.id if event else None,
+            },
+            event.id if event else None,
+        )
+        db.commit()
+        lifecycle_state = get_stock_model_lifecycle_state(db, model.run_id)
+        return model_projection(model, lifecycle_state=lifecycle_state) | {
+            "lifecycle_state": lifecycle_state,
+            "lifecycle_event_id": event.id if event else None,
+            "paper_only": True,
+            "live_authorized": False,
+        }
+    except StockTrainingError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from None
 
 
 @router.post("/binding")
@@ -172,7 +259,11 @@ def bind_paper_model(body: BindingBody, request: Request, db: Session = Depends(
         )
         _audit(db, request, "bind_frozen_paper_model", {"model_id": body.model_id, "snapshot_id": body.snapshot_id, "binding_id": row.id}, row.id)
         db.commit()
-        return _binding(row)
+        model = db.get(StockModelRegistry, row.model_run_id)
+        return _binding(row) | {
+            "active_binding_id": row.id,
+            "lifecycle_state": get_stock_model_lifecycle_state(db, model.run_id) if model else None,
+        }
     except StockTrainingError as exc:
         db.rollback()
         raise HTTPException(409, str(exc)) from None

@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import (
     StockDatasetSnapshot, StockHoldoutConsumption, StockHoldoutReservation,
-    StockModelRegistry, StockPaperModelBinding, StockTrainingJob,
+    StockModelLifecycleEvent, StockModelLifecycleState, StockModelRegistry, StockPaperBindingState,
+    StockPaperModelBinding, StockTrainingJob,
 )
 from app.services.stock_dataset import (
     StockDataset,
@@ -33,6 +34,16 @@ MAX_ATTEMPTS = 3
 MAX_DELIVERY_ATTEMPTS = 3
 MAX_ACTIVE_JOBS = 4
 LEASE_SECONDS = 15 * 60
+STOCK_MODEL_LIFECYCLE_STATES = (
+    "challenger", "eligible", "paper_canary", "champion", "demoted", "retired",
+)
+STOCK_MODEL_LIFECYCLE_ACTIONS = {
+    "mark_eligible": {"challenger": "eligible", "demoted": "eligible"},
+    "start_canary": {"challenger": "paper_canary", "eligible": "paper_canary", "demoted": "paper_canary"},
+    "promote": {"paper_canary": "champion"},
+    "demote": {"paper_canary": "demoted", "champion": "demoted"},
+    "retire": {"challenger": "retired", "eligible": "retired", "paper_canary": "retired", "demoted": "retired"},
+}
 
 
 class StockTrainingError(ValueError):
@@ -45,6 +56,155 @@ class HoldoutAlreadyReserved(StockTrainingError):
 
 class AmbiguousHoldoutConsumption(StockTrainingError):
     """A final holdout was durably consumed but has no publishable result."""
+
+
+def _lock_lifecycle_admission(db: Session) -> None:
+    """Serialize lifecycle transitions and active-binding replacement."""
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(781928344202)"))
+    elif dialect == "sqlite" and not db.in_transaction():
+        db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+
+def _active_binding_state(db: Session, *, for_update: bool = True) -> StockPaperBindingState | None:
+    statement = select(StockPaperBindingState).where(StockPaperBindingState.id == 1)
+    if for_update:
+        statement = statement.with_for_update()
+    return db.scalar(statement)
+
+
+def _current_lifecycle(
+    db: Session, model: StockModelRegistry, *, for_update: bool = True,
+) -> StockModelLifecycleState:
+    statement = select(StockModelLifecycleState).where(
+        StockModelLifecycleState.model_run_id == model.run_id
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    state = db.scalar(statement)
+    if state is None:
+        state = StockModelLifecycleState(
+            model_run_id=model.run_id,
+            lifecycle_state=model.lifecycle_state or "challenger",
+            updated_by="system",
+            reason="Initialized from immutable model registry state",
+        )
+        db.add(state)
+        db.flush()
+    return state
+
+
+def get_stock_model_lifecycle_state(db: Session, model_run_id: str) -> str:
+    model = db.get(StockModelRegistry, model_run_id)
+    if model is None:
+        raise StockTrainingError("Stock model not found")
+    state = db.scalar(
+        select(StockModelLifecycleState.lifecycle_state).where(
+            StockModelLifecycleState.model_run_id == model_run_id
+        )
+    )
+    return state or model.lifecycle_state or "challenger"
+
+
+def _lifecycle_event(
+    db: Session, *, model: StockModelRegistry, from_state: str | None, to_state: str,
+    action: str, actor: str, reason: str, binding_id: int | None = None,
+) -> StockModelLifecycleEvent:
+    if to_state not in STOCK_MODEL_LIFECYCLE_STATES:
+        raise StockTrainingError("Unsupported stock model lifecycle state")
+    event_identity = {
+        "event_nonce": uuid4().hex,
+        "model_run_id": model.run_id,
+        "binding_id": binding_id,
+        "from_state": from_state,
+        "to_state": to_state,
+        "action": action,
+        "actor": actor,
+        "reason": reason.strip(),
+        "created_at": _utc(_now()).isoformat(),
+    }
+    event = StockModelLifecycleEvent(
+        model_run_id=model.run_id, binding_id=binding_id, from_state=from_state,
+        to_state=to_state, action=action, actor=actor, reason=reason.strip(),
+        event_sha256=hashlib.sha256(_canonical(event_identity)).hexdigest(),
+    )
+    db.add(event)
+    return event
+
+
+def _transition_model(
+    db: Session, *, model: StockModelRegistry, action: str, actor: str, reason: str,
+    binding_id: int | None = None,
+) -> StockModelLifecycleEvent:
+    if not reason.strip():
+        raise StockTrainingError("A lifecycle transition reason is required")
+    allowed = STOCK_MODEL_LIFECYCLE_ACTIONS.get(action)
+    current = _current_lifecycle(db, model)
+    if allowed is None or current.lifecycle_state not in allowed:
+        raise StockTrainingError(
+            f"Invalid lifecycle transition: {current.lifecycle_state} cannot perform {action}"
+        )
+    from_state = current.lifecycle_state
+    to_state = allowed[from_state]
+    current.lifecycle_state = to_state
+    current.updated_by, current.reason, current.updated_at = actor, reason.strip(), _now()
+    return _lifecycle_event(
+        db, model=model, from_state=from_state, to_state=to_state,
+        action=action, actor=actor, reason=reason, binding_id=binding_id,
+    )
+
+
+def transition_stock_model_lifecycle(
+    db: Session, *, model_run_id: str, action: str, actor: str, reason: str,
+) -> StockModelRegistry:
+    """Apply one explicit, auditable lifecycle transition.
+
+    Promotion is intentionally not inferred from training, binding, or a
+    scheduled job. It requires the model to be the active paper canary.
+    """
+    if action not in STOCK_MODEL_LIFECYCLE_ACTIONS:
+        raise StockTrainingError("Unsupported stock model lifecycle action")
+    _lock_lifecycle_admission(db)
+    model = db.scalar(
+        select(StockModelRegistry)
+        .where(StockModelRegistry.run_id == model_run_id)
+        .with_for_update()
+    )
+    if model is None:
+        raise StockTrainingError("Stock model not found")
+    current = _current_lifecycle(db, model)
+    state = _active_binding_state(db)
+    active_binding = db.get(StockPaperModelBinding, state.active_binding_id) if state else None
+    if action == "start_canary" and (
+        active_binding is None or active_binding.model_run_id != model.run_id
+    ):
+        raise StockTrainingError(
+            "A paper canary must be created through an active paper binding"
+        )
+    if action == "promote":
+        if active_binding is None or active_binding.model_run_id != model.run_id:
+            raise StockTrainingError("Only the active paper canary may be promoted")
+        champions = db.scalars(
+            select(StockModelLifecycleState)
+            .where(
+                StockModelLifecycleState.lifecycle_state == "champion",
+                StockModelLifecycleState.model_run_id != model.run_id,
+            )
+            .with_for_update()
+        ).all()
+        if champions:
+            raise StockTrainingError("An existing champion must be explicitly demoted before promotion")
+        _transition_model(
+            db, model=model, action=action, actor=actor, reason=reason,
+            binding_id=active_binding.id,
+        )
+    else:
+        _transition_model(db, model=model, action=action, actor=actor, reason=reason)
+        if action in {"demote", "retire"} and active_binding and active_binding.model_run_id == model.run_id:
+            db.delete(state)
+            db.flush()
+    return model
 
 
 def _canonical(value) -> bytes:
@@ -327,6 +487,10 @@ def _register_stock_model(db: Session, dataset: StockDataset, manifest: dict, ou
     )
     db.add(row)
     db.flush()
+    db.add(StockModelLifecycleState(
+        model_run_id=run_id, lifecycle_state="challenger", updated_by="training",
+        reason="Model publication creates a challenger only",
+    ))
     return row
 
 
@@ -656,7 +820,13 @@ def recover_stock_training_jobs(db: Session, *, stale_after_minutes: int = 30) -
 def create_stock_paper_binding(
     db: Session, *, model_run_id: str, snapshot_id: str, actor: str, purpose: str, reason: str
 ) -> StockPaperModelBinding:
-    model, snapshot = db.get(StockModelRegistry, model_run_id), db.get(StockDatasetSnapshot, snapshot_id)
+    _lock_lifecycle_admission(db)
+    model = db.scalar(
+        select(StockModelRegistry)
+        .where(StockModelRegistry.run_id == model_run_id)
+        .with_for_update()
+    )
+    snapshot = db.get(StockDatasetSnapshot, snapshot_id)
     if model is None or snapshot is None or model.snapshot_id != snapshot.snapshot_id:
         raise StockTrainingError("A completed immutable model and its exact verified snapshot are required")
     if snapshot.metadata_json.get("binding_eligible") is not True:
@@ -673,6 +843,25 @@ def create_stock_paper_binding(
     _validate_holdout_consumption(db, job=consumed_job, manifest=manifest)
     if not purpose.strip() or not reason.strip():
         raise StockTrainingError("A paper evaluation purpose and binding reason are required")
+    state = _active_binding_state(db)
+    active_binding = db.get(StockPaperModelBinding, state.active_binding_id) if state else None
+    if active_binding and active_binding.model_run_id != model_run_id:
+        active_model = db.scalar(
+            select(StockModelRegistry)
+            .where(StockModelRegistry.run_id == active_binding.model_run_id)
+            .with_for_update()
+        )
+        active_lifecycle = _current_lifecycle(db, active_model) if active_model else None
+        if active_lifecycle and active_lifecycle.lifecycle_state == "champion":
+            raise StockTrainingError(
+                "The active champion cannot be replaced; explicitly demote it before binding a challenger"
+            )
+        if active_lifecycle and active_lifecycle.lifecycle_state == "paper_canary":
+            _transition_model(
+                db, model=active_model, action="demote", actor=actor,
+                reason=f"Replaced by explicit paper canary binding: {reason}",
+                binding_id=active_binding.id,
+            )
     # A binding is an append-only activation event, not a mutable association.
     # In particular, A -> B -> A must record the final reactivation rather
     # than returning A's old event and leaving B selected by the latest-event
@@ -698,6 +887,35 @@ def create_stock_paper_binding(
     )
     db.add(row)
     db.flush()
+    target_lifecycle = _current_lifecycle(db, model)
+    if target_lifecycle.lifecycle_state in {"challenger", "demoted"}:
+        _transition_model(
+            db, model=model, action="mark_eligible", actor=actor,
+            reason=f"Eligibility established for paper canary: {reason}",
+        )
+    if target_lifecycle.lifecycle_state == "eligible":
+        _transition_model(
+            db, model=model, action="start_canary", actor=actor,
+            reason=reason, binding_id=row.id,
+        )
+    elif target_lifecycle.lifecycle_state == "paper_canary":
+        # Re-activation of the same canary is represented by the new immutable
+        # binding event and pointer update; no fake state transition is needed.
+        pass
+    else:
+        raise StockTrainingError(
+            f"Model lifecycle state {target_lifecycle.lifecycle_state} cannot create a paper binding"
+        )
+    if state is None:
+        state = StockPaperBindingState(
+            id=1, active_binding_id=row.id, changed_by=actor, reason=reason.strip(),
+            changed_at=activated_at,
+        )
+        db.add(state)
+    else:
+        state.active_binding_id = row.id
+        state.changed_by, state.reason, state.changed_at = actor, reason.strip(), activated_at
+    db.flush()
     return row
 
 
@@ -714,10 +932,16 @@ def snapshot_projection(row: StockDatasetSnapshot) -> dict:
     }
 
 
-def model_projection(row: StockModelRegistry, snapshot: StockDatasetSnapshot | None = None) -> dict:
+def model_projection(
+    row: StockModelRegistry,
+    snapshot: StockDatasetSnapshot | None = None,
+    lifecycle_state: str | None = None,
+) -> dict:
+    state = lifecycle_state or row.lifecycle_state or "challenger"
     return {
         "model_id": row.run_id, "model_version": row.training_metadata.get("selected_model", "unknown"),
-        "status": "challenger", "sha256": row.manifest_sha256, "artifact_hash": row.manifest_sha256,
+        "status": state, "lifecycle_state": state,
+        "sha256": row.manifest_sha256, "artifact_hash": row.manifest_sha256,
         "created_at": row.created_at, "scheduled": False,
         "eligible_for_binding": bool(snapshot and snapshot.metadata_json.get("binding_eligible") is True),
         "binding_eligibility_reason": (
@@ -735,12 +959,17 @@ def model_projection(row: StockModelRegistry, snapshot: StockDatasetSnapshot | N
     }
 
 
-def report_projection(job: StockTrainingJob, snapshot: StockDatasetSnapshot | None, model: StockModelRegistry | None) -> dict:
+def report_projection(
+    job: StockTrainingJob,
+    snapshot: StockDatasetSnapshot | None,
+    model: StockModelRegistry | None,
+    lifecycle_state: str | None = None,
+) -> dict:
     manifest = model.training_metadata if model else {}
     holdout_evaluation_count = manifest.get("final_holdout_evaluation_count", 0)
     if type(holdout_evaluation_count) is not int or holdout_evaluation_count < 0:
         holdout_evaluation_count = 0
-    model_detail = model_projection(model, snapshot) | {"scheduled": job.trigger == "scheduled"} if model else None
+    model_detail = model_projection(model, snapshot, lifecycle_state) | {"scheduled": job.trigger == "scheduled"} if model else None
     comparisons, walkforward, calibration = [], [], []
     for name, metrics in manifest.get("walkforward_metrics", {}).items():
         outcome = metrics.get("cost_aware_nonoverlapping_returns", {})
@@ -802,6 +1031,7 @@ def summarize_job(job: StockTrainingJob, db: Session | None = None, detail: bool
         snapshot = db.get(StockDatasetSnapshot, job.snapshot_id)
         model = db.get(StockModelRegistry, job.result_run_id) if job.result_run_id else None
         answer["snapshot"] = snapshot_projection(snapshot) if snapshot else None
-        answer["model"] = (model_projection(model, snapshot) | {"scheduled": job.trigger == "scheduled"}) if model else None
-        answer["report"] = report_projection(job, snapshot, model)
+        lifecycle_state = get_stock_model_lifecycle_state(db, model.run_id) if model else None
+        answer["model"] = (model_projection(model, snapshot, lifecycle_state) | {"scheduled": job.trigger == "scheduled"}) if model else None
+        answer["report"] = report_projection(job, snapshot, model, lifecycle_state)
     return answer

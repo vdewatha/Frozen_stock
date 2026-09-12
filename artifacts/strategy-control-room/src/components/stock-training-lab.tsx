@@ -16,8 +16,10 @@ import { RoleGate, canAccess, useAccessRole } from "@/components/access-control"
 import { StatusPill } from "@/components/status-pill";
 import {
   bindStockModel,
+  changeStockModelLifecycle,
   cancelStockTraining,
   getActiveStockModelBinding,
+  getStockModelLifecycle,
   getStockTrainingJob,
   getStockTrainingJobs,
   getStockTrainingReport,
@@ -26,6 +28,8 @@ import {
   type StockDatasetSnapshot,
   type StockModelArtifact,
   type StockModelBinding,
+  type StockModelLifecycle,
+  type StockModelLifecycleAction,
   type StockTrainingComparison,
   type StockTrainingJob,
   type StockTrainingJobDetail,
@@ -312,6 +316,8 @@ export function StockTrainingLab() {
   const [selectedJob, setSelectedJob] = useState<StockTrainingJobDetail | null>(null);
   const [report, setReport] = useState<StockTrainingReport | null>(null);
   const [binding, setBinding] = useState<StockModelBinding | null>(null);
+  const [lifecycle, setLifecycle] = useState<StockModelLifecycle | null>(null);
+  const [lifecycleReason, setLifecycleReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("Loading verified stock training jobs");
   const [error, setError] = useState("");
@@ -327,6 +333,7 @@ export function StockTrainingLab() {
   const canBind = canAccess(role, "operator");
   const selectedJobId = selectedJob?.id ?? null;
   const canCancel = Boolean(selectedJob && ACTIVE_STATUSES.has(selectedJob.status.toLowerCase()) && canStart);
+  const selectedModelId = model?.model_id && /^[0-9a-f]{64}$/.test(model.model_id) ? model.model_id : null;
 
   async function loadJob(job: StockTrainingJob): Promise<void> {
     setBusy(true);
@@ -382,6 +389,18 @@ export function StockTrainingLab() {
       if (timer) window.clearTimeout(timer);
     };
   }, [refreshTick, selectedJobId]);
+
+  useEffect(() => {
+    let disposed = false;
+    if (!selectedModelId) {
+      setLifecycle(null);
+      return () => { disposed = true; };
+    }
+    void getStockModelLifecycle(selectedModelId)
+      .then(next => { if (!disposed) setLifecycle(next); })
+      .catch(failure => { if (!disposed) setError(getErrorMessage(failure, "Model lifecycle unavailable.")); });
+    return () => { disposed = true; };
+  }, [selectedModelId, refreshTick]);
 
   async function startTraining(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -446,6 +465,23 @@ export function StockTrainingLab() {
       setStatus("Paper-only frozen model binding is active.");
     } catch (failure) {
       setError(getErrorMessage(failure, "Model binding was rejected."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeLifecycle(action: StockModelLifecycleAction) {
+    if (!selectedModelId || !lifecycleReason.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await changeStockModelLifecycle(selectedModelId, action, lifecycleReason.trim());
+      setLifecycle(next);
+      setLifecycleReason("");
+      setStatus(`Model lifecycle changed to ${next.lifecycle_state}.`);
+      setRefreshTick(value => value + 1);
+    } catch (failure) {
+      setError(getErrorMessage(failure, "Model lifecycle change was rejected."));
     } finally {
       setBusy(false);
     }
@@ -538,6 +574,23 @@ export function StockTrainingLab() {
             {selectedJob?.trigger === "scheduled" ? <div className="mt-3 rounded border border-line bg-panel p-2 text-xs text-slate-600">Scheduled challenger safety: this run can be inspected and compared, but it will never auto-promote or replace the active frozen paper binding.</div> : null}
              {!canBind && model?.eligible_for_binding !== false ? <div className="mt-3 text-xs text-slate-500">Requires Operator or Admin access to confirm a paper-only frozen binding.</div> : null}
           </div>
+           {lifecycle && selectedModelId ? <div className="rounded-md border border-line p-3">
+             <div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck size={16} className="text-mint" /> Champion / challenger lifecycle</div><StatusPill status={lifecycle.lifecycle_state} /></div>
+             <div className="mt-2 text-xs text-slate-600">State changes are explicit and auditable. Scheduled retraining only creates challengers; it cannot replace this binding.</div>
+             {lifecycle.events.length ? <div className="mt-3 grid gap-1 text-xs text-slate-600"><div className="font-semibold text-ink">Latest transition</div><div>{lifecycle.events[lifecycle.events.length - 1].from_state ?? "uninitialized"} → {lifecycle.events[lifecycle.events.length - 1].to_state} · {formatDate(lifecycle.events[lifecycle.events.length - 1].created_at)}</div><div className="break-all">{lifecycle.events[lifecycle.events.length - 1].reason}</div></div> : null}
+             {canBind && lifecycle.lifecycle_state !== "retired" ? <RoleGate requires="operator" className="mt-3">
+               <div className="grid gap-2 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                 <label className="grid gap-1"><span>Reason for lifecycle action</span><textarea className="focus-ring min-h-14 rounded border border-amber-300 bg-white p-2" value={lifecycleReason} onChange={event => setLifecycleReason(event.target.value)} placeholder="Record the evidence for this state change." /></label>
+                 <div className="flex flex-wrap gap-2">
+                   {(lifecycle.lifecycle_state === "challenger" || lifecycle.lifecycle_state === "demoted") ? <button className="focus-ring inline-flex h-8 items-center rounded bg-mint px-2.5 font-semibold text-white" disabled={busy || !lifecycleReason.trim()} onClick={() => void changeLifecycle("mark_eligible")} type="button">Mark eligible</button> : null}
+                   {lifecycle.lifecycle_state === "paper_canary" && binding?.model_id === selectedModelId && binding.active !== false ? <button className="focus-ring inline-flex h-8 items-center rounded bg-mint px-2.5 font-semibold text-white" disabled={busy || !lifecycleReason.trim()} onClick={() => void changeLifecycle("promote")} type="button">Promote to champion</button> : null}
+                   {lifecycle.lifecycle_state === "paper_canary" || lifecycle.lifecycle_state === "champion" ? <button className="focus-ring inline-flex h-8 items-center rounded border border-amber-400 px-2.5 font-semibold" disabled={busy || !lifecycleReason.trim()} onClick={() => void changeLifecycle("demote")} type="button">Demote</button> : null}
+                   <button className="focus-ring inline-flex h-8 items-center rounded border border-red-300 px-2.5 font-semibold text-coral" disabled={busy || !lifecycleReason.trim()} onClick={() => void changeLifecycle("retire")} type="button">Retire</button>
+                 </div>
+               </div>
+             </RoleGate> : null}
+             {!canBind ? <div className="mt-3 text-xs text-slate-500">Requires Operator or Admin access to change model lifecycle.</div> : null}
+           </div> : null}
         </div>
       </div>
     </section>

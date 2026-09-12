@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -416,12 +416,19 @@ class StockHoldoutConsumption(Base):
 
 class StockModelRegistry(Base):
     __tablename__ = "stock_model_registry"
+    __table_args__ = (
+        CheckConstraint(
+            "lifecycle_state IN ('challenger', 'eligible', 'paper_canary', 'champion', 'demoted', 'retired')",
+            name="ck_stock_model_lifecycle_state",
+        ),
+    )
 
     run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     snapshot_id: Mapped[str] = mapped_column(ForeignKey("stock_dataset_snapshots.snapshot_id"), nullable=False)
     manifest_sha256: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
     training_metadata: Mapped[dict] = mapped_column(JSON, nullable=False)
+    lifecycle_state: Mapped[str] = mapped_column(String(24), nullable=False, default="challenger", server_default="challenger", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -474,6 +481,79 @@ class StockPaperModelBinding(Base):
     live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     bound_by: Mapped[str] = mapped_column(String(32), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockPaperBindingState(Base):
+    """Singleton pointer to the one currently active paper binding.
+
+    Binding rows remain immutable activation events. This row is the mutable
+    coordination point used to enforce one active paper binding atomically.
+    """
+    __tablename__ = "stock_paper_binding_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_stock_paper_binding_state_singleton"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    active_binding_id: Mapped[int] = mapped_column(
+        ForeignKey("stock_paper_model_bindings.id"), nullable=False, unique=True
+    )
+    changed_by: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockModelLifecycleState(Base):
+    """Mutable current lifecycle state for an otherwise immutable model row."""
+    __tablename__ = "stock_model_lifecycle_state"
+    __table_args__ = (
+        CheckConstraint(
+            "lifecycle_state IN ('challenger', 'eligible', 'paper_canary', 'champion', 'demoted', 'retired')",
+            name="ck_stock_model_current_lifecycle_state",
+        ),
+        Index(
+            "uq_stock_model_one_champion",
+            "lifecycle_state",
+            unique=True,
+            sqlite_where=text("lifecycle_state = 'champion'"),
+            postgresql_where=text("lifecycle_state = 'champion'"),
+        ),
+    )
+
+    model_run_id: Mapped[str] = mapped_column(
+        ForeignKey("stock_model_registry.run_id"), primary_key=True
+    )
+    lifecycle_state: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockModelLifecycleEvent(Base):
+    """Append-only evidence for every explicit model lifecycle transition."""
+    __tablename__ = "stock_model_lifecycle_events"
+    __table_args__ = (
+        CheckConstraint(
+            "to_state IN ('challenger', 'eligible', 'paper_canary', 'champion', 'demoted', 'retired')",
+            name="ck_stock_model_lifecycle_event_to_state",
+        ),
+        CheckConstraint(
+            "from_state IS NULL OR from_state IN ('challenger', 'eligible', 'paper_canary', 'champion', 'demoted', 'retired')",
+            name="ck_stock_model_lifecycle_event_from_state",
+        ),
+        UniqueConstraint("event_sha256", name="uq_stock_model_lifecycle_event_digest"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_run_id: Mapped[str] = mapped_column(ForeignKey("stock_model_registry.run_id"), nullable=False, index=True)
+    binding_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_model_bindings.id"), index=True)
+    from_state: Mapped[Optional[str]] = mapped_column(String(24))
+    to_state: Mapped[str] = mapped_column(String(24), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    event_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

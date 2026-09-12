@@ -23,11 +23,12 @@ from app.db.base import Base
 from app.core.config import settings
 from app.models import (
     Asset, MarketPrice, StockDatasetSnapshot, StockHoldoutReservation,
-    StockModelRegistry, StockPaperModelBinding, StockTrainingJob,
+    StockModelLifecycleEvent, StockModelLifecycleState, StockModelRegistry,
+    StockPaperBindingState, StockPaperModelBinding, StockTrainingJob,
 )
 from app.services.stock_training_jobs import (
     StockTrainingError, create_stock_paper_binding, create_stock_training_job, recover_stock_training_jobs,
-    _owned_update, run_stock_training_job, summarize_job,
+    _owned_update, run_stock_training_job, summarize_job, transition_stock_model_lifecycle,
 )
 
 
@@ -76,6 +77,8 @@ def test_stock_training_route_roles_are_explicit():
     assert required_role("POST", "/stock/training/jobs/12345678-1234-1234-1234-123456789abc/cancel") == "researcher"
     assert required_role("POST", "/stock/training/binding") == "operator"
     assert required_role("POST", "/stock/training/jobs/recover") == "admin"
+    assert required_role("GET", f"/stock/training/models/{'a' * 64}/lifecycle") == "viewer"
+    assert required_role("POST", f"/stock/training/models/{'a' * 64}/lifecycle") == "operator"
 
 
 def test_stock_training_post_rejects_viewer_before_database_work():
@@ -231,6 +234,52 @@ def test_schema_has_named_dedupe_and_binding_constraints_and_reusable_dataset_ha
         db.add_all((first, second))
         db.commit()
         assert db.query(StockDatasetSnapshot).count() == 2
+
+
+def test_model_lifecycle_is_auditable_without_mutating_immutable_registry_rows():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        model = StockModelRegistry(
+            run_id="a" * 64, snapshot_id="b" * 64, manifest_sha256="c" * 64,
+            artifact_path="/immutable/model", training_metadata={"selected_model": "test"},
+        )
+        db.add(model)
+        db.flush()
+        transition_stock_model_lifecycle(
+            db, model_run_id=model.run_id, action="mark_eligible",
+            actor="operator", reason="Independent review completed",
+        )
+        db.commit()
+        binding = StockPaperModelBinding(
+            model_run_id=model.run_id, snapshot_id=model.snapshot_id,
+            binding_sha256="d" * 64, purpose="test", paper_only=True,
+            live_authorized=False, bound_by="operator", reason="Canary review",
+        )
+        db.add(binding)
+        db.flush()
+        db.add(StockPaperBindingState(
+            id=1, active_binding_id=binding.id, changed_by="operator", reason="Canary review",
+        ))
+        db.commit()
+        transition_stock_model_lifecycle(
+            db, model_run_id=model.run_id, action="start_canary",
+            actor="operator", reason="Start controlled canary",
+        )
+        db.commit()
+        transition_stock_model_lifecycle(
+            db, model_run_id=model.run_id, action="promote",
+            actor="operator", reason="Explicit promotion decision",
+        )
+        db.commit()
+
+        assert model.lifecycle_state == "challenger"
+        assert db.get(StockModelLifecycleState, model.run_id).lifecycle_state == "champion"
+        assert [event.to_state for event in db.scalars(
+            select(StockModelLifecycleEvent)
+            .where(StockModelLifecycleEvent.model_run_id == model.run_id)
+            .order_by(StockModelLifecycleEvent.id)
+        ).all()] == ["eligible", "paper_canary", "champion"]
 
 
 def test_stock_migration_head_has_the_same_named_constraints(tmp_path):
