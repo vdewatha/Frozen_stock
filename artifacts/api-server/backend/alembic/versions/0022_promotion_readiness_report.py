@@ -36,6 +36,7 @@ def upgrade() -> None:
         "stock_paper_promotion_readiness_reports",
         ["source_metric_id"],
     )
+    _create_immutability_triggers()
 
 
 def downgrade() -> None:
@@ -44,3 +45,32 @@ def downgrade() -> None:
     op.drop_index("ix_stock_paper_promotion_readiness_reports_trial_id",
                   table_name="stock_paper_promotion_readiness_reports")
     op.drop_table("stock_paper_promotion_readiness_reports")
+
+
+def _create_immutability_triggers() -> None:
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        op.execute(
+            "CREATE OR REPLACE FUNCTION stock_promotion_readiness_immutable_row() "
+            "RETURNS trigger AS "
+            "$$ BEGIN RAISE EXCEPTION 'stock_paper_promotion_readiness_reports is immutable'; "
+            "END; $$ LANGUAGE plpgsql"
+        )
+        op.execute(
+            "CREATE TRIGGER stock_paper_promotion_readiness_reports_immutable "
+            "BEFORE UPDATE OR DELETE ON stock_paper_promotion_readiness_reports "
+            "FOR EACH ROW EXECUTE FUNCTION stock_promotion_readiness_immutable_row()"
+        )
+    elif bind.dialect.name == "sqlite":
+        op.execute(
+            "CREATE TRIGGER stock_paper_promotion_readiness_reports_immutable_update "
+            "BEFORE UPDATE ON stock_paper_promotion_readiness_reports "
+            "BEGIN SELECT RAISE(ABORT, "
+            "'stock_paper_promotion_readiness_reports is immutable'); END"
+        )
+        op.execute(
+            "CREATE TRIGGER stock_paper_promotion_readiness_reports_immutable_delete "
+            "BEFORE DELETE ON stock_paper_promotion_readiness_reports "
+            "BEGIN SELECT RAISE(ABORT, "
+            "'stock_paper_promotion_readiness_reports is immutable'); END"
+        )

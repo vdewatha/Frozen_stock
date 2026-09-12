@@ -107,6 +107,9 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(first["id"], second["id"])
             self.assertEqual(db.query(StockPaperPromotionReadinessReport).count(), 1)
             self.assertEqual(before, (row.status, row.binding_id, dict(row.policy), dict(row.lineage)))
+            report = db.get(StockPaperPromotionReadinessReport, first["id"])
+            self.assertEqual(report.report_hash, second["report_hash"])
+            self.assertEqual(report.decision, "unknown")
 
     def test_promotion_readiness_route_is_viewer_only(self):
         self.assertEqual(

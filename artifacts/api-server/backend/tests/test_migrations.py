@@ -36,6 +36,64 @@ class MigrationTests(unittest.TestCase):
         self.assertFalse(columns["source"]["nullable"])
         self.assertFalse(columns["imported_at"]["nullable"])
         self.assertIn("stock_paper_promotion_readiness_reports", inspector.get_table_names())
+        with self.engine.connect() as connection:
+            trigger_names = {
+                row[0]
+                for row in connection.execute(text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'trigger' AND tbl_name = "
+                    "'stock_paper_promotion_readiness_reports'"
+                ))
+            }
+        self.assertIn(
+            "stock_paper_promotion_readiness_reports_immutable_update",
+            trigger_names,
+        )
+        self.assertIn(
+            "stock_paper_promotion_readiness_reports_immutable_delete",
+            trigger_names,
+        )
+
+    def test_promotion_readiness_reports_are_append_only(self):
+        command.upgrade(self.config, "0023_stock_model_lifecycle")
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "DROP TRIGGER stock_paper_promotion_readiness_reports_immutable_update"
+            ))
+            connection.execute(text(
+                "DROP TRIGGER stock_paper_promotion_readiness_reports_immutable_delete"
+            ))
+        command.upgrade(self.config, "head")
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO stock_paper_promotion_readiness_reports "
+                "(trial_id,report_hash,decision,gates,lineage,policy) "
+                "VALUES ('trial-1','hash-1','unknown','{}','{}','{}')"
+            ))
+
+        with self.engine.connect() as connection:
+            with self.assertRaisesRegex(Exception, "immutable"):
+                connection.execute(text(
+                    "UPDATE stock_paper_promotion_readiness_reports "
+                    "SET decision = 'pass' WHERE report_hash = 'hash-1'"
+                ))
+            connection.rollback()
+
+            with self.assertRaisesRegex(Exception, "immutable"):
+                connection.execute(text(
+                    "DELETE FROM stock_paper_promotion_readiness_reports "
+                    "WHERE report_hash = 'hash-1'"
+                ))
+            connection.rollback()
+
+        with self.engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(text(
+                    "SELECT decision FROM stock_paper_promotion_readiness_reports "
+                    "WHERE report_hash = 'hash-1'"
+                )).scalar(),
+                "unknown",
+            )
 
     def test_trial_exit_order_link_backfills_hashed_legacy_attempt(self):
         command.upgrade(self.config, "0020_trial_baseline_equity")
