@@ -77,13 +77,13 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
   const lineage = trial.lineage || {};
   const policy = trial.policy || {};
   const modelHash = lineage.model_hash || "Unavailable";
-  const modelCutoff = lineage.model_cutoff || lineage.cutoff || "Unavailable";
+  const modelCutoff = lineage.model_cutoff || lineage.cutoff_date || lineage.cutoff || "Unavailable";
   const universe = lineage.universe || "Unavailable";
   const paperOnly = policy.paper_only !== false;
   const liveDisabled = policy.live_disabled !== false && policy.live_authorized !== true;
 
   return (
-    <div className="grid gap-4 border-t border-line bg-slate-50 p-4">
+    <div className="grid gap-4 border-t border-line bg-slate-50 p-4" data-testid={`forward-trial-detail-${trial.id}`}>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-md border border-line bg-white p-3 text-sm">
           <div className="font-semibold text-slate-800">Configuration</div>
@@ -118,8 +118,8 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
           <div className="mt-2 grid gap-1 text-xs text-slate-600">
             <div>Started: <span className="font-medium text-slate-800">{trial.started_at ? new Date(trial.started_at).toLocaleString() : "Not started"}</span></div>
             <div>Stopped: <span className="font-medium text-slate-800">{trial.stopped_at ? new Date(trial.stopped_at).toLocaleString() : "-"}</span></div>
-            {trial.blocked_reason && <div>Blocked: <span className="font-medium text-coral">{trial.blocked_reason}</span></div>}
-            {trial.pause_reason && <div>Pause Reason: <span className="font-medium text-amber-600">{trial.pause_reason}</span></div>}
+            {trial.blocked_reason && <div>Blocked: <span className="font-medium text-coral" data-testid="forward-trial-blocked-reason">{trial.blocked_reason}</span></div>}
+            {trial.pause_reason && <div>Pause Reason: <span className="font-medium text-amber-600" data-testid="forward-trial-pause-reason">{trial.pause_reason}</span></div>}
           </div>
         </div>
       </div>
@@ -210,7 +210,7 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
       </div>
 
       <RoleGate requires="operator">
-        <div className="flex flex-wrap gap-2 pt-2">
+        <div className="flex flex-wrap gap-2 pt-2" data-testid="forward-trial-operator-controls">
           {trial.status === "approved" && (
             <button
               disabled={isBusy}
@@ -256,6 +256,7 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
           )}
           {(trial.status === "paused" || trial.status === "blocked") && (
             <button
+              data-testid="button-resume-forward-trial"
               disabled={isBusy}
               onClick={() => handleAction(() => resumeForwardTrial(trial.id))}
               className="inline-flex items-center gap-1.5 rounded border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-mint disabled:opacity-50"
@@ -265,6 +266,7 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
           )}
           {(trial.status === "running" || trial.status === "paused" || trial.status === "approved" || trial.status === "blocked") && (
             <button
+              data-testid="button-stop-forward-trial"
               disabled={isBusy}
               onClick={() => handleAction(() => stopForwardTrial(trial.id))}
               className="inline-flex items-center gap-1.5 rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-coral disabled:opacity-50"
@@ -335,14 +337,14 @@ export function ForwardPaperEvaluationPanel() {
   };
 
   return (
-    <section className="rounded-md border border-line bg-white">
+    <section className="rounded-md border border-line bg-white" data-testid="panel-forward-paper-evaluation">
       <div className="flex items-center justify-between border-b border-line p-4">
         <div className="flex items-center gap-2">
           <Beaker size={19} className="text-mint" />
           <h2 className="text-base font-semibold">Forward Paper Evaluation</h2>
         </div>
         <RoleGate requires="admin">
-          <div className="text-xs font-semibold text-mint bg-emerald-50 border border-emerald-200 px-2 py-1 rounded">
+          <div className="text-xs font-semibold text-mint bg-emerald-50 border border-emerald-200 px-2 py-1 rounded" data-testid="forward-trial-admin-surface">
             Admin Approved Surface
           </div>
         </RoleGate>
@@ -357,7 +359,7 @@ export function ForwardPaperEvaluationPanel() {
 
       <RoleGate requires="admin">
         {bindings.length > 0 && (
-          <div className="border-b border-line p-4">
+          <div className="border-b border-line p-4" data-testid="forward-trial-admin-controls">
             <h3 className="text-sm font-semibold text-slate-800 mb-3">Approve New Trial</h3>
             <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-3">
               <label className="grid gap-1.5 text-xs font-semibold text-slate-700">
@@ -404,6 +406,7 @@ export function ForwardPaperEvaluationPanel() {
             return (
               <div key={trial.id} className="group flex flex-col">
                 <button
+                  data-testid={`forward-trial-row-${trial.id}`}
                   onClick={() => setExpandedTrial(isExpanded ? null : trial.id)}
                   className="flex items-center justify-between p-4 hover:bg-slate-50 transition-colors text-left"
                 >
