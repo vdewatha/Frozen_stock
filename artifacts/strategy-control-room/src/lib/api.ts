@@ -589,6 +589,27 @@ export type DeploymentMonitorSnapshot = {
   readiness: ReadinessSnapshot;
 };
 
+export type StockMonitoringCheck = {
+  key: string;
+  category: string;
+  metric: string;
+  status: "clear" | "warning" | "breach" | "unknown";
+  message: string;
+  value: Record<string, unknown>;
+  threshold: Record<string, unknown>;
+  details: Record<string, unknown>;
+  action_scope: string;
+};
+
+export type StockMonitoringSnapshot = {
+  status: string;
+  generated_at: string;
+  snapshot_id?: number;
+  checks: StockMonitoringCheck[];
+  breaches: { key: string; status: string; consecutive_count: number; severity: string; last_observed_at: string }[];
+  actions: { action: string; reasons?: string[]; model_run_id?: string }[];
+};
+
 export type TradeCandidate = {
   symbol: string;
   strategy: string;
@@ -1681,6 +1702,15 @@ export async function getReadiness(): Promise<ReadinessSnapshot> {
 export async function getDeploymentMonitor(): Promise<DeploymentMonitorSnapshot> {
   const response = await authenticatedFetch(`${API_BASE_URL}/system/deployment-monitor`, { cache: "no-store" });
   return handleResponse<DeploymentMonitorSnapshot>(response);
+}
+
+export async function getStockMonitoring(): Promise<StockMonitoringSnapshot> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/system/stock-monitoring`, { cache: "no-store" });
+  return handleResponse<StockMonitoringSnapshot>(response);
+}
+
+export async function runStockMonitoring(): Promise<StockMonitoringSnapshot> {
+  return postJson<StockMonitoringSnapshot>("/system/stock-monitoring/run", {});
 }
 
 export async function getTradeCandidates(limit = 12, refresh = false): Promise<TradeCandidateResponse> {

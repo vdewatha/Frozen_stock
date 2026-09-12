@@ -115,6 +115,8 @@ def required_role(method: str, path: str) -> str:
         return "researcher"
     if method == "POST" and path in RESEARCH_POSTS:
         return "researcher"
+    if method == "POST" and path == "/system/stock-monitoring/run":
+        return "operator"
     if method == "POST" and (path in OPERATOR_POSTS or path.startswith((
         "/paper-trading/close/", "/paper-trading/reduce/", "/stock-paper/orders/", "/stock-paper/positions/",
     ))):

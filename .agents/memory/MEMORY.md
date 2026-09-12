@@ -4,3 +4,4 @@
 - [Stock holdout governance](stock-holdout-governance.md) — prefer deferred challengers over reused holdouts; extraction-time histories are not historical point-in-time evidence.
 - [Forward-trial feature alignment](forward-trial-feature-alignment.md) — daily features must match the decision session; stale-data rejections never count toward coverage.
 - [Immutable model registry lifecycle](immutable-model-registry-lifecycle.md) — keep mutable champion/challenger state outside append-only registry rows.
+- [Monitoring read safety](monitoring-read-safety.md) — monitoring reads must return unknown before evidence exists and never trigger safety actions.

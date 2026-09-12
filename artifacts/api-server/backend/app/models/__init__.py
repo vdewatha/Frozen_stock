@@ -39,6 +39,8 @@ from app.models.models import (
     StrategyMemory,
     StrategySignal,
     TradeCandidateSnapshot,
+    StockMonitoringSnapshot,
+    StockMonitoringBreach,
 )
 from app.models.stock_paper import (
     StockPaperAccount,
@@ -88,6 +90,8 @@ __all__ = [
     "StrategyMemory",
     "StrategySignal",
     "TradeCandidateSnapshot",
+    "StockMonitoringSnapshot",
+    "StockMonitoringBreach",
     "StockPaperAccount",
     "StockPaperBrokerActivity",
     "StockPaperEquitySnapshot",

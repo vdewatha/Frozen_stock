@@ -27,6 +27,7 @@ from app.services.stock_training_jobs import (
     recover_stock_training_jobs,
     run_stock_training_job,
 )
+from app.services.stock_monitoring import run_stock_monitoring
 from app.services.stock_forward_trial import observe_trial, execute_pending_decisions, start_trial, evaluate_trial
 from app.models import StockPaperTrial
 from app.tasks.celery_app import celery_app
@@ -295,6 +296,11 @@ def risk_monitor_job() -> dict:
                 "reason": "Legacy paper-trade risk monitoring cannot mutate stock-paper kill or strategy state."}
 
     return _run_job("risk_monitor_job", work)
+
+
+@celery_app.task
+def stock_monitoring_job() -> dict:
+    return _run_job("stock_monitoring_job", lambda db: run_stock_monitoring(db))
 
 @celery_app.task
 def stock_training_job(job_id: str) -> dict:

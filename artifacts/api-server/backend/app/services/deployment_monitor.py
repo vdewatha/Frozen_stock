@@ -92,6 +92,7 @@ def _check_celery_schedule() -> dict:
         "paper-trading-signal-job",
         "paper-trade-reconciliation-job",
         "risk-monitor-job",
+        "stock-monitoring-job",
     }
     missing = sorted(required_jobs - set(job_names))
     return {

@@ -286,6 +286,47 @@ class Notification(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class StockMonitoringSnapshot(Base):
+    """Append-only evidence from the continuous stock monitor."""
+    __tablename__ = "stock_monitoring_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    monitor_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    checks: Mapped[list] = mapped_column(JSON, nullable=False)
+    actions: Mapped[list] = mapped_column(JSON, nullable=False)
+    source: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockMonitoringBreach(Base):
+    """Mutable state for persistence tracking; each evaluation is also snapshotted."""
+    __tablename__ = "stock_monitoring_breaches"
+    __table_args__ = (
+        UniqueConstraint("breach_key", name="uq_stock_monitoring_breach_key"),
+        CheckConstraint(
+            "status IN ('unknown', 'observed', 'persistent', 'cleared')",
+            name="ck_stock_monitoring_breach_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    breach_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    metric: Mapped[str] = mapped_column(String(96), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(24), nullable=False)
+    observed_value: Mapped[Optional[dict]] = mapped_column(JSON)
+    threshold: Mapped[Optional[dict]] = mapped_column(JSON)
+    consecutive_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    first_observed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    details: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class ModelPrediction(Base):
     __tablename__ = "model_predictions"
 
