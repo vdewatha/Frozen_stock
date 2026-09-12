@@ -33,7 +33,7 @@ READ_PATHS = {
     "/audit-logs", "/notifications", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
     "/economic/indicators", "/system/readiness", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs",
-    "/stock/training/jobs", "/stock/training/binding",
+    "/stock/training/jobs", "/stock/training/binding", "/stock/learning-cycles",
     "/stock-paper/status",
     "/stock/forward-trials", "/stock/forward-trials/bindings/eligible",
     "/trade-candidates/refresh-jobs/latest",
@@ -49,6 +49,7 @@ RESEARCH_POSTS = {
     "/trade-candidates/memory-replay/monitor", "/trade-candidates/activation-review",
     "/watchlist/import", "/experiments/run",
     "/stock/training/jobs",
+    "/stock/learning-cycles",
 }
 OPERATOR_POSTS = {
     "/crypto/paper/intents", "/crypto/paper/kill-switch/enable",
@@ -58,6 +59,7 @@ OPERATOR_POSTS = {
     "/portfolio/allocation-review-queue/review", "/portfolio/allocation-review-queue/dry-run",
     "/portfolio/allocation-plan/execute", "/portfolio/risk/actions",
     "/stock/training/binding",
+    "/stock/learning-cycles",
     "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal",
 }
 ADMIN_POSTS = {
@@ -83,6 +85,12 @@ def required_role(method: str, path: str) -> str:
         return "viewer"
     if method == "POST" and re.fullmatch(r"/stock/training/jobs/[0-9a-f-]{36}/cancel", path):
         return "researcher"
+    if method == "GET" and re.fullmatch(r"/stock/learning-cycles/[0-9a-f]{64}", path):
+        return "viewer"
+    if method == "POST" and path == "/stock/learning-cycles":
+        return "researcher"
+    if method == "POST" and re.fullmatch(r"/stock/learning-cycles/[0-9a-f]{64}/(review|action)", path):
+        return "operator"
     if method == "POST" and re.fullmatch(r"/stock/training/models/[0-9a-f]{64}/lifecycle", path):
         return "operator"
     if method == "GET" and re.fullmatch(r"/stock/forward-trials/[0-9a-f-]{36}(?:/(decisions|metrics|promotion-readiness|preflight))?", path):

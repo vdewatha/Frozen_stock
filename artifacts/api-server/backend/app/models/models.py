@@ -552,7 +552,48 @@ class StockTrainingJob(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     recovery_attempted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
+class StockLearningCycle(Base):
+    """Mutable current pointer for one governed learning-cycle run.
 
+    The linked datasets, models, holdout claims, trials, bindings, monitoring
+    snapshots, and recovery events remain immutable or independently governed.
+    This row only answers where the cycle is now; its history is in the event
+    table below.
+    """
+    __tablename__ = "stock_learning_cycles"
+    __table_args__ = (
+        UniqueConstraint("request_sha256", name="uq_stock_learning_cycle_request"),
+        CheckConstraint(
+            "status IN ('blocked', 'deferred', 'queued', 'running', "
+            "'awaiting_forward_evidence', 'operator_review', 'complete', "
+            "'demoted', 'rolled_back', 'failed')",
+            name="ck_stock_learning_cycle_status",
+        ),
+    )
+
+    cycle_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    trigger: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="blocked", index=True)
+    stage: Mapped[str] = mapped_column(String(48), nullable=False, default="preflight", index=True)
+    requested_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    symbols: Mapped[list] = mapped_column(JSON, nullable=False)
+    cutoff_date: Mapped[date] = mapped_column(Date, nullable=False)
+    horizon_days: Mapped[int] = mapped_column(nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    seed: Mapped[int] = mapped_column(nullable=False, default=42)
+    snapshot_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_dataset_snapshots.snapshot_id"))
+    training_job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_training_jobs.id"))
+    model_run_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_model_registry.run_id"))
+    trial_id: Mapped[Optional[str]] = mapped_column(String(36))
+    active_binding_id: Mapped[Optional[int]] = mapped_column()
+    monitor_snapshot_id: Mapped[Optional[int]] = mapped_column()
+    recovery_event_id: Mapped[Optional[int]] = mapped_column()
+    gates: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    last_reason: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 class StockPaperModelBinding(Base):
     __tablename__ = "stock_paper_model_bindings"
     __table_args__ = (
@@ -721,3 +762,24 @@ class StockPaperPromotionReadinessReport(Base):
     paper_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class StockLearningCycleEvent(Base):
+    """Append-only stage and gate evidence for a learning-cycle run."""
+    __tablename__ = "stock_learning_cycle_events"
+    __table_args__ = (
+        UniqueConstraint("decision_sha256", name="uq_stock_learning_cycle_event_digest"),
+        CheckConstraint(
+            "decision IN ('pass', 'fail', 'unknown', 'blocked', 'deferred', 'complete')",
+            name="ck_stock_learning_cycle_event_decision",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cycle_id: Mapped[str] = mapped_column(ForeignKey("stock_learning_cycles.cycle_id"), nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    decision_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)

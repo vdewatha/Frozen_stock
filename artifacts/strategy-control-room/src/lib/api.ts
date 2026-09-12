@@ -667,6 +667,16 @@ export type StockMonitoringSnapshot = {
   actions: { action: string; reasons?: string[]; model_run_id?: string }[];
 };
 
+export type StockLearningCycleEvent = {
+  id: number;
+  stage: string;
+  decision: string;
+  actor: string;
+  reason: string;
+  decision_sha256: string;
+  evidence: Record<string, unknown>;
+  created_at: string;
+};
 export type TradeCandidate = {
   symbol: string;
   strategy: string;
@@ -1798,6 +1808,10 @@ export async function runStockMonitoring(): Promise<StockMonitoringSnapshot> {
   return postJson<StockMonitoringSnapshot>("/system/stock-monitoring/run", {});
 }
 
+export async function getStockLearningCycles(limit = 25): Promise<StockLearningCycle[]> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/learning-cycles?limit=${limit}`, { cache: "no-store" });
+  return handleResponse<StockLearningCycle[]>(response);
+}
 export async function getTradeCandidates(limit = 12, refresh = false): Promise<TradeCandidateResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (refresh) {
@@ -2471,3 +2485,65 @@ export async function resumeForwardTrial(id: string): Promise<ForwardTrial> {
 export async function stopForwardTrial(id: string): Promise<ForwardTrial> {
   return postJson<ForwardTrial>(`/stock/forward-trials/${encodeURIComponent(id)}/stop`, {});
 }
+
+export async function reviewStockLearningCycle(cycleId: string, reason: string, trialId?: string): Promise<StockLearningCycle> {
+  return postJson<StockLearningCycle>(`/stock/learning-cycles/${encodeURIComponent(cycleId)}/review`, {
+    reason,
+    ...(trialId ? { trial_id: trialId } : {}),
+  });
+}
+
+export type StockLearningCycleAction = "mark_eligible" | "start_canary" | "promote" | "demote" | "retire";
+
+export async function actOnStockLearningCycle(
+  cycleId: string,
+  action: StockLearningCycleAction,
+  reason: string,
+): Promise<StockLearningCycle> {
+  return postJson<StockLearningCycle>(`/stock/learning-cycles/${encodeURIComponent(cycleId)}/action`, { action, reason });
+}
+
+export async function getStockLearningCycle(cycleId: string): Promise<StockLearningCycle> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/learning-cycles/${encodeURIComponent(cycleId)}`, { cache: "no-store" });
+  return handleResponse<StockLearningCycle>(response);
+}
+
+export type StockLearningCycle = {
+  cycle_id: string;
+  status: string;
+  stage: string;
+  trigger: string;
+  requested_by: string;
+  symbols: string[];
+  cutoff_date: string;
+  horizon_days: number;
+  provider: string;
+  snapshot_id: string | null;
+  training_job_id: string | null;
+  model_run_id: string | null;
+  trial_id: string | null;
+  active_binding_id: number | null;
+  active_binding_model_run_id: string | null;
+  gates: Record<string, { status: string; reason?: string; evidence?: unknown }>;
+  evidence: Record<string, unknown>;
+  last_reason: string | null;
+  paper_only: boolean;
+  live_authorized: boolean;
+  monitoring: {
+    snapshot_id: number | null;
+    status: string;
+    generated_at: string | null;
+    actions: Array<Record<string, unknown>>;
+  };
+  recovery: {
+    status: string;
+    last_known_good_model_run_id: string | null;
+    last_known_good_binding_id: number | null;
+    latest_event_id: number | null;
+    latest_event_action: string | null;
+  };
+  events: StockLearningCycleEvent[];
+  created_at: string;
+  updated_at: string;
+  deduplicated?: boolean;
+};

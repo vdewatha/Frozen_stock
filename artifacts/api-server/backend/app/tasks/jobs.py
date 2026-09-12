@@ -10,7 +10,6 @@ from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.types import JSON
 
 from app.db.session import SessionLocal
-from app.models import Asset, PaperTrade, Strategy
 from app.services.economic_data import import_fallback_economic_indicators
 from app.services.decision_journal import refresh_decision_journal_outcomes, update_strategy_memory_from_journal
 from app.services.deployment_monitor import run_deployment_monitor
@@ -38,6 +37,8 @@ from app.services.stock_recovery import reconcile_inflight_stock_orders_on_resta
 from app.services.stock_forward_trial import observe_trial, execute_pending_decisions, start_trial, evaluate_trial
 from app.models import StockPaperTrial
 from app.tasks.celery_app import celery_app
+from app.models import Asset, PaperTrade, Strategy, StockTrainingJob
+from app.services.stock_learning_cycle import (
 
 
 def _json_safe(value):
@@ -342,14 +343,24 @@ def risk_monitor_job() -> dict:
 
 @celery_app.task
 def stock_monitoring_job() -> dict:
-    return _run_job("stock_monitoring_job", lambda db: run_stock_monitoring(db))
+    def work(db):
+        result = run_stock_monitoring(db)
+        sync_cycle_observability(db, monitor_snapshot_id=result.get("snapshot_id"))
+        db.commit()
+        return result
+    return _run_job("stock_monitoring_job", work)
 
 @celery_app.task
 def stock_training_job(job_id: str) -> dict:
     """Execute a persisted stock-training intent; Redis state is never queried."""
     db = SessionLocal()
     try:
-        return run_stock_training_job(db, job_id)
+        result = run_stock_training_job(db, job_id)
+        cycle = sync_cycle_from_training_job(db, job_id)
+        db.commit()
+        if cycle:
+            result["cycle_id"] = cycle.cycle_id
+        return result
     finally:
         db.close()
 
@@ -376,16 +387,20 @@ def scheduled_stock_challenger_retraining_job() -> dict:
         queued, deferred, blocked = [], [], []
         for asset in assets:
             try:
-                job, duplicate = create_stock_training_job(
-                    db, symbols=[asset.symbol], cutoff_at=date.today(), horizon_bars=5, seed=42,
-                    actor="scheduler", trigger="scheduled"
+                cycle, duplicate = create_learning_cycle(
+                    db, symbols=[asset.symbol], cutoff_at=date.today(), horizon_days=5,
+                    provider="yfinance", seed=42, actor="scheduler", trigger="scheduled"
                 )
                 db.commit()
-                if not duplicate and job.status == "queued":
-                    enqueue_stock_training_job(db, job)
+                if cycle.training_job_id and not duplicate and cycle.status == "queued":
+                    job = db.get(StockTrainingJob, cycle.training_job_id)
+                    if job:
+                        enqueue_stock_training_job(db, job)
                     db.commit()
-                item = {"symbol": asset.symbol, "job_id": job.id, "status": job.status, "deduplicated": duplicate}
-                (deferred if job.status == "deferred" else queued).append(item)
+                item = {"symbol": asset.symbol, "cycle_id": cycle.cycle_id, "job_id": cycle.training_job_id,
+                        "status": cycle.status, "stage": cycle.stage, "deduplicated": duplicate,
+                        "reason": cycle.last_reason}
+                (deferred if cycle.status == "deferred" else blocked if cycle.status == "blocked" else queued).append(item)
             except StockTrainingError as exc:
                 db.rollback()
                 blocked.append({"symbol": asset.symbol, "reason": str(exc)})

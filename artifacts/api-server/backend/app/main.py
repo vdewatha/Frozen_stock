@@ -28,6 +28,7 @@ app.add_middleware(
 )
 from app.api.stock_training import router as stock_training_router
 from app.api.stock_forward_trial import router as stock_forward_trial_router
+from app.api.stock_learning_cycle import router as stock_learning_cycle_router
 
 
 @app.on_event("startup")
@@ -47,3 +48,4 @@ app.include_router(shadow_evidence_router, prefix="/api")
 app.include_router(stock_paper_router, prefix="/api")
 app.include_router(stock_training_router, prefix="/api")
 app.include_router(stock_forward_trial_router, prefix="/api")
+app.include_router(stock_learning_cycle_router, prefix="/api")

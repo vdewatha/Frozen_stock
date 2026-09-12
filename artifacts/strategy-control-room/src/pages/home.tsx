@@ -29,6 +29,7 @@ import { getAuthSession, getDashboard, getErrorMessage, setAccessToken, type Acc
 import { StockTrainingLab } from "@/components/stock-training-lab";
 import { StockMonitoringPanel } from "@/components/stock-monitoring-panel";
 import { StockRecoveryPanel } from "@/components/stock-recovery-panel";
+import { StockLearningCyclePanel } from "@/components/stock-learning-cycle-panel";
 import { OperationalHardeningPanel } from "@/components/operational-hardening-panel";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -120,6 +121,8 @@ function Home({ dashboard, role, onSignOut }: { dashboard: DashboardSnapshot; ro
         <StockMonitoringPanel />
 
         <StockRecoveryPanel />
+
+        <StockLearningCyclePanel />
 
         <OperationalHardeningPanel />
 
