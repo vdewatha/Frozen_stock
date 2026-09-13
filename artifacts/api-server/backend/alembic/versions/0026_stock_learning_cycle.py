@@ -4,7 +4,7 @@ import sqlalchemy as sa
 
 
 revision = "0026_stock_learning_cycle"
-down_revision = ("0025_readiness_immutable", "0025_stock_paper_recovery")
+down_revision = "0026_stock_paper_recovery_merge"
 branch_labels = None
 depends_on = None
 

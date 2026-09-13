@@ -39,6 +39,10 @@ from app.models import StockPaperTrial
 from app.tasks.celery_app import celery_app
 from app.models import Asset, PaperTrade, Strategy, StockTrainingJob
 from app.services.stock_learning_cycle import (
+    create_learning_cycle,
+    sync_cycle_from_training_job,
+    sync_cycle_observability,
+)
 
 
 def _json_safe(value):
@@ -433,10 +437,26 @@ def stock_forward_trial_observe_job(trial_id: str | None = None) -> dict:
             if row:
                 observe_trial(db, row.id)
                 execute_pending_decisions(db, row.id)
-                metric = evaluate_trial(db, row.id)
-                results.append({"trial_id": row.id, "status": row.status, "classification": metric.classification})
-        _normalize_pending_json(db)
-        db.commit()
+                # Commit the observation and any broker-intent changes before
+                # calculating numeric evidence. A malformed metric payload must
+                # not erase the durable observation that produced it.
+                _normalize_pending_json(db)
+                db.commit()
+                try:
+                    metric = evaluate_trial(db, row.id)
+                    _normalize_pending_json(db)
+                    db.flush()
+                    db.commit()
+                    classification = metric.classification
+                    metric_error = None
+                except Exception as exc:
+                    db.rollback()
+                    classification = "unavailable"
+                    metric_error = f"{exc.__class__.__name__}: {exc}"
+                result = {"trial_id": row.id, "status": row.status, "classification": classification}
+                if metric_error:
+                    result["metric_error"] = metric_error
+                results.append(result)
         return {"status": "complete", "trials": results, "paper_only": True}
     return _run_job("stock_forward_trial_observe_job", work)
 

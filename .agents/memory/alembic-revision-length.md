@@ -10,5 +10,6 @@ earlier migration widens the version column first.
 after its DDL has run, leaving the upgrade path unable to reach the new head.
 
 **How to apply:** Check the identifier length whenever adding or renaming a
-migration, and keep merge-point down revisions compatible with already-applied
-heads.
+migration, keep merge-point down revisions compatible with already-applied
+heads, and use a forward-only compatibility revision when an already-stamped
+head skipped newly introduced tables.

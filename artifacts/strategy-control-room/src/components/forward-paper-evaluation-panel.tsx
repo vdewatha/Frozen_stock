@@ -28,9 +28,10 @@ const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFracti
 const decimal = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
-function formatNull(val: number | null | undefined, formatter: Intl.NumberFormat): string {
-  if (val === null || val === undefined) return "Unavailable";
-  return formatter.format(val);
+function formatNull(val: number | string | null | undefined, formatter: Intl.NumberFormat): string {
+  if (val === null || val === undefined || val === "") return "Unavailable";
+  const numeric = typeof val === "number" ? val : Number(val);
+  return Number.isFinite(numeric) ? formatter.format(numeric) : "Unavailable";
 }
 
 function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onActionComplete: () => void }) {
@@ -197,23 +198,23 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
               </div>
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Net PnL</div>
-                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.net_pnl as number, currency)}</div>
+                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.net_pnl, currency)}</div>
               </div>
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Gross PnL (Prov)</div>
-                <div className="mt-1 font-medium text-slate-800">{formatNull((payload.provisional_gross_pnl ?? payload.gross_pnl) as number, currency)}</div>
+                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.provisional_gross_pnl ?? payload.gross_pnl, currency)}</div>
               </div>
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Expectancy</div>
-                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.expectancy as number, currency)}</div>
+                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.expectancy, currency)}</div>
               </div>
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Max Drawdown</div>
-                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.max_drawdown as number, percent)}</div>
+                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.max_drawdown, percent)}</div>
               </div>
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Bmk Buy & Hold</div>
-                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.benchmark_buy_hold as number, percent)}</div>
+                <div className="mt-1 font-medium text-slate-800">{formatNull(payload.benchmark_buy_hold, percent)}</div>
               </div>
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Obs / Exp</div>

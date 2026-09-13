@@ -1021,6 +1021,42 @@ class ForwardTrialTests(unittest.TestCase):
         self.assertEqual(len(seen), 6)
         self.assertEqual(len(result["trials"]), 3)
 
+    def test_observe_job_commits_observation_before_numeric_metric_failure(self):
+        from app.tasks import jobs
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused")
+            trial_id = row.id
+            db.commit()
+
+        def persist_observation(db, current_trial_id):
+            db.add(StockPaperTrialDecision(
+                trial_id=current_trial_id,
+                symbol="SPY",
+                bar_timestamp=datetime(2025, 1, 2, tzinfo=timezone.utc),
+                decision_timestamp=datetime(2025, 1, 2, tzinfo=timezone.utc),
+                action="reject",
+                qualifying=False,
+                rejection_reason="numeric evidence pending",
+                lineage={"probability": "0.5"},
+            ))
+
+        def run_job(_name, work):
+            with Session(self.engine) as db:
+                return work(db)
+
+        with patch.object(jobs, "_run_job", side_effect=run_job), \
+             patch.object(jobs, "observe_trial", side_effect=persist_observation), \
+             patch.object(jobs, "execute_pending_decisions"), \
+             patch.object(jobs, "evaluate_trial", side_effect=TypeError("numeric evidence is unavailable")):
+            result = stock_forward_trial_observe_job.run()
+
+        with Session(self.engine) as db:
+            decisions = db.query(StockPaperTrialDecision).filter_by(trial_id=trial_id).all()
+            self.assertEqual(len(decisions), 1)
+            self.assertEqual(decisions[0].rejection_reason, "numeric evidence pending")
+        self.assertEqual(result["trials"][0]["classification"], "unavailable")
+        self.assertIn("numeric evidence is unavailable", result["trials"][0]["metric_error"])
+
     def test_session_twenty_stops_and_rejects_pending_entries(self):
         with Session(self.engine) as db:
             row = self.trial(db, status="running")

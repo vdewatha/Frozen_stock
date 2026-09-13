@@ -5,7 +5,7 @@ from hashlib import sha256
 import json
 
 revision = "0027_audit_event_chain"
-down_revision = "0026_stock_paper_recovery_merge"
+down_revision = "0026_stock_learning_cycle"
 branch_labels = None
 depends_on = None
 

@@ -2375,14 +2375,14 @@ export type ForwardTrialPreflight = {
   live_authorized: boolean;
 };
 export type ForwardTrialDecision = {
-  id: string;
+  id: number;
   symbol: string;
   bar_timestamp: string;
   action: string;
   qualifying: boolean;
   rejection_reason: string | null;
   lineage: Record<string, unknown>;
-  order_id: string | null;
+  order_id: number | null;
 };
 
 export type ForwardTrialMetricHistoryItem = {
@@ -2392,15 +2392,16 @@ export type ForwardTrialMetricHistoryItem = {
     observed_sessions?: number;
     expected_observations?: number;
     observed_observations?: number;
-    decision_coverage?: string | number;
+    decision_coverage?: string | null;
     closed_trades?: number;
-    provisional_gross_pnl?: number;
-    gross_pnl?: number;
-    net_pnl?: number;
-    expectancy?: number;
-    win_rate?: string | number | null;
-    max_drawdown?: number;
-    benchmark_buy_hold?: number;
+    provisional_gross_pnl?: string | null;
+    gross_pnl?: string | null;
+    net_pnl?: string | null;
+    expectancy?: string | null;
+    win_rate?: string | null;
+    max_drawdown?: string | null;
+    account_drawdown?: string | null;
+    benchmark_buy_hold?: string | null;
     costs_known?: boolean;
     [key: string]: unknown;
   };
