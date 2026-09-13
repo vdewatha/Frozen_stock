@@ -3,9 +3,11 @@ import { RotateCcw, ShieldAlert, ShieldCheck, Square, Waves } from "lucide-react
 
 import { RoleGate } from "@/components/access-control";
 import {
+  acknowledgeStockPaperAccountingReview,
   cancelStockPaperRecovery,
   getErrorMessage,
   getStockPaperRecovery,
+  resumeStockPaperAccount,
   rollbackStockPaperToLastKnownGood,
   type StockPaperRecoveryStatus,
 } from "@/lib/api";
@@ -20,6 +22,8 @@ export function StockRecoveryPanel() {
   const [recovery, setRecovery] = useState<StockPaperRecoveryStatus | null>(null);
   const [message, setMessage] = useState("Loading recovery state");
   const [busy, setBusy] = useState(false);
+  const [reviewReason, setReviewReason] = useState("");
+  const [confirmReview, setConfirmReview] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -44,6 +48,20 @@ export function StockRecoveryPanel() {
       setMessage("Recovery action recorded. Reconciliation and cooldown gates still apply.");
     } catch (error) {
       setMessage(getErrorMessage(error, "Recovery action failed."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resume() {
+    setBusy(true);
+    setMessage("Checking cooldown, reconciliation, monitoring, and order gates before resume");
+    try {
+      await resumeStockPaperAccount();
+      await refresh();
+      setMessage("Paper recovery resumed after all safety gates passed");
+    } catch (error) {
+      setMessage(getErrorMessage(error, "Paper recovery could not resume."));
     } finally {
       setBusy(false);
     }
@@ -84,6 +102,33 @@ export function StockRecoveryPanel() {
         </div>
       </div>
       <RoleGate requires="operator" className="flex flex-wrap gap-2 border-t border-line p-4">
+        {recovery?.accounting_review_required ? (
+          <div className="w-full rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+            <div className="font-semibold">Manual accounting review required</div>
+            <p className="mt-1">Review the latest Alpaca reconciliation and confirm that the unexplained residual is understood. This does not resume paper trading.</p>
+            <label className="mt-3 flex items-start gap-2">
+              <input checked={confirmReview} className="mt-0.5" onChange={(event) => setConfirmReview(event.target.checked)} type="checkbox" />
+              <span>I reviewed the current broker evidence and confirm the residual is explained.</span>
+            </label>
+            <input
+              className="focus-ring mt-3 h-9 w-full rounded border border-amber-300 bg-white px-2 text-xs"
+              onChange={(event) => setReviewReason(event.target.value)}
+              placeholder="Record what evidence was reviewed"
+              value={reviewReason}
+            />
+            <button
+              className="focus-ring mt-3 inline-flex h-9 items-center gap-2 rounded bg-amber-700 px-3 text-xs font-semibold text-white disabled:opacity-60"
+              disabled={busy || !confirmReview || !reviewReason.trim()}
+              onClick={() => void run(
+                () => acknowledgeStockPaperAccountingReview(reviewReason.trim()),
+                "Recording the operator accounting review",
+              )}
+              type="button"
+            >
+              <ShieldCheck size={14} /> Record accounting review
+            </button>
+          </div>
+        ) : null}
         <button
           className="focus-ring inline-flex h-9 items-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white disabled:opacity-60"
           disabled={busy}
@@ -108,6 +153,18 @@ export function StockRecoveryPanel() {
         >
           <RotateCcw size={14} /> Roll back model
         </button>
+      </RoleGate>
+      <RoleGate requires="admin" className="flex flex-wrap gap-2 border-t border-line p-4">
+        {recovery && ["cooldown", "revalidation_required", "resumable"].includes(recovery.status) ? (
+          <button
+            className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-mint disabled:opacity-60"
+            disabled={busy}
+            onClick={() => void resume()}
+            type="button"
+          >
+            <ShieldCheck size={14} /> Resume paper recovery
+          </button>
+        ) : null}
       </RoleGate>
       {recovery?.pause_reason ? <div className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><strong>Recovery reason:</strong> {recovery.pause_reason}</div> : null}
     </section>

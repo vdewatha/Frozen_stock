@@ -8,9 +8,11 @@ branch_labels = None
 depends_on = None
 
 def upgrade() -> None:
+    tables = set(sa.inspect(op.get_bind()).get_table_names())
     with op.batch_alter_table("stock_paper_trials") as batch:
         batch.add_column(sa.Column("strategy_id", sa.Integer(), nullable=True))
-        batch.create_foreign_key("fk_stock_trial_strategy", "strategies", ["strategy_id"], ["id"])
+        if "strategies" in tables:
+            batch.create_foreign_key("fk_stock_trial_strategy", "strategies", ["strategy_id"], ["id"])
         batch.create_index("ix_stock_paper_trials_strategy_id", ["strategy_id"])
 
 def downgrade() -> None:

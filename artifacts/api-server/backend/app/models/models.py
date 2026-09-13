@@ -354,6 +354,11 @@ class StockPaperRecoveryState(Base):
     last_monitor_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_watchdog_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_revalidation_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    accounting_review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    accounting_reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    accounting_reviewed_by: Mapped[Optional[str]] = mapped_column(String(128))
+    accounting_review_reason: Mapped[Optional[str]] = mapped_column(Text)
+    accounting_review_digest: Mapped[Optional[str]] = mapped_column(String(64))
     updated_by: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

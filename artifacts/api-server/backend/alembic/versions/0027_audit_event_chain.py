@@ -11,9 +11,14 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    if "audit_logs" not in sa.inspect(bind).get_table_names():
+        # A stock-only interim namespace may intentionally omit the shared
+        # application audit table. There is no audit history to backfill in
+        # that namespace; leave this cross-cutting upgrade a no-op.
+        return
     op.add_column("audit_logs", sa.Column("previous_event_sha256", sa.String(length=64)))
     op.add_column("audit_logs", sa.Column("event_sha256", sa.String(length=64)))
-    bind = op.get_bind()
     rows = bind.execute(
         sa.text(
             "SELECT id, event_type, entity_type, entity_id, action, status, message, payload "

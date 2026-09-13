@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import CorporateAction, IntradayBar, RiskRule, Strategy, StrategySignal
+from app.models import CorporateAction, IntradayBar, RiskRule, Strategy, StrategySignal, StockPaperRecoveryState
 from app.models.stock_paper import (
     StockPaperAccount, StockPaperBrokerActivity, StockPaperEquitySnapshot,
     StockPaperFill, StockPaperLedgerEvent, StockPaperOrder, StockPaperPosition, StockPaperStrategyEvidence,
@@ -220,6 +220,19 @@ def _halt(account: StockPaperAccount, reason: str, *, reconciliation_required: b
     account.halt_reason = reason
     account.reconciliation_required = reconciliation_required
     account.halted_at = datetime.now(UTC)
+
+
+def _mark_accounting_review_required(db: Session) -> None:
+    state = db.get(StockPaperRecoveryState, 1)
+    if state is None:
+        state = StockPaperRecoveryState(id=1, status="armed", flatten_policy="none", updated_by="stock_reconciler")
+        db.add(state)
+    state.accounting_review_required = True
+    state.accounting_reviewed_at = None
+    state.accounting_reviewed_by = None
+    state.accounting_review_reason = None
+    state.accounting_review_digest = None
+    state.updated_by = "stock_reconciler"
 
 
 def _account_values(raw: dict, observed: datetime) -> dict:
@@ -582,6 +595,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             # a second reconcile silently establish the discrepant value as a
             # new baseline.
             account.unexplained_residual = True
+            _mark_accounting_review_required(db)
             _halt(account, equation_error)
             _event(db, account, "reconcile", "halted", equation_error)
         elif unresolved_nonterminal:
@@ -599,6 +613,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             _event(db, account, "reconcile", "drift", account.halt_reason, {"symbols": drift})
         elif account.unexplained_residual:
             account.reconciliation_required = True
+            _mark_accounting_review_required(db)
             _event(db, account, "reconcile", "halted",
                    "Prior unexplained cash or position residual requires manual accounting review")
         else:

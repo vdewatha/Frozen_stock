@@ -54,6 +54,10 @@ def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
 
 
+def _accounting_review_digest(account: StockPaperAccount) -> str:
+    return hashlib.sha256(_canonical(account.raw_payload or {})).hexdigest()
+
+
 def _state(db: Session, *, for_update: bool = True) -> StockPaperRecoveryState:
     statement = select(StockPaperRecoveryState).where(StockPaperRecoveryState.id == 1)
     if for_update:
@@ -335,6 +339,13 @@ def resume_stock_paper_after_revalidation(db: Session, *, actor: str) -> dict:
     account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
     if not account or account.status != "reconciled" or account.reconciliation_required:
         raise StockPaperError("A successful broker reconciliation after recovery is required")
+    if state.accounting_review_required:
+        if not state.accounting_reviewed_at or not state.accounting_reviewed_by:
+            raise StockPaperError("Explicit operator accounting review is required before recovery can resume")
+        if state.accounting_review_digest != _accounting_review_digest(account):
+            raise StockPaperError("Accounting review evidence is stale; review the latest broker reconciliation")
+        if account.unexplained_residual:
+            raise StockPaperError("The unexplained accounting residual remains unresolved")
     if db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id,
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
@@ -350,6 +361,71 @@ def resume_stock_paper_after_revalidation(db: Session, *, actor: str) -> dict:
     _set_kill_switch(db, False)
     account.status, account.halt_reason, account.reconciliation_required = "reconciled", None, False
     _event(db, action="resume", status="revalidated", actor=actor, reason="Cooldown elapsed and fresh monitoring/reconciliation evidence passed", payload={"monitoring_at": now.isoformat()})
+    db.commit()
+    return recovery_status(db)
+
+
+def acknowledge_stock_paper_accounting_review(
+    db: Session,
+    *,
+    actor: str,
+    reason: str,
+    confirm_residual_review: bool,
+) -> dict:
+    """Record an operator's explicit review of an unexplained broker residual.
+
+    This does not resume paper trading. It only clears the accounting review
+    gate after the operator attests that the latest broker evidence explains the
+    residual; cooldown, monitoring, and in-flight-order gates remain enforced.
+    """
+    reason = reason.strip()
+    if not reason:
+        raise StockPaperError("Accounting review requires a non-empty reason")
+    if not confirm_residual_review:
+        raise StockPaperError("Explicit confirmation is required to acknowledge the accounting residual")
+    state = _state(db)
+    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    if account is None:
+        raise StockPaperError("Stock paper account is not initialized")
+    if not state.accounting_review_required or not account.unexplained_residual:
+        raise StockPaperError("No unexplained accounting residual is awaiting operator review")
+    now = _now()
+    digest = _accounting_review_digest(account)
+    state.accounting_review_required = False
+    state.accounting_reviewed_at = now
+    state.accounting_reviewed_by = actor
+    state.accounting_review_reason = reason
+    state.accounting_review_digest = digest
+    account.unexplained_residual = False
+    account.reconciliation_required = False
+    account.accounting_verified = True
+    account.status = "reconciled"
+    account.halt_reason = None
+    ledger_event(
+        db,
+        account,
+        "accounting_review",
+        "reviewed",
+        "Operator acknowledged the unexplained broker accounting residual",
+        {"review_digest": digest},
+    )
+    _event(
+        db,
+        action="accounting_review",
+        status="complete",
+        actor=actor,
+        reason=reason,
+        payload={"review_digest": digest, "reviewed_at": now.isoformat()},
+    )
+    write_audit_log(
+        db,
+        event_type="stock_recovery",
+        action="accounting_review",
+        status="complete",
+        message=reason,
+        entity_type="stock_paper",
+        payload={"review_digest": digest, "actor": actor},
+    )
     db.commit()
     return recovery_status(db)
 
@@ -402,6 +478,10 @@ def recovery_status(db: Session) -> dict:
         "last_monitor_heartbeat_at": state.last_monitor_heartbeat_at.isoformat() if state.last_monitor_heartbeat_at else None,
         "last_watchdog_heartbeat_at": state.last_watchdog_heartbeat_at.isoformat() if state.last_watchdog_heartbeat_at else None,
         "last_revalidation_at": state.last_revalidation_at.isoformat() if state.last_revalidation_at else None,
+        "accounting_review_required": state.accounting_review_required,
+        "accounting_reviewed_at": state.accounting_reviewed_at.isoformat() if state.accounting_reviewed_at else None,
+        "accounting_reviewed_by": state.accounting_reviewed_by,
+        "accounting_review_reason": state.accounting_review_reason,
         "account_status": account.status if account else "uninitialized",
         "events": [{"id": event.id, "action": event.action, "status": event.status, "actor": event.actor, "reason": event.reason, "created_at": event.created_at.isoformat() if event.created_at else None, "payload": event.payload} for event in events],
     }

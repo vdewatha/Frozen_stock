@@ -156,6 +156,10 @@ export type StockPaperRecoveryStatus = {
   last_monitor_heartbeat_at: string | null;
   last_watchdog_heartbeat_at: string | null;
   last_revalidation_at: string | null;
+  accounting_review_required: boolean;
+  accounting_reviewed_at: string | null;
+  accounting_reviewed_by: string | null;
+  accounting_review_reason: string | null;
   account_status: string;
   events: Array<{ id: number; action: string; status: string; actor: string; reason: string; created_at: string | null; payload: Record<string, unknown> }>;
 };
@@ -1646,6 +1650,13 @@ export async function cancelStockPaperRecovery(flattenPolicy: "none" | "position
 
 export async function rollbackStockPaperToLastKnownGood(reason: string): Promise<StockPaperRecoveryStatus> {
   return postJson<StockPaperRecoveryStatus>("/stock-paper/recovery/rollback", { reason });
+}
+
+export async function acknowledgeStockPaperAccountingReview(reason: string): Promise<StockPaperRecoveryStatus> {
+  return postJson<StockPaperRecoveryStatus>("/stock-paper/recovery/accounting-review", {
+    reason,
+    confirm_residual_review: true,
+  });
 }
 
 export type StockPaperOrderRequest = {

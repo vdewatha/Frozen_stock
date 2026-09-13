@@ -128,7 +128,7 @@ def test_populated_interim_stock_schema_repairs_through_head_with_audit_triggers
 
         with isolated.connect() as connection:
             inspector = inspect(connection)
-            assert MigrationContext.configure(connection).get_current_heads() == ("0014_stock_holdout_consumption",)
+            assert MigrationContext.configure(connection).get_current_heads() == ("0030_stock_accounting_review",)
             assert connection.execute(text("SELECT count(*) FROM stock_dataset_snapshots")).scalar() == 1
             assert connection.execute(text("SELECT count(*) FROM stock_holdout_reservations")).scalar() == 1
             assert connection.execute(text("SELECT count(*) FROM stock_training_jobs")).scalar() == 1

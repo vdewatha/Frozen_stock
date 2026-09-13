@@ -9,6 +9,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if "audit_logs" not in sa.inspect(op.get_bind()).get_table_names():
+        return
     with op.batch_alter_table("audit_logs") as batch:
         batch.alter_column("event_sha256", existing_type=sa.String(length=64), nullable=False)
 

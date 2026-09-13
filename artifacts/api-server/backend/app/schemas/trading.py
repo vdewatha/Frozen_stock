@@ -396,6 +396,11 @@ class StockPaperRecoveryRequest(BaseModel):
     reason: str = Field(default="Operator-requested stock-paper recovery", min_length=3, max_length=500)
 
 
+class StockPaperAccountingReviewRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+    confirm_residual_review: bool
+
+
 class StockPaperRollbackRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 

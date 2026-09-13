@@ -27,7 +27,12 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
     stock_paper_status,
 )
-from app.services.stock_recovery import run_stock_watchdog, resume_stock_paper_after_revalidation
+from app.services.stock_recovery import (
+    acknowledge_stock_paper_accounting_review,
+    enter_stock_recovery,
+    run_stock_watchdog,
+    resume_stock_paper_after_revalidation,
+)
 
 
 class FakeAlpaca:
@@ -729,6 +734,33 @@ class StockPaperRecoveryTests(unittest.TestCase):
             run_stock_watchdog(db)
             with self.assertRaises(StockPaperError):
                 resume_stock_paper_after_revalidation(db, actor="operator-test")
+
+    def test_unexplained_residual_requires_explicit_accounting_review_before_resume(self):
+        from app.models import StockPaperRecoveryState
+        from app.models.stock_paper import StockPaperAccount
+        residual = FakeAlpaca(account=StockPaperLedgerTests.account_payload(cash="999", equity="999", last_equity="999"))
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            reconcile_stock_paper_account(db, residual)
+            state = db.get(StockPaperRecoveryState, 1)
+            self.assertTrue(state.accounting_review_required)
+            enter_stock_recovery(db, reason="Residual requires controlled recovery", actor="watchdog")
+            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            account = db.query(StockPaperAccount).one()
+            account.status = "reconciled"
+            account.reconciliation_required = False
+            with self.assertRaisesRegex(StockPaperError, "accounting review"):
+                resume_stock_paper_after_revalidation(db, actor="admin-test")
+            reviewed = acknowledge_stock_paper_accounting_review(
+                db,
+                actor="operator-test",
+                reason="Reviewed the matching Alpaca account snapshot and activity history",
+                confirm_residual_review=True,
+            )
+            self.assertFalse(reviewed["account_status"] == "halted")
+            self.assertFalse(db.query(StockPaperRecoveryState).one().accounting_review_required)
+            with self.assertRaisesRegex(StockPaperError, "monitoring"):
+                resume_stock_paper_after_revalidation(db, actor="admin-test")
 
     def test_broker_cancellation_outage_leaves_paper_account_halted(self):
         from app.models.stock_paper import StockPaperAccount, StockPaperOrder
