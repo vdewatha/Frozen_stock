@@ -91,6 +91,19 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(status["status"], "market_closed")
         self.assertEqual(status["missing_intervals"], [])
 
+    def test_completed_bar_boundary_is_strict(self):
+        opened = datetime(2026, 9, 11, 14, 0, tzinfo=UTC)
+        # The bar is not accepted until the full minute and late-trade
+        # allowance have elapsed.
+        early = intraday_data.upsert_intraday_bars(
+            self.db, "SPY", [bar(opened)], ingested_at=opened + timedelta(seconds=119)
+        )
+        self.assertEqual(early["rows_imported"], 0)
+        result = intraday_data.upsert_intraday_bars(
+            self.db, "SPY", [bar(opened)], ingested_at=opened + timedelta(seconds=120)
+        )
+        self.assertEqual(result["rows_imported"], 1)
+
     def test_unconfigured_and_entitlement_errors(self):
         with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("")), patch.object(
             settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("")

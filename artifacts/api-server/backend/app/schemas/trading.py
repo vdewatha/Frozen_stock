@@ -1010,4 +1010,6 @@ class DashboardSnapshot(BaseModel):
     recent_trades: list[dict]
     experiments: list[dict]
     risk_rules: list[dict]
-    generated_at: date
+    # Use an actual timestamp so the UI can report freshness rather than only
+    # the calendar date of the snapshot.
+    generated_at: datetime

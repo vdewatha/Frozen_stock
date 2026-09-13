@@ -62,7 +62,7 @@ class SecurityTests(unittest.TestCase):
         config.update(overrides)
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware, configuration=Settings(_env_file=None, **config))
-        for path, method in [("/health", "GET"), ("/dashboard", "GET"), ("/auth/session", "GET"), ("/trade-candidates", "GET"),
+        for path, method in [("/health", "GET"), ("/ready", "GET"), ("/dashboard", "GET"), ("/auth/session", "GET"), ("/trade-candidates", "GET"),
                              ("/models/run", "POST"), ("/paper-trading/run-signal", "POST"),
                              ("/safety/kill-switch/disable", "POST"), ("/new-route", "GET")]:
             app.add_api_route(path, lambda: {"ok": True}, methods=[method])
@@ -112,6 +112,14 @@ class SecurityTests(unittest.TestCase):
             client = self.make_client(**config)
             self.assertEqual(client.get("/dashboard", headers=self.headers("viewer")).status_code, 503)
             self.assertEqual(client.get("/health").status_code, 200)
+
+    def test_liveness_and_readiness_are_public_but_distinct(self):
+        client = self.make_client()
+        self.assertEqual(client.get("/health").status_code, 200)
+        # Readiness is allowed through authentication middleware so an
+        # orchestrator can probe it, but the application still fails closed
+        # when the paper stack is not ready.
+        self.assertIn(client.get("/ready").status_code, (200, 503))
 
     def test_no_secret_in_audit(self):
         client = self.make_client()

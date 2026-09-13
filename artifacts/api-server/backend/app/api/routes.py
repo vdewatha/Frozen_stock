@@ -4,6 +4,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -142,7 +143,28 @@ LEGACY_STOCK_EVIDENCE_QUARANTINE = (
 
 @router.get("/health")
 def health() -> dict:
-    return {"status": "ok", "paper_only": True, "live_trading": False}
+    # Liveness intentionally does not depend on the database or Redis. The
+    # authenticated readiness route is the gate for scheduled/paper activity.
+    return {
+        "status": "ok",
+        "service": "api",
+        "paper_only": True,
+        "live_trading": False,
+    }
+
+
+@router.get("/ready")
+def ready(db: Session = Depends(get_db)) -> dict:
+    """Report whether the API stack is safe to serve paper operations."""
+    snapshot = readiness_snapshot(db)
+    if snapshot["overall_status"] != "ready":
+        raise HTTPException(status_code=503, detail=jsonable_encoder(snapshot))
+    return {
+        "status": "ready",
+        "paper_only": True,
+        "live_trading": False,
+        "generated_at": snapshot["generated_at"],
+    }
 
 
 @router.get("/auth/session")
@@ -859,5 +881,5 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSnapshot:
             for experiment in stored_experiments
         ] or proposed_experiments,
         risk_rules=[{"name": risk_rule.name, "value": risk_rule.value, "is_active": risk_rule.is_active}] if risk_rule else [],
-        generated_at=datetime.utcnow().date(),
+        generated_at=datetime.utcnow(),
     )

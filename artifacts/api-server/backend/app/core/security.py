@@ -164,7 +164,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path.removeprefix("/api") or "/"
-        if request.method == "GET" and path == "/health":
+        if request.method == "GET" and path in {"/health", "/ready"}:
             return await call_next(request)
         correlation = str(uuid4())
         required = required_role(request.method, path)

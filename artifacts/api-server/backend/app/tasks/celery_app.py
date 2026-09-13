@@ -43,7 +43,13 @@ celery_app.conf.task_routes = {
 }
 celery_app.conf.beat_schedule = {
     "daily-market-data-import": {"task": "app.tasks.jobs.daily_market_data_import", "schedule": 60 * 60 * 24},
-    "intraday-market-data-import": {"task": "app.tasks.jobs.intraday_market_data_import", "schedule": 60},
+    # Expire a tick before the next cadence window. The task itself also holds
+    # a Redis lease, so a slow request is skipped rather than overlapped.
+    "intraday-market-data-import": {
+        "task": "app.tasks.jobs.intraday_market_data_import",
+        "schedule": 60,
+        "options": {"expires": 55},
+    },
     "daily-economic-data-import": {"task": "app.tasks.jobs.daily_economic_data_import", "schedule": 60 * 60 * 24},
     "daily-news-import": {"task": "app.tasks.jobs.daily_news_import", "schedule": 60 * 60 * 24},
     "daily-feature-generation": {"task": "app.tasks.jobs.daily_feature_generation", "schedule": 60 * 60 * 24},
@@ -61,8 +67,16 @@ celery_app.conf.beat_schedule = {
     "stock-monitoring-job": {"task": "app.tasks.jobs.stock_monitoring_job", "schedule": 60 * 5},
     "stock-training-recovery-job": {"task": "app.tasks.jobs.recover_stock_training_jobs_job", "schedule": 60 * 5},
     "scheduled-stock-challenger-retraining": {"task": "app.tasks.jobs.scheduled_stock_challenger_retraining_job", "schedule": 60 * 60 * 24},
-    "stock-forward-trial-reconcile": {"task": "app.tasks.jobs.stock_forward_trial_reconcile_job", "schedule": 60},
-    "stock-forward-trial-observe": {"task": "app.tasks.jobs.stock_forward_trial_observe_job", "schedule": 60},
+    "stock-forward-trial-reconcile": {
+        "task": "app.tasks.jobs.stock_forward_trial_reconcile_job",
+        "schedule": 60,
+        "options": {"expires": 55},
+    },
+    "stock-forward-trial-observe": {
+        "task": "app.tasks.jobs.stock_forward_trial_observe_job",
+        "schedule": 60,
+        "options": {"expires": 55},
+    },
 }
 
 celery_app.autodiscover_tasks(["app.tasks.jobs"])

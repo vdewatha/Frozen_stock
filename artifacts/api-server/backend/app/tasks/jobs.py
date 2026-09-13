@@ -5,10 +5,12 @@ from hashlib import sha256
 from decimal import Decimal
 from typing import Callable
 
+import redis
 from sqlalchemy import text
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.types import JSON
 
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.economic_data import import_fallback_economic_indicators
 from app.services.decision_journal import refresh_decision_journal_outcomes, update_strategy_memory_from_journal
@@ -69,11 +71,60 @@ def _normalize_pending_json(db) -> None:
                 setattr(instance, attribute.key, _json_safe(value))
 
 
+REDIS_LOCKED_JOBS = frozenset(
+    {
+        "intraday_market_data_import",
+        "stock_forward_trial_observe_job",
+        "stock_forward_trial_reconcile_job",
+    }
+)
+REDIS_JOB_LOCK_TTL_SECONDS = 15 * 60
+
+
+def _acquire_job_lock(job_name: str):
+    """Acquire a Redis lease for jobs whose cadence must not overlap.
+
+    PostgreSQL advisory locks protect production workers, but the local stack
+    intentionally uses SQLite. Redis is the shared coordination point for both
+    environments. A Redis outage is an operational failure, not permission to
+    run an uncoordinated market-data or broker-reconciliation task.
+    """
+    client = redis.Redis.from_url(
+        settings.redis_url,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+        health_check_interval=15,
+    )
+    try:
+        client.ping()
+        lock = client.lock(
+            f"trading:scheduled-job:{job_name}",
+            timeout=REDIS_JOB_LOCK_TTL_SECONDS,
+            blocking=False,
+        )
+        if not lock.acquire(blocking=False):
+            return None
+        return lock
+    except redis.RedisError as exc:
+        raise RuntimeError(
+            f"Redis coordination is unavailable for scheduled job {job_name}"
+        ) from exc
+
+
 def _run_job(job_name: str, work: Callable) -> dict:
     db = SessionLocal()
     lock_key = int.from_bytes(sha256(f"job:{job_name}".encode()).digest()[:8], "big") % 2_147_483_647
     lock_acquired = False
+    redis_lock = None
     try:
+        if job_name in REDIS_LOCKED_JOBS:
+            redis_lock = _acquire_job_lock(job_name)
+            if redis_lock is None:
+                return {
+                    "status": "skipped",
+                    "job": job_name,
+                    "reason": "duplicate scheduled job lease is active",
+                }
         if db.get_bind().dialect.name == "postgresql":
             lock_acquired = bool(db.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}))
             if not lock_acquired:
@@ -98,6 +149,11 @@ def _run_job(job_name: str, work: Callable) -> dict:
                 db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
             except Exception:
                 db.rollback()
+        if redis_lock is not None:
+            try:
+                redis_lock.release()
+            except redis.RedisError:
+                pass
         db.close()
 
 
