@@ -272,6 +272,11 @@ def _snapshot(gateway: AlpacaPaperGateway, after: datetime | None = None) -> tup
     return account, positions, orders, fills, observed
 
 
+def _activity_timestamp(raw: dict, fallback: datetime) -> datetime:
+    """Use broker-provided activity time before the reconciliation observation time."""
+    return _timestamp(raw.get("transaction_time") or raw.get("created_at"), fallback=fallback)
+
+
 def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict]) -> None:
     for raw in rows:
         broker_order_id = str(raw.get("id") or "").strip()
@@ -316,12 +321,16 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
         activity = db.query(StockPaperBrokerActivity).filter_by(broker_activity_id=activity_id).one_or_none()
         if not activity:
             activity = StockPaperBrokerActivity(account_id=account.id, broker_activity_id=activity_id,
-                activity_type=str(raw.get("activity_type") or "FILL"), occurred_at=_timestamp(raw.get("transaction_time"), fallback=observed), raw_payload=raw)
+                activity_type=str(raw.get("activity_type") or "FILL"), occurred_at=_activity_timestamp(raw, observed), raw_payload=raw)
             db.add(activity)
-        elif (activity.activity_type, _utc(activity.occurred_at), activity.raw_payload) != (
-            str(raw.get("activity_type") or "FILL"), _timestamp(raw.get("transaction_time"), fallback=observed), raw,
-        ):
-            raise StockPaperError("Broker activity immutable fields changed; refusing corrupted evidence")
+        else:
+            activity_type = str(raw.get("activity_type") or "FILL")
+            if (activity.activity_type, activity.raw_payload) != (activity_type, raw):
+                raise StockPaperError("Broker activity immutable fields changed; refusing corrupted evidence")
+            # occurred_at is derived metadata. Correct an old observation-time
+            # fallback once the broker supplies a stable created_at value, while
+            # keeping the immutable payload comparison fail-closed.
+            activity.occurred_at = _activity_timestamp(raw, activity.occurred_at)
         if str(raw.get("activity_type") or "FILL").upper() != "FILL":
             continue
         existing_fill = db.query(StockPaperFill).filter_by(broker_activity_id=activity_id).one_or_none()

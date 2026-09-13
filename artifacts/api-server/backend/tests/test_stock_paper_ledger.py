@@ -150,6 +150,25 @@ class StockPaperLedgerTests(unittest.TestCase):
             from app.models.stock_paper import StockPaperBrokerActivity
             self.assertEqual(db.query(StockPaperBrokerActivity).count(), 2)
 
+    def test_journal_activity_with_created_at_is_stable_across_reconciliation(self):
+        activity = {
+            "id": "journal-1",
+            "activity_type": "JNLC",
+            "created_at": "2026-01-01T14:30:00Z",
+            "date": "2026-01-01",
+            "net_amount": "1000",
+            "description": "",
+            "status": "executed",
+            "currency": "USD",
+        }
+        first = FakeAlpaca(activities=[activity])
+        second = FakeAlpaca(activities=[activity])
+        with Session(self.engine) as db:
+            self.assertEqual(initialize_stock_paper_account(db, first)["status"], "reconciled")
+            result = reconcile_stock_paper_account(db, second)
+            self.assertEqual(result["status"], "reconciled")
+            self.assertEqual(second.fills_after, [None])
+
     def test_external_nonterminal_and_late_fill_are_fail_closed(self):
         external = FakeAlpaca(orders=[{"id": "external-1", "symbol": "SPY", "side": "buy", "qty": "1",
                                        "type": "limit", "time_in_force": "day", "status": "accepted"}])

@@ -8,3 +8,4 @@
 - [Independent watchdog launch](independent-watchdog-launch.md) — launch the backend watchdog with the backend directory on PYTHONPATH.
 - [Audit-chain writer serialization](audit-chain-writer-serialization.md) — flush same-transaction audit events before linking digests; never rewrite a detected historical fork.
 - [Alembic revision length](alembic-revision-length.md) — keep migration identifiers within the historical varchar(32) version-column limit.
+- [Broker activity timestamps](broker-activity-timestamps.md) — use stable broker timestamps before reconciliation observation time for immutable activity checks.
