@@ -762,6 +762,141 @@ class StockPaperRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(StockPaperError, "monitoring"):
                 resume_stock_paper_after_revalidation(db, actor="admin-test")
 
+    def test_late_known_commission_automatically_reviews_and_resumes_after_all_gates(self):
+        from app.models import StockPaperRecoveryState
+        from app.models.stock_paper import StockPaperAccount
+
+        transaction_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+        fill_without_fee = {
+            "id": "late-fee-fill",
+            "activity_type": "FILL",
+            "order_id": "broker-order-late-fee",
+            "symbol": "SPY",
+            "side": "buy",
+            "qty": "1",
+            "price": "100",
+            "transaction_time": transaction_time,
+        }
+        fill_with_fee = {**fill_without_fee, "commission": "1"}
+        residual_account = FakeAlpaca(
+            positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
+            activities=[fill_without_fee],
+            account=StockPaperLedgerTests.account_payload(cash="899", equity="999", last_equity="999"),
+        )
+        enriched_account = FakeAlpaca(
+            positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
+            activities=[fill_with_fee],
+            account=StockPaperLedgerTests.account_payload(cash="899", equity="999", last_equity="999"),
+        )
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            first = reconcile_stock_paper_account(db, residual_account)
+            self.assertEqual(first["status"], "halted")
+            self.assertTrue(first["account"]["unexplained_residual"])
+
+            second = reconcile_stock_paper_account(db, enriched_account)
+            self.assertEqual(second["automatic_recovery"]["status"], "waiting")
+            state = db.query(StockPaperRecoveryState).one()
+            account = db.query(StockPaperAccount).one()
+            self.assertFalse(state.accounting_review_required)
+            self.assertEqual(state.accounting_reviewed_by, "stock_recovery_automation")
+            self.assertEqual(state.status, "cooldown")
+            self.assertFalse(account.unexplained_residual)
+            self.assertEqual(account.status, "reconciled")
+
+            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.commit()
+            with patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "clear")):
+                third = reconcile_stock_paper_account(db, enriched_account)
+            self.assertEqual(third["automatic_recovery"]["status"], "resumed")
+            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "resumable")
+            self.assertEqual(db.query(StockPaperAccount).one().status, "reconciled")
+
+            with patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "clear")):
+                repeated = reconcile_stock_paper_account(db, enriched_account)
+            self.assertEqual(repeated["automatic_recovery"]["status"], "already_resumed")
+            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "resumable")
+
+    def test_automatic_review_stays_blocked_for_unknown_fee_and_notifies_operator(self):
+        from app.models import Notification
+
+        residual = FakeAlpaca(
+            positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
+            activities=[{
+                "id": "unknown-fee",
+                "activity_type": "FILL",
+                "symbol": "SPY",
+                "side": "buy",
+                "qty": "1",
+                "price": "100",
+                "transaction_time": "2026-01-01T16:00:00Z",
+            }],
+            account=StockPaperLedgerTests.account_payload(cash="899", equity="999", last_equity="999"),
+        )
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            result = reconcile_stock_paper_account(db, residual)
+            self.assertEqual(result["automatic_recovery"]["status"], "blocked")
+            self.assertEqual(result["status"], "halted")
+            self.assertTrue(result["account"]["unexplained_residual"])
+            self.assertEqual(db.query(Notification).filter_by(source="stock_recovery_automation").count(), 1)
+            reconcile_stock_paper_account(db, residual)
+            self.assertEqual(db.query(Notification).filter_by(source="stock_recovery_automation").count(), 1)
+
+    def test_automatic_resume_does_not_bypass_monitoring_or_open_order_gates(self):
+        from app.models import StockPaperRecoveryState
+        from app.models.stock_paper import StockPaperAccount, StockPaperOrder
+
+        transaction_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+        fill_without_fee = {
+            "id": "gate-fill",
+            "activity_type": "FILL",
+            "order_id": "broker-order-gate",
+            "symbol": "SPY",
+            "side": "buy",
+            "qty": "1",
+            "price": "100",
+            "transaction_time": transaction_time,
+        }
+        base = FakeAlpaca()
+        enriched = FakeAlpaca(
+            positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
+            activities=[{**fill_without_fee, "commission": "1"}],
+            account=StockPaperLedgerTests.account_payload(cash="899", equity="999", last_equity="999"),
+        )
+        initial = FakeAlpaca(
+            positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
+            activities=[fill_without_fee],
+            account=StockPaperLedgerTests.account_payload(cash="899", equity="999", last_equity="999"),
+        )
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, base)
+            reconcile_stock_paper_account(db, initial)
+            reconcile_stock_paper_account(db, enriched)
+            state = db.query(StockPaperRecoveryState).one()
+            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            account = db.query(StockPaperAccount).one()
+            db.add(StockPaperOrder(
+                account_id=account.id,
+                client_order_id="auto-gate-order",
+                broker_order_id="broker-auto-gate-order",
+                symbol="SPY",
+                side="sell",
+                quantity=Decimal("1"),
+                order_type="limit",
+                time_in_force="day",
+                limit_price=Decimal("100"),
+                reserved_cash=Decimal("0"),
+                status="accepted",
+                source="manual_close",
+            ))
+            db.commit()
+            with patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "clear")):
+                blocked = reconcile_stock_paper_account(db, enriched)
+            self.assertEqual(blocked["automatic_recovery"]["status"], "blocked")
+            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "cooldown")
+            self.assertEqual(db.query(StockPaperAccount).one().status, "halted")
+
     def test_broker_cancellation_outage_leaves_paper_account_halted(self):
         from app.models.stock_paper import StockPaperAccount, StockPaperOrder
         from app.services.stock_recovery import cancel_open_stock_orders

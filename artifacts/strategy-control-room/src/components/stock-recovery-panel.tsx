@@ -22,8 +22,6 @@ export function StockRecoveryPanel() {
   const [recovery, setRecovery] = useState<StockPaperRecoveryStatus | null>(null);
   const [message, setMessage] = useState("Loading recovery state");
   const [busy, setBusy] = useState(false);
-  const [reviewReason, setReviewReason] = useState("");
-  const [confirmReview, setConfirmReview] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -104,29 +102,15 @@ export function StockRecoveryPanel() {
       <RoleGate requires="operator" className="flex flex-wrap gap-2 border-t border-line p-4">
         {recovery?.accounting_review_required ? (
           <div className="w-full rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
-            <div className="font-semibold">Manual accounting review required</div>
-            <p className="mt-1">Review the latest Alpaca reconciliation and confirm that the unexplained residual is understood. This does not resume paper trading.</p>
-            <label className="mt-3 flex items-start gap-2">
-              <input checked={confirmReview} className="mt-0.5" onChange={(event) => setConfirmReview(event.target.checked)} type="checkbox" />
-              <span>I reviewed the current broker evidence and confirm the residual is explained.</span>
-            </label>
-            <input
-              className="focus-ring mt-3 h-9 w-full rounded border border-amber-300 bg-white px-2 text-xs"
-              onChange={(event) => setReviewReason(event.target.value)}
-              placeholder="Record what evidence was reviewed"
-              value={reviewReason}
-            />
-            <button
-              className="focus-ring mt-3 inline-flex h-9 items-center gap-2 rounded bg-amber-700 px-3 text-xs font-semibold text-white disabled:opacity-60"
-              disabled={busy || !confirmReview || !reviewReason.trim()}
-              onClick={() => void run(
-                () => acknowledgeStockPaperAccountingReview(reviewReason.trim()),
-                "Recording the operator accounting review",
-              )}
-              type="button"
-            >
-              <ShieldCheck size={14} /> Record accounting review
-            </button>
+            <div className="font-semibold">Automatic accounting review is blocked</div>
+            <p className="mt-1">Paper trading stays halted until a later, timestamped Alpaca fill with a known commission exactly explains the residual. Stable balances or operator confirmation do not bypass this gate.</p>
+            {recovery.accounting_review_reason ? <p className="mt-2 text-amber-900">{recovery.accounting_review_reason}</p> : null}
+          </div>
+        ) : null}
+        {!recovery?.accounting_review_required && recovery?.automatic_review_status === "complete" ? (
+          <div className="w-full rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-950">
+            <div className="font-semibold">Automatic accounting review completed</div>
+            <p className="mt-1">The residual was resolved from broker-complete evidence. Cooldown, fresh monitoring, reconciliation, and in-flight-order gates still control resume.</p>
           </div>
         ) : null}
         <button

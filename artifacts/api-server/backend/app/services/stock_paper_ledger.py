@@ -326,7 +326,8 @@ def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict]) ->
         order.raw_payload = raw
 
 
-def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], observed: datetime) -> None:
+def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], observed: datetime) -> set[str]:
+    enriched_activity_ids: set[str] = set()
     for raw in rows:
         activity_id = str(raw.get("id") or "").strip()
         if not activity_id:
@@ -338,8 +339,20 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
             db.add(activity)
         else:
             activity_type = str(raw.get("activity_type") or "FILL")
-            if (activity.activity_type, activity.raw_payload) != (activity_type, raw):
+            previous_payload = dict(activity.raw_payload or {})
+            incoming_payload = dict(raw)
+            previous_commission = previous_payload.pop("commission", None)
+            incoming_commission = incoming_payload.pop("commission", None)
+            commission_enrichment = (
+                activity_type.upper() == "FILL"
+                and previous_commission is None
+                and incoming_commission is not None
+                and previous_payload == incoming_payload
+            )
+            if (activity.activity_type, activity.raw_payload) != (activity_type, raw) and not commission_enrichment:
                 raise StockPaperError("Broker activity immutable fields changed; refusing corrupted evidence")
+            if commission_enrichment:
+                activity.raw_payload = raw
             # occurred_at is derived metadata. Correct an old observation-time
             # fallback once the broker supplies a stable created_at value, while
             # keeping the immutable payload comparison fail-closed.
@@ -355,6 +368,29 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
                 _decimal(raw["commission"], "commission") if raw.get("commission") is not None else None,
                 _timestamp(raw.get("transaction_time"), fallback=observed),
             )
+            existing_payload = dict(existing_fill.raw_payload or {})
+            candidate_payload = dict(raw)
+            existing_commission = existing_payload.pop("commission", None)
+            candidate_commission = candidate_payload.pop("commission", None)
+            immutable_match = (
+                existing_fill.broker_order_id, existing_fill.symbol, existing_fill.side, existing_fill.quantity,
+                existing_fill.price, _utc(existing_fill.filled_at)
+            ) == (
+                candidate[0], candidate[1], candidate[2], candidate[3], candidate[4], candidate[6]
+            )
+            is_cost_enrichment = (
+                existing_fill.fee is None
+                and candidate[5] is not None
+                and immutable_match
+                and existing_commission is None
+                and existing_payload == candidate_payload
+            )
+            if is_cost_enrichment:
+                existing_fill.fee = candidate[5]
+                existing_fill.cost_known = True
+                existing_fill.raw_payload = raw
+                enriched_activity_ids.add(activity_id)
+                continue
             if (existing_fill.broker_order_id, existing_fill.symbol, existing_fill.side, existing_fill.quantity,
                     existing_fill.price, existing_fill.fee, _utc(existing_fill.filled_at)) != candidate:
                 raise StockPaperError("Broker fill immutable fields changed; refusing corrupted evidence")
@@ -368,7 +404,8 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
         db.add(StockPaperFill(account_id=account.id, order_id=order.id if order else None, broker_activity_id=activity_id,
             broker_order_id=order_id, symbol=str(raw.get("symbol") or "").upper(), side=side,
             quantity=_decimal(raw.get("qty"), "fill quantity"), price=_decimal(raw.get("price"), "fill price"),
-            fee=fee, cost_known=False, filled_at=_timestamp(raw.get("transaction_time"), fallback=observed), raw_payload=raw))
+            fee=fee, cost_known=fee is not None, filled_at=_timestamp(raw.get("transaction_time"), fallback=observed), raw_payload=raw))
+    return enriched_activity_ids
 
 
 def _sync_positions(db: Session, account: StockPaperAccount, broker_rows: list[dict], observed: datetime, *, detect_drift: bool) -> list[str]:
@@ -406,16 +443,17 @@ def _record_snapshot(db: Session, account: StockPaperAccount, observed: datetime
 
 def _equation_failure(raw_activities: list[dict], previous_cash: Decimal, current_cash: Decimal,
                       previous_positions: dict[str, Decimal], current_positions: list[dict],
-                      since: datetime | None) -> str | None:
+                      since: datetime | None, allowed_late_activity_ids: set[str] | None = None) -> str | None:
     """Verify cash/inventory deltas only for fully reported, supported activity."""
     unsupported = sorted({str(row.get("activity_type") or "FILL").upper() for row in raw_activities
                           if str(row.get("activity_type") or "FILL").upper() != "FILL"})
     if unsupported:
         return f"Unsupported broker cash/position activities require review: {', '.join(unsupported)}"
     new_rows = []
+    allowed_late_activity_ids = allowed_late_activity_ids or set()
     for row in raw_activities:
         filled_at = _timestamp(row.get("transaction_time"), fallback=datetime.now(UTC))
-        if since and filled_at <= _utc(since):
+        if since and filled_at <= _utc(since) and str(row.get("id") or "") not in allowed_late_activity_ids:
             return "Late broker fill predates the reconciliation watermark; full accounting reconstruction is required"
         new_rows.append(row)
     if not new_rows:
@@ -450,6 +488,47 @@ def _equation_failure(raw_activities: list[dict], previous_cash: Decimal, curren
     if previous_cash + cash_delta != current_cash:
         return "Broker cash does not reconcile to reported fills"
     return None
+
+
+def _enriched_fill_resolves_residual(
+    db: Session,
+    account: StockPaperAccount,
+    enriched_activity_ids: set[str],
+    prior_cash: Decimal,
+    current_cash: Decimal,
+    prior_positions: dict[str, Decimal],
+    current_positions: list[dict],
+) -> bool:
+    """Accept only a late fee correction that matches the recorded residual."""
+    if not enriched_activity_ids or prior_cash != current_cash:
+        return False
+    current_quantities = {row["symbol"]: row["quantity"] for row in current_positions}
+    if current_quantities != prior_positions:
+        return False
+    prior_residual = None
+    prior_ids: set[str] = set()
+    for event in (
+        db.query(StockPaperLedgerEvent)
+        .filter_by(account_id=account.id, event_type="reconcile", status="halted")
+        .order_by(StockPaperLedgerEvent.id.desc())
+        .all()
+    ):
+        payload = event.payload or {}
+        candidate_ids = {str(value) for value in payload.get("activity_ids", [])}
+        if payload.get("cash_residual") is not None and candidate_ids:
+            prior_residual = Decimal(str(payload["cash_residual"]))
+            prior_ids = candidate_ids
+            break
+    if prior_residual is None or prior_ids != enriched_activity_ids:
+        return False
+    fees = sum(
+        (fill.fee or Decimal("0") for fill in db.query(StockPaperFill).filter(
+            StockPaperFill.account_id == account.id,
+            StockPaperFill.broker_activity_id.in_(enriched_activity_ids),
+        ).all()),
+        Decimal("0"),
+    )
+    return prior_residual + fees == Decimal("0")
 
 
 def _strategy_owned_position_counts(db: Session, account: StockPaperAccount,
@@ -532,6 +611,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
     if account is None:
         raise StockPaperError("Stock paper account is not initialized")
     gateway = gateway or AlpacaPaperClient()
+    automatic_recovery = None
     try:
         prior_cash = account.cash
         prior_positions = {row.symbol: row.quantity for row in db.query(StockPaperPosition).filter_by(account_id=account.id).all()}
@@ -567,10 +647,31 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
         for key, value in values.items():
             setattr(account, key, value)
         _upsert_orders(db, account, raw_orders)
-        _upsert_fills(db, account, raw_fills, observed)
+        enriched_activity_ids = _upsert_fills(db, account, raw_fills, observed)
         position_values = [_position_values(row, observed) for row in raw_positions]
-        new_activities = [row for row in raw_fills if str(row.get("id") or "") not in prior_activity_ids]
-        equation_error = _equation_failure(new_activities, prior_cash, account.cash, prior_positions, position_values, previous_reconciled_at)
+        new_activities = [
+            row for row in raw_fills
+            if str(row.get("id") or "") not in prior_activity_ids
+            or str(row.get("id") or "") in enriched_activity_ids
+        ]
+        residual_resolved = _enriched_fill_resolves_residual(
+            db,
+            account,
+            enriched_activity_ids,
+            prior_cash,
+            account.cash,
+            prior_positions,
+            position_values,
+        )
+        equation_error = None if residual_resolved else _equation_failure(
+            new_activities,
+            prior_cash,
+            account.cash,
+            prior_positions,
+            position_values,
+            previous_reconciled_at,
+            enriched_activity_ids,
+        )
         # A quantity delta backed by imported fills is explained, not drift.
         drift = _sync_positions(db, account, raw_positions, observed, detect_drift=False)
         outstanding = db.query(StockPaperOrder).filter(
@@ -582,6 +683,21 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             CorporateAction.ex_date >= _utc(account.last_reconciled_at or observed).date(),
             CorporateAction.symbol.in_([str(row.get("symbol", "")).upper() for row in raw_positions]),
         ).count()
+        automatic_review_candidate = bool(
+            account.unexplained_residual
+            and enriched_activity_ids
+            and equation_error is None
+            and not unresolved_nonterminal
+            and not external_outstanding
+            and not actions
+            and not drift
+            and all(
+                str(row.get("activity_type") or "FILL").upper() == "FILL"
+                and (row.get("transaction_time") or row.get("created_at"))
+                for row in raw_fills
+            )
+            and all(fill.fee is not None and fill.cost_known for fill in db.query(StockPaperFill).filter_by(account_id=account.id).all())
+        )
         account.last_reconciled_at = observed
         account.costs_known = False
         account.accounting_verified = False
@@ -597,7 +713,14 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             account.unexplained_residual = True
             _mark_accounting_review_required(db)
             _halt(account, equation_error)
-            _event(db, account, "reconcile", "halted", equation_error)
+            residual_payload = {"activity_ids": [str(row.get("id")) for row in new_activities]}
+            if new_activities:
+                cash_delta_without_fee = Decimal("0")
+                for row in new_activities:
+                    sign = Decimal("1") if str(row.get("side") or "").lower() == "buy" else Decimal("-1")
+                    cash_delta_without_fee += -sign * _decimal(row.get("qty"), "fill quantity") * _decimal(row.get("price"), "fill price")
+                residual_payload["cash_residual"] = str(account.cash - (prior_cash + cash_delta_without_fee))
+            _event(db, account, "reconcile", "halted", equation_error, residual_payload)
         elif unresolved_nonterminal:
             _halt(account, "Nonterminal client order has no broker lookup result")
             _event(db, account, "reconcile", "halted", account.halt_reason, {"unresolved_client_order_ids": unresolved_nonterminal})
@@ -623,13 +746,34 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             _event(db, account, "reconcile", "reconciled", UNKNOWN_COSTS_REASON)
         _record_snapshot(db, account, observed)
         db.commit()
+        recovery_state = db.get(StockPaperRecoveryState, 1)
+        if (
+            account.unexplained_residual
+            or automatic_review_candidate
+            or (
+                recovery_state is not None
+                and recovery_state.accounting_reviewed_by == "stock_recovery_automation"
+            )
+        ):
+            from app.services.stock_recovery import attempt_automatic_stock_recovery
+            automatic_recovery = attempt_automatic_stock_recovery(
+                db,
+                candidate=automatic_review_candidate,
+                evidence={
+                    "enriched_activity_ids": sorted(enriched_activity_ids),
+                    "observed_at": observed.isoformat(),
+                },
+            )
     except (StockPaperError, StockPaperUnavailable) as exc:
         db.rollback()
         account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one()
         _halt(account, str(exc))
         _event(db, account, "reconcile", "unavailable", str(exc))
         db.commit()
-    return stock_paper_status(db)
+    result = stock_paper_status(db)
+    if automatic_recovery is not None:
+        result["automatic_recovery"] = automatic_recovery
+    return result
 
 
 def halt_stock_paper_account(db: Session, reason: str) -> dict:

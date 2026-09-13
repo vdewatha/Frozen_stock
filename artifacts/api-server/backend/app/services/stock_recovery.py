@@ -20,7 +20,13 @@ from app.models import (
     StockPaperRecoveryState,
     StockPaperModelBinding,
 )
-from app.models.stock_paper import StockPaperAccount, StockPaperOrder, StockPaperPosition
+from app.models.stock_paper import (
+    StockPaperAccount,
+    StockPaperBrokerActivity,
+    StockPaperFill,
+    StockPaperOrder,
+    StockPaperPosition,
+)
 from app.services.audit import write_audit_log
 from app.services.intraday_data import feed_status
 from app.services.notifications import create_notification
@@ -44,6 +50,7 @@ from app.services.stock_training_jobs import (
 UTC = timezone.utc
 RECOVERY_COOLDOWN = timedelta(minutes=15)
 HEARTBEAT_TIMEOUT = timedelta(minutes=10)
+AUTOMATIC_RECOVERY_ACTOR = "stock_recovery_automation"
 
 
 def _now() -> datetime:
@@ -54,8 +61,26 @@ def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
 
 
-def _accounting_review_digest(account: StockPaperAccount) -> str:
-    return hashlib.sha256(_canonical(account.raw_payload or {})).hexdigest()
+def _accounting_review_digest(account: StockPaperAccount, db: Session | None = None) -> str:
+    evidence: dict[str, Any] = {"account": account.raw_payload or {}}
+    if db is not None:
+        evidence["positions"] = [
+            row.raw_payload or {}
+            for row in db.query(StockPaperPosition).filter_by(account_id=account.id).order_by(StockPaperPosition.symbol).all()
+        ]
+        evidence["fills"] = [
+            row.raw_payload or {}
+            for row in db.query(StockPaperFill).filter_by(account_id=account.id).order_by(StockPaperFill.broker_activity_id).all()
+        ]
+        evidence["activities"] = [
+            row.raw_payload or {}
+            for row in db.query(StockPaperBrokerActivity).filter_by(account_id=account.id).order_by(StockPaperBrokerActivity.broker_activity_id).all()
+        ]
+        evidence["orders"] = [
+            row.raw_payload or {}
+            for row in db.query(StockPaperOrder).filter_by(account_id=account.id).order_by(StockPaperOrder.client_order_id).all()
+        ]
+    return hashlib.sha256(_canonical(evidence)).hexdigest()
 
 
 def _state(db: Session, *, for_update: bool = True) -> StockPaperRecoveryState:
@@ -342,7 +367,7 @@ def resume_stock_paper_after_revalidation(db: Session, *, actor: str) -> dict:
     if state.accounting_review_required:
         if not state.accounting_reviewed_at or not state.accounting_reviewed_by:
             raise StockPaperError("Explicit operator accounting review is required before recovery can resume")
-        if state.accounting_review_digest != _accounting_review_digest(account):
+        if state.accounting_review_digest != _accounting_review_digest(account, db):
             raise StockPaperError("Accounting review evidence is stale; review the latest broker reconciliation")
         if account.unexplained_residual:
             raise StockPaperError("The unexplained accounting residual remains unresolved")
@@ -363,6 +388,183 @@ def resume_stock_paper_after_revalidation(db: Session, *, actor: str) -> dict:
     _event(db, action="resume", status="revalidated", actor=actor, reason="Cooldown elapsed and fresh monitoring/reconciliation evidence passed", payload={"monitoring_at": now.isoformat()})
     db.commit()
     return recovery_status(db)
+
+
+def _automatic_recovery_notification(db: Session, *, reason: str, payload: dict | None = None) -> None:
+    existing = db.query(Notification).filter(
+        Notification.category == "stock_recovery",
+        Notification.source == AUTOMATIC_RECOVERY_ACTOR,
+        Notification.status == "open",
+        Notification.entity_type == "stock_paper",
+    ).first()
+    if existing:
+        return
+    create_notification(
+        db,
+        category="stock_recovery",
+        severity="critical",
+        source=AUTOMATIC_RECOVERY_ACTOR,
+        title="Automatic paper-account recovery is blocked",
+        message=reason,
+        entity_type="stock_paper",
+        payload=payload or {},
+    )
+
+
+def attempt_automatic_stock_recovery(
+    db: Session,
+    *,
+    candidate: bool,
+    evidence: dict | None = None,
+) -> dict:
+    """Resolve only a broker-complete residual, then use normal recovery gates.
+
+    The only automatic accounting proof accepted here is a later commission
+    enrichment for an existing fill. The fill's immutable trade fields must
+    already match, every persisted fill must have a reported fee, every broker
+    activity must be a timestamped fill, and reconciliation must have found no
+    other mismatch. A repeated snapshot is never treated as proof.
+    """
+    evidence = evidence or {}
+    state = _state(db)
+    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    if account is None:
+        return {"status": "uninitialized"}
+
+    review_complete = (
+        not state.accounting_review_required
+        and not account.unexplained_residual
+        and state.accounting_reviewed_by == AUTOMATIC_RECOVERY_ACTOR
+    )
+    if not state.accounting_review_required and not review_complete:
+        return {"status": "not_required"}
+    if review_complete and state.status == "resumable":
+        return {"status": "already_resumed"}
+
+    if not review_complete:
+        blocked_reason = None
+        if not candidate:
+            blocked_reason = (
+                "Automatic review requires a later broker commission enrichment that exactly "
+                "explains the residual; stable account values are insufficient."
+            )
+        elif not evidence.get("enriched_activity_ids"):
+            blocked_reason = "No immutable fill was enriched with a broker-reported commission."
+        else:
+            activities = db.query(StockPaperBrokerActivity).filter_by(account_id=account.id).all()
+            fills = db.query(StockPaperFill).filter_by(account_id=account.id).all()
+            if any(fill.fee is None or not fill.cost_known for fill in fills):
+                blocked_reason = "At least one persisted fill still has an unknown broker fee."
+            elif any(
+                str(activity.activity_type or "").upper() != "FILL"
+                or not (activity.raw_payload or {}).get("transaction_time")
+                and not (activity.raw_payload or {}).get("created_at")
+                for activity in activities
+            ):
+                blocked_reason = "Broker activity history contains an unsupported flow or stale timestamp."
+            elif not account.reconciliation_required or account.status != "halted":
+                blocked_reason = "The latest residual state is not a clean halted reconciliation state."
+            else:
+                blocked_reason = None
+        if blocked_reason:
+            _automatic_recovery_notification(db, reason=blocked_reason, payload={"evidence": evidence})
+            _event(
+                db,
+                action="automatic_accounting_review",
+                status="blocked",
+                actor=AUTOMATIC_RECOVERY_ACTOR,
+                reason=blocked_reason,
+                payload={"evidence": evidence},
+            )
+            db.commit()
+            return {"status": "blocked", "reason": blocked_reason}
+
+    # A qualifying residual starts the same cooldown as any other recovery.
+    # This never jumps directly from a ledger halt to trading.
+    if state.status == "armed":
+        enter_stock_recovery(
+            db,
+            reason="Automatic recovery requires cooldown after broker-complete accounting review",
+            actor=AUTOMATIC_RECOVERY_ACTOR,
+        )
+        state = _state(db)
+        account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one()
+
+    now = _now()
+    digest = _accounting_review_digest(account, db)
+    if state.accounting_review_required:
+        state.accounting_review_required = False
+        state.accounting_reviewed_at = now
+        state.accounting_reviewed_by = AUTOMATIC_RECOVERY_ACTOR
+        state.accounting_review_reason = (
+            "Broker commission enrichment exactly reconciled the prior residual; "
+            "all persisted broker fills have known fees and timestamped fill evidence."
+        )
+        state.accounting_review_digest = digest
+        account.unexplained_residual = False
+        account.reconciliation_required = False
+        account.accounting_verified = True
+        account.status = "reconciled"
+        account.halt_reason = None
+        ledger_event(
+            db,
+            account,
+            "accounting_review",
+            "automated",
+            "Automatic broker-complete accounting review resolved the residual",
+            {"review_digest": digest, "enriched_activity_ids": evidence.get("enriched_activity_ids", [])},
+        )
+        _event(
+            db,
+            action="automatic_accounting_review",
+            status="complete",
+            actor=AUTOMATIC_RECOVERY_ACTOR,
+            reason=state.accounting_review_reason,
+            payload={"review_digest": digest, "evidence": evidence},
+        )
+        write_audit_log(
+            db,
+            event_type="stock_recovery",
+            action="automatic_accounting_review",
+            status="complete",
+            message=state.accounting_review_reason,
+            entity_type="stock_paper",
+            payload={"review_digest": digest, "actor": AUTOMATIC_RECOVERY_ACTOR, "evidence": evidence},
+        )
+        db.commit()
+
+    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one()
+    if account.status == "halted":
+        if account.reconciliation_required:
+            reason = account.halt_reason or "A fresh broker reconciliation is required before automatic resume"
+            _automatic_recovery_notification(db, reason=reason, payload={"evidence": evidence})
+            db.commit()
+            return {"status": "blocked", "reason": reason}
+        account.status = "reconciled"
+        account.halt_reason = None
+
+    try:
+        resumed = resume_stock_paper_after_revalidation(db, actor=AUTOMATIC_RECOVERY_ACTOR)
+        return {"status": "resumed", "recovery": resumed}
+    except StockPaperError as exc:
+        # Cooldown and fresh-evidence gates are expected asynchronous states.
+        # Other failures remain visible to the operator and keep the account
+        # halted; the next scheduled reconciliation may retry safely.
+        reason = str(exc)
+        if "cooldown remains active" not in reason:
+            account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one()
+            _halt(account, reason, reconciliation_required=False)
+            _automatic_recovery_notification(db, reason=reason, payload={"evidence": evidence})
+            _event(
+                db,
+                action="automatic_resume",
+                status="blocked",
+                actor=AUTOMATIC_RECOVERY_ACTOR,
+                reason=reason,
+                payload={"evidence": evidence},
+            )
+            db.commit()
+        return {"status": "waiting" if "cooldown remains active" in reason else "blocked", "reason": reason}
 
 
 def acknowledge_stock_paper_accounting_review(
@@ -390,7 +592,7 @@ def acknowledge_stock_paper_accounting_review(
     if not state.accounting_review_required or not account.unexplained_residual:
         raise StockPaperError("No unexplained accounting residual is awaiting operator review")
     now = _now()
-    digest = _accounting_review_digest(account)
+    digest = _accounting_review_digest(account, db)
     state.accounting_review_required = False
     state.accounting_reviewed_at = now
     state.accounting_reviewed_by = actor
@@ -468,6 +670,13 @@ def recovery_status(db: Session) -> dict:
     state = _state(db, for_update=False)
     account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
     events = db.query(StockPaperRecoveryEvent).order_by(StockPaperRecoveryEvent.created_at.desc()).limit(25).all()
+    automatic_review_status = (
+        "blocked"
+        if state.accounting_review_required
+        else "complete"
+        if state.accounting_reviewed_by == AUTOMATIC_RECOVERY_ACTOR
+        else "not_required"
+    )
     return {
         "status": state.status,
         "flatten_policy": state.flatten_policy,
@@ -482,6 +691,8 @@ def recovery_status(db: Session) -> dict:
         "accounting_reviewed_at": state.accounting_reviewed_at.isoformat() if state.accounting_reviewed_at else None,
         "accounting_reviewed_by": state.accounting_reviewed_by,
         "accounting_review_reason": state.accounting_review_reason,
+        "automatic_review_enabled": True,
+        "automatic_review_status": automatic_review_status,
         "account_status": account.status if account else "uninitialized",
         "events": [{"id": event.id, "action": event.action, "status": event.status, "actor": event.actor, "reason": event.reason, "created_at": event.created_at.isoformat() if event.created_at else None, "payload": event.payload} for event in events],
     }

@@ -10,3 +10,4 @@
 - [Alembic revision length](alembic-revision-length.md) — keep migration identifiers within the historical varchar(32) version-column limit.
 - [Broker activity timestamps](broker-activity-timestamps.md) — use stable broker timestamps before reconciliation observation time for immutable activity checks.
 - [Interim migration compatibility](interim-migration-compatibility.md) — legacy stock-only schemas may omit shared tables; historical migrations must preserve rows and skip unavailable cross-domain constraints.
+- [Automatic accounting recovery](automatic-accounting-recovery.md) — only an exact late-commission enrichment can resolve a residual automatically; stable snapshots never qualify.
