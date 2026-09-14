@@ -168,6 +168,13 @@ export type StockPaperRecoveryStatus = {
   account_halt_reason: string | null;
   accounting_verified: boolean;
   costs_known: boolean;
+  last_monitoring_preflight: {
+    status: string;
+    actor: string;
+    reason: string;
+    created_at: string | null;
+    payload: { checked_at?: string } & Record<string, unknown>;
+  } | null;
   events: Array<{ id: number; action: string; status: string; actor: string; reason: string; created_at: string | null; payload: Record<string, unknown> }>;
 };
 

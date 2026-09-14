@@ -68,6 +68,8 @@ export function StockRecoveryPanel() {
   const accountHalted = recovery?.account_status === "halted" || recovery?.accounting_residual || recovery?.account_reconciliation_required;
   const needsRecovery = recovery && (accountHalted || (recovery.status !== "armed" && recovery.status !== "resumable"));
   const displayedStatus = accountHalted ? "halted" : recovery?.status ?? "loading";
+  const monitoringPreflight = recovery?.last_monitoring_preflight ?? null;
+  const monitoringPreflightCheckedAt = monitoringPreflight?.payload.checked_at ?? monitoringPreflight?.created_at ?? null;
 
   return (
     <section className="rounded-md border border-line bg-white" data-testid="panel-stock-recovery">
@@ -119,6 +121,18 @@ export function StockRecoveryPanel() {
         </div>
       ) : null}
       <RoleGate requires="operator" className="flex flex-wrap gap-2 border-t border-line p-4">
+        {monitoringPreflight ? (
+          <div className="w-full rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-950" data-testid="monitoring-preflight-block">
+            <div className="flex items-center gap-2 font-semibold">
+              <ShieldAlert size={15} /> Monitoring preflight blocked recovery
+            </div>
+            <div className="mt-2 grid gap-1 text-red-900 sm:grid-cols-3">
+              <div><span className="font-semibold">Status:</span> {monitoringPreflight.status}</div>
+              <div><span className="font-semibold">Checked:</span> {formatTime(monitoringPreflightCheckedAt)}</div>
+              <div className="sm:col-span-3"><span className="font-semibold">Reason:</span> {monitoringPreflight.reason || "No reason recorded"}</div>
+            </div>
+          </div>
+        ) : null}
         {recovery?.accounting_review_required ? (
           <div className="w-full rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
             <div className="font-semibold">Automatic accounting review is blocked</div>
