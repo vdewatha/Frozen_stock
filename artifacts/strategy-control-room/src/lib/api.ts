@@ -169,7 +169,7 @@ export type StockPaperRecoveryStatus = {
   accounting_verified: boolean;
   costs_known: boolean;
   last_monitoring_preflight: {
-    status: string;
+    status: "blocked" | "clear" | string;
     actor: string;
     reason: string;
     created_at: string | null;

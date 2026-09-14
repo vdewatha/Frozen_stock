@@ -69,3 +69,44 @@ test("operator keeps the persisted blocked monitoring notice after refresh", asy
   await expect(notice).toContainText("Reason: Fresh monitoring evidence is not clear");
   await expect(notice).toContainText(`Checked: ${expectedCheckedTime}`);
 });
+
+test("operator sees persisted clear monitoring evidence after refresh", async ({ page, authenticateAs }) => {
+  const clearRecovery = {
+    ...recovery,
+    last_monitoring_preflight: {
+      status: "clear",
+      actor: "stock_recovery_automation",
+      reason: "Monitoring evidence is fresh and clear",
+      created_at: "2026-09-12T16:05:01Z",
+      payload: {
+        checked_at: "2026-09-12T16:05:00Z",
+      },
+    },
+  };
+  let recoveryFetches = 0;
+  await page.route("**/api/stock-paper/recovery", route => {
+    recoveryFetches += 1;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(clearRecovery),
+    });
+  });
+
+  await authenticateAs("operator");
+
+  const panel = page.getByTestId("panel-stock-recovery");
+  const notice = panel.getByTestId("monitoring-preflight-clear");
+  const expectedCheckedTime = await page.evaluate(() => new Date("2026-09-12T16:05:00Z").toLocaleString());
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("Fresh monitoring evidence cleared the recovery block");
+  await expect(notice).toContainText("Status: clear");
+  await expect(notice).toContainText("Reason: Monitoring evidence is fresh and clear");
+  await expect(notice).toContainText(`Checked: ${expectedCheckedTime}`);
+  await expect.poll(() => recoveryFetches).toBeGreaterThan(0);
+
+  await panel.getByRole("button", { name: "Refresh" }).click();
+  await expect.poll(() => recoveryFetches).toBeGreaterThan(1);
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("Status: clear");
+  await expect(notice).toContainText(`Checked: ${expectedCheckedTime}`);
+});

@@ -934,6 +934,52 @@ class StockPaperRecoveryTests(unittest.TestCase):
             resumed = resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Accept fresh monitoring evidence")
             self.assertEqual(resumed["status"], "resumable")
 
+    def test_recovery_status_projects_later_clear_monitoring_evidence(self):
+        from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
+        from app.models.stock_paper import StockPaperAccount
+        from app.services.stock_recovery import recovery_status
+
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            enter_stock_recovery(db, reason="Monitoring status changed", actor="watchdog")
+            account = db.query(StockPaperAccount).one()
+            account.status = "reconciled"
+            account.reconciliation_required = False
+            state = db.query(StockPaperRecoveryState).one()
+            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.add(StockMonitoringSnapshot(
+                monitor_key="stock_continuous_monitor",
+                status="warning",
+                generated_at=datetime.now(timezone.utc),
+                checks=[{"status": "warning"}],
+                actions=[],
+                source="test",
+            ))
+            db.commit()
+            with self.assertRaisesRegex(StockPaperError, "not clear"):
+                resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Record blocked monitoring evidence")
+
+            blocked = db.query(StockPaperRecoveryEvent).filter_by(
+                action="monitoring_preflight",
+                status="blocked",
+            ).order_by(StockPaperRecoveryEvent.id.desc()).one()
+            clear_at = datetime.now(timezone.utc)
+            db.add(StockMonitoringSnapshot(
+                monitor_key="stock_continuous_monitor",
+                status="clear",
+                generated_at=clear_at,
+                checks=[],
+                actions=[],
+                source="continuous_monitor",
+            ))
+            db.commit()
+
+            projected = recovery_status(db)
+            self.assertEqual(projected["last_monitoring_preflight"]["status"], "clear")
+            self.assertEqual(projected["last_monitoring_preflight"]["actor"], "continuous_monitor")
+            self.assertEqual(projected["last_monitoring_preflight"]["payload"]["checked_at"], clear_at.isoformat())
+            self.assertGreater(clear_at, blocked.created_at.replace(tzinfo=timezone.utc))
+
     def test_repeated_recovery_attempt_requires_monitoring_after_new_pause(self):
         from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
         from app.models.stock_paper import StockPaperAccount
@@ -1167,6 +1213,13 @@ class StockPaperRecoveryTests(unittest.TestCase):
             )
             self.assertEqual(allowed["status"], "awaiting_operator_revalidation")
             self.assertEqual(db.query(StockPaperAccount).one().status, "reconciled")
+            clear_preflight = db.query(StockPaperRecoveryEvent).filter_by(
+                action="monitoring_preflight",
+                status="clear",
+                actor="stock_recovery_automation",
+            ).one()
+            self.assertEqual(clear_preflight.reason, "Monitoring evidence is fresh and clear")
+            self.assertIn("checked_at", clear_preflight.payload)
 
     def test_created_at_is_a_stable_fill_timestamp_and_old_created_at_halts(self):
         fill_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()

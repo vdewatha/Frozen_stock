@@ -70,6 +70,7 @@ export function StockRecoveryPanel() {
   const displayedStatus = accountHalted ? "halted" : recovery?.status ?? "loading";
   const monitoringPreflight = recovery?.last_monitoring_preflight ?? null;
   const monitoringPreflightCheckedAt = monitoringPreflight?.payload.checked_at ?? monitoringPreflight?.created_at ?? null;
+  const monitoringPreflightClear = monitoringPreflight?.status === "clear";
 
   return (
     <section className="rounded-md border border-line bg-white" data-testid="panel-stock-recovery">
@@ -122,15 +123,20 @@ export function StockRecoveryPanel() {
       ) : null}
       <RoleGate requires="operator" className="flex flex-wrap gap-2 border-t border-line p-4">
         {monitoringPreflight ? (
-          <div className="w-full rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-950" data-testid="monitoring-preflight-block">
+          <div
+            className={`w-full rounded-md border p-3 text-xs ${monitoringPreflightClear ? "border-emerald-300 bg-emerald-50 text-emerald-950" : "border-red-300 bg-red-50 text-red-950"}`}
+            data-testid={monitoringPreflightClear ? "monitoring-preflight-clear" : "monitoring-preflight-block"}
+          >
             <div className="flex items-center gap-2 font-semibold">
-              <ShieldAlert size={15} /> Monitoring preflight blocked recovery
+              {monitoringPreflightClear ? <ShieldCheck size={15} /> : <ShieldAlert size={15} />}
+              {monitoringPreflightClear ? "Fresh monitoring evidence cleared the recovery block" : "Monitoring preflight blocked recovery"}
             </div>
-            <div className="mt-2 grid gap-1 text-red-900 sm:grid-cols-3">
+            <div className="mt-2 grid gap-1 sm:grid-cols-3">
               <div><span className="font-semibold">Status:</span> {monitoringPreflight.status}</div>
               <div><span className="font-semibold">Checked:</span> {formatTime(monitoringPreflightCheckedAt)}</div>
               <div className="sm:col-span-3"><span className="font-semibold">Reason:</span> {monitoringPreflight.reason || "No reason recorded"}</div>
             </div>
+            {monitoringPreflightClear ? <p className="mt-2">The monitoring gate is clear; remaining recovery safety gates and the server decision still control resume.</p> : null}
           </div>
         ) : null}
         {recovery?.accounting_review_required ? (

@@ -374,6 +374,34 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
     return True, "Monitoring evidence is fresh and clear"
 
 
+def _record_monitoring_preflight_result(
+    db: Session,
+    *,
+    actor: str,
+    status: str,
+    reason: str,
+    now: datetime,
+    payload: dict | None = None,
+) -> None:
+    _event(
+        db,
+        action="monitoring_preflight",
+        status=status,
+        actor=actor,
+        reason=reason,
+        payload={"checked_at": now.isoformat(), **(payload or {})},
+    )
+    write_audit_log(
+        db,
+        event_type="stock_recovery",
+        action="monitoring_preflight",
+        status=status,
+        message=reason,
+        entity_type="stock_paper",
+        payload={"actor": actor, "checked_at": now.isoformat(), **(payload or {})},
+    )
+
+
 def _record_monitoring_preflight_rejection(
     db: Session,
     *,
@@ -381,22 +409,12 @@ def _record_monitoring_preflight_rejection(
     reason: str,
     now: datetime,
 ) -> None:
-    _event(
+    _record_monitoring_preflight_result(
         db,
-        action="monitoring_preflight",
-        status="blocked",
         actor=actor,
-        reason=reason,
-        payload={"checked_at": now.isoformat()},
-    )
-    write_audit_log(
-        db,
-        event_type="stock_recovery",
-        action="monitoring_preflight",
         status="blocked",
-        message=reason,
-        entity_type="stock_paper",
-        payload={"actor": actor, "checked_at": now.isoformat()},
+        reason=reason,
+        now=now,
     )
 
 
@@ -440,6 +458,13 @@ def resume_stock_paper_after_revalidation(
         _record_monitoring_preflight_rejection(db, actor=actor, reason=monitoring_reason, now=now)
         db.commit()
         raise StockPaperError(monitoring_reason)
+    _record_monitoring_preflight_result(
+        db,
+        actor=actor,
+        status="clear",
+        reason=monitoring_reason,
+        now=now,
+    )
     state.status = "resumable"
     state.last_revalidation_at = now
     state.updated_by = actor
@@ -658,6 +683,13 @@ def attempt_automatic_stock_recovery(
         _event(db, action="automatic_resume", status="blocked", actor=AUTOMATIC_RECOVERY_ACTOR, reason=reason, payload={"evidence": evidence})
         db.commit()
         return {"status": "blocked", "reason": reason}
+    _record_monitoring_preflight_result(
+        db,
+        actor=AUTOMATIC_RECOVERY_ACTOR,
+        status="clear",
+        reason=reason,
+        now=now,
+    )
     operator_reason = (
         "Accounting proof, cooldown, monitoring, reconciliation, and order preflight passed; "
         "an authorized operator must perform the final resume revalidation."
@@ -787,6 +819,36 @@ def recovery_status(db: Session) -> dict:
         if monitoring_event
         else None
     )
+    if monitoring_event and monitoring_event.status == "blocked":
+        latest_snapshot = db.query(StockMonitoringSnapshot).filter_by(
+            monitor_key="stock_continuous_monitor",
+        ).order_by(
+            StockMonitoringSnapshot.generated_at.desc(),
+            StockMonitoringSnapshot.id.desc(),
+        ).first()
+        checked_at_value = (monitoring_event.payload or {}).get("checked_at")
+        try:
+            blocked_checked_at = (
+                datetime.fromisoformat(str(checked_at_value).replace("Z", "+00:00"))
+                if checked_at_value
+                else monitoring_event.created_at
+            )
+            blocked_checked_at = _utc(blocked_checked_at) if blocked_checked_at else None
+        except (TypeError, ValueError):
+            blocked_checked_at = _utc(monitoring_event.created_at) if monitoring_event.created_at else None
+        if latest_snapshot and blocked_checked_at and _utc(latest_snapshot.generated_at) > blocked_checked_at:
+            monitoring_clear, monitoring_reason = _fresh_monitoring_is_clear(db, _now())
+            if monitoring_clear:
+                monitoring_preflight = {
+                    "status": "clear",
+                    "actor": latest_snapshot.source,
+                    "reason": monitoring_reason,
+                    "created_at": latest_snapshot.created_at.isoformat() if latest_snapshot.created_at else None,
+                    "payload": {
+                        "checked_at": _utc(latest_snapshot.generated_at).isoformat(),
+                        "evidence_generated_at": _utc(latest_snapshot.generated_at).isoformat(),
+                    },
+                }
     automatic_review_status = (
         "blocked"
         if state.accounting_review_required
