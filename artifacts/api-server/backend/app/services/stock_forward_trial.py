@@ -820,6 +820,60 @@ def pause_trial(db: Session, trial_id: str, reason: str) -> StockPaperTrial:
     if row.status == "running": row.status, row.pause_reason = "paused", reason
     return row
 
+def _accounting_halt_reason(account: StockPaperAccount | None) -> str | None:
+    """Return the fail-closed trial reason for an unsafe paper ledger."""
+    if (
+        not account
+        or account.status != "reconciled"
+        or account.reconciliation_required
+    ):
+        return "account_uncertainty"
+    if not account.accounting_verified or account.unexplained_residual:
+        return "accounting_review_required"
+    return None
+
+def _halt_trial_for_accounting(
+    db: Session,
+    trial: StockPaperTrial,
+    account: StockPaperAccount | None,
+) -> str | None:
+    """Pause active trial work and persist safe evidence of an accounting halt."""
+    reason = _accounting_halt_reason(account)
+    if reason is None:
+        return None
+    before = (trial.status, trial.pause_reason, trial.blocked_reason)
+    if trial.status == "running":
+        trial.status, trial.pause_reason = "paused", reason
+    elif trial.status == "paused":
+        trial.pause_reason = reason
+    elif trial.status == "blocked":
+        trial.blocked_reason = reason
+    after = (trial.status, trial.pause_reason, trial.blocked_reason)
+    if before != after and trial.status in {"paused", "blocked"}:
+        write_audit_log(
+            db,
+            event_type="stock_forward_trial",
+            action="accounting_halt",
+            status="blocked",
+            message="Forward trial halted because Alpaca paper accounting requires review",
+            entity_type="stock_paper_trial",
+            payload={
+                "trial_id": trial.id,
+                "reason": reason,
+                "account_status": account.status if account else None,
+                "reconciliation_required": (
+                    account.reconciliation_required if account else True
+                ),
+                "accounting_verified": (
+                    account.accounting_verified if account else False
+                ),
+                "unexplained_residual": (
+                    account.unexplained_residual if account else False
+                ),
+            },
+        )
+    return reason
+
 def stop_trial(db: Session, trial_id: str) -> StockPaperTrial:
     row = db.get(StockPaperTrial, trial_id)
     if not row: raise StockTrainingError("Trial not found")
@@ -880,6 +934,15 @@ def observe_trial(db: Session, trial_id: str) -> dict:
         _ensure_exit_intents(db, trial, "operator_stop", now)
         return {"status": "stopped", "trial_id": trial_id, "decisions": 0,
                 "reason": trial.pause_reason, "paper_only": True}
+    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    if account and _halt_trial_for_accounting(db, trial, account):
+        return {
+            "status": trial.status,
+            "trial_id": trial_id,
+            "decisions": 0,
+            "reason": trial.pause_reason or trial.blocked_reason,
+            "paper_only": True,
+        }
     manifest = validate_trial_artifact(db, trial)
     bounds = session_bounds(now.astimezone(timezone.utc).date())
     feed_checks = {}
@@ -904,16 +967,21 @@ def observe_trial(db: Session, trial_id: str) -> dict:
     if not bounds or now < bounds[1]:
         return {"status": "observed", "trial_id": trial_id, "decisions": 0,
                 "reason": "regular_session_not_closed", "paper_only": True}
+    if account is None:
+        accounting_reason = _halt_trial_for_accounting(db, trial, account)
+        return {
+            "status": trial.status,
+            "trial_id": trial_id,
+            "decisions": 0,
+            "reason": accounting_reason,
+            "paper_only": True,
+        }
     symbols = trial.lineage.get("universe", [])
     artifact = Path(getattr(db.get(StockModelRegistry, trial.lineage["model_run_id"]), "artifact_path", ""))
     model_path, calibrator_path = artifact / "selected_model.joblib", artifact / "calibrator.joblib"
     if not model_path.is_file() or not calibrator_path.is_file():
         raise StockTrainingError("Exact selected model and calibrator artifacts are unavailable")
     model, calibrator = joblib.load(model_path), joblib.load(calibrator_path)
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
-    if not account or account.status != "reconciled" or account.reconciliation_required:
-        trial.status, trial.pause_reason = "paused", "account_uncertainty"
-        return {"status": "paused", "trial_id": trial_id, "reason": trial.pause_reason}
     if trial.peak_equity is None:
         trial.peak_equity = account.equity
     elif account.equity > trial.peak_equity:
@@ -1089,10 +1157,26 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
         return {"status": trial.status, "trial_id": trial_id, "executed": 0}
     _sync_trial_lot_state(db, trial)
     now = _now()
+    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    if account and _halt_trial_for_accounting(db, trial, account):
+        return {
+            "status": trial.status,
+            "trial_id": trial_id,
+            "executed": 0,
+            "reason": trial.pause_reason or trial.blocked_reason,
+        }
     bounds = session_bounds(now.astimezone(timezone.utc).date())
     if not bounds or not (bounds[0] <= now < bounds[1]):
         return {"status": "waiting", "trial_id": trial_id, "executed": 0,
                 "reason": "regular_session_required"}
+    if account is None:
+        accounting_reason = _halt_trial_for_accounting(db, trial, account)
+        return {
+            "status": trial.status,
+            "trial_id": trial_id,
+            "executed": 0,
+            "reason": accounting_reason,
+        }
     # Entries are executable only in the session immediately following the
     # decision's eligible close.
     previous_day = now.astimezone(timezone.utc).date() - timedelta(days=1)
@@ -1102,12 +1186,6 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
         if previous_bounds:
             break
         previous_day -= timedelta(days=1)
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
-    if not account or account.status != "reconciled" or account.reconciliation_required:
-        if trial.status != "stopped":
-            trial.status, trial.pause_reason = "paused", "account_uncertainty"
-        return {"status": trial.status, "trial_id": trial_id, "executed": 0,
-                "reason": "account_uncertainty"}
     if trial.peak_equity is None or account.equity > trial.peak_equity:
         trial.peak_equity = account.equity
     drawdown_blocked = bool(

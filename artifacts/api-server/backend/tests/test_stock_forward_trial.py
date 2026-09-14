@@ -791,6 +791,28 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(result["status"], "paused")
             self.assertIn("old bar", row.pause_reason)
 
+    def test_observe_pauses_active_trial_when_reconciliation_becomes_required(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            patches, _, _, _ = self._post_close_patches(db, row, 0.8)
+            account = db.query(StockPaperAccount).one()
+            account.unexplained_residual = False
+            account.status = "reconciled"
+            account.reconciliation_required = True
+            with self.enter_contexts(patches):
+                result = observe_trial(db, row.id)
+            self.assertEqual(result["status"], "paused")
+            self.assertEqual(result["reason"], "account_uncertainty")
+            self.assertEqual(row.pause_reason, "account_uncertainty")
+            self.assertEqual(db.query(StockPaperOrder).count(), 0)
+            audit = db.query(AuditLog).one()
+            self.assertEqual(audit.action, "accounting_halt")
+            self.assertEqual(audit.status, "blocked")
+            self.assertIn("accounting", audit.message.lower())
+            self.assertEqual(audit.payload["trial_id"], row.id)
+            self.assertTrue(audit.payload["reconciliation_required"])
+            self.assertNotIn("raw_payload", json.dumps(audit.payload))
+
     def test_daily_model_rejects_fresh_bar_without_order(self):
         with Session(self.engine) as db:
             row = self.trial(db)
@@ -948,6 +970,41 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(second["executed"], 0)
             self.assertEqual(db.query(StockPaperOrder).count(), 1)
             self.assertIsNotNone(db.scalar(select(StockPaperTrialDecision)).order_id)
+
+    def test_pending_decision_stays_blocked_after_accounting_residual(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            self.account(db)
+            account = db.query(StockPaperAccount).one()
+            account.unexplained_residual = True
+            decision = StockPaperTrialDecision(
+                trial_id=row.id,
+                symbol="SPY",
+                bar_timestamp=datetime(2025, 1, 2, 20, 59),
+                decision_timestamp=datetime(2025, 1, 2, 21, tzinfo=timezone.utc),
+                action="buy",
+                qualifying=True,
+                lineage={**row.lineage, "probability": 0.8},
+            )
+            db.add(decision)
+            db.flush()
+            now = datetime(2025, 1, 3, 15, tzinfo=timezone.utc)
+            with patch("app.services.stock_forward_trial._now", return_value=now), \
+                 patch("app.services.stock_forward_trial.session_bounds", return_value=(
+                     datetime(2025, 1, 3, 14, 30, tzinfo=timezone.utc),
+                     datetime(2025, 1, 3, 21, tzinfo=timezone.utc))), \
+                 patch("app.services.stock_forward_trial.dispatch_reserved_order") as dispatch:
+                result = execute_pending_decisions(db, row.id)
+            self.assertEqual(result["status"], "paused")
+            self.assertEqual(result["executed"], 0)
+            self.assertEqual(result["reason"], "accounting_review_required")
+            self.assertEqual(row.pause_reason, "accounting_review_required")
+            self.assertEqual(db.query(StockPaperOrder).count(), 0)
+            dispatch.assert_not_called()
+            audit = db.query(AuditLog).one()
+            self.assertEqual(audit.action, "accounting_halt")
+            self.assertTrue(audit.payload["unexplained_residual"])
+            self.assertNotIn("raw_payload", json.dumps(audit.payload))
 
     def test_previous_session_rule_expires_stale_pending_decision(self):
         with Session(self.engine) as db:

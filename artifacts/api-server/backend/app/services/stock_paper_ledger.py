@@ -912,7 +912,12 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         if (existing.symbol, existing.side, existing.quantity, existing.limit_price) != (symbol, side, quantity, reference_price):
             raise StockPaperError("Idempotency key was already used for a different order")
         return existing
-    if not account or account.status != "reconciled" or account.reconciliation_required:
+    if (
+        not account
+        or account.status != "reconciled"
+        or account.reconciliation_required
+        or account.unexplained_residual
+    ):
         raise StockPaperError("Stock paper exposure is blocked until reconciled")
     if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
         raise StockPaperError("Only positive long buy/sell paper orders are permitted")
@@ -1015,7 +1020,11 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
         return order
     account = db.query(StockPaperAccount).filter_by(id=order.account_id).with_for_update().one()
     recovery_flatten = order.source == "recovery_flatten" and order.side == "sell"
-    if (not recovery_flatten and account.status != "reconciled") or account.reconciliation_required:
+    if (
+        (not recovery_flatten and account.status != "reconciled")
+        or account.reconciliation_required
+        or account.unexplained_residual
+    ):
         raise StockPaperError("Reserved order cannot dispatch until stock paper account is reconciled")
     rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
     if not recovery_flatten and bool((rule.value if rule else {}).get("kill_switch_enabled", False)):
