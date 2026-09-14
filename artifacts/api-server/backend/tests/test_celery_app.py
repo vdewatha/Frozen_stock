@@ -1,6 +1,8 @@
 import unittest
+from unittest.mock import patch
 
 from app.tasks.celery_app import celery_app
+from app.tasks import jobs
 
 
 class CeleryConfigurationTests(unittest.TestCase):
@@ -32,3 +34,52 @@ class CeleryConfigurationTests(unittest.TestCase):
         self.assertEqual(schedule["task"], "app.tasks.jobs.intraday_market_data_import")
         self.assertEqual(schedule["schedule"], 60)
         self.assertEqual(schedule["options"], {"expires": 55})
+
+    def test_intraday_task_time_limits_leave_room_for_lease_expiry(self):
+        task = jobs.intraday_market_data_import
+
+        self.assertEqual(task.soft_time_limit, jobs.INTRADAY_TASK_SOFT_TIME_LIMIT_SECONDS)
+        self.assertEqual(task.time_limit, jobs.INTRADAY_TASK_TIME_LIMIT_SECONDS)
+        self.assertGreater(
+            jobs.INTRADAY_JOB_LOCK_TTL_SECONDS,
+            task.time_limit,
+        )
+
+    def test_intraday_lease_uses_short_dedicated_ttl(self):
+        class FakeLock:
+            def acquire(self, blocking=False):
+                return True
+
+        class FakeRedis:
+            def __init__(self):
+                self.lock_calls = []
+
+            def ping(self):
+                return True
+
+            def lock(self, name, timeout, blocking=False):
+                self.lock_calls.append((name, timeout, blocking))
+                return FakeLock()
+
+        client = FakeRedis()
+        with patch.object(jobs.redis.Redis, "from_url", return_value=client):
+            intraday_lock = jobs._acquire_job_lock("intraday_market_data_import")
+            other_lock = jobs._acquire_job_lock("daily_market_data_import")
+
+        self.assertIsNotNone(intraday_lock)
+        self.assertIsNotNone(other_lock)
+        self.assertEqual(
+            client.lock_calls,
+            [
+                (
+                    "trading:scheduled-job:intraday_market_data_import",
+                    jobs.INTRADAY_JOB_LOCK_TTL_SECONDS,
+                    False,
+                ),
+                (
+                    "trading:scheduled-job:daily_market_data_import",
+                    jobs.REDIS_JOB_LOCK_TTL_SECONDS,
+                    False,
+                ),
+            ],
+        )

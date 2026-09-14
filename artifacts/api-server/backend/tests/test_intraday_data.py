@@ -236,6 +236,56 @@ class IntradayDataTests(unittest.TestCase):
             "2026-09-10T13:30:00+00:00",
         )
 
+    def test_interrupted_poll_resumes_bounded_repair_on_next_invocation(self):
+        observed = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
+        calls = []
+        interrupt_next_slice = True
+
+        class WorkerLost(BaseException):
+            pass
+
+        def fetch(symbol, start, end):
+            nonlocal interrupt_next_slice
+            calls.append((symbol, start, end))
+            if interrupt_next_slice and len(calls) == 2:
+                interrupt_next_slice = False
+                raise WorkerLost("worker interrupted during the next repair slice")
+            return [
+                bar(start + timedelta(minutes=offset))
+                for offset in range(int((end - start).total_seconds() // 60))
+            ], 0, False
+
+        with patch.object(intraday_data, "_fetch_bars", side_effect=fetch):
+            with self.assertRaises(WorkerLost):
+                intraday_data.ingest_intraday(self.db, ["SPY"], now=observed)
+
+        # The first bounded slice committed before the worker disappeared, but
+        # the unresolved previous session must not be treated as ready.
+        self.assertEqual(self.db.query(IntradayBar).count(), 60)
+
+        calls.clear()
+        with patch.object(intraday_data, "_fetch_bars", side_effect=fetch):
+            result = intraday_data.ingest_intraday(self.db, ["SPY"], now=observed)
+
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(
+            all(end - start <= intraday_data.INTRADAY_BACKFILL_WINDOW for _, start, end in calls)
+        )
+        symbol_result = result["results"][0]
+        self.assertEqual(symbol_result["status"], "incomplete")
+        self.assertEqual(
+            symbol_result["oldest_unresolved_interval"],
+            "2026-09-10T13:30:00+00:00",
+        )
+        self.assertEqual(
+            symbol_result["deferred_window"],
+            {
+                "start": "2026-09-10T13:30:00+00:00",
+                "end": "2026-09-10T14:30:00+00:00",
+            },
+        )
+        self.assertTrue(symbol_result["missing_intervals"])
+
     def test_unsupported_symbol_is_structured_untrusted_data(self):
         with self.assertRaisesRegex(UntrustedMarketData, "must be one of"):
             validate_intraday_readiness(self.db, "TSLA")

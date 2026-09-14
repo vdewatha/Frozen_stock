@@ -15,3 +15,4 @@
 - [Backend test module path](backend-test-module-path.md) — run backend pytest with PYTHONPATH=. so app imports resolve from the workspace.
 - [Recovery evidence linkage](recovery-evidence-linkage.md) — link low-level pause events to cycles while keeping demotion fail-closed and last-known-good bindings immutable.
 - [Recovery evidence export](recovery-evidence-export.md) — expose proof digests and stable identifiers, never raw broker payloads or financial fields.
+- [Intraday repair priority](intraday-repair-priority.md) — retry the newest completed slice before older bounded backfill; readiness must remain incomplete while historical gaps remain.
