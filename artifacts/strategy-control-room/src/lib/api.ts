@@ -216,6 +216,8 @@ export type IntradayImportResponse = {
     rows_imported?: number;
     unavailable_reason?: string;
     missing_intervals?: string[];
+    deferred_window?: { start: string; end: string } | null;
+    oldest_unresolved_interval?: string | null;
   }>;
 };
 
@@ -240,6 +242,8 @@ export type IntradayPreflightResponse = {
     ingestion_timestamp?: string | null;
     latency_seconds?: number | null;
     missing_intervals: string[];
+    deferred_window?: { start: string; end: string } | null;
+    oldest_unresolved_interval?: string | null;
     rows_imported?: number;
     failure_class?: string;
     unavailable_reason?: string | null;
@@ -257,6 +261,8 @@ export type MarketDataHealth = {
   ingestion_timestamp?: string | null;
   latency_seconds: number | null;
   missing_intervals: string[];
+  deferred_window?: { start: string; end: string } | null;
+  oldest_unresolved_interval?: string | null;
   is_stale?: boolean;
   is_incomplete?: boolean;
   status: string;

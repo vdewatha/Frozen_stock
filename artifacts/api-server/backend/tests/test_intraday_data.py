@@ -224,6 +224,17 @@ class IntradayDataTests(unittest.TestCase):
         symbol_result = result["results"][0]
         self.assertEqual(symbol_result["status"], "incomplete")
         self.assertTrue(symbol_result["missing_intervals"])
+        self.assertEqual(
+            symbol_result["deferred_window"],
+            {
+                "start": "2026-09-10T13:30:00+00:00",
+                "end": "2026-09-10T14:30:00+00:00",
+            },
+        )
+        self.assertEqual(
+            symbol_result["oldest_unresolved_interval"],
+            "2026-09-10T13:30:00+00:00",
+        )
 
     def test_unsupported_symbol_is_structured_untrusted_data(self):
         with self.assertRaisesRegex(UntrustedMarketData, "must be one of"):

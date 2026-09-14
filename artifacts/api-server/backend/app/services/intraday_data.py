@@ -310,6 +310,28 @@ def _bounded_missing_window(
     return window_start, min(end, window_start + INTRADAY_BACKFILL_WINDOW)
 
 
+def _repair_metadata(
+    missing: list[str],
+    ranges: list[tuple[datetime, datetime]],
+) -> tuple[dict[str, str] | None, str | None]:
+    """Describe the next bounded repair slice without changing readiness semantics."""
+    if not missing:
+        return None, None
+
+    oldest = missing[0]
+    oldest_at = datetime.fromisoformat(oldest)
+    matching_range = next(
+        ((start, end) for start, end in ranges if start <= oldest_at < end),
+        None,
+    )
+    if matching_range is None:
+        return None, oldest
+
+    _, range_end = matching_range
+    deferred_end = min(range_end, oldest_at + INTRADAY_BACKFILL_WINDOW)
+    return {"start": oldest, "end": deferred_end.isoformat()}, oldest
+
+
 def upsert_corporate_actions(db: Session, symbol: str, actions: list[dict]) -> int:
     """Persist complete split/dividend actions; raw intraday bars remain unadjusted."""
     symbol = _symbol(symbol)
@@ -498,6 +520,10 @@ def ingest_intraday(
             for target_start, target_end in target_ranges:
                 missing.extend(_session_missing(db, symbol, target_start, target_end))
             missing = sorted(set(missing))
+            deferred_window, oldest_unresolved_interval = _repair_metadata(
+                missing,
+                target_ranges + windows,
+            )
             latest = (
                 db.query(IntradayBar)
                 .filter_by(symbol=symbol, timeframe="1m")
@@ -517,6 +543,8 @@ def ingest_intraday(
                     "ingestion_timestamp": observed_at.isoformat(),
                     "latency_seconds": (observed_at - bar_close).total_seconds() if bar_close else None,
                     "missing_intervals": missing,
+                    "deferred_window": deferred_window,
+                    "oldest_unresolved_interval": oldest_unresolved_interval,
                     "duplicate_bars": provider_duplicates + saved["duplicate_bars"],
                     "out_of_order": provider_out_of_order or saved["out_of_order"],
                     "unavailable_reason": "Missing completed regular-session intervals" if missing else None,
@@ -530,6 +558,8 @@ def ingest_intraday(
                     "status": "unavailable",
                     "failure_class": failure_class,
                     "missing_intervals": [],
+                    "deferred_window": None,
+                    "oldest_unresolved_interval": None,
                     "unavailable_reason": reason,
                 }
             )
@@ -595,6 +625,8 @@ def preflight_intraday(
                     "failure_class": "configuration",
                     "unavailable_reason": "Alpaca SIP feed is not configured",
                     "missing_intervals": [],
+                    "deferred_window": None,
+                    "oldest_unresolved_interval": None,
                 }
                 for symbol in selected
             ],
@@ -616,6 +648,8 @@ def preflight_intraday(
                     "failure_class": "configuration",
                     "unavailable_reason": "Alpaca credentials are not configured in workspace secrets",
                     "missing_intervals": [],
+                    "deferred_window": None,
+                    "oldest_unresolved_interval": None,
                 }
                 for symbol in selected
             ],
@@ -635,6 +669,8 @@ def preflight_intraday(
                     "failure_class": "timing",
                     "unavailable_reason": reason,
                     "missing_intervals": [],
+                    "deferred_window": None,
+                    "oldest_unresolved_interval": None,
                 }
                 for symbol in selected
             ],
@@ -690,6 +726,8 @@ def preflight_intraday(
                 "failure_class": failure_class,
                 "unavailable_reason": reason,
                 "missing_intervals": imported.get("missing_intervals", []),
+                "deferred_window": imported.get("deferred_window"),
+                "oldest_unresolved_interval": imported.get("oldest_unresolved_interval"),
                 "rows_imported": imported.get("rows_imported", 0),
             }
         results.append(result)
@@ -775,6 +813,18 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             _aware_utc(latest.ingested_at) - (_aware_utc(latest.opened_at) + BAR_CADENCE)
         ).total_seconds() if latest else None,
         "missing_intervals": missing,
+        "deferred_window": (
+            {
+                "start": missing[0],
+                "end": min(
+                    target_bounds[1],
+                    datetime.fromisoformat(missing[0]) + INTRADAY_BACKFILL_WINDOW,
+                ).isoformat(),
+            }
+            if missing
+            else None
+        ),
+        "oldest_unresolved_interval": missing[0] if missing else None,
         "checked_at": observed_at,
         "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
     }

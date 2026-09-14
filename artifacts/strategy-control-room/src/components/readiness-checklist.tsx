@@ -199,6 +199,7 @@ function MarketFeedDetails({ details }: { details: Record<string, unknown> }) {
     const item = details[key];
     if (item === null || typeof item === "undefined") return "Unavailable";
     if (Array.isArray(item)) return item.length ? item.join(", ") : "None";
+    if (typeof item === "object") return JSON.stringify(item);
     return String(item);
   };
   return (
@@ -207,6 +208,8 @@ function MarketFeedDetails({ details }: { details: Record<string, unknown> }) {
       <div>Mode: {value("data_mode")} · Provider: {value("provider")} · Feed: {value("feed") === "Unavailable" ? value("feed_class") : value("feed")} · Cadence: {value("cadence")}</div>
       <div>Exchange timestamp: {value("exchange_timestamp")} · Ingestion: {value("ingestion_time")}</div>
       <div>Latency: {value("latency_seconds")} · Missing intervals: {value("missing_intervals")}</div>
+      <div>Catch-up window: {value("deferred_window")} · Oldest unresolved: {value("oldest_unresolved_interval")}</div>
+      {details.deferred_windows ? <div>Per-symbol deferred windows: {value("deferred_windows")}</div> : null}
       <div className="text-coral">Unavailable reason: {value("unavailable_reason")}</div>
     </div>
   );

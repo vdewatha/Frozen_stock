@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Activity, Database, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { BacktestResponse, IntradayPreflightResponse, MarketDataHealth, MarketImportResponse, PriceHistoryResponse, getMarketDataHealth, getPriceHistory, importIntradayMarketData, importMarketData, runBacktest, runIntradayPreflight } from "@/lib/api";
+import { BacktestResponse, IntradayImportResponse, IntradayPreflightResponse, MarketDataHealth, MarketImportResponse, PriceHistoryResponse, getMarketDataHealth, getPriceHistory, importIntradayMarketData, importMarketData, runBacktest, runIntradayPreflight } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -24,6 +24,7 @@ export function MarketLab() {
   const [symbol, setSymbol] = useState("SPY");
   const [strategy, setStrategy] = useState("moving_average_crossover");
   const [importResult, setImportResult] = useState<MarketImportResponse | null>(null);
+  const [intradayImportResult, setIntradayImportResult] = useState<IntradayImportResponse | null>(null);
   const [prices, setPrices] = useState<PriceHistoryResponse | null>(null);
   const [backtest, setBacktest] = useState<BacktestResponse | null>(null);
   const [health, setHealth] = useState<MarketDataHealth | null>(null);
@@ -71,6 +72,7 @@ export function MarketLab() {
     setStatus("Importing Alpaca SIP 1-minute bars");
     try {
       const result = await importIntradayMarketData(symbol);
+      setIntradayImportResult(result);
       const imported = result.results.reduce((total, row) => total + (row.rows_imported ?? 0), 0);
       setStatus(`Imported ${imported} completed regular-session bars`);
       setHealth(await getMarketDataHealth(symbol));
@@ -197,6 +199,30 @@ export function MarketLab() {
               {importResult ? `${importResult.rows_imported} rows, ${importResult.start_date} to ${importResult.end_date}` : "No import run yet"}
             </div>
           </div>
+           <div className="rounded-md border border-line p-3" data-testid="intraday-import-result">
+             <div className="text-xs font-semibold uppercase text-slate-500">Intraday repair</div>
+             {intradayImportResult ? (
+               <div className="mt-2 grid gap-2 text-sm">
+                 {intradayImportResult.results.map((row) => (
+                   <div className="border-t border-line pt-2 first:border-t-0 first:pt-0" key={row.symbol}>
+                     <div className="flex justify-between gap-3">
+                       <span>{row.symbol}</span>
+                       <strong className={row.status === "complete" ? "text-mint" : "text-amber-700"}>{row.status}</strong>
+                     </div>
+                     {row.deferred_window ? (
+                       <div className="mt-1 text-xs text-amber-800">
+                         Catch-up backlog: next deferred window {row.deferred_window.start} – {row.deferred_window.end}; oldest unresolved {row.oldest_unresolved_interval ?? row.deferred_window.start}.
+                       </div>
+                     ) : row.oldest_unresolved_interval ? (
+                       <div className="mt-1 text-xs text-amber-800">Oldest unresolved interval: {row.oldest_unresolved_interval}</div>
+                     ) : null}
+                     {row.unavailable_reason ? <div className="mt-1 text-xs text-coral">{row.unavailable_reason}</div> : null}
+                   </div>
+                 ))}
+               </div>
+             ) : <div className="mt-2 text-sm text-slate-500">No intraday repair run yet.</div>}
+             <div className="mt-2 text-xs text-slate-500">A catch-up backlog remains incomplete data and cannot satisfy readiness.</div>
+           </div>
           <div className="rounded-md border border-line p-3" data-testid="market-data-health">
             <div className="flex items-center justify-between gap-2 text-xs font-semibold uppercase text-slate-500">
               <span>Feed health · completed 1-minute regular session</span>
@@ -210,6 +236,8 @@ export function MarketLab() {
                 <span>Ingestion time</span><strong className="text-right">{health.ingestion_timestamp ?? health.ingestion_time ?? "Unavailable"}</strong>
                 <span>Latency</span><strong className="text-right">{health.latency_seconds === null ? "Unavailable" : `${health.latency_seconds.toFixed(1)}s`}</strong>
                 <span>Missing intervals</span><strong className="text-right">{health.missing_intervals.length ? health.missing_intervals.join(", ") : "None reported"}</strong>
+                {health.deferred_window ? <><span>Catch-up window</span><strong className="text-right text-amber-700">{health.deferred_window.start} – {health.deferred_window.end}</strong></> : null}
+                {health.oldest_unresolved_interval ? <><span>Oldest unresolved</span><strong className="text-right text-amber-700">{health.oldest_unresolved_interval}</strong></> : null}
                 <span>State</span><strong className={`text-right ${health.is_stale || health.is_incomplete || health.status === "stale" || health.status === "unavailable" ? "text-coral" : "text-mint"}`}>{health.is_stale || health.status === "stale" ? "Stale" : health.is_incomplete ? "Incomplete" : health.status === "unavailable" ? "Unavailable" : "Current"}</strong>
                 {health.unavailable_reason ? <span className="sm:col-span-2 text-coral">Unavailable reason: {health.unavailable_reason}</span> : null}
               </div>
@@ -226,9 +254,12 @@ export function MarketLab() {
               <div className="mt-2 grid gap-1 text-sm">
                 <div className="flex justify-between gap-3"><span>Session / feed</span><strong>{preflight.session} / {preflight.feed_class}</strong></div>
                 {preflight.results.map((row) => (
-                  <div key={row.symbol} className="flex justify-between gap-3 border-t border-line pt-1">
-                    <span>{row.symbol}</span>
-                    <strong className={row.status === "ready" ? "text-mint" : "text-coral"}>{row.status}{row.latency_seconds == null ? "" : ` · ${row.latency_seconds.toFixed(1)}s`}</strong>
+                  <div key={row.symbol} className="border-t border-line pt-1">
+                    <div className="flex justify-between gap-3">
+                      <span>{row.symbol}</span>
+                      <strong className={row.status === "ready" ? "text-mint" : "text-coral"}>{row.status}{row.latency_seconds == null ? "" : ` · ${row.latency_seconds.toFixed(1)}s`}</strong>
+                    </div>
+                    {row.deferred_window ? <div className="pt-1 text-xs text-amber-800">{row.symbol} catch-up: {row.deferred_window.start} – {row.deferred_window.end}; oldest unresolved {row.oldest_unresolved_interval ?? row.deferred_window.start}</div> : null}
                   </div>
                 ))}
                 {preflight.reason ? <div className="pt-1 text-coral">{preflight.reason}</div> : null}

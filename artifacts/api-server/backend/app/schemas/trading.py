@@ -132,6 +132,8 @@ class FeedStatusResponse(BaseModel):
     ingestion_timestamp: Optional[datetime] = None
     latency_seconds: Optional[float] = None
     missing_intervals: list[str] = Field(default_factory=list)
+    deferred_window: Optional[dict[str, str]] = None
+    oldest_unresolved_interval: Optional[str] = None
     unavailable_reason: Optional[str] = None
     checked_at: Optional[datetime] = None
     adjustment_policy: Optional[str] = None

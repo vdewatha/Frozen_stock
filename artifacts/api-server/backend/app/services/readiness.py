@@ -150,6 +150,18 @@ def readiness_snapshot(db: Session) -> dict:
             "ingestion_time": representative.get("ingestion_timestamp"),
             "latency_seconds": representative.get("latency_seconds"),
             "missing_intervals": representative.get("missing_intervals", []),
+             "deferred_window": representative.get("deferred_window"),
+             "oldest_unresolved_interval": representative.get("oldest_unresolved_interval"),
+             "deferred_windows": {
+                 symbol: status.get("deferred_window")
+                 for symbol, status in intraday_status.items()
+                 if status.get("deferred_window")
+             },
+             "oldest_unresolved_intervals": {
+                 symbol: status.get("oldest_unresolved_interval")
+                 for symbol, status in intraday_status.items()
+                 if status.get("oldest_unresolved_interval")
+             },
             "unavailable_reason": representative.get("unavailable_reason"),
             "failures": intraday_failures,
             "symbols": intraday_status,
