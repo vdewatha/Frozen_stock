@@ -95,7 +95,7 @@ def required_role(method: str, path: str) -> str:
         return "operator"
     if method == "GET" and re.fullmatch(
         r"/stock/forward-trials/[0-9a-f-]{36}(?:/(decisions|metrics|promotion-readiness|preflight)"
-        r"|/promotion-readiness/reports(?:/[1-9][0-9]*(?:/download)?)?)?",
+        r"|/promotion-readiness/reports(?:/[1-9][0-9]*(?:/(download|session-evidence))?)?)?",
         path,
     ):
         return "viewer"

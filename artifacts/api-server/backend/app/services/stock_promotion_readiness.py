@@ -4,7 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -17,6 +17,11 @@ from app.models import (
 )
 from app.models.stock_paper import StockPaperAccount, StockPaperFill, StockPaperOrder, StockPaperTrialLot
 from app.services.stock_forward_trial import _hash, _trial_allocated_notional
+
+DEFAULT_HISTORY_LIMIT = 10
+MAX_HISTORY_LIMIT = 50
+DEFAULT_SESSION_EVIDENCE_LIMIT = 20
+MAX_SESSION_EVIDENCE_LIMIT = 100
 
 
 def _gate(status: str, value: Any = None, required: Any = None, reason: str | None = None) -> dict:
@@ -100,8 +105,51 @@ def _risk_gate(db: Session, trial: StockPaperTrial, account: StockPaperAccount |
                  reason=None if maximum <= required else "a trial lot exceeds the frozen risk ceiling")
 
 
-def _report_out(report: StockPaperPromotionReadinessReport) -> dict:
+def _evidence_summary(report: StockPaperPromotionReadinessReport) -> dict:
+    evidence = report.evidence or {}
+    aggregate_metrics = evidence.get("aggregate_metrics") or {}
+    session_evidence = evidence.get("session_evidence") or {}
+    aggregates = session_evidence.get("aggregates") or {}
+    window = session_evidence.get("window") or {}
+    sessions = session_evidence.get("sessions") or []
+    unknown_historical = aggregates.get("unknown_historical_feed_health", 0)
+    classification = aggregate_metrics.get("classification")
+    if not classification:
+        classification = {
+            "pass": "passing",
+            "fail": "failing",
+        }.get(report.decision, "insufficient")
     return {
+        "elapsed_sessions": window.get("elapsed_regular_sessions", len(sessions)),
+        "evidenced_sessions": aggregates.get(
+            "evidenced_sessions",
+            sum(1 for session in sessions if session.get("status") == "evidenced"),
+        ),
+        "expected_decisions": aggregates.get("expected_decisions", 0),
+        "observed_decisions": aggregates.get("observed_decisions", 0),
+        "verified_decisions": aggregates.get("verified_decisions", 0),
+        "duplicate_exclusions": aggregates.get("duplicate_exclusions", 0),
+        "rejected_decisions": aggregates.get("rejected_decisions", 0),
+        "missing_decisions": aggregates.get("missing_decisions", 0),
+        "decision_coverage": aggregates.get("decision_coverage"),
+        "classification": classification,
+        "costs_known": aggregate_metrics.get("costs_known"),
+        "historical_evidence_status": "unknown" if unknown_historical or not sessions else "verified",
+        "historical_evidence_reason": (
+            "Historical feed or health evidence is unavailable; it was not reconstructed"
+            if unknown_historical or not sessions
+            else None
+        ),
+        "session_count": len(sessions),
+    }
+
+
+def _report_out(
+    report: StockPaperPromotionReadinessReport,
+    *,
+    include_evidence: bool = True,
+) -> dict:
+    result = {
         "id": report.id,
         "version": report.report_version,
         "trial_id": report.trial_id,
@@ -112,25 +160,115 @@ def _report_out(report: StockPaperPromotionReadinessReport) -> dict:
         "gates": report.gates,
         "lineage": report.lineage,
         "policy": report.policy,
-        "evidence": report.evidence,
+        "evidence": report.evidence if include_evidence else None,
         "paper_only": report.paper_only,
         "live_authorized": report.live_authorized,
         "created_at": report.created_at,
         "promotion_authorized": False,
     }
+    if not include_evidence:
+        result["summary"] = _evidence_summary(report)
+        result["session_evidence_available"] = bool(
+            (report.evidence or {}).get("session_evidence")
+        )
+    return result
 
 
-def promotion_readiness_report_history(db: Session, trial_id: str) -> list[dict]:
+def promotion_readiness_report_history(
+    db: Session,
+    trial_id: str,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict]:
     """Read immutable report rows only; this must never recalculate a trial."""
     if not db.get(StockPaperTrial, trial_id):
         raise ValueError("Trial not found")
-    reports = db.scalars(select(StockPaperPromotionReadinessReport).where(
+    if limit is not None and not 1 <= limit <= MAX_HISTORY_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_HISTORY_LIMIT}")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    query = select(StockPaperPromotionReadinessReport).where(
         StockPaperPromotionReadinessReport.trial_id == trial_id,
     ).order_by(
         StockPaperPromotionReadinessReport.report_version.asc().nullsfirst(),
         StockPaperPromotionReadinessReport.id.asc(),
-    )).all()
+    )
+    if limit is not None:
+        query = query.offset(offset).limit(limit)
+    reports = db.scalars(query).all()
     return [_report_out(report) for report in reports]
+
+
+def promotion_readiness_report_history_page(
+    db: Session,
+    trial_id: str,
+    *,
+    limit: int = DEFAULT_HISTORY_LIMIT,
+    offset: int = 0,
+) -> dict:
+    """Return lightweight immutable report metadata for bounded history views."""
+    if not db.get(StockPaperTrial, trial_id):
+        raise ValueError("Trial not found")
+    if not 1 <= limit <= MAX_HISTORY_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_HISTORY_LIMIT}")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    base = select(StockPaperPromotionReadinessReport).where(
+        StockPaperPromotionReadinessReport.trial_id == trial_id,
+    )
+    reports = db.scalars(base.order_by(
+        StockPaperPromotionReadinessReport.report_version.asc().nullsfirst(),
+        StockPaperPromotionReadinessReport.id.asc(),
+    ).offset(offset).limit(limit)).all()
+    total = db.scalar(
+        select(func.count()).select_from(base.subquery())
+    ) or 0
+    return {
+        "items": [_report_out(report, include_evidence=False) for report in reports],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(reports) < total,
+    }
+
+
+def promotion_readiness_session_evidence(
+    db: Session,
+    trial_id: str,
+    report_id: int,
+    *,
+    limit: int = DEFAULT_SESSION_EVIDENCE_LIMIT,
+    offset: int = 0,
+) -> dict:
+    """Read a bounded slice from one immutable report's session evidence."""
+    report = db.get(StockPaperPromotionReadinessReport, report_id)
+    if not report or report.trial_id != trial_id:
+        raise ValueError("Promotion readiness report not found")
+    if not 1 <= limit <= MAX_SESSION_EVIDENCE_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_SESSION_EVIDENCE_LIMIT}")
+    if offset < 0:
+        raise ValueError("offset must be non-negative")
+    evidence = report.evidence or {}
+    session_evidence = evidence.get("session_evidence") or {}
+    sessions = session_evidence.get("sessions") or []
+    items = sessions[offset:offset + limit]
+    bounded_session_evidence = {
+        key: value for key, value in session_evidence.items() if key != "sessions"
+    }
+    bounded_session_evidence["sessions"] = items
+    return {
+        "trial_id": trial_id,
+        "report_id": report.id,
+        "as_of": report.as_of,
+        "summary": _evidence_summary(report),
+        "session_evidence": bounded_session_evidence,
+        "items": items,
+        "total": len(sessions),
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(items) < len(sessions),
+    }
 
 
 def promotion_readiness_report(db: Session, trial_id: str, report_id: int) -> dict:

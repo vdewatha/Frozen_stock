@@ -1,6 +1,6 @@
 """Admin/operator controls for controlled stock forward-paper trials."""
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,7 +11,8 @@ from app.models import StockPaperTrial, StockPaperModelBinding, StockModelRegist
 from app.services.stock_promotion_readiness import (
     evaluate_promotion_readiness,
     promotion_readiness_report,
-    promotion_readiness_report_history,
+    promotion_readiness_report_history_page,
+    promotion_readiness_session_evidence,
 )
 
 router = APIRouter(prefix="/stock/forward-trials", tags=["stock forward trials"])
@@ -85,19 +86,53 @@ def preflight(trial_id: str, db: Session = Depends(get_db)):
     return trial_feed_preflight(db, row)
 
 @router.get("/{trial_id}/promotion-readiness")
-def promotion_readiness(trial_id: str, db: Session = Depends(get_db)):
+def promotion_readiness(
+    trial_id: str,
+    include_session_evidence: bool = Query(True),
+    db: Session = Depends(get_db),
+):
     try:
         result = evaluate_promotion_readiness(db, trial_id)
         db.commit()
+        if not include_session_evidence:
+            evidence = result.get("evidence") or {}
+            aggregate_metrics = dict(evidence.get("aggregate_metrics") or {})
+            aggregate_metrics.pop("session_evidence", None)
+            evidence = {key: value for key, value in evidence.items() if key != "session_evidence"}
+            evidence["aggregate_metrics"] = aggregate_metrics
+            result = {**result, "evidence": evidence}
         return result
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from None
 
 
 @router.get("/{trial_id}/promotion-readiness/reports")
-def promotion_readiness_reports(trial_id: str, db: Session = Depends(get_db)):
+def promotion_readiness_reports(
+    trial_id: str,
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
     try:
-        return {"items": promotion_readiness_report_history(db, trial_id)}
+        return promotion_readiness_report_history_page(
+            db, trial_id, limit=limit, offset=offset
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from None
+
+
+@router.get("/{trial_id}/promotion-readiness/reports/{report_id}/session-evidence")
+def get_promotion_readiness_session_evidence(
+    trial_id: str,
+    report_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    try:
+        return promotion_readiness_session_evidence(
+            db, trial_id, report_id, limit=limit, offset=offset
+        )
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from None
 

@@ -2547,6 +2547,22 @@ export type ForwardTrialReport = {
 export type ForwardTrialReportHistory = {
   trial_id: string;
   items: ForwardTrialReport[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+};
+
+export type ForwardTrialSessionEvidencePage = {
+  trial_id: string;
+  report_id: number;
+  as_of: string | null;
+  session_evidence: NonNullable<NonNullable<PromotionReadinessReport["evidence"]>["session_evidence"]>;
+  items: Array<Record<string, unknown>>;
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
 };
 
 export type PromotionReadinessGate = {
@@ -2567,6 +2583,8 @@ export type PromotionReadinessReport = {
   gates: Record<string, PromotionReadinessGate>;
   lineage: Record<string, unknown>;
   policy: Record<string, unknown>;
+  summary?: ForwardTrialEvidenceSummary;
+  session_evidence_available?: boolean;
   evidence?: {
     version?: number;
     trial_id?: string;
@@ -2708,7 +2726,10 @@ export function forwardTrialEvidenceFromReadiness(report: PromotionReadinessRepo
   const unknownHistorical = asNumber(aggregate.unknown_historical_feed_health);
   const summary: ForwardTrialEvidenceSummary = {
     elapsed_sessions: asNumber(window.elapsed_regular_sessions, sessions.length),
-    evidenced_sessions: sessions.filter((session) => session.status === "evidenced").length,
+    evidenced_sessions: asNumber(
+      aggregate.evidenced_sessions,
+      sessions.filter((session) => session.status === "evidenced").length,
+    ),
     expected_decisions: asNumber(aggregate.expected_decisions, sessions.reduce((total, session) => total + session.expected_decisions, 0)),
     observed_decisions: asNumber(aggregate.observed_decisions, sessions.reduce((total, session) => total + session.observed_decisions, 0)),
     verified_decisions: asNumber(aggregate.verified_decisions),
@@ -2734,6 +2755,17 @@ export function forwardTrialEvidenceFromReadiness(report: PromotionReadinessRepo
   };
 }
 
+export function forwardTrialEvidenceFromSessionPage(
+  report: PromotionReadinessReport,
+  page: ForwardTrialSessionEvidencePage,
+): ForwardTrialEvidence | null {
+  const evidence = {
+    ...(report.evidence ?? {}),
+    session_evidence: page.session_evidence,
+  };
+  return forwardTrialEvidenceFromReadiness({ ...report, evidence });
+}
+
 function forwardTrialReportFromReadiness(report: PromotionReadinessReport): ForwardTrialReport {
   const evidence = forwardTrialEvidenceFromReadiness(report);
   const aggregateMetrics = asRecord(report.evidence?.aggregate_metrics);
@@ -2749,7 +2781,7 @@ function forwardTrialReportFromReadiness(report: PromotionReadinessReport): Forw
     report_hash: report.report_hash,
     lineage: report.lineage,
     policy: report.policy,
-    summary: evidence?.summary ?? {
+    summary: evidence?.summary ?? report.summary ?? {
       elapsed_sessions: 0,
       evidenced_sessions: 0,
       expected_decisions: 0,
@@ -2817,15 +2849,66 @@ export async function getForwardTrialPreflight(id: string): Promise<ForwardTrial
   const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/preflight`, { cache: "no-store" });
   return handleResponse<ForwardTrialPreflight>(response);
 }
-export async function getForwardTrialPromotionReadiness(id: string): Promise<PromotionReadinessReport> {
-  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness`, { cache: "no-store" });
+export async function getForwardTrialPromotionReadiness(
+  id: string,
+  options: { includeSessionEvidence?: boolean } = {},
+): Promise<PromotionReadinessReport> {
+  const params = new URLSearchParams();
+  if (options.includeSessionEvidence !== undefined) {
+    params.set("include_session_evidence", String(options.includeSessionEvidence));
+  }
+  const query = params.toString();
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness${query ? `?${query}` : ""}`,
+    { cache: "no-store" },
+  );
   return handleResponse<PromotionReadinessReport>(response);
 }
 
-export async function getForwardTrialReportHistory(id: string): Promise<ForwardTrialReportHistory> {
-  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness/reports`, { cache: "no-store" });
-  const data = await handleResponse<{ items: PromotionReadinessReport[] }>(response);
-  return { trial_id: id, items: data.items.map(forwardTrialReportFromReadiness) };
+export async function getForwardTrialReportHistory(
+  id: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<ForwardTrialReportHistory> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  const query = params.toString();
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness/reports${query ? `?${query}` : ""}`,
+    { cache: "no-store" },
+  );
+  const data = await handleResponse<{
+    items: PromotionReadinessReport[];
+    total?: number;
+    limit?: number;
+    offset?: number;
+    has_more?: boolean;
+  }>(response);
+  const items = data.items.map(forwardTrialReportFromReadiness);
+  return {
+    trial_id: id,
+    items,
+    total: data.total ?? items.length,
+    limit: data.limit ?? options.limit ?? items.length,
+    offset: data.offset ?? options.offset ?? 0,
+    has_more: data.has_more ?? false,
+  };
+}
+
+export async function getForwardTrialSessionEvidence(
+  id: string,
+  reportId: string | number,
+  options: { limit?: number; offset?: number } = {},
+): Promise<ForwardTrialSessionEvidencePage> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  const query = params.toString();
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness/reports/${encodeURIComponent(String(reportId))}/session-evidence${query ? `?${query}` : ""}`,
+    { cache: "no-store" },
+  );
+  return handleResponse<ForwardTrialSessionEvidencePage>(response);
 }
 
 export async function getForwardTrialReport(id: string, reportId: string | number): Promise<ForwardTrialReport> {

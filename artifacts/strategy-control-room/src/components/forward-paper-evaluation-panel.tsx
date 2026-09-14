@@ -11,8 +11,10 @@ import {
   getForwardTrialPromotionReadiness,
   getForwardTrialPreflight,
   getForwardTrialReportHistory,
+  getForwardTrialSessionEvidence,
   downloadForwardTrialReport,
   forwardTrialEvidenceFromReadiness,
+  forwardTrialEvidenceFromSessionPage,
   startForwardTrial,
   pauseForwardTrial,
   resumeForwardTrial,
@@ -160,7 +162,13 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
   const [readiness, setReadiness] = useState<PromotionReadinessReport | null>(null);
   const [preflight, setPreflight] = useState<ForwardTrialPreflight | null>(null);
   const [evidence, setEvidence] = useState<ForwardTrialEvidence | null>(null);
+  const [evidenceTotal, setEvidenceTotal] = useState(0);
+  const [evidenceHasMore, setEvidenceHasMore] = useState(false);
+  const [loadingMoreEvidence, setLoadingMoreEvidence] = useState(false);
   const [reportHistory, setReportHistory] = useState<ForwardTrialReport[]>([]);
+  const [reportHistoryTotal, setReportHistoryTotal] = useState(0);
+  const [reportHistoryHasMore, setReportHistoryHasMore] = useState(false);
+  const [loadingMoreReports, setLoadingMoreReports] = useState(false);
   const [reportError, setReportError] = useState("");
   const [downloadingReportId, setDownloadingReportId] = useState<string | number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -174,16 +182,28 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
       const [m, d, r, p, h] = await Promise.all([
         getForwardTrialMetrics(trial.id),
         getForwardTrialDecisions(trial.id),
-        getForwardTrialPromotionReadiness(trial.id),
+        getForwardTrialPromotionReadiness(trial.id, { includeSessionEvidence: false }),
         getForwardTrialPreflight(trial.id),
-        getForwardTrialReportHistory(trial.id).catch(() => null),
+        getForwardTrialReportHistory(trial.id, { limit: 10, offset: 0 }).catch(() => null),
       ]);
+      const sessionPage = r.evidence?.session_evidence
+        ? null
+        : await getForwardTrialSessionEvidence(trial.id, r.id, { limit: 20, offset: 0 }).catch(() => null);
+      const nextEvidence = r.evidence?.session_evidence
+        ? forwardTrialEvidenceFromReadiness(r)
+        : sessionPage
+          ? forwardTrialEvidenceFromSessionPage(r, sessionPage)
+          : null;
       setLatestMetric(m.length > 0 ? m[m.length - 1] : null);
       setDecisions(d);
       setReadiness(r);
       setPreflight(p);
-      setEvidence(forwardTrialEvidenceFromReadiness(r));
+      setEvidence(nextEvidence);
+      setEvidenceTotal(sessionPage?.total ?? nextEvidence?.sessions.length ?? 0);
+      setEvidenceHasMore(sessionPage?.has_more ?? false);
       setReportHistory(h?.items ?? []);
+      setReportHistoryTotal(h?.total ?? h?.items.length ?? 0);
+      setReportHistoryHasMore(h?.has_more ?? false);
       setReportError(h ? "" : "Evidence report history is unavailable.");
     } catch (e) {
       console.error(e);
@@ -191,6 +211,53 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
       setLoading(false);
     }
   }, [trial.id]);
+
+  const loadMoreEvidence = async () => {
+    if (!readiness || !evidence || loadingMoreEvidence || !evidenceHasMore) return;
+    try {
+      setLoadingMoreEvidence(true);
+      const page = await getForwardTrialSessionEvidence(trial.id, readiness.id, {
+        limit: 20,
+        offset: evidence.sessions.length,
+      });
+      const nextPageEvidence = forwardTrialEvidenceFromSessionPage(readiness, page);
+      if (nextPageEvidence) {
+        setEvidence(current => current ? {
+          ...current,
+          sessions: [...current.sessions, ...nextPageEvidence.sessions],
+          execution_sources: [
+            ...(current.execution_sources ?? []),
+            ...(nextPageEvidence.execution_sources ?? []),
+          ],
+        } : nextPageEvidence);
+      }
+      setEvidenceTotal(page.total);
+      setEvidenceHasMore(page.has_more);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoadingMoreEvidence(false);
+    }
+  };
+
+  const loadMoreReports = async () => {
+    if (loadingMoreReports || !reportHistoryHasMore) return;
+    try {
+      setLoadingMoreReports(true);
+      const page = await getForwardTrialReportHistory(trial.id, {
+        limit: 10,
+        offset: reportHistory.length,
+      });
+      setReportHistory(current => [...current, ...page.items]);
+      setReportHistoryTotal(page.total);
+      setReportHistoryHasMore(page.has_more);
+    } catch (error) {
+      console.error(error);
+      setReportError("More evidence report history could not be loaded.");
+    } finally {
+      setLoadingMoreReports(false);
+    }
+  };
 
   const handleReportDownload = async (report: ForwardTrialReport) => {
     try {
@@ -473,6 +540,24 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
                 </div>
               )}
             </div>
+            {(evidenceHasMore || evidence.sessions.length > 0) && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                <span data-testid={`text-forward-evidence-loaded-${trial.id}`}>
+                  Showing {evidence.sessions.length} of {evidenceTotal || evidence.sessions.length} sessions
+                </span>
+                {evidenceHasMore && (
+                  <button
+                    type="button"
+                    className="rounded border border-line bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={loadingMoreEvidence}
+                    onClick={() => void loadMoreEvidence()}
+                    data-testid={`button-load-more-forward-evidence-${trial.id}`}
+                  >
+                    {loadingMoreEvidence ? "Loading…" : "Load more sessions"}
+                  </button>
+                )}
+              </div>
+            )}
             {(evidence.execution_sources?.length ?? 0) > 0 && (
               <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
                 <span className="font-semibold text-slate-600">Trial-owned execution evidence:</span>
@@ -548,6 +633,24 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
                 </div>
               </details>
             ))}
+            {(reportHistoryHasMore || reportHistory.length > 0) && (
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                <span data-testid={`text-forward-trial-report-history-loaded-${trial.id}`}>
+                  Showing {reportHistory.length} of {reportHistoryTotal || reportHistory.length} report versions
+                </span>
+                {reportHistoryHasMore && (
+                  <button
+                    type="button"
+                    className="rounded border border-line bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={loadingMoreReports}
+                    onClick={() => void loadMoreReports()}
+                    data-testid={`button-load-more-forward-trial-reports-${trial.id}`}
+                  >
+                    {loadingMoreReports ? "Loading…" : "Load more reports"}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="mt-3 text-xs text-slate-500" data-testid={`text-forward-trial-report-history-empty-${trial.id}`}>

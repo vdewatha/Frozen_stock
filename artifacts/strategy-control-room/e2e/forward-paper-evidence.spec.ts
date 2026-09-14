@@ -227,11 +227,11 @@ test.beforeEach(async ({ page }) => {
       live_authorized: false,
     }),
   }));
-  await page.route(`**/api/stock/forward-trials/${trialId}/promotion-readiness`, route => route.fulfill({
+  await page.route(`**/api/stock/forward-trials/${trialId}/promotion-readiness*`, route => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify(readinessReport),
   }));
-  await page.route(`**/api/stock/forward-trials/${trialId}/promotion-readiness/reports`, route => route.fulfill({
+  await page.route(`**/api/stock/forward-trials/${trialId}/promotion-readiness/reports*`, route => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify({ items: [readinessReport] }),
   }));

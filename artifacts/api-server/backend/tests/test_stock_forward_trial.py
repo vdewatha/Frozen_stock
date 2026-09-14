@@ -34,7 +34,8 @@ from app.services.stock_forward_trial import (
 )
 from app.services.stock_promotion_readiness import (
     evaluate_promotion_readiness, promotion_readiness_report,
-    promotion_readiness_report_history,
+    promotion_readiness_report_history, promotion_readiness_report_history_page,
+    promotion_readiness_session_evidence,
 )
 from app.services.stock_paper_ledger import reserve_stock_paper_order
 from app.tasks.jobs import stock_forward_trial_observe_job
@@ -122,6 +123,10 @@ class ForwardTrialTests(unittest.TestCase):
         )
         self.assertEqual(
             required_role("GET", "/stock/forward-trials/00000000-0000-0000-0000-000000000001/promotion-readiness/reports/1/download"),
+            "viewer",
+        )
+        self.assertEqual(
+            required_role("GET", "/stock/forward-trials/00000000-0000-0000-0000-000000000001/promotion-readiness/reports/1/session-evidence"),
             "viewer",
         )
 
@@ -237,6 +242,22 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(retrieved["report_hash"], first["report_hash"])
             self.assertEqual(retrieved["evidence"]["session_evidence"]["as_of"], "2025-01-03T21:00:00+00:00")
             self.assertEqual(first["gates"]["historical_feed_health"]["status"], "unknown")
+            page = promotion_readiness_report_history_page(db, row.id, limit=1)
+            self.assertEqual(page["total"], 2)
+            self.assertTrue(page["has_more"])
+            self.assertEqual(len(page["items"]), 1)
+            self.assertIsNone(page["items"][0]["evidence"])
+            self.assertEqual(page["items"][0]["summary"]["historical_evidence_status"], "unknown")
+            bounded_history = promotion_readiness_report_history(
+                db, row.id, limit=1, offset=1
+            )
+            self.assertEqual([item["report_hash"] for item in bounded_history], [second["report_hash"]])
+            evidence_page = promotion_readiness_session_evidence(
+                db, row.id, first["id"], limit=1
+            )
+            self.assertEqual(evidence_page["total"], 0)
+            self.assertFalse(evidence_page["has_more"])
+            self.assertEqual(evidence_page["items"], [])
 
     def test_invalid_binding_cannot_create_trial(self):
         with Session(self.engine) as db:
