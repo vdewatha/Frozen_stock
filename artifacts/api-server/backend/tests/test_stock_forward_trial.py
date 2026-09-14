@@ -278,6 +278,98 @@ class ForwardTrialTests(unittest.TestCase):
                 before_report_count,
             )
 
+    def test_authenticated_missing_report_download_is_404_and_read_only(self):
+        trial_id = "00000000-0000-0000-0000-000000000001"
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused", trial_id=trial_id)
+            created = evaluate_promotion_readiness(db, row.id)
+            db.commit()
+            before_trial = (
+                row.status,
+                row.pause_reason,
+                row.binding_id,
+                dict(row.policy),
+                dict(row.lineage),
+            )
+            before_reports = [
+                (
+                    report.id,
+                    report.trial_id,
+                    report.report_hash,
+                    report.decision,
+                    report.as_of,
+                    json.loads(json.dumps(report.evidence)),
+                )
+                for report in db.scalars(
+                    select(StockPaperPromotionReadinessReport).order_by(
+                        StockPaperPromotionReadinessReport.id
+                    )
+                ).all()
+            ]
+            missing_report_id = created["id"] + 1
+
+        app = FastAPI()
+        app.add_middleware(
+            AuthenticationMiddleware,
+            configuration=Settings(
+                _env_file=None,
+                auth_viewer_key="v" * 32,
+                auth_researcher_key="r" * 32,
+                auth_operator_key="o" * 32,
+                auth_admin_key="a" * 32,
+            ),
+        )
+        app.include_router(router, prefix="/api")
+
+        def db_session():
+            with Session(self.engine) as db:
+                yield db
+
+        app.dependency_overrides[get_db] = db_session
+        path = (
+            f"/api/stock/forward-trials/{trial_id}/"
+            f"promotion-readiness/reports/{missing_report_id}/download"
+        )
+        with TestClient(app) as client:
+            response = client.get(
+                path,
+                headers={"Authorization": "Bearer " + "v" * 32},
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["detail"], "Promotion readiness report not found")
+        self.assertNotIn("report_hash", response.text)
+        self.assertNotIn("evidence", response.text)
+        self.assertNotIn("Content-Disposition", response.headers)
+        with Session(self.engine) as db:
+            current = db.get(StockPaperTrial, trial_id)
+            self.assertEqual(
+                before_trial,
+                (
+                    current.status,
+                    current.pause_reason,
+                    current.binding_id,
+                    dict(current.policy),
+                    dict(current.lineage),
+                ),
+            )
+            after_reports = [
+                (
+                    report.id,
+                    report.trial_id,
+                    report.report_hash,
+                    report.decision,
+                    report.as_of,
+                    json.loads(json.dumps(report.evidence)),
+                )
+                for report in db.scalars(
+                    select(StockPaperPromotionReadinessReport).order_by(
+                        StockPaperPromotionReadinessReport.id
+                    )
+                ).all()
+            ]
+            self.assertEqual(after_reports, before_reports)
+
     def test_session_evidence_uses_first_completed_sessions_after_start(self):
         with Session(self.engine) as db:
             row = self.trial(db)
