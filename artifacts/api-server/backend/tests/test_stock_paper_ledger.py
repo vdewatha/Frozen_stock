@@ -39,6 +39,18 @@ from app.services.stock_recovery import (
     resume_stock_paper_after_revalidation,
 )
 
+RECOVERY_TEST_NOW = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+
+
+class DeterministicRecoveryClock:
+    def __init__(self, start: datetime):
+        self.current = start
+
+    def __call__(self) -> datetime:
+        value = self.current
+        self.current += timedelta(microseconds=1)
+        return value
+
 
 class FakeAlpaca:
     def __init__(self, positions=None, orders=None, activities=None, account=None, lookup_rows=None):
@@ -877,16 +889,19 @@ class StockPaperRecoveryTests(unittest.TestCase):
         from app.models.stock_paper import StockPaperAccount
         from app.services.stock_recovery import recovery_status
 
-        with Session(self.engine) as db:
+        pause_at = RECOVERY_TEST_NOW - timedelta(minutes=20)
+        halt_at = RECOVERY_TEST_NOW - timedelta(minutes=10)
+        with patch("app.services.stock_recovery._now", new=DeterministicRecoveryClock(RECOVERY_TEST_NOW)), Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())
             enter_stock_recovery(db, reason="Monitoring boundary test", actor="watchdog")
-            state = db.query(StockPaperRecoveryEvent).filter_by(action="pause").order_by(StockPaperRecoveryEvent.id.desc()).one()
-            pause_at = state.created_at
+            pause_event = db.query(StockPaperRecoveryEvent).filter_by(action="pause").order_by(StockPaperRecoveryEvent.id.desc()).one()
+            pause_event.created_at = pause_at
             account = db.query(StockPaperAccount).one()
             account.status = "reconciled"
             account.reconciliation_required = False
+            account.halted_at = pause_at
             recovery_state = db.query(StockPaperRecoveryState).one()
-            recovery_state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            recovery_state.cooldown_until = RECOVERY_TEST_NOW - timedelta(minutes=1)
             db.commit()
 
             db.add(StockMonitoringSnapshot(
@@ -905,11 +920,11 @@ class StockPaperRecoveryTests(unittest.TestCase):
 
             # A clear snapshot after the pause still cannot satisfy a later
             # broker-account halt boundary.
-            account.halted_at = pause_at + timedelta(minutes=1)
+            account.halted_at = halt_at
             db.add(StockMonitoringSnapshot(
                 monitor_key="stock_continuous_monitor",
                 status="clear",
-                generated_at=pause_at + timedelta(seconds=30),
+                generated_at=pause_at + timedelta(minutes=5),
                 checks=[],
                 actions=[],
                 source="test",
@@ -925,7 +940,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             db.add(StockMonitoringSnapshot(
                 monitor_key="stock_continuous_monitor",
                 status="clear",
-                generated_at=account.halted_at + timedelta(seconds=1),
+                generated_at=halt_at + timedelta(seconds=1),
                 checks=[],
                 actions=[],
                 source="test",
@@ -939,18 +954,26 @@ class StockPaperRecoveryTests(unittest.TestCase):
         from app.models.stock_paper import StockPaperAccount
         from app.services.stock_recovery import recovery_status
 
-        with Session(self.engine) as db:
+        pause_at = RECOVERY_TEST_NOW - timedelta(minutes=20)
+        blocked_at = RECOVERY_TEST_NOW - timedelta(minutes=5)
+        # The projection must see evidence generated after the blocked
+        # preflight's checked_at timestamp, not merely after its database row.
+        clear_at = RECOVERY_TEST_NOW + timedelta(minutes=1)
+        with patch("app.services.stock_recovery._now", new=DeterministicRecoveryClock(RECOVERY_TEST_NOW)), Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())
             enter_stock_recovery(db, reason="Monitoring status changed", actor="watchdog")
+            pause_event = db.query(StockPaperRecoveryEvent).filter_by(action="pause").order_by(StockPaperRecoveryEvent.id.desc()).one()
+            pause_event.created_at = pause_at
             account = db.query(StockPaperAccount).one()
             account.status = "reconciled"
             account.reconciliation_required = False
+            account.halted_at = pause_at
             state = db.query(StockPaperRecoveryState).one()
-            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            state.cooldown_until = RECOVERY_TEST_NOW - timedelta(minutes=1)
             db.add(StockMonitoringSnapshot(
                 monitor_key="stock_continuous_monitor",
                 status="warning",
-                generated_at=datetime.now(timezone.utc),
+                generated_at=RECOVERY_TEST_NOW - timedelta(minutes=2),
                 checks=[{"status": "warning"}],
                 actions=[],
                 source="test",
@@ -963,7 +986,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
                 action="monitoring_preflight",
                 status="blocked",
             ).order_by(StockPaperRecoveryEvent.id.desc()).one()
-            clear_at = datetime.now(timezone.utc)
+            blocked.created_at = blocked_at
             db.add(StockMonitoringSnapshot(
                 monitor_key="stock_continuous_monitor",
                 status="clear",
@@ -984,19 +1007,23 @@ class StockPaperRecoveryTests(unittest.TestCase):
         from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
         from app.models.stock_paper import StockPaperAccount
 
-        with Session(self.engine) as db:
+        first_pause_at = RECOVERY_TEST_NOW - timedelta(minutes=8)
+        second_pause_at = RECOVERY_TEST_NOW - timedelta(minutes=4)
+        with patch("app.services.stock_recovery._now", new=DeterministicRecoveryClock(RECOVERY_TEST_NOW)), Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())
             enter_stock_recovery(db, reason="First recovery attempt", actor="watchdog")
             first_pause = db.query(StockPaperRecoveryEvent).filter_by(action="pause").order_by(StockPaperRecoveryEvent.id.desc()).one()
+            first_pause.created_at = first_pause_at
             account = db.query(StockPaperAccount).one()
             account.status = "reconciled"
             account.reconciliation_required = False
+            account.halted_at = first_pause_at
             recovery_state = db.query(StockPaperRecoveryState).one()
-            recovery_state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            recovery_state.cooldown_until = RECOVERY_TEST_NOW - timedelta(minutes=1)
             db.add(StockMonitoringSnapshot(
                 monitor_key="stock_continuous_monitor",
                 status="clear",
-                generated_at=first_pause.created_at + timedelta(seconds=1),
+                generated_at=first_pause_at + timedelta(seconds=1),
                 checks=[],
                 actions=[],
                 source="test",
@@ -1008,11 +1035,12 @@ class StockPaperRecoveryTests(unittest.TestCase):
             )
 
             enter_stock_recovery(db, reason="Second recovery attempt", actor="watchdog")
+            second_pause = db.query(StockPaperRecoveryEvent).filter_by(action="pause").order_by(StockPaperRecoveryEvent.id.desc()).first()
+            second_pause.created_at = second_pause_at
             account.status = "reconciled"
             account.reconciliation_required = False
-            prior_snapshot = db.query(StockMonitoringSnapshot).order_by(StockMonitoringSnapshot.generated_at.desc()).one()
-            account.halted_at = prior_snapshot.generated_at + timedelta(seconds=1)
-            recovery_state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            account.halted_at = second_pause_at
+            recovery_state.cooldown_until = RECOVERY_TEST_NOW - timedelta(minutes=1)
             db.commit()
             with self.assertRaisesRegex(StockPaperError, "generated before the current recovery pause"):
                 resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Reject evidence from prior pause")
@@ -1125,7 +1153,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
         from app.models import Notification, StockMonitoringSnapshot, StockPaperRecoveryEvent
         from app.models.stock_paper import StockPaperAccount
 
-        transaction_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+        transaction_time = RECOVERY_TEST_NOW.isoformat()
         fill_without_fee = {
             "id": "automatic-boundary-fill",
             "activity_type": "FILL",
@@ -1147,7 +1175,9 @@ class StockPaperRecoveryTests(unittest.TestCase):
             account=StockPaperLedgerTests.account_payload(cash="899", equity="999", last_equity="999"),
         )
 
-        with Session(self.engine) as db:
+        pause_at = RECOVERY_TEST_NOW - timedelta(minutes=20)
+        halt_at = RECOVERY_TEST_NOW - timedelta(minutes=10)
+        with patch("app.services.stock_recovery._now", new=DeterministicRecoveryClock(RECOVERY_TEST_NOW)), Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())
             self.assertEqual(reconcile_stock_paper_account(db, residual_account)["status"], "halted")
 
@@ -1156,10 +1186,12 @@ class StockPaperRecoveryTests(unittest.TestCase):
             # asserted as a newly persisted automatic-recovery notice.
             accounting_notice = db.query(Notification).filter_by(source="stock_recovery_automation").one()
             accounting_notice.status = "resolved"
+            account = db.query(StockPaperAccount).one()
+            account.halted_at = pause_at
             db.add(StockMonitoringSnapshot(
                 monitor_key="stock_continuous_monitor",
                 status="clear",
-                generated_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+                generated_at=pause_at - timedelta(seconds=1),
                 checks=[],
                 actions=[],
                 source="test",
@@ -1169,8 +1201,12 @@ class StockPaperRecoveryTests(unittest.TestCase):
             waiting = reconcile_stock_paper_account(db, enriched_account)
             self.assertEqual(waiting["automatic_recovery"]["status"], "waiting")
 
+            pause_event = db.query(StockPaperRecoveryEvent).filter_by(action="pause").order_by(StockPaperRecoveryEvent.id.desc()).one()
+            pause_event.created_at = pause_at
             state = db.query(StockPaperRecoveryState).one()
-            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            account = db.query(StockPaperAccount).one()
+            account.halted_at = pause_at
+            state.cooldown_until = RECOVERY_TEST_NOW - timedelta(minutes=1)
             db.commit()
 
             blocked = attempt_automatic_stock_recovery(
@@ -1194,12 +1230,13 @@ class StockPaperRecoveryTests(unittest.TestCase):
             ).one()
             self.assertIn("generated before the current recovery pause", notice.message)
 
-            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            state.cooldown_until = RECOVERY_TEST_NOW - timedelta(minutes=1)
             account = db.query(StockPaperAccount).one()
+            account.halted_at = halt_at
             db.add(StockMonitoringSnapshot(
                 monitor_key="stock_continuous_monitor",
                 status="clear",
-                generated_at=account.halted_at + timedelta(seconds=1),
+                generated_at=halt_at + timedelta(seconds=1),
                 checks=[],
                 actions=[],
                 source="test",
