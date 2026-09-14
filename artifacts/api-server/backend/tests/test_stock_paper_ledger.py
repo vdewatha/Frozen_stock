@@ -32,6 +32,7 @@ from app.services.stock_paper_ledger import (
 from app.services.stock_recovery import (
     _accounting_review_digest,
     acknowledge_stock_paper_accounting_review,
+    attempt_automatic_stock_recovery,
     enter_stock_recovery,
     recovery_evidence,
     run_stock_watchdog,
@@ -1073,6 +1074,99 @@ class StockPaperRecoveryTests(unittest.TestCase):
             self.assertEqual(repeated["automatic_recovery"]["status"], "already_resumed")
             self.assertTrue(repeated["costs_known"])
             self.assertEqual(db.query(StockPaperRecoveryState).one().status, "resumable")
+
+    def test_automatic_recovery_rejects_monitoring_snapshot_before_pause_boundary(self):
+        from app.models import Notification, StockMonitoringSnapshot, StockPaperRecoveryEvent
+        from app.models.stock_paper import StockPaperAccount
+
+        transaction_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+        fill_without_fee = {
+            "id": "automatic-boundary-fill",
+            "activity_type": "FILL",
+            "order_id": "broker-order-automatic-boundary",
+            "symbol": "SPY",
+            "side": "buy",
+            "qty": "1",
+            "price": "100",
+            "transaction_time": transaction_time,
+        }
+        residual_account = FakeAlpaca(
+            positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
+            activities=[fill_without_fee],
+            account=StockPaperLedgerTests.account_payload(cash="899", equity="999", last_equity="999"),
+        )
+        enriched_account = FakeAlpaca(
+            positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
+            activities=[{**fill_without_fee, "commission": "1"}],
+            account=StockPaperLedgerTests.account_payload(cash="899", equity="999", last_equity="999"),
+        )
+
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            self.assertEqual(reconcile_stock_paper_account(db, residual_account)["status"], "halted")
+
+            # The first accounting-review attempt creates its own blocked
+            # notification. Resolve it here so the monitoring block below is
+            # asserted as a newly persisted automatic-recovery notice.
+            accounting_notice = db.query(Notification).filter_by(source="stock_recovery_automation").one()
+            accounting_notice.status = "resolved"
+            db.add(StockMonitoringSnapshot(
+                monitor_key="stock_continuous_monitor",
+                status="clear",
+                generated_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+                checks=[],
+                actions=[],
+                source="test",
+            ))
+            db.commit()
+
+            waiting = reconcile_stock_paper_account(db, enriched_account)
+            self.assertEqual(waiting["automatic_recovery"]["status"], "waiting")
+
+            state = db.query(StockPaperRecoveryState).one()
+            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.commit()
+
+            blocked = attempt_automatic_stock_recovery(
+                db,
+                candidate=True,
+                evidence={"enriched_activity_ids": ["automatic-boundary-fill"]},
+            )
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertIn("generated before the current recovery pause", blocked["reason"])
+            self.assertEqual(db.query(StockPaperAccount).one().status, "halted")
+
+            preflight = db.query(StockPaperRecoveryEvent).filter_by(
+                action="monitoring_preflight",
+                status="blocked",
+                actor="stock_recovery_automation",
+            ).one()
+            self.assertIn("generated before the current recovery pause", preflight.reason)
+            notice = db.query(Notification).filter_by(
+                source="stock_recovery_automation",
+                status="open",
+            ).one()
+            self.assertIn("generated before the current recovery pause", notice.message)
+
+            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            account = db.query(StockPaperAccount).one()
+            db.add(StockMonitoringSnapshot(
+                monitor_key="stock_continuous_monitor",
+                status="clear",
+                generated_at=account.halted_at + timedelta(seconds=1),
+                checks=[],
+                actions=[],
+                source="test",
+            ))
+            db.commit()
+
+            allowed = attempt_automatic_stock_recovery(
+                db,
+                candidate=True,
+                evidence={"enriched_activity_ids": ["automatic-boundary-fill"]},
+            )
+            self.assertEqual(allowed["status"], "awaiting_operator_revalidation")
+            self.assertEqual(db.query(StockPaperAccount).one().status, "reconciled")
 
     def test_created_at_is_a_stable_fill_timestamp_and_old_created_at_halts(self):
         fill_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
