@@ -667,6 +667,102 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertTrue(all(audit.status == "blocked" for audit in audits))
             self.assertTrue(all("not reconciled" in audit.message for audit in audits))
 
+    def test_forward_trial_lifecycle_requires_operator_and_persists_operator_actions(self):
+        trial_ids = {
+            "start": "00000000-0000-0000-0000-000000000001",
+            "pause": "00000000-0000-0000-0000-000000000002",
+            "resume": "00000000-0000-0000-0000-000000000003",
+            "stop": "00000000-0000-0000-0000-000000000004",
+        }
+        initial_statuses = {
+            "start": "approved",
+            "pause": "running",
+            "resume": "paused",
+            "stop": "paused",
+        }
+        with Session(self.engine) as db:
+            for action, trial_id in trial_ids.items():
+                self.trial(db, status=initial_statuses[action], trial_id=trial_id)
+            self.account(db)
+            db.commit()
+
+        app = FastAPI()
+        app.add_middleware(
+            AuthenticationMiddleware,
+            configuration=Settings(
+                _env_file=None,
+                auth_viewer_key="v" * 32,
+                auth_researcher_key="r" * 32,
+                auth_operator_key="o" * 32,
+                auth_admin_key="a" * 32,
+            ),
+        )
+        app.include_router(router, prefix="/api")
+
+        def db_session():
+            with Session(self.engine) as db:
+                yield db
+
+        app.dependency_overrides[get_db] = db_session
+        lifecycle = tuple(trial_ids)
+        with TestClient(app) as client:
+            for role in ("viewer", "researcher"):
+                for action in lifecycle:
+                    with self.subTest(role=role, action=action):
+                        response = client.post(
+                            f"/api/stock/forward-trials/{trial_ids[action]}/{action}",
+                            headers={"Authorization": "Bearer " + role[0] * 32},
+                            json={"reason": "viewer or researcher must not mutate trial state"}
+                            if action == "pause" else None,
+                        )
+                        self.assertEqual(response.status_code, 403, response.text)
+                        self.assertEqual(response.json(), {"detail": "Insufficient role"})
+                        self.assertNotIn(trial_ids[action], response.text)
+                        self.assertNotIn("broker", response.text.lower())
+                        self.assertNotIn("alpaca", response.text.lower())
+
+            with patch(
+                "app.services.stock_forward_trial.validate_trial_artifact",
+                return_value={},
+            ), patch(
+                "app.services.stock_forward_trial.trial_feed_preflight",
+                return_value={"ready": True, "status": "ready"},
+            ):
+                expected_statuses = {
+                    "start": "running",
+                    "pause": "paused",
+                    "resume": "running",
+                    "stop": "completed",
+                }
+                for action in lifecycle:
+                    with self.subTest(role="operator", action=action):
+                        response = client.post(
+                            f"/api/stock/forward-trials/{trial_ids[action]}/{action}",
+                            headers={"Authorization": "Bearer " + "o" * 32},
+                            json={"reason": "operator lifecycle test"}
+                            if action == "pause" else None,
+                        )
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertEqual(response.json()["status"], expected_statuses[action])
+
+        with Session(self.engine) as db:
+            self.assertEqual(
+                {
+                    action: db.get(StockPaperTrial, trial_id).status
+                    for action, trial_id in trial_ids.items()
+                },
+                {
+                    "start": "running",
+                    "pause": "paused",
+                    "resume": "running",
+                    "stop": "completed",
+                },
+            )
+            self.assertEqual(
+                db.get(StockPaperTrial, trial_ids["pause"]).pause_reason,
+                "operator lifecycle test",
+            )
+
     def test_start_feed_unavailable_blocks_during_session(self):
         with Session(self.engine) as db:
             row = self.trial(db, status="approved")
@@ -1399,7 +1495,11 @@ class ForwardTrialTests(unittest.TestCase):
         self.assertNotIn(("/stock/forward-trials/{trial_id}/decisions", "POST"), methods)
         trial_path = "/stock/forward-trials/00000000-0000-0000-0000-000000000001"
         self.assertEqual(required_role("GET", trial_path + "/decisions"), "viewer")
-        self.assertEqual(required_role("POST", "/stock/forward-trials/00000000-0000-0000-0000-000000000001/start"), "operator")
+        for action in ("start", "pause", "resume", "stop"):
+            self.assertEqual(
+                required_role(f"POST", f"{trial_path}/{action}"),
+                "operator",
+            )
         self.assertEqual(required_role("POST", "/stock/forward-trials"), "admin")
 
     def test_allocation_counts_filled_open_lot_and_unfilled_remainder_once(self):
