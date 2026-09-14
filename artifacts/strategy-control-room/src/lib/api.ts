@@ -2441,6 +2441,114 @@ export type ForwardTrialMetricHistoryItem = {
   };
 };
 
+/**
+ * Evidence is deliberately separate from elapsed trial metrics.  A session
+ * can have elapsed while its decisions are missing, rejected, stale, or
+ * otherwise not attributable to this trial.  Keep the source identifiers
+ * opaque so the UI can link to trial-owned evidence without exposing broker
+ * payloads.
+ */
+export type ForwardTrialEvidenceSource = {
+  source_id?: string | null;
+  kind?: string | null;
+  label?: string | null;
+  identifier?: string | null;
+};
+
+export type ForwardTrialEvidenceSymbol = {
+  symbol: string;
+  status?: "evidenced" | "partial" | "missing" | "rejected" | "unknown" | string;
+  expected_decisions: number;
+  observed_decisions: number;
+  verified_decisions?: number;
+  duplicate_exclusions?: number;
+  rejected_decisions: number;
+  missing_decisions: number;
+  missing_reasons: string[];
+  rejected_reasons: string[];
+  execution_sources: ForwardTrialEvidenceSource[];
+};
+
+export type ForwardTrialEvidenceSession = {
+  session_id: string;
+  session_date?: string | null;
+  status: "evidenced" | "partial" | "missing" | "rejected" | "unknown" | string;
+  expected_decisions: number;
+  observed_decisions: number;
+  verified_decisions?: number;
+  duplicate_exclusions?: number;
+  rejected_decisions: number;
+  missing_decisions: number;
+  missing_reasons: string[];
+  rejected_reasons: string[];
+  symbols: ForwardTrialEvidenceSymbol[];
+  execution_sources: ForwardTrialEvidenceSource[];
+};
+
+export type ForwardTrialEvidenceSummary = {
+  elapsed_sessions: number;
+  evidenced_sessions: number;
+  expected_decisions: number;
+  observed_decisions: number;
+  verified_decisions?: number;
+  duplicate_exclusions?: number;
+  rejected_decisions: number;
+  missing_decisions: number;
+  decision_coverage: string | null;
+  classification: "accumulating" | "insufficient" | "failing" | "passing" | "unknown" | string;
+  costs_known: boolean | null;
+  historical_evidence_status?: "verified" | "unknown" | "unavailable" | string;
+  historical_evidence_reason?: string | null;
+};
+
+export type ForwardTrialEvidence = {
+  trial_id: string;
+  as_of: string | null;
+  summary: ForwardTrialEvidenceSummary;
+  sessions: ForwardTrialEvidenceSession[];
+  lineage?: Record<string, unknown>;
+  policy?: Record<string, unknown>;
+  source_links?: ForwardTrialEvidenceSource[];
+  execution_sources?: ForwardTrialEvidenceSource[];
+};
+
+export type ForwardTrialReport = {
+  id: string | number;
+  trial_id: string;
+  version: number | string;
+  created_at: string;
+  as_of: string | null;
+  classification: "accumulating" | "insufficient" | "failing" | "passing" | "unknown" | string;
+  report_hash: string;
+  digest?: string;
+  lineage: Record<string, unknown>;
+  policy: Record<string, unknown>;
+  summary: ForwardTrialEvidenceSummary;
+  sessions: ForwardTrialEvidenceSession[];
+  readiness_gates: Record<string, PromotionReadinessGate>;
+  reproducibility?: {
+    trial_id?: string;
+    model_id?: string | null;
+    model_hash?: string | null;
+    policy_version?: string | null;
+    source_ids?: string[];
+    as_of?: string | null;
+  };
+  source_ids?: string[];
+  source_links?: ForwardTrialEvidenceSource[];
+  execution_sources?: ForwardTrialEvidenceSource[];
+  paper_only: boolean;
+  live_authorized: false;
+  promotion_authorized: false;
+  resume_authorized?: false;
+  download_url?: string | null;
+};
+
+export type ForwardTrialReportHistory = {
+  trial_id: string;
+  items: ForwardTrialReport[];
+};
+
 export type PromotionReadinessGate = {
   status: "pass" | "fail" | "unknown" | string;
   value?: string | number | null;
@@ -2450,18 +2558,227 @@ export type PromotionReadinessGate = {
 
 export type PromotionReadinessReport = {
   id: number;
+  version?: number | null;
   trial_id: string;
   source_metric_id: number | null;
+  as_of?: string | null;
   report_hash: string;
   decision: "pass" | "fail" | "unknown" | string;
   gates: Record<string, PromotionReadinessGate>;
   lineage: Record<string, unknown>;
   policy: Record<string, unknown>;
+  evidence?: {
+    version?: number;
+    trial_id?: string;
+    source_metric_id?: number | null;
+    source_metric_as_of?: string | null;
+    as_of?: string | null;
+    decision?: string;
+    gates?: Record<string, PromotionReadinessGate>;
+    lineage?: Record<string, unknown>;
+    policy?: Record<string, unknown>;
+    aggregate_metrics?: Record<string, unknown> | null;
+    session_evidence?: {
+      version?: number;
+      as_of?: string | null;
+      window?: {
+        started_at?: string | null;
+        regular_sessions_required?: number;
+        elapsed_regular_sessions?: number;
+        complete?: boolean;
+        session_dates?: string[];
+      };
+      sessions?: Array<Record<string, unknown>>;
+      aggregates?: Record<string, unknown>;
+      source_lineage?: Record<string, unknown>;
+    } | null;
+    paper_only?: boolean;
+    live_authorized?: boolean;
+    promotion_authorized?: false;
+  } | null;
   paper_only: boolean;
   live_authorized: boolean;
   created_at: string;
   promotion_authorized: false;
 };
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : Number.isFinite(Number(value)) ? Number(value) : fallback;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function reasons(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+  const text = asString(value);
+  return text ? [text] : [];
+}
+
+function executionSources(executionValue: unknown): ForwardTrialEvidenceSource[] {
+  const execution = asRecord(executionValue);
+  if (execution.status === "not_applicable") return [];
+  const sources: ForwardTrialEvidenceSource[] = [];
+  for (const [key, value] of Object.entries(execution)) {
+    if (key === "status" || value == null || value === "") continue;
+    const values = Array.isArray(value) ? value : [value];
+    values.forEach((item) => {
+      if (typeof item === "string" || typeof item === "number") {
+        sources.push({ source_id: String(item), kind: key, label: `${key.replaceAll("_", " ")} ${item}`, identifier: String(item) });
+      }
+    });
+  }
+  return sources;
+}
+
+function evidenceClassification(report: PromotionReadinessReport, aggregateMetrics: Record<string, unknown>): string {
+  const metricClassification = asString(aggregateMetrics.classification);
+  if (metricClassification) return metricClassification;
+  if (report.decision === "pass") return "passing";
+  if (report.decision === "fail") return "failing";
+  return "insufficient";
+}
+
+/**
+ * Convert the immutable readiness report's nested session evidence into the
+ * stable UI contract. The backend intentionally keeps execution references as
+ * identifiers only; no broker payload is ever sent to the browser.
+ */
+export function forwardTrialEvidenceFromReadiness(report: PromotionReadinessReport): ForwardTrialEvidence | null {
+  const nested = report.evidence?.session_evidence;
+  if (!nested) return null;
+  const nestedRecord = nested as Record<string, unknown>;
+  const window = asRecord(nestedRecord.window);
+  const aggregate = asRecord(nestedRecord.aggregates);
+  const aggregateMetrics = asRecord(report.evidence?.aggregate_metrics);
+  const rawSessions = Array.isArray(nestedRecord.sessions) ? nestedRecord.sessions : [];
+  const sessions: ForwardTrialEvidenceSession[] = rawSessions.map((rawValue, sessionIndex) => {
+    const raw = asRecord(rawValue);
+    const rawSymbols = Array.isArray(raw.symbols) ? raw.symbols : [];
+    const symbols: ForwardTrialEvidenceSymbol[] = rawSymbols.map((symbolValue) => {
+      const symbol = asRecord(symbolValue);
+      const execution = asRecord(symbol.execution);
+      const expected = asNumber(symbol.expected_decisions, 1);
+      const observed = asNumber(symbol.observed_decisions);
+      const rejected = symbol.status === "rejected" || asString(symbol.rejected_reason) ? 1 : 0;
+      const missing = asString(symbol.missing_reason) ? 1 : Math.max(0, expected - observed);
+      return {
+        symbol: asString(symbol.symbol) ?? `symbol-${sessionIndex}`,
+        status: asString(symbol.status) ?? "unknown",
+        expected_decisions: expected,
+        observed_decisions: observed,
+        verified_decisions: asNumber(symbol.verified_decisions),
+        duplicate_exclusions: asNumber(symbol.duplicate_exclusions),
+        rejected_decisions: rejected,
+        missing_decisions: missing,
+        missing_reasons: reasons(symbol.missing_reason),
+        rejected_reasons: reasons(symbol.rejected_reason),
+        execution_sources: executionSources(execution),
+      };
+    });
+    const expected = symbols.reduce((total, symbol) => total + symbol.expected_decisions, 0);
+    const observed = symbols.reduce((total, symbol) => total + symbol.observed_decisions, 0);
+    const verified = symbols.reduce((total, symbol) => total + (symbol.verified_decisions ?? 0), 0);
+    const rejected = symbols.reduce((total, symbol) => total + symbol.rejected_decisions, 0);
+    const missing = symbols.reduce((total, symbol) => total + symbol.missing_decisions, 0);
+    const complete = expected > 0 && verified >= expected;
+    const status = complete ? "evidenced" : rejected > 0 ? "rejected" : missing > 0 ? "missing" : "partial";
+    return {
+      session_id: asString(raw.session_date) ?? `session-${sessionIndex + 1}`,
+      session_date: asString(raw.session_date),
+      status,
+      expected_decisions: expected,
+      observed_decisions: observed,
+      verified_decisions: verified,
+      duplicate_exclusions: symbols.reduce((total, symbol) => total + (symbol.duplicate_exclusions ?? 0), 0),
+      rejected_decisions: rejected,
+      missing_decisions: missing,
+      missing_reasons: symbols.flatMap((symbol) => symbol.missing_reasons),
+      rejected_reasons: symbols.flatMap((symbol) => symbol.rejected_reasons),
+      symbols,
+      execution_sources: symbols.flatMap((symbol) => symbol.execution_sources),
+    };
+  });
+  const costsKnown = typeof aggregateMetrics.costs_known === "boolean" ? aggregateMetrics.costs_known : null;
+  const unknownHistorical = asNumber(aggregate.unknown_historical_feed_health);
+  const summary: ForwardTrialEvidenceSummary = {
+    elapsed_sessions: asNumber(window.elapsed_regular_sessions, sessions.length),
+    evidenced_sessions: sessions.filter((session) => session.status === "evidenced").length,
+    expected_decisions: asNumber(aggregate.expected_decisions, sessions.reduce((total, session) => total + session.expected_decisions, 0)),
+    observed_decisions: asNumber(aggregate.observed_decisions, sessions.reduce((total, session) => total + session.observed_decisions, 0)),
+    verified_decisions: asNumber(aggregate.verified_decisions),
+    duplicate_exclusions: asNumber(aggregate.duplicate_exclusions),
+    rejected_decisions: asNumber(aggregate.rejected_decisions),
+    missing_decisions: asNumber(aggregate.missing_decisions),
+    decision_coverage: asString(aggregate.decision_coverage),
+    classification: evidenceClassification(report, aggregateMetrics),
+    costs_known: costsKnown,
+    historical_evidence_status: unknownHistorical > 0 || sessions.length === 0 ? "unknown" : "verified",
+    historical_evidence_reason: unknownHistorical > 0 || sessions.length === 0 ? "Historical feed or health evidence is unavailable; it was not reconstructed" : null,
+  };
+  const sourceLineage = asRecord(nestedRecord.source_lineage);
+  return {
+    trial_id: report.trial_id,
+    as_of: asString(nestedRecord.as_of) ?? report.as_of ?? null,
+    summary,
+    sessions,
+    lineage: Object.keys(sourceLineage).length > 0 ? sourceLineage : report.lineage,
+    policy: report.policy,
+    source_links: Object.entries(sourceLineage).map(([key, value]) => ({ source_id: asString(value), kind: key, label: `${key.replaceAll("_", " ")}: ${String(value ?? "Unknown")}` })),
+    execution_sources: sessions.flatMap((session) => session.execution_sources),
+  };
+}
+
+function forwardTrialReportFromReadiness(report: PromotionReadinessReport): ForwardTrialReport {
+  const evidence = forwardTrialEvidenceFromReadiness(report);
+  const aggregateMetrics = asRecord(report.evidence?.aggregate_metrics);
+  const lineageSourceIds = Object.values(report.lineage).flatMap((value) => typeof value === "string" ? [value] : []);
+  const executionSourceIds = evidence?.execution_sources?.flatMap((source) => source.source_id ? [source.source_id] : source.identifier ? [source.identifier] : []) ?? [];
+  return {
+    id: report.id,
+    trial_id: report.trial_id,
+    version: report.version ?? "unknown",
+    created_at: report.created_at,
+    as_of: report.as_of ?? report.evidence?.as_of ?? null,
+    classification: evidence?.summary.classification ?? evidenceClassification(report, aggregateMetrics),
+    report_hash: report.report_hash,
+    lineage: report.lineage,
+    policy: report.policy,
+    summary: evidence?.summary ?? {
+      elapsed_sessions: 0,
+      evidenced_sessions: 0,
+      expected_decisions: 0,
+      observed_decisions: 0,
+      rejected_decisions: 0,
+      missing_decisions: 0,
+      decision_coverage: null,
+      classification: evidenceClassification(report, aggregateMetrics),
+      costs_known: typeof aggregateMetrics.costs_known === "boolean" ? aggregateMetrics.costs_known : null,
+    },
+    sessions: evidence?.sessions ?? [],
+    readiness_gates: report.gates,
+    reproducibility: {
+      trial_id: report.trial_id,
+      model_id: asString(report.lineage.model_run_id),
+      model_hash: asString(report.lineage.model_hash),
+      policy_version: asString(report.lineage.policy_version),
+      source_ids: [...lineageSourceIds, ...executionSourceIds],
+      as_of: report.as_of ?? null,
+    },
+    source_ids: [...lineageSourceIds, ...executionSourceIds],
+    source_links: evidence?.source_links,
+    execution_sources: evidence?.execution_sources,
+    paper_only: report.paper_only,
+    live_authorized: false,
+    promotion_authorized: false,
+    resume_authorized: false,
+  };
+}
 
 export async function getForwardTrialsEligibleBindings(): Promise<ForwardTrialBindingEligible[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/bindings/eligible`, { cache: "no-store" });
@@ -2503,6 +2820,37 @@ export async function getForwardTrialPreflight(id: string): Promise<ForwardTrial
 export async function getForwardTrialPromotionReadiness(id: string): Promise<PromotionReadinessReport> {
   const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness`, { cache: "no-store" });
   return handleResponse<PromotionReadinessReport>(response);
+}
+
+export async function getForwardTrialReportHistory(id: string): Promise<ForwardTrialReportHistory> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness/reports`, { cache: "no-store" });
+  const data = await handleResponse<{ items: PromotionReadinessReport[] }>(response);
+  return { trial_id: id, items: data.items.map(forwardTrialReportFromReadiness) };
+}
+
+export async function getForwardTrialReport(id: string, reportId: string | number): Promise<ForwardTrialReport> {
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness/reports/${encodeURIComponent(String(reportId))}`,
+    { cache: "no-store" },
+  );
+  return forwardTrialReportFromReadiness(await handleResponse<PromotionReadinessReport>(response));
+}
+
+/**
+ * Download an immutable report version.  The endpoint returns the exact
+ * server-generated bytes (rather than rebuilding a report in the browser).
+ */
+export async function downloadForwardTrialReport(id: string, reportId: string | number): Promise<{ blob: Blob; filename: string }> {
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/promotion-readiness/reports/${encodeURIComponent(String(reportId))}/download`,
+    { cache: "no-store" },
+  );
+  const contentDisposition = response.headers.get("content-disposition") ?? "";
+  const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  return {
+    blob: await response.blob(),
+    filename: filenameMatch?.[1] ?? `forward-trial-${id}-report-${reportId}.json`,
+  };
 }
 
 export async function startForwardTrial(id: string): Promise<ForwardTrial> {

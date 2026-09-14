@@ -103,18 +103,42 @@ def _risk_gate(db: Session, trial: StockPaperTrial, account: StockPaperAccount |
 def _report_out(report: StockPaperPromotionReadinessReport) -> dict:
     return {
         "id": report.id,
+        "version": report.report_version,
         "trial_id": report.trial_id,
         "source_metric_id": report.source_metric_id,
+        "as_of": report.as_of,
         "report_hash": report.report_hash,
         "decision": report.decision,
         "gates": report.gates,
         "lineage": report.lineage,
         "policy": report.policy,
+        "evidence": report.evidence,
         "paper_only": report.paper_only,
         "live_authorized": report.live_authorized,
         "created_at": report.created_at,
         "promotion_authorized": False,
     }
+
+
+def promotion_readiness_report_history(db: Session, trial_id: str) -> list[dict]:
+    """Read immutable report rows only; this must never recalculate a trial."""
+    if not db.get(StockPaperTrial, trial_id):
+        raise ValueError("Trial not found")
+    reports = db.scalars(select(StockPaperPromotionReadinessReport).where(
+        StockPaperPromotionReadinessReport.trial_id == trial_id,
+    ).order_by(
+        StockPaperPromotionReadinessReport.report_version.asc().nullsfirst(),
+        StockPaperPromotionReadinessReport.id.asc(),
+    )).all()
+    return [_report_out(report) for report in reports]
+
+
+def promotion_readiness_report(db: Session, trial_id: str, report_id: int) -> dict:
+    """Retrieve one immutable report; deliberately no live evaluator calls."""
+    report = db.get(StockPaperPromotionReadinessReport, report_id)
+    if not report or report.trial_id != trial_id:
+        raise ValueError("Promotion readiness report not found")
+    return _report_out(report)
 
 
 def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
@@ -124,7 +148,7 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
         raise ValueError("Trial not found")
     metric = db.scalar(select(StockPaperTrialMetric).where(
         StockPaperTrialMetric.trial_id == trial_id
-    ).order_by(StockPaperTrialMetric.as_of.desc()))
+    ).order_by(StockPaperTrialMetric.as_of.desc(), StockPaperTrialMetric.id.desc()))
     account = db.scalar(select(StockPaperAccount).where(StockPaperAccount.broker == "alpaca_paper"))
     sessions = _number(_metric_value(metric, "observed_sessions"))
     coverage = _number(_metric_value(metric, "decision_coverage"))
@@ -133,6 +157,9 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
     required_coverage = Decimal(str(trial.policy["minimum_decision_coverage"]))
     required_closed = Decimal(str(trial.policy["minimum_closed_trades"]))
     complete = bool(sessions is not None and sessions >= required_sessions)
+    session_evidence = metric.payload.get("session_evidence") if metric else None
+    aggregates = session_evidence.get("aggregates", {}) if isinstance(session_evidence, dict) else {}
+    historical_health_unknown = aggregates.get("unknown_historical_feed_health")
     gates = {
         "regular_sessions": _gate("pass" if sessions is not None and sessions >= required_sessions else
                                   ("fail" if trial.status in {"completed", "stopped"} else "unknown"),
@@ -142,6 +169,13 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
                                    ("fail" if complete and coverage is not None else "unknown"),
                                    str(coverage) if coverage is not None else None, str(required_coverage),
                                    None if complete and coverage is not None and coverage >= required_coverage else "coverage evidence is incomplete or below the frozen threshold"),
+        "historical_feed_health": _gate(
+            "pass" if session_evidence and historical_health_unknown == 0 else "unknown",
+            str(historical_health_unknown) if historical_health_unknown is not None else None,
+            "0",
+            None if session_evidence and historical_health_unknown == 0
+            else "historical feed or health evidence is unavailable; it was not reconstructed",
+        ),
         "closed_trades": _gate("pass" if closed is not None and closed >= required_closed else
                                ("fail" if trial.status in {"completed", "stopped"} and closed is not None else "unknown"),
                                str(closed) if closed is not None else None, str(required_closed),
@@ -167,13 +201,20 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
     statuses = {gate["status"] for gate in gates.values()}
     decision = "fail" if "fail" in statuses else ("pass" if statuses == {"pass"} else "unknown")
     evidence = {
+        "version": 1,
         "trial_id": trial.id,
         "source_metric_id": metric.id if metric else None,
         "source_metric_as_of": metric.as_of.isoformat() if metric else None,
+        "as_of": (
+            session_evidence.get("as_of") if isinstance(session_evidence, dict)
+            else (metric.as_of.isoformat() if metric else None)
+        ),
         "decision": decision,
         "gates": gates,
         "lineage": lineage or trial.lineage,
         "policy": trial.policy,
+        "aggregate_metrics": metric.payload if metric else None,
+        "session_evidence": session_evidence,
         "paper_only": True,
         "live_authorized": False,
         "promotion_authorized": False,
@@ -184,11 +225,18 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
     ))
     if existing:
         return _report_out(existing)
+    latest_version = db.scalar(select(StockPaperPromotionReadinessReport.report_version).where(
+        StockPaperPromotionReadinessReport.trial_id == trial.id,
+        StockPaperPromotionReadinessReport.report_version.is_not(None),
+    ).order_by(StockPaperPromotionReadinessReport.report_version.desc()))
     report = StockPaperPromotionReadinessReport(
         trial_id=trial.id, source_metric_id=metric.id if metric else None,
         report_hash=report_hash, decision=decision, gates=gates,
         lineage=evidence["lineage"], policy=trial.policy,
         paper_only=True, live_authorized=False,
+        report_version=(latest_version or 0) + 1,
+        as_of=metric.as_of if metric else None,
+        evidence=evidence,
     )
     db.add(report)
     db.flush()

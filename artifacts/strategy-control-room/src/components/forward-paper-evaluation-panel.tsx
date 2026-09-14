@@ -1,17 +1,18 @@
 import { useEffect, useState, useCallback } from "react";
-import { useForm } from "react-hook-form";
-import { Activity, Beaker, Check, ChevronDown, ChevronRight, CircleOff, FileText, Pause, Play, Square, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Beaker, ChevronDown, ChevronRight, CircleOff, Download, Pause, Play, Square, ShieldCheck, ShieldAlert } from "lucide-react";
 import { RoleGate } from "@/components/access-control";
 import { StatusPill } from "@/components/status-pill";
 import {
   getForwardTrials,
   getForwardTrialsEligibleBindings,
   createForwardTrial,
-  getForwardTrialDetail,
   getForwardTrialDecisions,
   getForwardTrialMetrics,
   getForwardTrialPromotionReadiness,
   getForwardTrialPreflight,
+  getForwardTrialReportHistory,
+  downloadForwardTrialReport,
+  forwardTrialEvidenceFromReadiness,
   startForwardTrial,
   pauseForwardTrial,
   resumeForwardTrial,
@@ -21,7 +22,12 @@ import {
   type ForwardTrialDecision,
   type ForwardTrialMetricHistoryItem,
   type PromotionReadinessReport,
-  type ForwardTrialPreflight
+  type ForwardTrialPreflight,
+  type ForwardTrialEvidence,
+  type ForwardTrialEvidenceSession,
+  type ForwardTrialEvidenceSymbol,
+  type ForwardTrialEvidenceSource,
+  type ForwardTrialReport,
 } from "@/lib/api";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -50,11 +56,113 @@ function formatNextSessionOpen(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? "Unavailable" : easternDateTime.format(date);
 }
 
+function formatEvidenceNumber(value: number | null | undefined): string {
+  return value === null || value === undefined ? "Unknown" : String(value);
+}
+
+function sourceLabel(source: ForwardTrialEvidenceSource): string {
+  return source.label || source.source_id || source.identifier || "Evidence source";
+}
+
+function reasonItems(reasons: string[]): string {
+  return reasons.length > 0 ? reasons.join(", ") : "None recorded";
+}
+
+function classificationClasses(classification: string): string {
+  if (classification === "passing") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (classification === "failing") return "border-red-200 bg-red-50 text-red-700";
+  if (classification === "insufficient" || classification === "unknown") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function EvidenceSymbolRow({ symbol, trialId }: { symbol: ForwardTrialEvidenceSymbol; trialId: string }) {
+  const sources = symbol.execution_sources ?? [];
+  return (
+    <div className="rounded border border-line bg-white p-2" data-testid={`forward-evidence-symbol-${trialId}-${symbol.symbol}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-semibold text-slate-800" data-testid={`text-forward-evidence-symbol-${trialId}-${symbol.symbol}`}>{symbol.symbol}</span>
+        <span className={`rounded border px-1.5 py-0.5 text-[11px] ${classificationClasses(symbol.status ?? "unknown")}`} data-testid={`status-forward-evidence-symbol-${trialId}-${symbol.symbol}`}>
+          {symbol.status ?? "unknown"}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-slate-600 sm:grid-cols-6">
+        <span data-testid={`text-forward-evidence-expected-${trialId}-${symbol.symbol}`}>Expected: {formatEvidenceNumber(symbol.expected_decisions)}</span>
+        <span data-testid={`text-forward-evidence-observed-${trialId}-${symbol.symbol}`}>Observed: {formatEvidenceNumber(symbol.observed_decisions)}</span>
+        <span data-testid={`text-forward-evidence-verified-${trialId}-${symbol.symbol}`}>Evidenced: {formatEvidenceNumber(symbol.verified_decisions)}</span>
+        <span data-testid={`text-forward-evidence-rejected-${trialId}-${symbol.symbol}`}>Rejected: {formatEvidenceNumber(symbol.rejected_decisions)}</span>
+        <span data-testid={`text-forward-evidence-missing-${trialId}-${symbol.symbol}`}>Missing: {formatEvidenceNumber(symbol.missing_decisions)}</span>
+        <span data-testid={`text-forward-evidence-duplicates-${trialId}-${symbol.symbol}`}>Duplicates excluded: {formatEvidenceNumber(symbol.duplicate_exclusions)}</span>
+      </div>
+      {(symbol.missing_reasons.length > 0 || symbol.rejected_reasons.length > 0) && (
+        <div className="mt-2 grid gap-1 text-[11px] text-slate-500">
+          {symbol.missing_reasons.length > 0 && <span data-testid={`text-forward-evidence-missing-reasons-${trialId}-${symbol.symbol}`}>Missing reasons: {reasonItems(symbol.missing_reasons)}</span>}
+          {symbol.rejected_reasons.length > 0 && <span data-testid={`text-forward-evidence-rejected-reasons-${trialId}-${symbol.symbol}`}>Rejected reasons: {reasonItems(symbol.rejected_reasons)}</span>}
+        </div>
+      )}
+      <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+        {sources.length === 0 ? (
+          <span className="text-slate-500" data-testid={`text-forward-evidence-sources-empty-${trialId}-${symbol.symbol}`}>No trial-owned execution evidence linked</span>
+        ) : (
+          sources.map((source, index) => (
+            <span key={`${source.source_id ?? source.identifier ?? "source"}-${index}`} className="text-slate-600" data-testid={`text-forward-evidence-source-${trialId}-${symbol.symbol}-${index}`}>
+              {sourceLabel(source)}
+            </span>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceSessionRow({ session, trialId }: { session: ForwardTrialEvidenceSession; trialId: string }) {
+  return (
+    <details className="rounded border border-line bg-panel" data-testid={`forward-evidence-session-${trialId}-${session.session_id}`}>
+      <summary className="cursor-pointer list-none p-3 text-xs" data-testid={`button-forward-evidence-session-${trialId}-${session.session_id}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-semibold text-slate-800">
+            {session.session_date || session.session_id}
+          </span>
+          <span className={`rounded border px-1.5 py-0.5 ${classificationClasses(session.status)}`} data-testid={`status-forward-evidence-session-${trialId}-${session.session_id}`}>
+            {session.status}
+          </span>
+        </div>
+        <div className="mt-1 grid grid-cols-2 gap-1 text-[11px] text-slate-500 sm:grid-cols-6">
+          <span data-testid={`text-forward-evidence-session-expected-${trialId}-${session.session_id}`}>Expected: {formatEvidenceNumber(session.expected_decisions)}</span>
+          <span data-testid={`text-forward-evidence-session-observed-${trialId}-${session.session_id}`}>Observed: {formatEvidenceNumber(session.observed_decisions)}</span>
+          <span data-testid={`text-forward-evidence-session-verified-${trialId}-${session.session_id}`}>Evidenced: {formatEvidenceNumber(session.verified_decisions)}</span>
+          <span data-testid={`text-forward-evidence-session-rejected-${trialId}-${session.session_id}`}>Rejected: {formatEvidenceNumber(session.rejected_decisions)}</span>
+          <span data-testid={`text-forward-evidence-session-missing-${trialId}-${session.session_id}`}>Missing: {formatEvidenceNumber(session.missing_decisions)}</span>
+          <span data-testid={`text-forward-evidence-session-duplicates-${trialId}-${session.session_id}`}>Duplicates excluded: {formatEvidenceNumber(session.duplicate_exclusions)}</span>
+        </div>
+      </summary>
+      <div className="grid gap-2 border-t border-line p-3">
+        {(session.missing_reasons.length > 0 || session.rejected_reasons.length > 0) && (
+          <div className="grid gap-1 text-[11px] text-slate-500">
+            {session.missing_reasons.length > 0 && <span data-testid={`text-forward-evidence-session-missing-reasons-${trialId}-${session.session_id}`}>Missing reasons: {reasonItems(session.missing_reasons)}</span>}
+            {session.rejected_reasons.length > 0 && <span data-testid={`text-forward-evidence-session-rejected-reasons-${trialId}-${session.session_id}`}>Rejected reasons: {reasonItems(session.rejected_reasons)}</span>}
+          </div>
+        )}
+        {session.symbols.length > 0 ? (
+          <div className="grid gap-2 md:grid-cols-2">
+            {session.symbols.map((symbol) => <EvidenceSymbolRow key={symbol.symbol} symbol={symbol} trialId={`${trialId}-${session.session_id}`} />)}
+          </div>
+        ) : (
+          <span className="text-[11px] text-slate-500" data-testid={`text-forward-evidence-session-symbols-empty-${trialId}-${session.session_id}`}>No symbol evidence recorded.</span>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onActionComplete: () => void }) {
   const [latestMetric, setLatestMetric] = useState<ForwardTrialMetricHistoryItem | null>(null);
   const [decisions, setDecisions] = useState<ForwardTrialDecision[]>([]);
   const [readiness, setReadiness] = useState<PromotionReadinessReport | null>(null);
   const [preflight, setPreflight] = useState<ForwardTrialPreflight | null>(null);
+  const [evidence, setEvidence] = useState<ForwardTrialEvidence | null>(null);
+  const [reportHistory, setReportHistory] = useState<ForwardTrialReport[]>([]);
+  const [reportError, setReportError] = useState("");
+  const [downloadingReportId, setDownloadingReportId] = useState<string | number | null>(null);
   const [loading, setLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [pauseReason, setPauseReason] = useState("");
@@ -63,22 +171,45 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
   const fetchDetails = useCallback(async () => {
     try {
       setLoading(true);
-      const [m, d, r, p] = await Promise.all([
+      const [m, d, r, p, h] = await Promise.all([
         getForwardTrialMetrics(trial.id),
         getForwardTrialDecisions(trial.id),
         getForwardTrialPromotionReadiness(trial.id),
-        getForwardTrialPreflight(trial.id)
+        getForwardTrialPreflight(trial.id),
+        getForwardTrialReportHistory(trial.id).catch(() => null),
       ]);
       setLatestMetric(m.length > 0 ? m[m.length - 1] : null);
       setDecisions(d);
       setReadiness(r);
       setPreflight(p);
+      setEvidence(forwardTrialEvidenceFromReadiness(r));
+      setReportHistory(h?.items ?? []);
+      setReportError(h ? "" : "Evidence report history is unavailable.");
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
   }, [trial.id]);
+
+  const handleReportDownload = async (report: ForwardTrialReport) => {
+    try {
+      setDownloadingReportId(report.id);
+      setReportError("");
+      const result = await downloadForwardTrialReport(trial.id, report.id);
+      const objectUrl = URL.createObjectURL(result.blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = result.filename;
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      console.error(error);
+      setReportError("The selected report could not be downloaded. The immutable report remains unchanged.");
+    } finally {
+      setDownloadingReportId(null);
+    }
+  };
 
   useEffect(() => {
     void fetchDetails();
@@ -282,6 +413,147 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
             <div className="mt-2 text-xs text-slate-500">No decisions recorded.</div>
           )}
         </div>
+      </div>
+
+      <div className="rounded-md border border-line bg-white p-3" data-testid={`forward-trial-evidence-${trial.id}`}>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="font-semibold text-sm text-slate-800">Session evidence breakdown</div>
+            <div className="mt-0.5 max-w-2xl text-xs text-slate-500">
+              Elapsed regular sessions are not the same as sessions with evidenced decisions. Missing or rejected evidence is a coverage failure, not a skipped session.
+            </div>
+          </div>
+          {evidence?.summary && (
+            <span className={`rounded border px-2 py-1 text-xs font-semibold ${classificationClasses(evidence.summary.classification)}`} data-testid={`status-forward-evidence-${trial.id}`}>
+              {evidence.summary.classification}
+            </span>
+          )}
+        </div>
+        {evidence ? (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:grid-cols-8">
+              {([
+                ["elapsed-sessions", "Elapsed sessions", evidence.summary.elapsed_sessions],
+                ["evidenced-sessions", "Evidenced sessions", evidence.summary.evidenced_sessions],
+                ["expected-decisions", "Expected decisions", evidence.summary.expected_decisions],
+                ["observed-decisions", "Observed decisions", evidence.summary.observed_decisions],
+                ["evidenced-decisions", "Evidenced decisions", evidence.summary.verified_decisions ?? 0],
+                ["rejected-decisions", "Rejected decisions", evidence.summary.rejected_decisions],
+                ["missing-decisions", "Missing decisions", evidence.summary.missing_decisions],
+                ["duplicate-exclusions", "Duplicates excluded", evidence.summary.duplicate_exclusions ?? 0],
+              ] as const).map(([key, label, value]) => (
+                <div key={key} className="rounded bg-panel p-2" data-testid={`metric-forward-evidence-${key}-${trial.id}`}>
+                  <div className="text-slate-500">{label}</div>
+                  <div className="mt-1 font-semibold text-slate-800">{formatEvidenceNumber(value)}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-slate-500">
+              <span data-testid={`text-forward-evidence-coverage-${trial.id}`}>Decision coverage: {evidence.summary.decision_coverage ?? "Unknown"}</span>
+              <span data-testid={`text-forward-evidence-as-of-${trial.id}`}>As of: {evidence.as_of ? new Date(evidence.as_of).toLocaleString() : "Unknown"}</span>
+              <span data-testid={`text-forward-evidence-metric-classification-${trial.id}`}>Metric classification: {latestMetric?.classification ?? "unknown"}</span>
+            </div>
+            {evidence.summary.costs_known === false && (
+              <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800" data-testid={`notice-forward-evidence-costs-unknown-${trial.id}`}>
+                Costs are unknown; net performance is unavailable and cannot be inferred from gross results.
+              </div>
+            )}
+            {evidence.summary.historical_evidence_status && evidence.summary.historical_evidence_status !== "verified" && (
+              <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800" data-testid={`notice-forward-evidence-history-unknown-${trial.id}`}>
+                Historical feed or health evidence is {evidence.summary.historical_evidence_status}; it was not reconstructed as verified.
+                {evidence.summary.historical_evidence_reason ? ` ${evidence.summary.historical_evidence_reason}` : ""}
+              </div>
+            )}
+            <div className="mt-3 grid gap-2" data-testid={`forward-evidence-sessions-${trial.id}`}>
+              {evidence.sessions.length > 0 ? evidence.sessions.map((session) => (
+                <EvidenceSessionRow key={session.session_id} session={session} trialId={trial.id} />
+              )) : (
+                <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800" data-testid={`text-forward-evidence-sessions-empty-${trial.id}`}>
+                  No evidenced sessions are available. This is an explicit coverage failure, not an extended evaluation window.
+                </div>
+              )}
+            </div>
+            {(evidence.execution_sources?.length ?? 0) > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+                <span className="font-semibold text-slate-600">Trial-owned execution evidence:</span>
+                {evidence.execution_sources?.map((source, index) => (
+                  <span key={`${source.source_id ?? source.identifier ?? "source"}-${index}`} className="text-slate-600" data-testid={`text-forward-evidence-execution-source-${trial.id}-${index}`}>
+                    {sourceLabel(source)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800" data-testid={`text-forward-evidence-unavailable-${trial.id}`}>
+            Session evidence is unavailable; elapsed metrics must not be treated as evidenced decisions.
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-md border border-line bg-white p-3" data-testid={`forward-trial-report-history-${trial.id}`}>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="font-semibold text-sm text-slate-800">Versioned report history</div>
+            <div className="mt-0.5 text-xs text-slate-500">Reports are immutable snapshots with trial, model, policy, source, and as-of lineage. Retrieval never changes trading state.</div>
+          </div>
+          <span className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700" data-testid={`status-forward-trial-report-safety-${trial.id}`}>
+            Read only · no promotion, resume, or live authorization
+          </span>
+        </div>
+        {reportError && <div className="mt-2 text-xs text-amber-700" data-testid={`text-forward-trial-report-error-${trial.id}`}>{reportError}</div>}
+        {reportHistory.length > 0 ? (
+          <div className="mt-3 grid gap-2">
+            {reportHistory.map((report) => (
+              <details key={String(report.id)} className="rounded border border-line bg-panel p-2 text-xs" data-testid={`row-forward-trial-report-${trial.id}-${report.id}`}>
+                <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2">
+                  <div className="grid gap-1">
+                    <div className="font-semibold text-slate-800">
+                      Version {report.version} · {report.classification}
+                    </div>
+                    <div className="text-slate-500">
+                      As of {report.as_of ? new Date(report.as_of).toLocaleString() : "Unknown"} · {report.created_at ? new Date(report.created_at).toLocaleString() : "Unknown"}
+                    </div>
+                    <div className="break-all text-[11px] text-slate-500" data-testid={`text-forward-trial-report-digest-${trial.id}-${report.id}`}>
+                      Stable digest: {report.report_hash || report.digest || "Unknown"}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 rounded border border-line bg-white px-2 py-1.5 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={downloadingReportId === report.id}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void handleReportDownload(report);
+                    }}
+                    data-testid={`button-download-forward-trial-report-${trial.id}-${report.id}`}
+                  >
+                    <Download size={13} />
+                    {downloadingReportId === report.id ? "Preparing…" : "Download report"}
+                  </button>
+                </summary>
+                <div className="mt-3 grid gap-2 border-t border-line pt-2 text-[11px] text-slate-600">
+                  <div data-testid={`text-forward-trial-report-lineage-${trial.id}-${report.id}`}>
+                    Trial: {report.trial_id} · Model: {String(report.reproducibility?.model_id ?? report.lineage.model_id ?? report.lineage.model_hash ?? "Unknown")} · Policy: {String(report.reproducibility?.policy_version ?? report.lineage.policy_version ?? "Unknown")}
+                  </div>
+                  <div data-testid={`text-forward-trial-report-sources-${trial.id}-${report.id}`}>
+                    Source identifiers: {(report.source_ids ?? report.reproducibility?.source_ids ?? []).join(", ") || "Unknown"}
+                  </div>
+                  <div>
+                    Readiness gates: {Object.entries(report.readiness_gates ?? {}).map(([name, gate]) => `${name}=${gate.status}`).join(" · ") || "Unknown"}
+                  </div>
+                  <div>
+                    Session breakdown: {report.sessions.length} session(s) · {report.summary.expected_decisions} expected · {report.summary.observed_decisions} observed · {report.summary.verified_decisions ?? 0} evidenced · {report.summary.rejected_decisions} rejected · {report.summary.missing_decisions} missing · {report.summary.duplicate_exclusions ?? 0} duplicates excluded
+                  </div>
+                </div>
+              </details>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-3 text-xs text-slate-500" data-testid={`text-forward-trial-report-history-empty-${trial.id}`}>
+            No previously generated report versions are available.
+          </div>
+        )}
       </div>
 
       <div className="rounded-md border border-line bg-white p-3" data-testid={`promotion-readiness-${trial.id}`}>

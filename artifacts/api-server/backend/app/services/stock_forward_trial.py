@@ -299,6 +299,237 @@ def _trial_has_managed_exposure(db: Session, trial: StockPaperTrial) -> bool:
 def _now(): return datetime.now(timezone.utc)
 def _hash(v): return hashlib.sha256(json.dumps(v, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
+
+_FEATURE_DATA_REJECTIONS = {
+    "missing_verified_daily_observation",
+    "insufficient_daily_feature_history",
+    "daily_feature_session_mismatch",
+    "feature_timestamp_not_before_decision",
+    "stale_decision_expired",
+    "trial_window_complete",
+}
+_LINEAGE_KEYS = (
+    "model_run_id", "model_hash", "snapshot_id", "dataset_sha256",
+    "cutoff_date", "universe", "cost_assumptions", "binding_hash", "policy_sha256",
+)
+
+
+def _utc(value: datetime) -> datetime:
+    """Normalize legacy naive database datetimes without changing their value."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _frozen_window_sessions(
+    trial: StockPaperTrial, as_of: datetime,
+) -> list[tuple[datetime.date, tuple[datetime, datetime]]]:
+    """First N completed regular sessions after start, never a rolling window.
+
+    A missing decision remains in the selected session.  Only exchange
+    holidays/non-sessions are absent, so elapsed days cannot replace a missing
+    evidence day later in the run.
+    """
+    if not trial.started_at:
+        return []
+    start = _utc(trial.started_at)
+    end = _utc(as_of)
+    cursor = start.astimezone(NY).date()
+    result = []
+    for _ in range(400):
+        if len(result) >= int(trial.policy["regular_sessions"]):
+            break
+        bounds = session_bounds(cursor)
+        if bounds:
+            opened, closed = _utc(bounds[0]), _utc(bounds[1])
+            if opened >= start and closed <= end:
+                result.append((cursor, (opened, closed)))
+        # Once a session starts after the as-of boundary no future session can
+        # be complete under that boundary.
+        if bounds and _utc(bounds[0]) > end:
+            break
+        cursor += timedelta(days=1)
+    return result
+
+
+def _decision_matches_trial_lineage(trial: StockPaperTrial, decision: StockPaperTrialDecision) -> bool:
+    lineage = decision.lineage or {}
+    return all(lineage.get(key) == trial.lineage.get(key) for key in _LINEAGE_KEYS)
+
+
+def _source_evidence(decision: StockPaperTrialDecision) -> tuple[str, str | None]:
+    """Classify only persisted source facts; never reconstruct historical health."""
+    lineage = decision.lineage or {}
+    if not lineage.get("bar_provider") or not lineage.get("bar_exchange_timestamp"):
+        return "unknown", "historical_bar_provenance_unavailable"
+    if lineage.get("feed_status") != "ready" or not lineage.get("feed_checked_at"):
+        return "unknown", "historical_feed_health_unavailable"
+    feature_timestamp = lineage.get("feature_timestamp")
+    if not feature_timestamp:
+        return "unknown", "historical_feature_timestamp_unavailable"
+    try:
+        feature_at = datetime.fromisoformat(str(feature_timestamp).replace("Z", "+00:00"))
+        decision_at = _utc(decision.decision_timestamp)
+        if _utc(feature_at) >= decision_at:
+            return "rejected", "feature_timestamp_not_before_decision"
+    except (TypeError, ValueError):
+        return "unknown", "historical_feature_timestamp_unparseable"
+    return "verified", None
+
+
+def _execution_evidence(
+    db: Session, trial: StockPaperTrial, decision: StockPaperTrialDecision,
+) -> dict:
+    """Safe identifiers for a trial-owned order/fill chain, never broker payloads."""
+    if not decision.order_id:
+        return {"status": "not_applicable" if decision.action == "reject" else "unlinked"}
+    order = db.get(StockPaperOrder, decision.order_id)
+    lot = db.scalar(select(StockPaperTrialLot).where(
+        StockPaperTrialLot.trial_id == trial.id,
+        StockPaperTrialLot.entry_decision_id == decision.id,
+        StockPaperTrialLot.entry_order_id == decision.order_id,
+    ))
+    owned = bool(order and lot and (trial.strategy_id is None or order.strategy_id == trial.strategy_id))
+    if not order or not owned:
+        return {"status": "unlinked", "order_id": decision.order_id}
+    fills = db.scalars(select(StockPaperFill).where(
+        StockPaperFill.order_id == order.id,
+    ).order_by(StockPaperFill.filled_at, StockPaperFill.id)).all()
+    return {
+        "status": "linked",
+        "order_id": order.id,
+        "client_order_id": order.client_order_id,
+        "order_status": order.status,
+        "lot_id": lot.id,
+        "fill_ids": [fill.id for fill in fills],
+        "broker_activity_ids": [fill.broker_activity_id for fill in fills],
+        "broker_order_ids": sorted({fill.broker_order_id for fill in fills if fill.broker_order_id}),
+        "costs_known": all(fill.cost_known and fill.fee is not None for fill in fills) if fills else None,
+    }
+
+
+def build_trial_session_evidence(
+    db: Session, trial: StockPaperTrial, *, as_of: datetime | None = None,
+) -> dict:
+    """Pure, deterministic session evidence used by metrics and readiness reports.
+
+    This deliberately has no feed probes, no synchronization, and no state
+    changes.  It can therefore be used to review old evidence safely.
+    """
+    boundary = _utc(as_of or _now())
+    sessions = _frozen_window_sessions(trial, boundary)
+    universe = sorted({str(symbol).upper() for symbol in trial.lineage.get("universe", [])})
+    decisions = db.scalars(select(StockPaperTrialDecision).where(
+        StockPaperTrialDecision.trial_id == trial.id,
+    ).order_by(StockPaperTrialDecision.bar_timestamp.desc(), StockPaperTrialDecision.id.asc())).all()
+    grouped: dict[tuple[datetime.date, str], list[StockPaperTrialDecision]] = {}
+    session_dates = {day for day, _ in sessions}
+    for decision in decisions:
+        timestamp = _utc(decision.bar_timestamp)
+        day = timestamp.astimezone(NY).date()
+        if day in session_dates and decision.symbol.upper() in universe:
+            grouped.setdefault((day, decision.symbol.upper()), []).append(decision)
+
+    rows, observed, verified, rejected, duplicate_exclusions, unknown_health = [], 0, 0, 0, 0, 0
+    for day, bounds in sessions:
+        symbols = []
+        for symbol in universe:
+            candidates = grouped.get((day, symbol), [])
+            # The completed-bar worker chooses the most recent completed bar.
+            # Any additional decision in the same expected slot is visible but
+            # cannot inflate coverage.
+            canonical = candidates[0] if candidates else None
+            duplicates = candidates[1:]
+            duplicate_exclusions += len(duplicates)
+            result = {
+                "symbol": symbol,
+                "expected_decisions": 1,
+                "observed_decisions": 0,
+                "verified_decisions": 0,
+                "duplicate_exclusions": len(duplicates),
+                "status": "missing",
+                "missing_reason": "no_persisted_decision",
+                "rejected_reason": None,
+                "historical_feed_health": {"status": "unknown", "reason": "no_decision"},
+                "execution": {"status": "not_applicable"},
+            }
+            if canonical:
+                in_session = bounds[0] <= _utc(canonical.bar_timestamp) < bounds[1]
+                lineage_ok = _decision_matches_trial_lineage(trial, canonical)
+                stale = canonical.rejection_reason in _FEATURE_DATA_REJECTIONS
+                source_status, source_reason = _source_evidence(canonical)
+                decision_out = {
+                    "id": canonical.id,
+                    "bar_timestamp": _utc(canonical.bar_timestamp).isoformat(),
+                    "decision_timestamp": _utc(canonical.decision_timestamp).isoformat(),
+                    "action": canonical.action,
+                    "qualifying": canonical.qualifying,
+                    "rejection_reason": canonical.rejection_reason,
+                    "source_ids": {
+                        "model_run_id": (canonical.lineage or {}).get("model_run_id"),
+                        "snapshot_id": (canonical.lineage or {}).get("snapshot_id"),
+                        "feature_hash": (canonical.lineage or {}).get("feature_hash"),
+                        "bar_exchange_timestamp": (canonical.lineage or {}).get("bar_exchange_timestamp"),
+                    },
+                }
+                result["decision"] = decision_out
+                result["execution"] = _execution_evidence(db, trial, canonical)
+                if not in_session:
+                    result.update(status="missing", missing_reason="decision_outside_regular_session")
+                elif not lineage_ok:
+                    result.update(status="missing", missing_reason="decision_lineage_mismatch")
+                elif stale:
+                    result.update(status="rejected", missing_reason=None,
+                                  rejected_reason=canonical.rejection_reason)
+                    rejected += 1
+                else:
+                    observed += 1
+                    result.update(observed_decisions=1, missing_reason=None,
+                                  historical_feed_health={"status": source_status, "reason": source_reason})
+                    if canonical.action == "reject":
+                        result["status"] = "rejected"
+                        result["rejected_reason"] = canonical.rejection_reason or "decision_rejected"
+                        rejected += 1
+                    elif source_status == "verified":
+                        result.update(status="verified", verified_decisions=1)
+                        verified += 1
+                    else:
+                        result.update(status="unknown", missing_reason=source_reason)
+                if source_status == "unknown":
+                    unknown_health += 1
+            symbols.append(result)
+        rows.append({
+            "session_date": day.isoformat(),
+            "opened_at": bounds[0].isoformat(),
+            "closed_at": bounds[1].isoformat(),
+            "status": "elapsed",
+            "symbols": symbols,
+        })
+    expected = len(sessions) * len(universe)
+    return {
+        "version": 1,
+        "as_of": boundary.isoformat(),
+        "window": {
+            "started_at": _utc(trial.started_at).isoformat() if trial.started_at else None,
+            "regular_sessions_required": int(trial.policy["regular_sessions"]),
+            "elapsed_regular_sessions": len(sessions),
+            "complete": len(sessions) >= int(trial.policy["regular_sessions"]),
+            "session_dates": [day.isoformat() for day, _ in sessions],
+        },
+        "sessions": rows,
+        "aggregates": {
+            "expected_decisions": expected,
+            "observed_decisions": observed,
+            "verified_decisions": verified,
+            "missing_decisions": expected - observed,
+            "rejected_decisions": rejected,
+            "duplicate_exclusions": duplicate_exclusions,
+            "unknown_historical_feed_health": unknown_health,
+            "decision_coverage": str(Decimal(observed) / Decimal(expected)) if expected else "0",
+            "verified_decision_coverage": str(Decimal(verified) / Decimal(expected)) if expected else "0",
+        },
+        "source_lineage": {key: trial.lineage.get(key) for key in _LINEAGE_KEYS},
+    }
+
+
 def validate_trial_artifact(db: Session, trial: StockPaperTrial) -> dict:
     """Revalidate the exact immutable binding on every worker invocation."""
     binding = db.get(StockPaperModelBinding, trial.binding_id)
@@ -634,6 +865,7 @@ def observe_trial(db: Session, trial_id: str) -> dict:
                 "reason": trial.pause_reason, "paper_only": True}
     manifest = validate_trial_artifact(db, trial)
     bounds = session_bounds(now.astimezone(timezone.utc).date())
+    feed_checks = {}
     for symbol in trial.lineage.get("universe", []):
         try:
             status = feed_status(db, symbol, now=now)
@@ -648,6 +880,7 @@ def observe_trial(db: Session, trial_id: str) -> dict:
                 trial.status = "paused"
             trial.pause_reason = f"fresh_complete_feed_required:{symbol}:{reason}"
             return {"status": "paused", "trial_id": trial_id, "reason": trial.pause_reason}
+        feed_checks[symbol] = status
     # Daily inference is deliberately gated until the regular session has
     # closed.  The 1m Alpaca bar is execution lineage only; features are built
     # from the latest completed, verified Yahoo daily observation.
@@ -803,6 +1036,8 @@ def observe_trial(db: Session, trial_id: str) -> dict:
                    "bar_exchange_timestamp": bar.exchange_timestamp.isoformat() if bar.exchange_timestamp else None,
                    "execution_reference_timestamp": opened.isoformat(),
                    "observation_timestamp": now.isoformat(), "feature_timestamp": feature_timestamp.isoformat() if feature_timestamp else None,
+                   "feed_status": feed_checks.get(symbol, {}).get("status"),
+                   "feed_checked_at": now.isoformat(),
                    "feature_hash": _hash(features) if features else None, "probability": probability,
                    "threshold": 0.5, "model_artifact": str(model_path)}
         action = "reject" if reason else "buy"
@@ -1037,34 +1272,16 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
         net = Decimal("0")
     win_rate = (Decimal(wins) / Decimal(closed)) if closed and costs_known else None
     expectancy = (net / Decimal(closed)) if closed and costs_known and closed_costs_known else None
+    as_of = _now()
+    session_evidence = build_trial_session_evidence(db, trial, as_of=as_of)
+    aggregates = session_evidence["aggregates"]
     universe = trial.lineage.get("universe", [])
-    start = trial.started_at
-    dates = []
-    if start is not None:
-        cursor = _now().astimezone(timezone.utc).date()
-        for _ in range(60):
-            candidate = session_bounds(cursor)
-            if candidate and candidate[1] <= _now() and candidate[0] >= start:
-                dates.append(cursor)
-            if len(dates) >= int(trial.policy["regular_sessions"]):
-                break
-            cursor -= timedelta(days=1)
-    dates = sorted(dates)
-    feature_data_rejections = {
-        "missing_verified_daily_observation",
-        "insufficient_daily_feature_history",
-        "daily_feature_session_mismatch",
-        "feature_timestamp_not_before_decision",
-    }
-    observed = {(d.bar_timestamp.date(), d.symbol) for d in decisions
-                if d.bar_timestamp.date() in dates and d.symbol in universe
-                and d.rejection_reason not in feature_data_rejections}
-    expected = len(dates) * len(universe)
-    coverage = (Decimal(len(observed)) / Decimal(expected)) if expected else Decimal("0")
-    sessions = len(dates)
+    dates = [datetime.fromisoformat(value).date() for value in session_evidence["window"]["session_dates"]]
+    coverage = Decimal(aggregates["decision_coverage"])
+    sessions = session_evidence["window"]["elapsed_regular_sessions"]
     if sessions >= int(trial.policy["regular_sessions"]):
         if trial.status in {"running", "paused", "blocked"}:
-            trial.status, trial.stopped_at = "stopped", trial.stopped_at or _now()
+            trial.status, trial.stopped_at = "stopped", trial.stopped_at or as_of
         # Freeze new decisions at the boundary and turn remaining lots into
         # durable risk-reducing intents; dispatch is still regular-session gated.
         for decision in decisions:
@@ -1073,7 +1290,7 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
         for lot in _sync_trial_lot_state(db, trial):
             if _trial_has_managed_exposure(db, trial) and lot.exit_status != "closed":
                 lot.exit_reason = lot.exit_reason or "trial_window_complete"
-                lot.exit_decided_at = lot.exit_decided_at or _now()
+                lot.exit_decided_at = lot.exit_decided_at or as_of
         if not _trial_has_managed_exposure(db, trial):
             trial.status = "completed"
     benchmark_returns = []
@@ -1098,9 +1315,15 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
     account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
     account_drawdown = ((trial.peak_equity - account.equity) / trial.peak_equity
                         if account and trial.peak_equity and trial.peak_equity > 0 else None)
-    trial_drawdown = _trial_equity_curve_max_drawdown(db, trial, _now())
-    payload = {"expected_observations": expected, "observed_observations": len(observed),
-               "observed_sessions": sessions, "decision_coverage": str(coverage),
+    trial_drawdown = _trial_equity_curve_max_drawdown(db, trial, as_of)
+    payload = {"expected_observations": aggregates["expected_decisions"],
+               "observed_observations": aggregates["observed_decisions"],
+                "observed_sessions": sessions, "elapsed_regular_sessions": sessions,
+                "evidenced_sessions": sum(any(symbol["observed_decisions"] for symbol in session["symbols"])
+                                         for session in session_evidence["sessions"]),
+                "decision_coverage": str(coverage),
+                "verified_decision_coverage": aggregates["verified_decision_coverage"],
+                "session_evidence": session_evidence,
                "closed_trades": closed, "winning_trades": wins,
                "win_rate": str(win_rate) if win_rate is not None else None,
                 "gross_pnl": str(gross) if closed else None,
@@ -1114,13 +1337,16 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
                "costs_known": costs_known}
     sufficient = sessions >= int(trial.policy["regular_sessions"])
     if not sufficient:
-        classification = "accumulating"
+        classification = "insufficient" if trial.status in {"stopped", "completed"} else "accumulating"
     elif closed < int(trial.policy["minimum_closed_trades"]) or coverage < Decimal(str(trial.policy["minimum_decision_coverage"])) or not costs_known:
         classification = "insufficient"
     elif net <= 0 or gross <= 0 or payload["benchmark_buy_hold"] is None or payload["max_drawdown"] is None:
         classification = "failing"
     else:
         classification = "passing"
-    metric = StockPaperTrialMetric(trial_id=trial_id, as_of=_now(), classification=classification, payload=payload)
+    # The payload is the frozen aggregate snapshot embedded in versioned
+    # readiness reports; keep its status aligned with the metric row.
+    payload["classification"] = classification
+    metric = StockPaperTrialMetric(trial_id=trial_id, as_of=as_of, classification=classification, payload=payload)
     db.add(metric)
     return metric

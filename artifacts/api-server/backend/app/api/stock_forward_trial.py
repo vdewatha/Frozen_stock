@@ -1,12 +1,18 @@
 """Admin/operator controls for controlled stock forward-paper trials."""
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models import StockPaperTrial, StockPaperModelBinding, StockModelRegistry, StockDatasetSnapshot, StockPaperTrialDecision, StockPaperTrialMetric
-from app.services.stock_promotion_readiness import evaluate_promotion_readiness
+from app.services.stock_promotion_readiness import (
+    evaluate_promotion_readiness,
+    promotion_readiness_report,
+    promotion_readiness_report_history,
+)
 
 router = APIRouter(prefix="/stock/forward-trials", tags=["stock forward trials"])
 from app.services.stock_forward_trial import (
@@ -86,6 +92,34 @@ def promotion_readiness(trial_id: str, db: Session = Depends(get_db)):
         return result
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from None
+
+
+@router.get("/{trial_id}/promotion-readiness/reports")
+def promotion_readiness_reports(trial_id: str, db: Session = Depends(get_db)):
+    try:
+        return {"items": promotion_readiness_report_history(db, trial_id)}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from None
+
+
+@router.get("/{trial_id}/promotion-readiness/reports/{report_id}")
+def get_promotion_readiness_report(trial_id: str, report_id: int, db: Session = Depends(get_db)):
+    try:
+        return promotion_readiness_report(db, trial_id, report_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from None
+
+
+@router.get("/{trial_id}/promotion-readiness/reports/{report_id}/download")
+def download_promotion_readiness_report(trial_id: str, report_id: int, db: Session = Depends(get_db)):
+    try:
+        report = promotion_readiness_report(db, trial_id, report_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return JSONResponse(
+        jsonable_encoder(report),
+        headers={"Content-Disposition": f'attachment; filename="promotion-readiness-{report_id}.json"'},
+    )
 
 @router.post("")
 def approve(body: Approve, request: Request, db: Session = Depends(get_db)):

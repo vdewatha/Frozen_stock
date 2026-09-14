@@ -23,15 +23,19 @@ from app.models import (
     IntradayBar, MarketPrice, StockDatasetSnapshot, StockModelRegistry, StockPaperAccount,
     StockPaperModelBinding, StockPaperTrial, StockPaperTrialDecision,
     StockPaperOrder, StockPaperFill, StockPaperTrialLot, Strategy,
-    StockPaperPromotionReadinessReport, AuditLog,
+    StockPaperPromotionReadinessReport, StockPaperTrialMetric, AuditLog,
 )
 from app.services.stock_forward_trial import (
     POLICY, _hash, create_trial, evaluate_trial, observe_trial, record_decision,
     start_trial, validate_trial_artifact,
     execute_pending_decisions, _trial_allocated_notional, stop_trial,
     _trial_equity_curve_max_drawdown, _evidence_allows_trade, trial_feed_preflight,
+    build_trial_session_evidence,
 )
-from app.services.stock_promotion_readiness import evaluate_promotion_readiness
+from app.services.stock_promotion_readiness import (
+    evaluate_promotion_readiness, promotion_readiness_report,
+    promotion_readiness_report_history,
+)
 from app.services.stock_paper_ledger import reserve_stock_paper_order
 from app.tasks.jobs import stock_forward_trial_observe_job
 from app.services.stock_training_jobs import StockTrainingError
@@ -116,6 +120,123 @@ class ForwardTrialTests(unittest.TestCase):
             required_role("GET", "/stock/forward-trials/00000000-0000-0000-0000-000000000001/promotion-readiness"),
             "viewer",
         )
+        self.assertEqual(
+            required_role("GET", "/stock/forward-trials/00000000-0000-0000-0000-000000000001/promotion-readiness/reports/1/download"),
+            "viewer",
+        )
+
+    def test_session_evidence_uses_first_completed_sessions_after_start(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            row.policy = {**row.policy, "regular_sessions": 2}
+            # Starting midway through Jan 2 cannot turn its already-open
+            # session into an evaluation session.
+            row.started_at = datetime(2025, 1, 2, 15, tzinfo=timezone.utc)
+            bounds = lambda day: (
+                datetime(day.year, day.month, day.day, 14, 30, tzinfo=timezone.utc),
+                datetime(day.year, day.month, day.day, 21, tzinfo=timezone.utc),
+            )
+            with patch("app.services.stock_forward_trial.session_bounds", side_effect=bounds):
+                evidence = build_trial_session_evidence(
+                    db, row, as_of=datetime(2025, 1, 5, 21, tzinfo=timezone.utc))
+            self.assertEqual(evidence["window"]["session_dates"], ["2025-01-03", "2025-01-04"])
+            self.assertEqual(evidence["aggregates"]["expected_decisions"], 2)
+            self.assertEqual(evidence["aggregates"]["missing_decisions"], 2)
+
+    def test_session_evidence_excludes_stale_mixed_lineage_and_duplicate_observations(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            row.policy = {**row.policy, "regular_sessions": 2}
+            row.started_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+            stale = StockPaperTrialDecision(
+                trial_id=row.id, symbol="SPY", bar_timestamp=datetime(2025, 1, 1, 20, 59),
+                decision_timestamp=datetime(2025, 1, 1, 21), action="reject", qualifying=False,
+                rejection_reason="stale_decision_expired", lineage=row.lineage,
+            )
+            # The latest candidate is intentionally mixed-lineage; the older
+            # replay is visible as an exclusion rather than a replacement.
+            replay = StockPaperTrialDecision(
+                trial_id=row.id, symbol="SPY", bar_timestamp=datetime(2025, 1, 2, 20, 58),
+                decision_timestamp=datetime(2025, 1, 2, 21), action="reject", qualifying=False,
+                rejection_reason="model_signal_not_qualifying", lineage=row.lineage,
+            )
+            mismatched = StockPaperTrialDecision(
+                trial_id=row.id, symbol="SPY", bar_timestamp=datetime(2025, 1, 2, 20, 59),
+                decision_timestamp=datetime(2025, 1, 2, 21), action="reject", qualifying=False,
+                rejection_reason="model_signal_not_qualifying",
+                lineage={**row.lineage, "model_hash": "different"},
+            )
+            db.add_all([stale, replay, mismatched])
+            bounds = lambda day: (
+                datetime(day.year, day.month, day.day, 14, 30, tzinfo=timezone.utc),
+                datetime(day.year, day.month, day.day, 21, tzinfo=timezone.utc),
+            )
+            with patch("app.services.stock_forward_trial.session_bounds", side_effect=bounds):
+                evidence = build_trial_session_evidence(
+                    db, row, as_of=datetime(2025, 1, 3, 21, tzinfo=timezone.utc))
+            self.assertEqual(evidence["aggregates"]["observed_decisions"], 0)
+            self.assertEqual(evidence["aggregates"]["duplicate_exclusions"], 1)
+            self.assertEqual(evidence["sessions"][0]["symbols"][0]["status"], "rejected")
+            self.assertEqual(evidence["sessions"][1]["symbols"][0]["missing_reason"], "decision_lineage_mismatch")
+
+    def test_completed_window_stays_frozen_as_time_advances(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            row.policy = {**row.policy, "regular_sessions": 2}
+            row.started_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+            bounds = lambda day: (
+                datetime(day.year, day.month, day.day, 14, 30, tzinfo=timezone.utc),
+                datetime(day.year, day.month, day.day, 21, tzinfo=timezone.utc),
+            )
+            with patch("app.services.stock_forward_trial.session_bounds", side_effect=bounds):
+                completed = build_trial_session_evidence(
+                    db, row, as_of=datetime(2025, 1, 3, 21, tzinfo=timezone.utc))
+                later = build_trial_session_evidence(
+                    db, row, as_of=datetime(2025, 2, 3, 21, tzinfo=timezone.utc))
+            self.assertEqual(completed["window"]["session_dates"], ["2025-01-01", "2025-01-02"])
+            self.assertEqual(later["window"]["session_dates"], completed["window"]["session_dates"])
+
+    def test_versioned_reports_preserve_frozen_metric_and_history_reads_are_pure(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused")
+            metric = StockPaperTrialMetric(
+                trial_id=row.id, as_of=datetime(2025, 1, 3, 21, tzinfo=timezone.utc),
+                classification="accumulating",
+                payload={
+                    "observed_sessions": 1, "decision_coverage": "0",
+                    "closed_trades": 0, "costs_known": False,
+                    "session_evidence": {
+                        "version": 1, "as_of": "2025-01-03T21:00:00+00:00",
+                        "aggregates": {"unknown_historical_feed_health": 1},
+                    },
+                },
+            )
+            db.add(metric)
+            first = evaluate_promotion_readiness(db, row.id)
+            second_metric = StockPaperTrialMetric(
+                trial_id=row.id, as_of=datetime(2025, 1, 4, 21, tzinfo=timezone.utc),
+                classification="accumulating",
+                payload={
+                    "observed_sessions": 2, "decision_coverage": "0.5",
+                    "closed_trades": 0, "costs_known": False,
+                    "session_evidence": {
+                        "version": 1, "as_of": "2025-01-04T21:00:00+00:00",
+                        "aggregates": {"unknown_historical_feed_health": 2},
+                    },
+                },
+            )
+            db.add(second_metric)
+            second = evaluate_promotion_readiness(db, row.id)
+            before = (row.status, row.pause_reason, db.query(StockPaperTrialMetric).count())
+            history = promotion_readiness_report_history(db, row.id)
+            retrieved = promotion_readiness_report(db, row.id, first["id"])
+            self.assertEqual(before, (row.status, row.pause_reason, db.query(StockPaperTrialMetric).count()))
+            self.assertEqual(first["version"], 1)
+            self.assertEqual(second["version"], 2)
+            self.assertEqual([item["report_hash"] for item in history], [first["report_hash"], second["report_hash"]])
+            self.assertEqual(retrieved["report_hash"], first["report_hash"])
+            self.assertEqual(retrieved["evidence"]["session_evidence"]["as_of"], "2025-01-03T21:00:00+00:00")
+            self.assertEqual(first["gates"]["historical_feed_health"]["status"], "unknown")
 
     def test_invalid_binding_cannot_create_trial(self):
         with Session(self.engine) as db:

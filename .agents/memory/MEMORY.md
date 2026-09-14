@@ -17,3 +17,4 @@
 - [Recovery evidence export](recovery-evidence-export.md) — expose proof digests and stable identifiers, never raw broker payloads or financial fields.
 - [Intraday repair priority](intraday-repair-priority.md) — retry the newest completed slice before older bounded backfill; readiness must remain incomplete while historical gaps remain.
 - [Control-room E2E routing](control-room-e2e-routing.md) — run browser tests through the artifact proxy and derive localized timestamps in-browser.
+- [Alembic index parity](alembic-index-parity.md) — match unique-index migrations with SQLAlchemy Index declarations so startup drift checks stay clean.

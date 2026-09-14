@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, func, text
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -754,6 +754,12 @@ class StockPaperPromotionReadinessReport(Base):
         CheckConstraint("paper_only = true", name="ck_stock_readiness_paper_only"),
         CheckConstraint("live_authorized = false", name="ck_stock_readiness_live_disabled"),
         UniqueConstraint("report_hash", name="uq_stock_readiness_report_hash"),
+        Index(
+            "uq_stock_readiness_report_trial_version",
+            "trial_id",
+            "report_version",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -766,6 +772,12 @@ class StockPaperPromotionReadinessReport(Base):
     policy: Mapped[dict] = mapped_column(JSON, nullable=False)
     paper_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Later reports carry a self-contained, versioned evidence bundle.  These
+    # remain nullable only so evidence created before this schema can be read
+    # without rewriting an immutable row.
+    report_version: Mapped[Optional[int]] = mapped_column(Integer)
+    as_of: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    evidence: Mapped[Optional[dict]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 class StockLearningCycleEvent(Base):
