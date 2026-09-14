@@ -18,6 +18,7 @@ from app.models import (
     StockMonitoringBreach,
     StockMonitoringSnapshot,
     StockPaperBindingState,
+    StockPaperRecoveryEvent,
 )
 from app.models.stock_paper import (
     StockPaperAccount,
@@ -356,6 +357,15 @@ def _persist_breach(db: Session, check: dict, now: datetime) -> dict:
 def _pause_stock_path(db: Session, reasons: list[str], now: datetime) -> dict:
     reason = "Automatic stock-paper pause after persistent monitoring breach: " + ", ".join(reasons)
     enter_stock_recovery(db, reason=reason, actor="stock_monitor", flatten_policy="none")
+    # The recovery event is created by enter_stock_recovery before the
+    # monitoring snapshot is written.  Expose its durable id so the cycle
+    # coordinator can link both sides of the decision.
+    db.flush()
+    recovery_event = db.query(StockPaperRecoveryEvent).filter(
+        StockPaperRecoveryEvent.action == "pause",
+        StockPaperRecoveryEvent.actor == "stock_monitor",
+        StockPaperRecoveryEvent.reason == reason,
+    ).order_by(StockPaperRecoveryEvent.id.desc()).first()
     write_audit_log(db, event_type="stock_monitoring_action", action="pause_stock_path", status="complete", message=reason, entity_type="stock_paper", payload={"reasons": reasons, "at": now.isoformat()})
     notification = db.query(Notification).filter(
         Notification.category == "stock_monitoring",
@@ -376,7 +386,11 @@ def _pause_stock_path(db: Session, reasons: list[str], now: datetime) -> dict:
             source="stock_monitoring", title="Stock paper trading paused",
             message=reason, entity_type="stock_paper", payload=payload,
         )
-    return {"action": "pause_stock_path", "reasons": reasons}
+    return {
+        "action": "pause_stock_path",
+        "reasons": reasons,
+        "recovery_event_id": recovery_event.id if recovery_event else None,
+    }
 
 
 def _demote_active_model(db: Session, reasons: list[str], now: datetime) -> dict | None:
@@ -426,7 +440,23 @@ def run_stock_monitoring(db: Session, *, source: str = "stock_monitoring_job") -
     db.add(snapshot)
     write_audit_log(db, event_type="stock_monitoring", action="evaluate", status=overall, message=f"Stock monitoring completed with status {overall}.", entity_type="stock_monitoring", payload={"checks": checks, "actions": actions, "source": source})
     db.commit()
-    return {"status": overall, "generated_at": now, "checks": checks, "breaches": persisted, "actions": actions, "snapshot_id": snapshot.id}
+    recovery_event_id = next(
+        (
+            action.get("recovery_event_id")
+            for action in actions
+            if action.get("recovery_event_id")
+        ),
+        None,
+    )
+    return {
+        "status": overall,
+        "generated_at": now,
+        "checks": checks,
+        "breaches": persisted,
+        "actions": actions,
+        "snapshot_id": snapshot.id,
+        "recovery_event_id": recovery_event_id,
+    }
 
 
 def latest_stock_monitoring(db: Session) -> dict:

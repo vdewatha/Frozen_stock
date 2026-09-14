@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AssetCreate(BaseModel):
@@ -403,6 +403,18 @@ class StockPaperAccountingReviewRequest(BaseModel):
 
 class StockPaperRollbackRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
+
+
+class StockPaperRevalidationRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def require_non_blank_reason(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("reason must contain at least three non-whitespace characters")
+        return value
 
 
 class PaperTradingRunResponse(BaseModel):

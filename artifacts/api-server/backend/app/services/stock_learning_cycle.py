@@ -534,7 +534,7 @@ def sync_cycle_observability(
             cycle.monitor_snapshot_id = monitor.id
         if recovery_event:
             cycle.recovery_event_id = recovery_event.id
-        if recovery_event and recovery_event.action in {"demote_model", "pause_stock_path", "flatten_positions"}:
+        if recovery_event and recovery_event.action in {"pause", "demote_model", "pause_stock_path", "flatten_positions"}:
             cycle.status = "demoted"
             cycle.stage = "recovery"
             cycle.last_reason = recovery_event.reason

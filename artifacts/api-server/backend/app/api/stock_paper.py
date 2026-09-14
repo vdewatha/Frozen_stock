@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingReviewRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest
+from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingReviewRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest, StockPaperRevalidationRequest
 from app.services.stock_paper_ledger import (
     StockPaperError,
     create_stock_paper_signal,
@@ -106,10 +106,10 @@ def halt(payload: StockPaperHaltRequest, request: Request, db: Session = Depends
 
 
 @router.post("/resume")
-def resume(request: Request, db: Session = Depends(get_db)) -> dict:
+def resume(payload: StockPaperRevalidationRequest, request: Request, db: Session = Depends(get_db)) -> dict:
     _attribute(db, request)
     try:
-        return resume_stock_paper_account(db)
+        return resume_stock_paper_account(db, reason=payload.reason)
     except StockPaperError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

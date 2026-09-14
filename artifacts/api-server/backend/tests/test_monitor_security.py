@@ -141,3 +141,193 @@ class MonitorSecurityTests(unittest.TestCase):
             result = deployment_monitor._check_redis()
         self.assertNotIn("redis-password", str(result))
         self.assertNotIn("redis_url", result["details"])
+
+    def test_persistent_regular_session_breach_reaches_authorized_recovery(self):
+        from datetime import datetime, timedelta, timezone
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        import app.services.stock_monitoring as stock_monitoring
+        from app.db.base import Base
+        from app.models import (
+            StockDatasetSnapshot,
+            StockLearningCycle,
+            StockModelLifecycleState,
+            StockModelRegistry,
+            StockPaperBindingState,
+            StockPaperModelBinding,
+            StockPaperRecoveryEvent,
+            StockPaperRecoveryState,
+        )
+        from app.models.stock_paper import StockPaperAccount
+        from app.services.stock_learning_cycle import cycle_projection, sync_cycle_observability
+        from app.services.stock_recovery import (
+            rollback_to_last_known_good,
+            resume_stock_paper_after_revalidation,
+            StockPaperError,
+        )
+
+        with TemporaryDirectory() as root:
+            engine = create_engine(f"sqlite:///{Path(root) / 'persistent-recovery.db'}")
+            Base.metadata.create_all(engine)
+            now = datetime(2026, 9, 14, 14, 30, tzinfo=timezone.utc)
+            model_run_id = "a" * 64
+            snapshot_id = "b" * 64
+            with Session(engine) as db:
+                db.add(StockDatasetSnapshot(
+                    snapshot_id=snapshot_id, dataset_sha256="c" * 64,
+                    cutoff_date=now.date(), universe=["SPY"], provider="yfinance",
+                    feature_config_id="test", horizon_days=5,
+                    artifact_path="/tmp/dataset", artifact_sha256="d" * 64,
+                    metadata_json={"test": True},
+                ))
+                db.add(StockModelRegistry(
+                    run_id=model_run_id, snapshot_id=snapshot_id,
+                    manifest_sha256="e" * 64, artifact_path="/tmp/model",
+                    training_metadata={"selected_model": "test"},
+                ))
+                db.add(StockModelLifecycleState(
+                    model_run_id=model_run_id, lifecycle_state="champion",
+                    updated_by="operator", reason="Last-known-good paper model",
+                ))
+                binding = StockPaperModelBinding(
+                    model_run_id=model_run_id, snapshot_id=snapshot_id,
+                    binding_sha256="f" * 64, purpose="forward_paper_evaluation",
+                    paper_only=True, live_authorized=False, bound_by="operator",
+                    reason="Regular-session paper exercise",
+                )
+                db.add(binding)
+                db.flush()
+                db.add(StockPaperBindingState(
+                    id=1, active_binding_id=binding.id, changed_by="operator",
+                    reason="Regular-session paper exercise",
+                ))
+                db.add(StockLearningCycle(
+                    cycle_id="1" * 64, request_sha256="2" * 64, trigger="manual",
+                    status="complete", stage="promotion", requested_by="operator",
+                    symbols=["SPY"], cutoff_date=now.date(), horizon_days=5,
+                    provider="yfinance", seed=42, model_run_id=model_run_id,
+                    active_binding_id=binding.id, gates={}, evidence={},
+                    last_reason="Paper model was qualified",
+                ))
+                db.add(StockPaperAccount(
+                    broker="alpaca_paper", broker_account_id="paper-account",
+                    currency="USD", cash=1000, buying_power=2000, equity=1000,
+                    last_equity=1000, status="reconciled", costs_known=True,
+                    accounting_verified=True, reconciliation_required=False,
+                    unexplained_residual=False, raw_payload={},
+                    last_reconciled_at=now,
+                ))
+                db.commit()
+
+                model_breach = {
+                    "key": "model.persistent_breach",
+                    "category": "model", "metric": "calibration",
+                    "status": "breach", "message": "Model breach",
+                    "value": {"degradation": 0.2}, "threshold": {"breach": 0.1},
+                    "details": {}, "action_scope": "model",
+                }
+                safety_breach = {
+                    "key": "safety.persistent_breach",
+                    "category": "risk", "metric": "daily_loss",
+                    "status": "breach", "message": "Safety breach",
+                    "value": {"daily_loss": 0.1}, "threshold": {"breach": 0.03},
+                    "details": {}, "action_scope": "safety",
+                }
+                clear_check = {
+                    "key": "data.clear_check",
+                    "category": "data", "metric": "test_clear",
+                    "status": "clear", "message": "Clear",
+                    "value": {}, "threshold": {}, "details": {},
+                    "action_scope": "none",
+                }
+                with (
+                    patch.object(stock_monitoring, "_now", side_effect=[now, now + timedelta(minutes=1)]),
+                    patch.object(stock_monitoring, "_distribution_drift", return_value=[model_breach]),
+                    patch.object(stock_monitoring, "_performance_drift", return_value=safety_breach),
+                    patch.object(stock_monitoring, "_freshness_and_provenance", return_value=clear_check),
+                    patch.object(stock_monitoring, "_execution_divergence", return_value=clear_check),
+                    patch.object(stock_monitoring, "_stock_risk_metrics", return_value=[]),
+                    patch.object(stock_monitoring, "_broker_reconciliation_health", return_value=[]),
+                    patch.object(stock_monitoring, "_worker_scheduler_health", return_value=[]),
+                ):
+                    first = stock_monitoring.run_stock_monitoring(db, source="regular_session_test")
+                    second = stock_monitoring.run_stock_monitoring(db, source="regular_session_test")
+
+                self.assertEqual(first["breaches"][0]["status"], "observed")
+                self.assertEqual(second["breaches"][0]["status"], "persistent")
+                self.assertEqual(second["status"], "breach")
+                self.assertIsNotNone(second["recovery_event_id"])
+                self.assertEqual(
+                    db.query(StockPaperRecoveryEvent).filter_by(action="pause").count(), 1
+                )
+
+                affected = sync_cycle_observability(
+                    db,
+                    monitor_snapshot_id=second["snapshot_id"],
+                    recovery_event_id=second["recovery_event_id"],
+                )
+                db.commit()
+                self.assertEqual(affected, ["1" * 64])
+                recovery = db.get(StockPaperRecoveryState, 1)
+                self.assertEqual(recovery.status, "cooldown")
+                self.assertEqual(recovery.last_known_good_model_run_id, model_run_id)
+                self.assertEqual(recovery.last_known_good_binding_id, binding.id)
+                self.assertIsNone(db.get(StockPaperBindingState, 1))
+                self.assertIsNotNone(db.get(StockPaperModelBinding, binding.id))
+                self.assertTrue(binding.paper_only)
+                self.assertFalse(binding.live_authorized)
+
+                projection = cycle_projection(db, db.get(StockLearningCycle, "1" * 64))
+                self.assertEqual(projection["status"], "demoted")
+                self.assertEqual(projection["monitoring"]["snapshot_id"], second["snapshot_id"])
+                self.assertEqual(projection["recovery"]["latest_event_id"], second["recovery_event_id"])
+                self.assertFalse(projection["live_authorized"])
+
+                snapshot_count = db.query(stock_monitoring.StockMonitoringSnapshot).count()
+                recovery_event_count = db.query(StockPaperRecoveryEvent).count()
+                stock_monitoring.latest_stock_monitoring(db)
+                stock_monitoring.latest_stock_monitoring(db)
+                self.assertEqual(db.query(stock_monitoring.StockMonitoringSnapshot).count(), snapshot_count)
+                self.assertEqual(db.query(StockPaperRecoveryEvent).count(), recovery_event_count)
+
+                recovery.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+                account = db.query(StockPaperAccount).one()
+                account.status = "reconciled"
+                account.reconciliation_required = False
+                halted_at = account.halted_at
+                if halted_at.tzinfo is None:
+                    halted_at = halted_at.replace(tzinfo=timezone.utc)
+                clear_at = max(halted_at, now) + timedelta(hours=1)
+                db.add(stock_monitoring.StockMonitoringSnapshot(
+                    monitor_key=stock_monitoring.MONITOR_KEY, status="clear",
+                    generated_at=clear_at, checks=[], actions=[],
+                    source="regular_session_revalidation",
+                ))
+                db.commit()
+                with self.assertRaisesRegex(StockPaperError, "explicit actor"):
+                    resume_stock_paper_after_revalidation(
+                        db, actor="", reason="Revalidate after breach"
+                    )
+                with patch(
+                    "app.services.stock_recovery._now",
+                    return_value=clear_at + timedelta(minutes=1),
+                ):
+                    resumed = resume_stock_paper_after_revalidation(
+                        db, actor="operator", reason="Fresh regular-session evidence reviewed"
+                    )
+                self.assertEqual(resumed["status"], "resumable")
+                self.assertEqual(resumed["events"][0]["reason"], "Fresh regular-session evidence reviewed")
+
+                with self.assertRaisesRegex(StockPaperError, "non-empty reason"):
+                    rollback_to_last_known_good(db, actor="operator", reason=" ")
+                rollback = rollback_to_last_known_good(
+                    db, actor="operator", reason="Restore the last-known-good paper binding"
+                )
+                self.assertEqual(rollback["events"][0]["action"], "rollback")
+                self.assertEqual(db.get(StockModelLifecycleState, model_run_id).lifecycle_state, "champion")
+                self.assertEqual(db.get(StockPaperBindingState, 1).active_binding_id, binding.id)
+            engine.dispose()

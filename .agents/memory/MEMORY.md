@@ -13,3 +13,4 @@
 - [Automatic accounting recovery](automatic-accounting-recovery.md) — only an exact late-commission enrichment can resolve a residual automatically; stable snapshots never qualify.
 - [Recovery timestamp precision](recovery-timestamp-precision.md) — use precise application-side halt timestamps when qualifying post-pause monitoring evidence.
 - [Backend test module path](backend-test-module-path.md) — run backend pytest with PYTHONPATH=. so app imports resolve from the workspace.
+- [Recovery evidence linkage](recovery-evidence-linkage.md) — link low-level pause events to cycles while keeping demotion fail-closed and last-known-good bindings immutable.

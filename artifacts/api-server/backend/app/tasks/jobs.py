@@ -416,7 +416,11 @@ def risk_monitor_job() -> dict:
 def stock_monitoring_job() -> dict:
     def work(db):
         result = run_stock_monitoring(db)
-        sync_cycle_observability(db, monitor_snapshot_id=result.get("snapshot_id"))
+        sync_cycle_observability(
+            db,
+            monitor_snapshot_id=result.get("snapshot_id"),
+            recovery_event_id=result.get("recovery_event_id"),
+        )
         db.commit()
         return result
     return _run_job("stock_monitoring_job", work)

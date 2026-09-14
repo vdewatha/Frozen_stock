@@ -100,6 +100,7 @@ from app.services.decision_journal import decision_journal_scorecard, list_candi
 from app.services.deployment_monitor import deployment_monitor_snapshot, run_deployment_monitor
 from app.services.operational_hardening import operational_hardening_snapshot, run_operational_hardening
 from app.services.stock_monitoring import latest_stock_monitoring, run_stock_monitoring
+from app.services.stock_learning_cycle import sync_cycle_observability
 from app.services.economic_data import import_fallback_economic_indicators, list_economic_indicators, summarize_macro_context
 from app.services.experiments import list_strategy_experiments, run_strategy_experiments
 from app.services.governance import evaluate_strategy_governance, latest_strategy_governance_scorecard
@@ -205,7 +206,15 @@ def system_stock_monitoring(db: Session = Depends(get_db)) -> dict:
 
 @router.post("/system/stock-monitoring/run", response_model=dict)
 def run_system_stock_monitoring(db: Session = Depends(get_db)) -> dict:
-    return run_stock_monitoring(db, source="manual_api")
+    result = run_stock_monitoring(db, source="manual_api")
+    sync_cycle_observability(
+        db,
+        monitor_snapshot_id=result.get("snapshot_id"),
+        recovery_event_id=result.get("recovery_event_id"),
+        actor="operator",
+    )
+    db.commit()
+    return result
 
 
 @router.get("/trade-candidates", response_model=TradeCandidateResponse)

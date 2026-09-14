@@ -399,8 +399,19 @@ def _record_monitoring_preflight_rejection(
     )
 
 
-def resume_stock_paper_after_revalidation(db: Session, *, actor: str) -> dict:
+def resume_stock_paper_after_revalidation(
+    db: Session,
+    *,
+    actor: str,
+    reason: str,
+) -> dict:
     now = _now()
+    actor = actor.strip()
+    reason = reason.strip()
+    if not actor:
+        raise StockPaperError("Recovery revalidation requires an explicit actor")
+    if not reason:
+        raise StockPaperError("Recovery revalidation requires a non-empty reason")
     state = _state(db)
     if actor == AUTOMATIC_RECOVERY_ACTOR:
         raise StockPaperError("Authorized operator revalidation is required before recovery can resume")
@@ -423,18 +434,25 @@ def resume_stock_paper_after_revalidation(db: Session, *, actor: str) -> dict:
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
     ).count():
         raise StockPaperError("In-flight orders must be terminal before recovery can resume")
-    okay, reason = _fresh_monitoring_is_clear(db, now)
+    okay, monitoring_reason = _fresh_monitoring_is_clear(db, now)
     if not okay:
-        _record_monitoring_preflight_rejection(db, actor=actor, reason=reason, now=now)
+        _record_monitoring_preflight_rejection(db, actor=actor, reason=monitoring_reason, now=now)
         db.commit()
-        raise StockPaperError(reason)
+        raise StockPaperError(monitoring_reason)
     state.status = "resumable"
     state.last_revalidation_at = now
     state.updated_by = actor
     state.pause_reason = None
     _set_kill_switch(db, False)
     account.status, account.halt_reason, account.reconciliation_required = "reconciled", None, False
-    _event(db, action="resume", status="revalidated", actor=actor, reason="Cooldown elapsed and fresh monitoring/reconciliation evidence passed", payload={"monitoring_at": now.isoformat()})
+    _event(
+        db,
+        action="resume",
+        status="revalidated",
+        actor=actor,
+        reason=reason,
+        payload={"monitoring_at": now.isoformat()},
+    )
     db.commit()
     return recovery_status(db)
 
@@ -709,6 +727,12 @@ def acknowledge_stock_paper_accounting_review(
 
 def rollback_to_last_known_good(db: Session, *, actor: str, reason: str) -> dict:
     """Restore the recorded last-known-good binding atomically with lifecycle evidence."""
+    actor = actor.strip()
+    reason = reason.strip()
+    if not actor:
+        raise StockPaperError("Rollback requires an explicit actor")
+    if not reason:
+        raise StockPaperError("Rollback requires a non-empty reason")
     state = _state(db)
     if not state.last_known_good_model_run_id or not state.last_known_good_binding_id:
         raise StockPaperError("No last-known-good model binding has been recorded")

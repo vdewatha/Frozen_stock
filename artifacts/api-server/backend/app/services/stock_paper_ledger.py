@@ -809,9 +809,13 @@ def halt_stock_paper_account(db: Session, reason: str) -> dict:
     return stock_paper_status(db)
 
 
-def resume_stock_paper_account(db: Session) -> dict:
+def resume_stock_paper_account(db: Session, *, reason: str) -> dict:
     from app.services.stock_recovery import resume_stock_paper_after_revalidation
-    return resume_stock_paper_after_revalidation(db, actor=str(db.info.get("stock_paper_actor", "operator")))
+    return resume_stock_paper_after_revalidation(
+        db,
+        actor=str(db.info.get("stock_paper_actor", "operator")),
+        reason=reason,
+    )
 
 
 def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, signal_id: int | None,

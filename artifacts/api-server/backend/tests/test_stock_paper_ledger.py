@@ -733,7 +733,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             initialize_stock_paper_account(db, FakeAlpaca())
             run_stock_watchdog(db)
             with self.assertRaises(StockPaperError):
-                resume_stock_paper_after_revalidation(db, actor="operator-test")
+                resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Retry after recovery evidence")
 
     def test_monitoring_evidence_must_follow_current_pause_and_accounting_halt(self):
         from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
@@ -762,7 +762,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             ))
             db.commit()
             with self.assertRaisesRegex(StockPaperError, "generated before the current recovery pause"):
-                resume_stock_paper_after_revalidation(db, actor="operator-test")
+                resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Reject stale monitoring evidence")
             status = recovery_status(db)
             self.assertIn("generated before the current recovery pause", status["last_monitoring_preflight"]["reason"])
 
@@ -779,7 +779,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             ))
             db.commit()
             with self.assertRaisesRegex(StockPaperError, "generated before the current recovery pause"):
-                resume_stock_paper_after_revalidation(db, actor="operator-test")
+                resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Reject pre-halt monitoring evidence")
             self.assertGreaterEqual(
                 db.query(StockPaperRecoveryEvent).filter_by(action="monitoring_preflight", status="blocked").count(),
                 2,
@@ -794,7 +794,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
                 source="test",
             ))
             db.commit()
-            resumed = resume_stock_paper_after_revalidation(db, actor="operator-test")
+            resumed = resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Accept fresh monitoring evidence")
             self.assertEqual(resumed["status"], "resumable")
 
     def test_repeated_recovery_attempt_requires_monitoring_after_new_pause(self):
@@ -820,7 +820,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             ))
             db.commit()
             self.assertEqual(
-                resume_stock_paper_after_revalidation(db, actor="operator-test")["status"],
+                resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Accept first recovery evidence")["status"],
                 "resumable",
             )
 
@@ -832,7 +832,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             recovery_state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
             db.commit()
             with self.assertRaisesRegex(StockPaperError, "generated before the current recovery pause"):
-                resume_stock_paper_after_revalidation(db, actor="operator-test")
+                resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Reject evidence from prior pause")
 
             db.add(StockMonitoringSnapshot(
                 monitor_key="stock_continuous_monitor",
@@ -844,7 +844,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             ))
             db.commit()
             self.assertEqual(
-                resume_stock_paper_after_revalidation(db, actor="operator-test")["status"],
+                resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Accept evidence after second pause")["status"],
                 "resumable",
             )
 
@@ -863,7 +863,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             account.status = "reconciled"
             account.reconciliation_required = False
             with self.assertRaisesRegex(StockPaperError, "accounting review"):
-                resume_stock_paper_after_revalidation(db, actor="admin-test")
+                resume_stock_paper_after_revalidation(db, actor="admin-test", reason="Review recovery gates")
             reviewed = acknowledge_stock_paper_accounting_review(
                 db,
                 actor="operator-test",
@@ -874,7 +874,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             self.assertTrue(db.query(StockPaperRecoveryState).one().accounting_review_required)
             self.assertTrue(db.query(StockPaperAccount).one().unexplained_residual)
             with self.assertRaisesRegex(StockPaperError, "accounting review"):
-                resume_stock_paper_after_revalidation(db, actor="admin-test")
+                resume_stock_paper_after_revalidation(db, actor="admin-test", reason="Review recovery gates again")
 
     def test_late_known_commission_automatically_reviews_and_requires_operator_resume(self):
         from app.models import StockPaperRecoveryState
@@ -928,7 +928,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             self.assertEqual(db.query(StockPaperAccount).one().status, "reconciled")
 
             with patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "clear")):
-                resumed = resume_stock_paper_after_revalidation(db, actor="admin-test")
+                resumed = resume_stock_paper_after_revalidation(db, actor="admin-test", reason="Approve fresh broker and monitor evidence")
             self.assertEqual(resumed["status"], "resumable")
             self.assertEqual(db.query(StockPaperRecoveryState).one().status, "resumable")
 
