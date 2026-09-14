@@ -517,6 +517,11 @@ def attempt_automatic_stock_recovery(
     already match, every persisted fill must have a reported fee, every broker
     activity must be a timestamped fill, and reconciliation must have found no
     other mismatch. A repeated snapshot is never treated as proof.
+
+    The returned mapping is the public automatic-recovery response: ``status``
+    is always present and ``reason`` is present whenever the status explains a
+    blocked, waiting, or operator-action outcome. Reconciliation exposes this
+    exact mapping under its ``automatic_recovery`` key.
     """
     evidence = evidence or {}
     state = _state(db)

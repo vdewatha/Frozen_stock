@@ -1120,7 +1120,16 @@ class StockPaperRecoveryTests(unittest.TestCase):
             self.assertTrue(first["account"]["unexplained_residual"])
 
             second = reconcile_stock_paper_account(db, enriched_account)
+            direct_waiting = attempt_automatic_stock_recovery(
+                db,
+                candidate=True,
+                evidence={"enriched_activity_ids": ["late-fee-fill"]},
+            )
             self.assertEqual(second["automatic_recovery"]["status"], "waiting")
+            self.assertEqual(direct_waiting["status"], "waiting")
+            self.assertEqual(second["automatic_recovery"], direct_waiting)
+            self.assertEqual(set(second["automatic_recovery"]), {"status", "reason"})
+            self.assertEqual(set(direct_waiting), {"status", "reason"})
             self.assertTrue(second["costs_known"])
             state = db.query(StockPaperRecoveryState).one()
             account = db.query(StockPaperAccount).one()
@@ -1134,7 +1143,16 @@ class StockPaperRecoveryTests(unittest.TestCase):
             db.commit()
             with patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "clear")):
                 third = reconcile_stock_paper_account(db, enriched_account)
+                direct_awaiting = attempt_automatic_stock_recovery(
+                    db,
+                    candidate=True,
+                    evidence={"enriched_activity_ids": ["late-fee-fill"]},
+                )
             self.assertEqual(third["automatic_recovery"]["status"], "awaiting_operator_revalidation")
+            self.assertEqual(direct_awaiting["status"], "awaiting_operator_revalidation")
+            self.assertEqual(third["automatic_recovery"], direct_awaiting)
+            self.assertEqual(set(third["automatic_recovery"]), {"status", "reason"})
+            self.assertEqual(set(direct_awaiting), {"status", "reason"})
             self.assertEqual(db.query(StockPaperRecoveryState).one().status, "cooldown")
             self.assertEqual(db.query(StockPaperAccount).one().status, "reconciled")
 
@@ -1145,7 +1163,16 @@ class StockPaperRecoveryTests(unittest.TestCase):
 
             with patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "clear")):
                 repeated = reconcile_stock_paper_account(db, enriched_account)
+            direct_already_resumed = attempt_automatic_stock_recovery(
+                db,
+                candidate=True,
+                evidence={"enriched_activity_ids": ["late-fee-fill"]},
+            )
             self.assertEqual(repeated["automatic_recovery"]["status"], "already_resumed")
+            self.assertEqual(direct_already_resumed["status"], "already_resumed")
+            self.assertEqual(repeated["automatic_recovery"], direct_already_resumed)
+            self.assertEqual(set(repeated["automatic_recovery"]), {"status"})
+            self.assertEqual(set(direct_already_resumed), {"status"})
             self.assertTrue(repeated["costs_known"])
             self.assertEqual(db.query(StockPaperRecoveryState).one().status, "resumable")
 
@@ -1294,7 +1321,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             self.assertIn("watermark", result["reason"].lower())
 
     def test_automatic_review_stays_blocked_for_unknown_fee_and_notifies_operator(self):
-        from app.models import Notification
+        from app.models import Notification, StockPaperRecoveryEvent
 
         residual = FakeAlpaca(
             positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
@@ -1312,9 +1339,28 @@ class StockPaperRecoveryTests(unittest.TestCase):
         with Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())
             result = reconcile_stock_paper_account(db, residual)
+            direct_blocked = attempt_automatic_stock_recovery(
+                db,
+                candidate=False,
+                evidence={},
+            )
             self.assertEqual(result["automatic_recovery"]["status"], "blocked")
+            self.assertEqual(direct_blocked["status"], "blocked")
+            self.assertEqual(result["automatic_recovery"], direct_blocked)
+            self.assertEqual(set(result["automatic_recovery"]), {"status", "reason"})
+            self.assertEqual(set(direct_blocked), {"status", "reason"})
             self.assertEqual(result["status"], "halted")
             self.assertTrue(result["account"]["unexplained_residual"])
+            blocked_events = db.query(StockPaperRecoveryEvent).filter_by(
+                action="automatic_accounting_review",
+                status="blocked",
+                actor="stock_recovery_automation",
+            ).order_by(StockPaperRecoveryEvent.id).all()
+            self.assertEqual(len(blocked_events), 2)
+            self.assertEqual(
+                [event.reason for event in blocked_events],
+                [result["automatic_recovery"]["reason"], direct_blocked["reason"]],
+            )
             self.assertEqual(db.query(Notification).filter_by(source="stock_recovery_automation").count(), 1)
             reconcile_stock_paper_account(db, residual)
             self.assertEqual(db.query(Notification).filter_by(source="stock_recovery_automation").count(), 1)

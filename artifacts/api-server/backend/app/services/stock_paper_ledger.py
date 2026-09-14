@@ -609,6 +609,13 @@ def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | No
 
 
 def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None) -> dict:
+    """Reconcile the broker account and preserve the automatic-recovery contract.
+
+    When automatic recovery runs, its exact response mapping is nested under
+    ``automatic_recovery``. API callers can therefore use the same ``status``
+    and optional ``reason`` fields as callers of
+    ``attempt_automatic_stock_recovery``.
+    """
     account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
     if account is None:
         raise StockPaperError("Stock paper account is not initialized")
@@ -792,6 +799,8 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
         db.commit()
     result = stock_paper_status(db)
     if automatic_recovery is not None:
+        # Keep the service response intact; callers depend on parity with the
+        # direct automatic-recovery entry point.
         result["automatic_recovery"] = automatic_recovery
     return result
 
