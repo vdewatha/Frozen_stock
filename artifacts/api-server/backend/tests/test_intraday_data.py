@@ -241,8 +241,28 @@ class IntradayDataTests(unittest.TestCase):
             result = intraday_data.preflight_intraday(self.db, now=now)
         self.assertTrue(result["ready"])
         self.assertEqual(result["status"], "ready")
+        self.assertIsNone(result["next_regular_session_open"])
+        self.assertIsNone(result["next_regular_session_gap"])
         self.assertEqual(result["symbols"], ["AAPL", "MSFT", "QQQ", "SPY"])
         self.assertEqual({row["symbol"] for row in result["results"]}, set(statuses))
+
+    def test_preflight_exposes_next_open_and_gap_when_session_is_closed(self):
+        observed_at = datetime(2026, 9, 11, 21, 0, tzinfo=UTC)
+        with patch.object(settings, "alpaca_feed", "sip"), patch.object(
+            settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")
+        ), patch.object(
+            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        ):
+            result = intraday_data.preflight_intraday(self.db, now=observed_at)
+
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(
+            result["next_regular_session_open"],
+            "2026-09-14T13:30:00+00:00",
+        )
+        self.assertEqual(result["next_regular_session_gap"], "weekend")
+        self.assertTrue(all(row["status"] == "out_of_session" for row in result["results"]))
 
     def test_session_repair_uses_bounded_windows_and_stays_fail_closed(self):
         calls = []

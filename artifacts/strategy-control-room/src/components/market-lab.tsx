@@ -8,6 +8,22 @@ import { BacktestResponse, IntradayImportResponse, IntradayPreflightResponse, Ma
 import { RoleGate } from "@/components/access-control";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
+const easternDateTime = new Intl.DateTimeFormat("en-US", {
+  weekday: "long",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: "America/New_York",
+  timeZoneName: "short",
+});
+
+function formatNextSessionOpen(value: string | null): string {
+  if (!value) return "Unavailable";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unavailable" : easternDateTime.format(date);
+}
 
 const strategies = [
   ["moving_average_crossover", "Moving Average"],
@@ -253,6 +269,17 @@ export function MarketLab() {
             {preflight ? (
               <div className="mt-2 grid gap-1 text-sm">
                 <div className="flex justify-between gap-3"><span>Session / feed</span><strong>{preflight.session} / {preflight.feed_class}</strong></div>
+                {preflight.next_regular_session_open ? (
+                  <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800" data-testid="sip-preflight-next-session">
+                    <div>
+                      NYSE regular session is closed. Next eligible open (Eastern Time):{" "}
+                      <strong>{formatNextSessionOpen(preflight.next_regular_session_open)}</strong>
+                    </div>
+                    {preflight.next_regular_session_gap ? (
+                      <div className="mt-0.5">Gap: {preflight.next_regular_session_gap}</div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {preflight.results.map((row) => (
                   <div key={row.symbol} className="border-t border-line pt-1">
                     <div className="flex justify-between gap-3">

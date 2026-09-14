@@ -137,6 +137,27 @@ def next_regular_session_open(now: datetime) -> datetime:
         candidate += timedelta(days=1)
 
 
+def next_regular_session_gap(now: datetime, next_open: datetime) -> str | None:
+    """Describe a non-session-day gap between the check and the next open."""
+    start = _aware_utc(now).astimezone(NY).date()
+    end = _aware_utc(next_open).astimezone(NY).date()
+    if end <= start:
+        return None
+
+    gap_days = [start + timedelta(days=offset) for offset in range((end - start).days)]
+    includes_weekend = any(day.weekday() >= 5 for day in gap_days)
+    includes_holiday = any(
+        day.weekday() < 5 and day in nyse_holidays(day.year) for day in gap_days
+    )
+    if includes_weekend and includes_holiday:
+        return "weekend and NYSE holiday"
+    if includes_weekend:
+        return "weekend"
+    if includes_holiday:
+        return "NYSE holiday"
+    return None
+
+
 def _symbol(symbol: str) -> str:
     value = symbol.strip().upper()
     if value not in ALLOWED_SYMBOLS:
@@ -601,6 +622,8 @@ def preflight_intraday(
     selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
     observed_at = _aware_utc(now or datetime.now(UTC))
     bounds = session_bounds(observed_at.astimezone(NY).date())
+    regular_session_open = bounds is not None and bounds[0] <= observed_at < bounds[1]
+    next_open = None if regular_session_open else next_regular_session_open(observed_at)
     base = {
         "provider": "alpaca",
         "feed_class": "sip",
@@ -610,6 +633,10 @@ def preflight_intraday(
         "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
         "checked_at": observed_at.isoformat(),
         "symbols": selected,
+        "next_regular_session_open": next_open.isoformat() if next_open else None,
+        "next_regular_session_gap": (
+            next_regular_session_gap(observed_at, next_open) if next_open else None
+        ),
     }
     if settings.alpaca_feed.strip().lower() != "sip":
         return {
@@ -654,7 +681,7 @@ def preflight_intraday(
                 for symbol in selected
             ],
         }
-    if bounds is None or not (bounds[0] <= observed_at < bounds[1]):
+    if not regular_session_open:
         reason = "Regular-session authenticated preflight is required"
         return {
             **base,

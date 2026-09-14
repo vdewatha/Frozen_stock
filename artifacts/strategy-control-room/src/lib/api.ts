@@ -234,6 +234,8 @@ export type IntradayPreflightResponse = {
   ready: boolean;
   failure_class: string | null;
   reason: string | null;
+  next_regular_session_open: string | null;
+  next_regular_session_gap: "weekend" | "NYSE holiday" | "weekend and NYSE holiday" | null;
   results: Array<{
     symbol: string;
     status: string;
