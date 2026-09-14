@@ -103,6 +103,8 @@ def required_role(method: str, path: str) -> str:
         return "viewer"
     if method == "GET" and path == "/stock-paper/recovery":
         return "viewer"
+    if method == "GET" and path == "/stock-paper/recovery/evidence":
+        return "operator"
     # Exactly one path parameter; the API validates its 64-character hex value.
     # Other nested research routes retain the default admin requirement.
     if method == "GET" and re.fullmatch(r"/research/runs/[^/]+", path):

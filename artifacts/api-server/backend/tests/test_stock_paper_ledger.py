@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -18,6 +19,7 @@ from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
 from app.db.session import get_db
 from app.models import RiskRule, StockPaperRecoveryState
+from app.models.stock_paper import StockPaperAccount, StockPaperBrokerActivity, StockPaperEquitySnapshot, StockPaperFill, StockPaperOrder, StockPaperPosition
 from app.services.stock_paper_ledger import (
     AlpacaPaperClient,
     StockPaperError,
@@ -28,8 +30,10 @@ from app.services.stock_paper_ledger import (
     stock_paper_status,
 )
 from app.services.stock_recovery import (
+    _accounting_review_digest,
     acknowledge_stock_paper_accounting_review,
     enter_stock_recovery,
+    recovery_evidence,
     run_stock_watchdog,
     resume_stock_paper_after_revalidation,
 )
@@ -718,6 +722,138 @@ class StockPaperRecoveryTests(unittest.TestCase):
         self.engine.dispose()
         self.tmp.cleanup()
 
+    def test_recovery_evidence_export_is_identifier_only_and_digest_bound(self):
+        observed = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+        account_payload = {
+            **StockPaperLedgerTests.account_payload(),
+            "id": "broker-account",
+            "api_key": "must-not-be-exported",
+        }
+        activity_payload = {
+            "id": "broker-activity-1",
+            "activity_type": "FILL",
+            "order_id": "broker-order-1",
+            "symbol": "SPY",
+            "side": "buy",
+            "qty": "1",
+            "price": "100",
+            "commission": "0.10",
+            "transaction_time": observed.isoformat(),
+            "APCA-API-SECRET-KEY": "must-not-be-exported",
+        }
+        with Session(self.engine) as db:
+            account = StockPaperAccount(
+                broker="alpaca_paper",
+                broker_account_id="broker-account",
+                currency="USD",
+                cash=Decimal("1000"),
+                buying_power=Decimal("2000"),
+                equity=Decimal("1000"),
+                last_equity=Decimal("999"),
+                status="reconciled",
+                costs_known=True,
+                accounting_verified=True,
+                reconciliation_required=False,
+                raw_payload=account_payload,
+                last_reconciled_at=observed,
+            )
+            db.add(account)
+            db.flush()
+            order = StockPaperOrder(
+                account_id=account.id,
+                client_order_id="client-order-1",
+                broker_order_id="broker-order-1",
+                symbol="SPY",
+                side="buy",
+                quantity=Decimal("1"),
+                order_type="market",
+                time_in_force="day",
+                reserved_cash=Decimal("0"),
+                status="filled",
+                source="broker_import",
+                raw_payload={"id": "broker-order-1", "api_key": "must-not-be-exported"},
+            )
+            db.add(order)
+            db.flush()
+            db.add_all([
+                StockPaperPosition(
+                    account_id=account.id,
+                    symbol="SPY",
+                    quantity=Decimal("1"),
+                    average_entry_price=Decimal("100"),
+                    current_price=Decimal("101"),
+                    market_value=Decimal("101"),
+                    cost_basis=Decimal("100"),
+                    unrealized_pl=Decimal("1"),
+                    observed_at=observed,
+                    raw_payload={"symbol": "SPY", "current_price": "101"},
+                ),
+                StockPaperBrokerActivity(
+                    account_id=account.id,
+                    broker_activity_id="broker-activity-1",
+                    activity_type="FILL",
+                    occurred_at=observed,
+                    raw_payload=activity_payload,
+                ),
+                StockPaperFill(
+                    account_id=account.id,
+                    order_id=order.id,
+                    broker_activity_id="broker-activity-1",
+                    broker_order_id="broker-order-1",
+                    symbol="SPY",
+                    side="buy",
+                    quantity=Decimal("1"),
+                    price=Decimal("100"),
+                    fee=Decimal("0.10"),
+                    cost_known=True,
+                    filled_at=observed,
+                    raw_payload=activity_payload,
+                ),
+                StockPaperEquitySnapshot(
+                    account_id=account.id,
+                    cash=Decimal("1000"),
+                    equity=Decimal("1000"),
+                    last_equity=Decimal("999"),
+                    buying_power=Decimal("2000"),
+                    observed_at=observed,
+                    source="alpaca_paper",
+                    raw_payload={"cash": "1000", "credential": "must-not-be-exported"},
+                ),
+            ])
+            db.add(StockPaperRecoveryState(
+                id=1,
+                status="resumable",
+                accounting_review_required=True,
+                accounting_reviewed_at=observed,
+                accounting_reviewed_by="operator-test",
+                accounting_review_reason="Reviewed broker evidence",
+                updated_by="operator-test",
+            ))
+            db.commit()
+
+            initial = recovery_evidence(db)
+            state = db.get(StockPaperRecoveryState, 1)
+            expected_digest = _accounting_review_digest(account, db)
+            state.accounting_review_digest = expected_digest
+            db.commit()
+            result = recovery_evidence(db)
+
+            self.assertEqual(result["proof_digest_status"], "current")
+            self.assertIsNone(initial["proof_digest"])
+            self.assertEqual(result["accounting_review_digest"], expected_digest)
+            self.assertEqual(result["evidence_identifiers"]["broker_account_id"], "broker-account")
+            self.assertEqual(result["evidence_identifiers"]["broker_activity_ids"], ["broker-activity-1"])
+            self.assertEqual(result["evidence_identifiers"]["broker_order_ids"], ["broker-order-1"])
+            self.assertEqual(result["evidence_identifiers"]["client_order_ids"], ["client-order-1"])
+            self.assertEqual(result["broker_evidence"]["fills"][0]["broker_activity_id"], "broker-activity-1")
+            self.assertEqual(result["reconciliation"]["snapshot_database_id"], 1)
+            serialized = json.dumps(result)
+            self.assertNotIn("must-not-be-exported", serialized)
+            self.assertNotIn("APCA-API-SECRET-KEY", serialized)
+            self.assertNotIn('"cash"', serialized)
+            self.assertNotIn("unrealized_pl", serialized)
+            self.assertNotIn('"fee"', serialized)
+
     def test_independent_watchdog_pauses_when_monitor_evidence_is_missing(self):
         from app.models import StockPaperRecoveryState
 
@@ -1141,6 +1277,7 @@ class StockPaperRoleTests(unittest.TestCase):
 
     def test_role_matrix_and_uninitialized_status(self):
         self.assertEqual(required_role("GET", "/stock-paper/status"), "viewer")
+        self.assertEqual(required_role("GET", "/stock-paper/recovery/evidence"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/initialize"), "admin")
         self.assertEqual(required_role("POST", "/stock-paper/reconcile"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/halt"), "operator")
@@ -1153,6 +1290,10 @@ class StockPaperRoleTests(unittest.TestCase):
         self.assertEqual(self.call("post", "/reconcile", "v").status_code, 403)
         self.assertEqual(self.call("post", "/halt", "r", json={"reason": "test"}).status_code, 403)
         self.assertEqual(self.call("post", "/resume", "o").status_code, 403)
+        self.assertEqual(self.call("get", "/recovery/evidence", "v").status_code, 403)
+        self.assertEqual(self.call("get", "/recovery/evidence", "r").status_code, 403)
+        self.assertEqual(self.call("get", "/recovery/evidence", "o").status_code, 200)
+        self.assertEqual(self.call("get", "/recovery/evidence", "a").status_code, 200)
         self.assertEqual(self.call("post", "/orders", "v", json={
             "symbol": "SPY", "side": "buy", "quantity": "1", "reference_price": "1", "idempotency_key": "order-key",
         }).status_code, 403)

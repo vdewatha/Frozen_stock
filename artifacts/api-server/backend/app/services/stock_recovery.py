@@ -23,6 +23,7 @@ from app.models import (
 from app.models.stock_paper import (
     StockPaperAccount,
     StockPaperBrokerActivity,
+    StockPaperEquitySnapshot,
     StockPaperFill,
     StockPaperOrder,
     StockPaperPosition,
@@ -817,6 +818,150 @@ def recovery_status(db: Session) -> dict:
         "accounting_verified": bool(account.accounting_verified) if account else False,
         "costs_known": bool(account.costs_known) if account else False,
         "events": [{"id": event.id, "action": event.action, "status": event.status, "actor": event.actor, "reason": event.reason, "created_at": event.created_at.isoformat() if event.created_at else None, "payload": event.payload} for event in events],
+    }
+
+
+def recovery_evidence(db: Session) -> dict:
+    """Return the non-sensitive broker evidence behind the accounting proof.
+
+    The accounting digest is intentionally calculated from immutable broker
+    payloads, but reviewers should not need access to those payloads (which may
+    contain broker-specific fields). This projection exposes only identifiers
+    and timestamps, never credentials, prices, balances, fees, or P/L.
+    """
+    state = _state(db, for_update=False)
+    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    if account is None:
+        return {
+            "status": state.status,
+            "accounting_review_digest": state.accounting_review_digest,
+            "proof_digest": state.accounting_review_digest,
+            "proof_digest_algorithm": "sha256",
+            "proof_digest_status": "not_recorded" if not state.accounting_review_digest else "unverifiable",
+            "broker_evidence": {
+                "account": None,
+                "positions": [],
+                "fills": [],
+                "activities": [],
+                "orders": [],
+            },
+            "reconciliation": None,
+            "evidence_identifiers": {
+                "broker_account_id": None,
+                "broker_activity_ids": [],
+                "broker_order_ids": [],
+                "client_order_ids": [],
+            },
+        }
+
+    positions = db.query(StockPaperPosition).filter_by(account_id=account.id).order_by(
+        StockPaperPosition.symbol
+    ).all()
+    fills = db.query(StockPaperFill).filter_by(account_id=account.id).order_by(
+        StockPaperFill.broker_activity_id
+    ).all()
+    activities = db.query(StockPaperBrokerActivity).filter_by(account_id=account.id).order_by(
+        StockPaperBrokerActivity.broker_activity_id
+    ).all()
+    orders = db.query(StockPaperOrder).filter_by(account_id=account.id).order_by(
+        StockPaperOrder.client_order_id
+    ).all()
+    latest_snapshot = db.query(StockPaperEquitySnapshot).filter_by(
+        account_id=account.id
+    ).order_by(
+        StockPaperEquitySnapshot.observed_at.desc(),
+        StockPaperEquitySnapshot.id.desc(),
+    ).first()
+
+    proof_digest = state.accounting_review_digest
+    current_digest = _accounting_review_digest(account, db)
+    proof_digest_status = (
+        "not_recorded"
+        if not proof_digest
+        else "current"
+        if proof_digest == current_digest
+        else "stale"
+    )
+    broker_order_ids = sorted({
+        value for value in (
+            [fill.broker_order_id for fill in fills]
+            + [order.broker_order_id for order in orders]
+        )
+        if value
+    })
+    client_order_ids = sorted({
+        order.client_order_id for order in orders if order.client_order_id
+    })
+
+    return {
+        "status": state.status,
+        "accounting_review_required": state.accounting_review_required,
+        "accounting_reviewed_at": (
+            state.accounting_reviewed_at.isoformat()
+            if state.accounting_reviewed_at
+            else None
+        ),
+        "accounting_reviewed_by": state.accounting_reviewed_by,
+        "accounting_review_reason": state.accounting_review_reason,
+        "accounting_review_digest": proof_digest,
+        "proof_digest": proof_digest,
+        "proof_digest_algorithm": "sha256",
+        "proof_digest_status": proof_digest_status,
+        "broker_evidence": {
+            "account": {
+                "database_id": account.id,
+                "broker": account.broker,
+                "broker_account_id": account.broker_account_id,
+            },
+            "positions": [
+                {"database_id": row.id, "symbol": row.symbol}
+                for row in positions
+            ],
+            "fills": [
+                {
+                    "database_id": row.id,
+                    "broker_activity_id": row.broker_activity_id,
+                    "broker_order_id": row.broker_order_id,
+                    "order_database_id": row.order_id,
+                    "filled_at": row.filled_at.isoformat() if row.filled_at else None,
+                }
+                for row in fills
+            ],
+            "activities": [
+                {
+                    "database_id": row.id,
+                    "broker_activity_id": row.broker_activity_id,
+                    "activity_type": row.activity_type,
+                    "occurred_at": row.occurred_at.isoformat() if row.occurred_at else None,
+                }
+                for row in activities
+            ],
+            "orders": [
+                {
+                    "database_id": row.id,
+                    "client_order_id": row.client_order_id,
+                    "broker_order_id": row.broker_order_id,
+                    "status": row.status,
+                }
+                for row in orders
+            ],
+        },
+        "reconciliation": {
+            "snapshot_database_id": latest_snapshot.id if latest_snapshot else None,
+            "observed_at": latest_snapshot.observed_at.isoformat() if latest_snapshot else None,
+            "source": latest_snapshot.source if latest_snapshot else None,
+            "last_reconciled_at": (
+                account.last_reconciled_at.isoformat()
+                if account.last_reconciled_at
+                else None
+            ),
+        },
+        "evidence_identifiers": {
+            "broker_account_id": account.broker_account_id,
+            "broker_activity_ids": [row.broker_activity_id for row in activities],
+            "broker_order_ids": broker_order_ids,
+            "client_order_ids": client_order_ids,
+        },
     }
 
 

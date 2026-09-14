@@ -18,7 +18,7 @@ from app.services.stock_paper_ledger import (
     resume_stock_paper_account,
     stock_paper_status,
 )
-from app.services.stock_recovery import acknowledge_stock_paper_accounting_review, cancel_open_stock_orders, recovery_status, rollback_to_last_known_good
+from app.services.stock_recovery import acknowledge_stock_paper_accounting_review, cancel_open_stock_orders, recovery_evidence, recovery_status, rollback_to_last_known_good
 from app.services.stock_training_jobs import StockTrainingError
 
 router = APIRouter(prefix="/stock-paper", tags=["stock-paper"])
@@ -35,6 +35,11 @@ def status(db: Session = Depends(get_db)) -> dict:
 @router.get("/recovery")
 def recovery(db: Session = Depends(get_db)) -> dict:
     return recovery_status(db)
+
+
+@router.get("/recovery/evidence")
+def recovery_evidence_export(db: Session = Depends(get_db)) -> dict:
+    return recovery_evidence(db)
 
 
 @router.post("/recovery/cancel")
