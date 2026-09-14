@@ -19,3 +19,4 @@
 - [Control-room E2E routing](control-room-e2e-routing.md) — run browser tests through the artifact proxy and derive localized timestamps in-browser.
 - [Alembic index parity](alembic-index-parity.md) — match unique-index migrations with SQLAlchemy Index declarations so startup drift checks stay clean.
 - [Celery worker crash tests](celery-worker-crash-tests.md) — use isolated broker clients for real-worker lifecycle tests; shared app config can leak across test order.
+- [PostgreSQL concurrency test isolation](postgres-concurrency-test-isolation.md) — use schema translation, not only search_path, when creating isolated SQLAlchemy test schemas.

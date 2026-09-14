@@ -1,32 +1,40 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+import uuid
+from threading import Barrier
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import app.api.stock_learning_cycle as learning_cycle_api
-from app.core.config import Settings
+from app.core.config import Settings, settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
 from app.models import (
     StockDatasetSnapshot,
     StockLearningCycle,
     StockLearningCycleEvent,
+    StockModelLifecycleEvent,
     StockModelLifecycleState,
     StockModelRegistry,
     StockPaperBindingState,
     StockPaperModelBinding,
     StockPaperPromotionDecision,
+    StockPaperOrder,
     StockPaperTrial,
+    StockTrainingJob,
 )
 from app.services.stock_forward_trial import POLICY
 from app.services.stock_learning_cycle import (
     create_learning_cycle,
     cycle_projection,
     review_learning_cycle,
+    run_scheduled_paper_trial_handoff_job,
     run_automatic_paper_promotion_job,
     scheduled_learning_control_projection,
     set_scheduled_learning_control,
@@ -42,6 +50,201 @@ def _db() -> Session:
     )
     Base.metadata.create_all(engine)
     return Session(engine)
+
+
+def _postgres_schema_engine():
+    if not settings.database_url.startswith("postgresql"):
+        pytest.skip("Concurrent scheduled handoff coverage requires PostgreSQL")
+
+    schema = f"task88_{uuid.uuid4().hex}"
+    admin_engine = create_engine(settings.database_url, pool_pre_ping=True)
+    with admin_engine.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+
+    engine = create_engine(
+        settings.database_url,
+        connect_args={"options": f"-csearch_path={schema},public"},
+        pool_size=2,
+        max_overflow=0,
+        pool_pre_ping=True,
+    ).execution_options(schema_translate_map={None: schema})
+    Base.metadata.create_all(engine)
+    return schema, admin_engine, engine
+
+
+def test_concurrent_scheduled_handoffs_share_one_binding_and_trial():
+    schema, admin_engine, engine = _postgres_schema_engine()
+    cycle_id = "8" * 64
+    snapshot_id = "9" * 64
+    model_id = "a" * 64
+    job_id = "00000000-0000-0000-0000-000000000088"
+    manifest = {
+        "purged_expanding_walkforward": True,
+        "final_holdout_evaluation_count": 1,
+        "final_holdout_consumption": {"count": 1, "job_id": job_id},
+        "embargo_days": 0,
+    }
+
+    try:
+        with Session(engine) as db:
+            db.add(StockDatasetSnapshot(
+                snapshot_id=snapshot_id, dataset_sha256="b" * 64,
+                cutoff_date=date(2026, 9, 12), universe=["SPY"],
+                provider="yfinance", feature_config_id="features",
+                horizon_days=5, artifact_path="/immutable/snapshot",
+                artifact_sha256="c" * 64,
+                metadata_json={
+                    "binding_eligible": True,
+                    "snapshot_id": snapshot_id,
+                    "dataset_sha256": "b" * 64,
+                    "artifact_path": "/immutable/snapshot",
+                    "artifact_sha256": "c" * 64,
+                    "provider": "yfinance",
+                    "universe": ["SPY"],
+                    "horizon_days": 5,
+                    "feature_config_id": "features",
+                    "identity_sha256": "d" * 64,
+                },
+            ))
+            db.add(StockModelRegistry(
+                run_id=model_id, snapshot_id=snapshot_id,
+                manifest_sha256="e" * 64, artifact_path="/immutable/model",
+                training_metadata=manifest,
+            ))
+            db.flush()
+            db.add(StockModelLifecycleState(
+                model_run_id=model_id, lifecycle_state="challenger",
+                updated_by="scheduler", reason="scheduled concurrency test",
+            ))
+            db.add(StockTrainingJob(
+                id=job_id, dedupe_key="f" * 64, trigger="scheduled",
+                status="succeeded", requested_by="scheduler",
+                request_payload={"symbols": ["SPY"], "horizon_bars": 5},
+                snapshot_id=snapshot_id, result_run_id=model_id,
+            ))
+            db.flush()
+            db.add(StockLearningCycle(
+                cycle_id=cycle_id, request_sha256="1" * 64,
+                trigger="scheduled", status="awaiting_admission",
+                stage="admission", requested_by="scheduler",
+                symbols=["SPY"], cutoff_date=date(2026, 9, 12),
+                horizon_days=5, provider="yfinance", seed=42,
+                snapshot_id=snapshot_id, training_job_id=job_id,
+                model_run_id=model_id, gates={}, evidence={},
+                last_reason="awaiting admission",
+            ))
+            db.commit()
+
+        admission_barrier = Barrier(2)
+        starts = []
+        from app.services.stock_learning_cycle import (
+            sync_cycle_from_training_job as real_sync_cycle_from_training_job,
+        )
+
+        def worker():
+            with Session(engine) as db:
+                return run_scheduled_paper_trial_handoff_job(db)
+
+        def start_trial_once(db, trial_id, *, actor):
+            starts.append(trial_id)
+            trial = db.get(StockPaperTrial, trial_id)
+            trial.status = "running"
+            return trial
+
+        def synchronize_handoff(db, job_id, *, actor):
+            admission_barrier.wait(timeout=10)
+            return real_sync_cycle_from_training_job(db, job_id, actor=actor)
+
+        with (
+            patch(
+                "app.services.stock_learning_cycle.sync_cycle_from_training_job",
+                side_effect=synchronize_handoff,
+            ),
+            patch(
+                "app.services.stock_training_jobs.validate_registered_stock_model",
+                return_value=manifest,
+            ),
+            patch(
+                "app.services.stock_training_jobs._dataset_from_record",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.stock_training_jobs._validate_holdout_consumption",
+            ),
+            patch(
+                "app.services.stock_forward_trial.validate_registered_stock_model",
+                return_value=manifest,
+            ),
+            patch(
+                "app.services.stock_forward_trial._dataset_from_record",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.stock_learning_cycle.validate_trial_artifact",
+                return_value={},
+            ),
+            patch(
+                "app.services.stock_learning_cycle.trial_feed_preflight",
+                return_value={
+                    "ready": True,
+                    "regular_session": True,
+                    "status": "ready",
+                },
+            ),
+            patch(
+                "app.services.stock_learning_cycle.start_trial",
+                side_effect=start_trial_once,
+            ),
+        ):
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                results = list(workers.map(lambda _: worker(), range(2)))
+
+        assert {result["status"] for result in results} == {"complete"}
+        assert all(
+            result["results"][0]["status"] == "running_forward_trial"
+            for result in results
+        ), [
+            (result["results"][0]["status"], result["results"][0]["reason"])
+            for result in results
+        ]
+        assert len(set(result["results"][0]["binding_id"] for result in results)) == 1
+        assert len(set(result["results"][0]["trial_id"] for result in results)) == 1
+        assert len(starts) == 1
+
+        with Session(engine) as db:
+            cycle = db.get(StockLearningCycle, cycle_id)
+            assert cycle.binding_id is not None
+            assert cycle.trial_id is not None
+            assert db.scalar(
+                select(StockPaperModelBinding).where(
+                    StockPaperModelBinding.source_cycle_id == cycle_id
+                )
+            ).id == cycle.binding_id
+            assert db.scalar(
+                select(StockPaperTrial).where(
+                    StockPaperTrial.source_cycle_id == cycle_id
+                )
+            ).id == cycle.trial_id
+            assert db.scalar(
+                select(StockPaperBindingState.active_binding_id)
+            ) == cycle.binding_id
+            assert db.query(StockPaperModelBinding).count() == 1
+            assert db.query(StockPaperTrial).count() == 1
+            assert db.query(StockModelLifecycleEvent).filter_by(
+                model_run_id=model_id, to_state="eligible"
+            ).count() == 1
+            assert db.query(StockModelLifecycleEvent).filter_by(
+                model_run_id=model_id, to_state="paper_canary"
+            ).count() == 1
+            assert db.query(StockLearningCycleEvent).filter_by(
+                cycle_id=cycle_id, stage="admission", decision="pass"
+            ).count() == 1
+            assert db.query(StockPaperOrder).count() == 0
+    finally:
+        engine.dispose()
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin_engine.dispose()
 
 
 def _client() -> TestClient:
