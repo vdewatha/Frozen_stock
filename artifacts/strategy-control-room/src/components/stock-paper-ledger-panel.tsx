@@ -26,6 +26,8 @@ import {
   type StockPaperStatusValue,
 } from "@/lib/api";
 
+import { latestEquitySnapshots } from "@/components/stock-paper-ledger-utils";
+
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 const quantityFormat = new Intl.NumberFormat("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -438,6 +440,7 @@ export function StockPaperLedgerPanel() {
   const orders = ledger?.orders ?? [];
   const fills = ledger?.fills ?? [];
   const snapshots = ledger?.equity_snapshots ?? [];
+  const visibleSnapshots = latestEquitySnapshots(snapshots);
   const unknownCostFills = useMemo(() => fills.filter((fill) => !fill.cost_known).length, [fills]);
   const statusNeedsAttention = status !== "reconciled";
   const canReconcile = Boolean(account) && status !== "unavailable" && status !== "loading";
@@ -960,7 +963,9 @@ export function StockPaperLedgerPanel() {
       <div className="border-b border-line p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm font-semibold"><Activity size={16} className="text-mint" /> Equity snapshots</div>
-          <span className="text-xs text-slate-500">{snapshots.length} retained</span>
+          <span className="text-xs text-slate-500" data-testid="text-stock-paper-equity-count">
+            Showing {visibleSnapshots.length} most recent of {snapshots.length} retained
+          </span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-sm">
@@ -974,7 +979,7 @@ export function StockPaperLedgerPanel() {
               </tr>
             </thead>
             <tbody>
-              {snapshots.length ? snapshots.map((snapshot) => (
+              {visibleSnapshots.length ? visibleSnapshots.map((snapshot) => (
                 <tr className="border-t border-line" data-testid={`row-stock-paper-equity-${snapshot.observed_at}`} key={snapshot.observed_at}>
                   <td className="px-3 py-2 text-xs text-slate-500">{formatTimestamp(snapshot.observed_at)}</td>
                   <td className="px-3 py-2 text-right">{formatMoney(snapshot.cash)}</td>
