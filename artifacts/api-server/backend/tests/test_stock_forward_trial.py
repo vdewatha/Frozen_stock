@@ -182,15 +182,44 @@ class ForwardTrialTests(unittest.TestCase):
         with Session(self.engine) as db:
             row = self.trial(db, status="paused", universe=("AAPL", "MSFT", "QQQ", "SPY"))
             self.account(db)
-            observed_at = datetime(2026, 11, 26, 15, 0, tzinfo=timezone.utc)
+            cases = (
+                (
+                    "spring daylight-saving transition",
+                    datetime(2026, 3, 8, 15, 0, tzinfo=timezone.utc),
+                    "2026-03-09T13:30:00+00:00",
+                ),
+                (
+                    "fall daylight-saving transition",
+                    datetime(2026, 11, 1, 15, 0, tzinfo=timezone.utc),
+                    "2026-11-02T14:30:00+00:00",
+                ),
+                (
+                    "observed New Year's Day",
+                    datetime(2023, 1, 2, 15, 0, tzinfo=timezone.utc),
+                    "2023-01-03T14:30:00+00:00",
+                ),
+                (
+                    "observed Juneteenth",
+                    datetime(2022, 6, 20, 15, 0, tzinfo=timezone.utc),
+                    "2022-06-21T13:30:00+00:00",
+                ),
+                (
+                    "observed Christmas",
+                    datetime(2022, 12, 26, 15, 0, tzinfo=timezone.utc),
+                    "2022-12-27T14:30:00+00:00",
+                ),
+                (
+                    "Thanksgiving",
+                    datetime(2026, 11, 26, 15, 0, tzinfo=timezone.utc),
+                    "2026-11-27T14:30:00+00:00",
+                ),
+            )
             with patch("app.services.stock_forward_trial.settings.alpaca_feed", "sip"):
-                result = trial_feed_preflight(db, row, now=observed_at)
-
-        self.assertFalse(result["regular_session"])
-        self.assertEqual(
-            result["next_regular_session_open"],
-            "2026-11-27T14:30:00+00:00",
-        )
+                for label, observed_at, expected_open in cases:
+                    with self.subTest(label=label):
+                        result = trial_feed_preflight(db, row, now=observed_at)
+                        self.assertFalse(result["regular_session"])
+                        self.assertEqual(result["next_regular_session_open"], expected_open)
 
     def test_successful_resume_audits_operator_and_preflight_without_rebinding(self):
         with Session(self.engine) as db:

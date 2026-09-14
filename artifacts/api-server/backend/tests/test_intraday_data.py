@@ -62,6 +62,44 @@ class IntradayDataTests(unittest.TestCase):
             datetime(2026, 11, 27, 14, 30, tzinfo=UTC),
         )
 
+    def test_next_regular_session_open_preserves_dst_and_observed_holiday_opens(self):
+        cases = (
+            (
+                "spring daylight-saving transition",
+                datetime(2026, 3, 8, 15, 0, tzinfo=UTC),
+                datetime(2026, 3, 9, 13, 30, tzinfo=UTC),
+            ),
+            (
+                "fall daylight-saving transition",
+                datetime(2026, 11, 1, 15, 0, tzinfo=UTC),
+                datetime(2026, 11, 2, 14, 30, tzinfo=UTC),
+            ),
+            (
+                "observed New Year's Day",
+                datetime(2023, 1, 2, 15, 0, tzinfo=UTC),
+                datetime(2023, 1, 3, 14, 30, tzinfo=UTC),
+            ),
+            (
+                "observed Juneteenth",
+                datetime(2022, 6, 20, 15, 0, tzinfo=UTC),
+                datetime(2022, 6, 21, 13, 30, tzinfo=UTC),
+            ),
+            (
+                "observed Christmas",
+                datetime(2022, 12, 26, 15, 0, tzinfo=UTC),
+                datetime(2022, 12, 27, 14, 30, tzinfo=UTC),
+            ),
+        )
+
+        for label, observed_at, expected_open in cases:
+            with self.subTest(label=label):
+                actual_open = intraday_data.next_regular_session_open(observed_at)
+                self.assertEqual(actual_open.isoformat(), expected_open.isoformat())
+                self.assertEqual(
+                    actual_open.astimezone(intraday_data.NY).time(),
+                    datetime.strptime("09:30", "%H:%M").time(),
+                )
+
     def test_completed_deduplicated_and_out_of_order_bars(self):
         observed = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
         first = datetime(2026, 9, 11, 14, 0, tzinfo=UTC)
