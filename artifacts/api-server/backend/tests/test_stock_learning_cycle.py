@@ -16,6 +16,7 @@ from app.core.config import Settings, settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
 from app.models import (
+    AuditLog,
     StockDatasetSnapshot,
     StockLearningCycle,
     StockLearningCycleEvent,
@@ -39,6 +40,7 @@ from app.services.stock_learning_cycle import (
     scheduled_learning_control_projection,
     set_scheduled_learning_control,
     start_scheduled_learning_trial,
+    sync_cycle_from_training_job,
 )
 
 
@@ -240,6 +242,222 @@ def test_concurrent_scheduled_handoffs_share_one_binding_and_trial():
                 cycle_id=cycle_id, stage="admission", decision="pass"
             ).count() == 1
             assert db.query(StockPaperOrder).count() == 0
+    finally:
+        engine.dispose()
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin_engine.dispose()
+
+
+def test_concurrent_scheduled_handoffs_defer_cross_cycle_paper_binding():
+    schema, admin_engine, engine = _postgres_schema_engine()
+    cycle_ids = ("a" * 64, "b" * 64)
+    snapshot_ids = ("c" * 64, "d" * 64)
+    model_ids = ("e" * 64, "f" * 64)
+    request_hashes = ("1" * 64, "2" * 64)
+    dedupe_keys = ("9" * 64, "8" * 64)
+    job_ids = (
+        "00000000-0000-0000-0000-000000000099",
+        "00000000-0000-0000-0000-000000000100",
+    )
+
+    def manifest_for(job_id):
+        return {
+            "purged_expanding_walkforward": True,
+            "final_holdout_evaluation_count": 1,
+            "final_holdout_consumption": {"count": 1, "job_id": job_id},
+            "embargo_days": 0,
+        }
+
+    try:
+        with Session(engine) as db:
+            for index, (cycle_id, snapshot_id, model_id, job_id) in enumerate(
+                zip(cycle_ids, snapshot_ids, model_ids, job_ids)
+            ):
+                dataset_hash = f"{index + 1}" * 64
+                db.add(StockDatasetSnapshot(
+                    snapshot_id=snapshot_id, dataset_sha256=dataset_hash,
+                    cutoff_date=date(2026, 9, 12), universe=["SPY"],
+                    provider="yfinance", feature_config_id="features",
+                    horizon_days=5, artifact_path=f"/immutable/snapshot-{index}",
+                    artifact_sha256=f"{index + 3}" * 64,
+                    metadata_json={
+                        "binding_eligible": True,
+                        "snapshot_id": snapshot_id,
+                        "dataset_sha256": dataset_hash,
+                        "artifact_path": f"/immutable/snapshot-{index}",
+                        "artifact_sha256": f"{index + 3}" * 64,
+                        "provider": "yfinance",
+                        "universe": ["SPY"],
+                        "horizon_days": 5,
+                        "feature_config_id": "features",
+                        "identity_sha256": f"{index + 5}" * 64,
+                    },
+                ))
+                db.add(StockModelRegistry(
+                    run_id=model_id, snapshot_id=snapshot_id,
+                    manifest_sha256=f"{index + 7}" * 64,
+                    artifact_path=f"/immutable/model-{index}",
+                    training_metadata=manifest_for(job_id),
+                ))
+                db.flush()
+                db.add(StockModelLifecycleState(
+                    model_run_id=model_id, lifecycle_state="challenger",
+                    updated_by="scheduler", reason="scheduled cross-cycle test",
+                ))
+                db.add(StockTrainingJob(
+                    id=job_id, dedupe_key=dedupe_keys[index],
+                    trigger="scheduled", status="succeeded",
+                    requested_by="scheduler",
+                    request_payload={"symbols": ["SPY"], "horizon_bars": 5},
+                    snapshot_id=snapshot_id, result_run_id=model_id,
+                ))
+                db.flush()
+                db.add(StockLearningCycle(
+                    cycle_id=cycle_id, request_sha256=request_hashes[index],
+                    trigger="scheduled", status="awaiting_admission",
+                    stage="admission", requested_by="scheduler",
+                    symbols=["SPY"], cutoff_date=date(2026, 9, 12),
+                    horizon_days=5, provider="yfinance", seed=42,
+                    snapshot_id=snapshot_id, training_job_id=job_id,
+                    model_run_id=model_id, gates={}, evidence={},
+                    last_reason="awaiting admission",
+                ))
+            db.commit()
+
+        admission_barrier = Barrier(2)
+        started_trial_ids = []
+
+        def worker(cycle_id, job_id):
+            with Session(engine) as db:
+                sync_cycle_from_training_job(
+                    db, job_id, actor="paper_learning_automation"
+                )
+                admission_barrier.wait(timeout=10)
+                cycle = start_scheduled_learning_trial(
+                    db, cycle_id, actor="paper_learning_automation"
+                )
+                db.commit()
+                return {
+                    "cycle_id": cycle.cycle_id,
+                    "status": cycle.status,
+                    "binding_id": cycle.binding_id,
+                    "trial_id": cycle.trial_id,
+                    "reason": cycle.last_reason,
+                }
+
+        def start_trial_once(db, trial_id, *, actor):
+            started_trial_ids.append(trial_id)
+            trial = db.get(StockPaperTrial, trial_id)
+            trial.status = "running"
+            return trial
+
+        with (
+            patch(
+                "app.services.stock_training_jobs.validate_registered_stock_model",
+                side_effect=lambda model, dataset: model.training_metadata,
+            ),
+            patch(
+                "app.services.stock_training_jobs._dataset_from_record",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.stock_training_jobs._validate_holdout_consumption",
+            ),
+            patch(
+                "app.services.stock_forward_trial.validate_registered_stock_model",
+                side_effect=lambda model, dataset: model.training_metadata,
+            ),
+            patch(
+                "app.services.stock_forward_trial._dataset_from_record",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.stock_learning_cycle.validate_trial_artifact",
+                return_value={},
+            ),
+            patch(
+                "app.services.stock_learning_cycle.trial_feed_preflight",
+                return_value={
+                    "ready": True,
+                    "regular_session": True,
+                    "status": "ready",
+                },
+            ),
+            patch(
+                "app.services.stock_learning_cycle.start_trial",
+                side_effect=start_trial_once,
+            ),
+        ):
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                results = list(
+                    workers.map(
+                        lambda item: worker(*item),
+                        zip(cycle_ids, job_ids),
+                    )
+                )
+
+        assert {result["status"] for result in results} == {
+            "running_forward_trial",
+            "deferred",
+        }
+        winner = next(
+            result for result in results if result["status"] == "running_forward_trial"
+        )
+        deferred = next(
+            result for result in results if result["status"] == "deferred"
+        )
+        assert winner["binding_id"] is not None
+        assert winner["trial_id"] is not None
+        assert deferred["binding_id"] is None
+        assert deferred["trial_id"] is None
+        assert "retry admission" in deferred["reason"]
+        assert len(started_trial_ids) == 1
+
+        with Session(engine) as db:
+            cycles = {
+                cycle.cycle_id: cycle
+                for cycle in db.scalars(
+                    select(StockLearningCycle).where(
+                        StockLearningCycle.cycle_id.in_(cycle_ids)
+                    )
+                )
+            }
+            bindings = db.scalars(select(StockPaperModelBinding)).all()
+            trials = db.scalars(select(StockPaperTrial)).all()
+            assert len(bindings) == 1
+            assert len(trials) == 1
+            assert bindings[0].source_cycle_id == winner["cycle_id"]
+            assert trials[0].source_cycle_id == winner["cycle_id"]
+            assert trials[0].binding_id == bindings[0].id
+            assert cycles[winner["cycle_id"]].binding_id == bindings[0].id
+            assert cycles[winner["cycle_id"]].trial_id == trials[0].id
+            assert cycles[deferred["cycle_id"]].binding_id is None
+            assert cycles[deferred["cycle_id"]].trial_id is None
+            assert db.scalar(
+                select(StockPaperBindingState.active_binding_id)
+            ) == bindings[0].id
+            winner_model_id = model_ids[cycle_ids.index(winner["cycle_id"])]
+            assert db.query(StockModelLifecycleEvent).filter_by(
+                model_run_id=winner_model_id,
+                to_state="paper_canary",
+            ).count() == 1
+            assert db.query(StockLearningCycleEvent).filter_by(
+                cycle_id=winner["cycle_id"], stage="admission", decision="pass"
+            ).count() == 1
+            assert db.query(StockLearningCycleEvent).filter_by(
+                cycle_id=deferred["cycle_id"], stage="admission", decision="deferred"
+            ).count() == 1
+            deferred_audits = db.scalars(
+                select(AuditLog).where(
+                    AuditLog.action == "automatic_paper_trial_handoff",
+                    AuditLog.status == "deferred",
+                )
+            ).all()
+            assert len(deferred_audits) == 1
+            assert deferred_audits[0].payload["cycle_id"] == deferred["cycle_id"]
+            assert deferred_audits[0].payload["binding_id"] is None
+            assert deferred_audits[0].payload["trial_id"] is None
     finally:
         engine.dispose()
         with admin_engine.begin() as connection:

@@ -571,6 +571,35 @@ def admit_scheduled_learning_cycle(
         )
 
     _lock_lifecycle_admission(db)
+    active_state = db.scalar(
+        select(StockPaperBindingState)
+        .where(StockPaperBindingState.id == 1)
+        .with_for_update()
+    )
+    active_binding = (
+        db.get(StockPaperModelBinding, active_state.active_binding_id)
+        if active_state and active_state.active_binding_id
+        else None
+    )
+    if (
+        active_binding
+        and active_binding.source_cycle_id
+        and active_binding.source_cycle_id != cycle.cycle_id
+    ):
+        return _handoff_failure(
+            db,
+            cycle,
+            stage="admission",
+            status="deferred",
+            reason=(
+                "Another scheduled cycle owns the active paper canary; "
+                "retry admission after its trial resolves"
+            ),
+            evidence={
+                "active_cycle_id": active_binding.source_cycle_id,
+                "active_binding_id": active_binding.id,
+            },
+        )
     binding = db.get(StockPaperModelBinding, cycle.binding_id) if cycle.binding_id else db.scalar(
         select(StockPaperModelBinding).where(
             StockPaperModelBinding.source_cycle_id == cycle.cycle_id,
