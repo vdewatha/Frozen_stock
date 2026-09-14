@@ -1,6 +1,7 @@
 import json
 import unittest
 import json
+import hashlib
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -17,8 +18,10 @@ from sqlalchemy.orm import Session
 
 import app.models
 from app.api.stock_forward_trial import router
-from app.core.security import required_role
+from app.core.config import Settings
+from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
+from app.db.session import get_db
 from app.models import (
     IntradayBar, MarketPrice, StockDatasetSnapshot, StockModelRegistry, StockPaperAccount,
     StockPaperModelBinding, StockPaperTrial, StockPaperTrialDecision,
@@ -129,6 +132,76 @@ class ForwardTrialTests(unittest.TestCase):
             required_role("GET", "/stock/forward-trials/00000000-0000-0000-0000-000000000001/promotion-readiness/reports/1/session-evidence"),
             "viewer",
         )
+
+    def test_authenticated_report_download_is_byte_stable_and_read_only(self):
+        trial_id = "00000000-0000-0000-0000-000000000001"
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused", trial_id=trial_id)
+            created = evaluate_promotion_readiness(db, row.id)
+            db.commit()
+            before_trial = (
+                row.status,
+                row.pause_reason,
+                row.binding_id,
+                dict(row.policy),
+                dict(row.lineage),
+            )
+            before_report_count = db.query(StockPaperPromotionReadinessReport).count()
+            report_hash = created["report_hash"]
+            report_id = created["id"]
+
+        app = FastAPI()
+        app.add_middleware(
+            AuthenticationMiddleware,
+            configuration=Settings(
+                _env_file=None,
+                auth_viewer_key="v" * 32,
+                auth_researcher_key="r" * 32,
+                auth_operator_key="o" * 32,
+                auth_admin_key="a" * 32,
+            ),
+        )
+        app.include_router(router, prefix="/api")
+
+        def db_session():
+            with Session(self.engine) as db:
+                yield db
+
+        app.dependency_overrides[get_db] = db_session
+        path = (
+            f"/api/stock/forward-trials/{trial_id}/"
+            f"promotion-readiness/reports/{report_id}/download"
+        )
+        with TestClient(app) as client:
+            headers = {"Authorization": "Bearer " + "v" * 32}
+            first = client.get(path, headers=headers)
+            second = client.get(path, headers=headers)
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(first.content, second.content)
+        self.assertEqual(
+            hashlib.sha256(first.content).hexdigest(),
+            hashlib.sha256(second.content).hexdigest(),
+        )
+        self.assertEqual(first.json()["report_hash"], report_hash)
+        self.assertEqual(second.json()["report_hash"], report_hash)
+        with Session(self.engine) as db:
+            current = db.get(StockPaperTrial, trial_id)
+            self.assertEqual(
+                before_trial,
+                (
+                    current.status,
+                    current.pause_reason,
+                    current.binding_id,
+                    dict(current.policy),
+                    dict(current.lineage),
+                ),
+            )
+            self.assertEqual(
+                db.query(StockPaperPromotionReadinessReport).count(),
+                before_report_count,
+            )
 
     def test_session_evidence_uses_first_completed_sessions_after_start(self):
         with Session(self.engine) as db:
