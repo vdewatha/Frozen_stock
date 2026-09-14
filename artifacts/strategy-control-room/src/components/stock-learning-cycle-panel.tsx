@@ -7,7 +7,10 @@ import {
   actOnStockLearningCycle,
   getErrorMessage,
   getStockLearningCycles,
+  getStockLearningScheduleControl,
   reviewStockLearningCycle,
+  updateStockLearningScheduleControl,
+  type StockLearningScheduleControl,
   type StockLearningCycle,
   type StockLearningCycleAction,
 } from "@/lib/api";
@@ -20,16 +23,36 @@ function gateClass(status: string): string {
 
 export function StockLearningCyclePanel() {
   const [cycles, setCycles] = useState<StockLearningCycle[]>([]);
+  const [scheduleControl, setScheduleControl] = useState<StockLearningScheduleControl | null>(null);
   const [reason, setReason] = useState("");
   const [status, setStatus] = useState("Loading governed learning cycles");
   const [busy, setBusy] = useState(false);
 
   async function refresh() {
     try {
-      setCycles(await getStockLearningCycles(12));
+      const [nextCycles, nextControl] = await Promise.all([
+        getStockLearningCycles(12),
+        getStockLearningScheduleControl(),
+      ]);
+      setCycles(nextCycles);
+      setScheduleControl(nextControl);
       setStatus("Cycle evidence refreshed");
     } catch (error) {
       setStatus(getErrorMessage(error));
+    }
+  }
+
+  async function updateSchedule(action: "pause" | "resume") {
+    if (!reason.trim()) return;
+    setBusy(true);
+    try {
+      setScheduleControl(await updateStockLearningScheduleControl(action, reason));
+      setReason("");
+      await refresh();
+    } catch (error) {
+      setStatus(getErrorMessage(error));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -79,6 +102,36 @@ export function StockLearningCyclePanel() {
           <RefreshCw size={13} /> Refresh
         </button>
       </div>
+
+      <RoleGate requires="operator" className="mt-4">
+        <div className="rounded border border-amber-200 bg-amber-50 p-3" data-testid="stock-learning-schedule-control">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold text-ink">Scheduled learning decisions</div>
+              <div className="text-xs text-slate-600">
+                {scheduleControl?.paused
+                  ? `Paused: ${scheduleControl.pause_reason ?? "operator maintenance"}`
+                  : "Running on its normal schedule"}
+              </div>
+            </div>
+            <span className={`text-xs font-semibold ${scheduleControl?.paused ? "text-amber-800" : "text-mint"}`}>
+              {scheduleControl?.paused ? "Paused" : "Active"}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {!scheduleControl?.paused ? (
+              <button className="focus-ring rounded bg-amber-700 px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy || !reason.trim()} onClick={() => void updateSchedule("pause")} type="button">
+                Pause scheduled learning
+              </button>
+            ) : (
+              <button className="focus-ring rounded bg-mint px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy || !reason.trim()} onClick={() => void updateSchedule("resume")} type="button">
+                Resume scheduled learning
+              </button>
+            )}
+            <span className="self-center text-xs text-slate-600">Paper execution safeguards and recovery controls remain independent.</span>
+          </div>
+        </div>
+      </RoleGate>
 
       {cycles.length === 0 ? (
         <div className="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">

@@ -19,6 +19,8 @@ from app.services.stock_learning_cycle import (
     cycle_projection,
     list_learning_cycles,
     review_learning_cycle,
+    scheduled_learning_control_projection,
+    set_scheduled_learning_control,
 )
 from app.services.stock_training_jobs import enqueue_stock_training_job
 
@@ -64,6 +66,19 @@ class CycleActionBody(StrictBody):
         return value
 
 
+class ScheduleControlBody(StrictBody):
+    action: Literal["pause", "resume"]
+    reason: str = Field(min_length=3, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def require_non_blank_reason(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("reason must contain at least three non-whitespace characters")
+        return value
+
+
 def _audit(db: Session, request: Request, action: str, cycle_id: str, payload: dict) -> None:
     write_audit_log(
         db, event_type="stock_learning_cycle", action=action, status="success",
@@ -81,6 +96,46 @@ def get_cycles(
     db: Session = Depends(get_db),
 ) -> list[dict]:
     return list_learning_cycles(db, limit=limit)
+
+
+@router.get("/schedule-control")
+def get_schedule_control(db: Session = Depends(get_db)) -> dict:
+    return scheduled_learning_control_projection(db)
+
+
+@router.post("/schedule-control")
+def update_schedule_control(
+    body: ScheduleControlBody,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        control = set_scheduled_learning_control(
+            db,
+            paused=body.action == "pause",
+            actor=request.state.actor,
+            reason=body.reason,
+        )
+        write_audit_log(
+            db,
+            event_type="stock_learning_cycle",
+            action=f"scheduled_learning_{body.action}",
+            status="success",
+            message=body.reason,
+            entity_type="stock_learning_schedule_control",
+            payload={
+                "actor": request.state.actor,
+                "request_id": request.state.request_id,
+                "paused": control.paused,
+                "paper_only": True,
+                "live_authorized": False,
+            },
+        )
+        db.commit()
+        return scheduled_learning_control_projection(db)
+    except StockTrainingError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from None
 
 
 @router.get("/{cycle_id}")

@@ -19,6 +19,7 @@ from app.models import (
     StockModelRegistry,
     StockPaperBindingState,
     StockPaperModelBinding,
+    StockPaperPromotionDecision,
     StockPaperTrial,
 )
 from app.services.stock_forward_trial import POLICY
@@ -26,6 +27,9 @@ from app.services.stock_learning_cycle import (
     create_learning_cycle,
     cycle_projection,
     review_learning_cycle,
+    run_automatic_paper_promotion_job,
+    scheduled_learning_control_projection,
+    set_scheduled_learning_control,
     start_scheduled_learning_trial,
 )
 
@@ -99,6 +103,88 @@ def test_learning_cycle_route_roles_cover_list_review_and_action():
                 expected = 200 if role in {"operator", "admin"} else 403
                 assert review.status_code == expected, (role, review.text)
                 assert action.status_code == expected, (role, action.text)
+
+
+def test_schedule_control_is_viewer_read_and_operator_write():
+    assert required_role("GET", "/stock/learning-cycles/schedule-control") == "viewer"
+    assert required_role("POST", "/stock/learning-cycles/schedule-control") == "operator"
+
+    with (
+        patch.object(
+            learning_cycle_api,
+            "scheduled_learning_control_projection",
+            return_value={
+                "paused": False,
+                "pause_reason": None,
+                "updated_by": "system",
+                "updated_at": None,
+                "paper_only": True,
+                "live_authorized": False,
+                "recovery_independent": True,
+            },
+        ),
+        patch.object(
+            learning_cycle_api,
+            "set_scheduled_learning_control",
+            return_value=object(),
+        ),
+        patch.object(learning_cycle_api, "write_audit_log"),
+    ):
+        with _client() as client:
+            assert client.get(
+                "/stock/learning-cycles/schedule-control",
+                headers=_headers("viewer"),
+            ).status_code == 200
+            for role in ("viewer", "researcher"):
+                response = client.post(
+                    "/stock/learning-cycles/schedule-control",
+                    headers=_headers(role),
+                    json={"action": "pause", "reason": "planned maintenance"},
+                )
+                assert response.status_code == 403, (role, response.text)
+
+
+def test_paused_scheduled_cycle_is_deferred_without_promotion_or_recovery_change():
+    db = _db()
+    cycle_id = "9" * 64
+    cycle = StockLearningCycle(
+        cycle_id=cycle_id,
+        request_sha256="8" * 64,
+        trigger="scheduled",
+        status="operator_review",
+        stage="promotion",
+        requested_by="scheduler",
+        symbols=["SPY"],
+        cutoff_date=date(2026, 9, 12),
+        horizon_days=5,
+        provider="yfinance",
+        seed=42,
+        training_job_id="00000000-0000-0000-0000-000000000099",
+        model_run_id="a" * 64,
+        gates={},
+        evidence={},
+        last_reason="awaiting automatic decision",
+    )
+    db.add(cycle)
+    set_scheduled_learning_control(
+        db,
+        paused=True,
+        actor="operator",
+        reason="Investigating model evidence",
+    )
+    db.commit()
+
+    result = run_automatic_paper_promotion_job(db)
+    db.commit()
+
+    assert result["status"] == "paused"
+    assert result["evaluated"] == 0
+    assert db.query(StockPaperPromotionDecision).filter_by(cycle_id=cycle_id).count() == 0
+    db.refresh(cycle)
+    assert cycle.status == "deferred"
+    assert cycle.last_reason == "Investigating model evidence"
+    assert scheduled_learning_control_projection(db)["recovery_independent"] is True
+    db.close()
 
 
 def test_learning_cycle_action_payload_cannot_inject_actor_or_automatic_promotion():

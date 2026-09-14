@@ -602,6 +602,22 @@ class StockLearningCycle(Base):
     last_reason: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class StockLearningScheduleControl(Base):
+    """Singleton control for scheduled paper-learning decisions only."""
+    __tablename__ = "stock_learning_schedule_control"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_stock_learning_schedule_control_singleton"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    pause_reason: Mapped[Optional[str]] = mapped_column(Text)
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class StockPaperModelBinding(Base):
     __tablename__ = "stock_paper_model_bindings"
     __table_args__ = (

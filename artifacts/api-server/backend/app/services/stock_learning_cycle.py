@@ -20,6 +20,7 @@ from app.models import (
     StockDatasetSnapshot,
     StockLearningCycle,
     StockLearningCycleEvent,
+    StockLearningScheduleControl,
     StockPaperPromotionDecision,
     StockModelRegistry,
     StockModelLifecycleState,
@@ -54,6 +55,82 @@ VALID_TRIGGERS = {"manual", "scheduled"}
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+SCHEDULE_CONTROL_ID = 1
+SCHEDULE_PAUSE_ACTOR = "scheduled_learning_control"
+SCHEDULE_PAUSED_REASON = "Scheduled paper learning is paused by operator"
+
+
+def scheduled_learning_control_projection(db: Session) -> dict:
+    control = db.get(StockLearningScheduleControl, SCHEDULE_CONTROL_ID)
+    return {
+        "paused": bool(control.paused) if control else False,
+        "pause_reason": control.pause_reason if control and control.paused else None,
+        "updated_by": control.updated_by if control else "system",
+        "updated_at": control.updated_at if control else None,
+        "paper_only": True,
+        "live_authorized": False,
+        "recovery_independent": True,
+    }
+
+
+def set_scheduled_learning_control(
+    db: Session,
+    *,
+    paused: bool,
+    actor: str,
+    reason: str,
+) -> StockLearningScheduleControl:
+    reason = reason.strip()
+    if len(reason) < 3:
+        raise StockTrainingError("Scheduled learning control requires a reason")
+    control = db.scalar(
+        select(StockLearningScheduleControl)
+        .where(StockLearningScheduleControl.id == SCHEDULE_CONTROL_ID)
+        .with_for_update()
+    )
+    if control is None:
+        control = StockLearningScheduleControl(id=SCHEDULE_CONTROL_ID)
+        db.add(control)
+        db.flush()
+    control.paused = paused
+    control.pause_reason = reason if paused else None
+    control.updated_by = actor
+    control.updated_at = _now()
+    return control
+
+
+def _scheduled_learning_pause_reason(db: Session) -> str | None:
+    control = db.get(StockLearningScheduleControl, SCHEDULE_CONTROL_ID)
+    if control and control.paused:
+        return control.pause_reason or SCHEDULE_PAUSED_REASON
+    return None
+
+
+def _defer_scheduled_cycle_for_pause(
+    db: Session,
+    cycle: StockLearningCycle,
+    *,
+    reason: str,
+    stage: str,
+) -> None:
+    if cycle.status in TERMINAL_STATUSES:
+        return
+    changed = cycle.status != "deferred" or cycle.stage != stage or cycle.last_reason != reason
+    cycle.status = "deferred"
+    cycle.stage = stage
+    cycle.last_reason = reason
+    if changed:
+        _event(
+            db,
+            cycle=cycle,
+            stage=stage,
+            decision="deferred",
+            actor=SCHEDULE_PAUSE_ACTOR,
+            reason=reason,
+            evidence={"scheduled_learning_paused": True},
+        )
 
 
 def _canonical(value: Any) -> bytes:
@@ -447,6 +524,12 @@ def admit_scheduled_learning_cycle(
         raise StockTrainingError("Learning cycle not found")
     if cycle.trigger != "scheduled":
         raise StockTrainingError("Automatic paper admission is limited to scheduled cycles")
+    pause_reason = _scheduled_learning_pause_reason(db)
+    if pause_reason:
+        _defer_scheduled_cycle_for_pause(
+            db, cycle, reason=pause_reason, stage="admission",
+        )
+        return cycle
     if cycle.binding_id and cycle.trial_id:
         return cycle
     if cycle.status in {"complete", "promoted", "demoted", "rolled_back", "failed"}:
@@ -592,6 +675,8 @@ def start_scheduled_learning_trial(
 ) -> StockLearningCycle:
     """Retry only the admitted trial's safe, authenticated start gates."""
     cycle = admit_scheduled_learning_cycle(db, cycle_id, actor=actor)
+    if _scheduled_learning_pause_reason(db):
+        return cycle
     if not cycle.binding_id or not cycle.trial_id:
         return cycle
     if cycle.status in {"complete", "promoted", "demoted", "rolled_back", "failed"}:
@@ -903,6 +988,20 @@ def automate_paper_promotion(
         raise StockTrainingError("Learning cycle not found")
     if cycle.trigger != "scheduled":
         raise StockTrainingError("Automatic promotion is limited to scheduled paper cycles")
+    pause_reason = _scheduled_learning_pause_reason(db)
+    if pause_reason:
+        _defer_scheduled_cycle_for_pause(
+            db, cycle, reason=pause_reason, stage="promotion",
+        )
+        db.flush()
+        return {
+            "id": None,
+            "cycle_id": cycle.cycle_id,
+            "decision": "deferred",
+            "reason": pause_reason,
+            "paper_only": True,
+            "live_authorized": False,
+        }
     prior_decision = db.query(StockPaperPromotionDecision).filter_by(
         cycle_id=cycle.cycle_id,
     ).order_by(StockPaperPromotionDecision.id.desc()).first()
@@ -1209,6 +1308,7 @@ def run_scheduled_paper_trial_handoff_job(
     this job is safe because the cycle, binding, and trial source keys are
     unique.
     """
+    pause_reason = _scheduled_learning_pause_reason(db)
     rows = db.scalars(select(StockLearningCycle).where(
         StockLearningCycle.trigger == "scheduled",
         StockLearningCycle.training_job_id.is_not(None),
@@ -1216,6 +1316,23 @@ def run_scheduled_paper_trial_handoff_job(
             "blocked", "complete", "promoted", "demoted", "rolled_back", "failed",
         )),
     ).order_by(StockLearningCycle.created_at, StockLearningCycle.cycle_id)).all()
+    if pause_reason:
+        for cycle in rows:
+            _defer_scheduled_cycle_for_pause(
+                db, cycle, reason=pause_reason, stage="handoff",
+            )
+        db.commit()
+        return {
+            "status": "paused",
+            "job": source_job,
+            "deferred": [
+                {"cycle_id": cycle.cycle_id, "reason": pause_reason}
+                for cycle in rows
+            ],
+            "reason": pause_reason,
+            "paper_only": True,
+            "live_authorized": False,
+        }
     results: list[dict] = []
     for cycle in rows:
         try:
@@ -1272,6 +1389,17 @@ def run_automatic_paper_promotion_job(
 ) -> dict:
     """Admit/start scheduled trials, then evaluate exact completed evidence."""
     handoff = run_scheduled_paper_trial_handoff_job(db, source_job=source_job)
+    if handoff.get("status") == "paused":
+        return {
+            "status": "paused",
+            "job": source_job,
+            "handoff": handoff,
+            "evaluated": 0,
+            "results": [],
+            "reason": handoff.get("reason"),
+            "paper_only": True,
+            "live_authorized": False,
+        }
     rows = db.scalars(select(StockLearningCycle).where(
         StockLearningCycle.trigger == "scheduled",
         StockLearningCycle.model_run_id.is_not(None),
@@ -1378,6 +1506,7 @@ def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
         },
         "gates": cycle.gates, "evidence": cycle.evidence,
         "last_reason": cycle.last_reason, "paper_only": True, "live_authorized": False,
+        "scheduled_learning_paused": bool(_scheduled_learning_pause_reason(db)),
         "automatic_promotion": _decision_projection(automatic_decision) if automatic_decision else None,
         "monitoring": {
             "snapshot_id": monitor.id if monitor else None,

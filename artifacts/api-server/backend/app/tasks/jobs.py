@@ -44,6 +44,7 @@ from app.services.stock_learning_cycle import (
     create_learning_cycle,
     run_automatic_paper_promotion_job,
     run_scheduled_paper_trial_handoff_job,
+    scheduled_learning_control_projection,
     sync_cycle_from_training_job,
     sync_cycle_from_trial,
     sync_cycle_observability,
@@ -461,6 +462,19 @@ def recover_stock_training_jobs_job() -> dict:
 def scheduled_stock_challenger_retraining_job() -> dict:
     """Schedule challengers only; this task never creates a paper binding."""
     def work(db):
+        control = scheduled_learning_control_projection(db)
+        if control["paused"]:
+            return {
+                "status": "paused",
+                "job": "scheduled_stock_challenger_retraining_job",
+                "reason": control["pause_reason"],
+                "challengers": [],
+                "deferred": [],
+                "blocked": [],
+                "paper_only": True,
+                "live_authorized": False,
+                "binding_changed": False,
+            }
         assets = db.query(Asset).filter(Asset.is_active.is_(True), Asset.asset_type == "stock").order_by(Asset.symbol).limit(5).all()
         queued, deferred, blocked = [], [], []
         for asset in assets:

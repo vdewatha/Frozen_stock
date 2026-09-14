@@ -1845,6 +1845,28 @@ export async function getStockLearningCycles(limit = 25): Promise<StockLearningC
   const response = await authenticatedFetch(`${API_BASE_URL}/stock/learning-cycles?limit=${limit}`, { cache: "no-store" });
   return handleResponse<StockLearningCycle[]>(response);
 }
+
+export type StockLearningScheduleControl = {
+  paused: boolean;
+  pause_reason: string | null;
+  updated_by: string;
+  updated_at: string | null;
+  paper_only: boolean;
+  live_authorized: boolean;
+  recovery_independent: boolean;
+};
+
+export async function getStockLearningScheduleControl(): Promise<StockLearningScheduleControl> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/learning-cycles/schedule-control`, { cache: "no-store" });
+  return handleResponse<StockLearningScheduleControl>(response);
+}
+
+export async function updateStockLearningScheduleControl(
+  action: "pause" | "resume",
+  reason: string,
+): Promise<StockLearningScheduleControl> {
+  return postJson<StockLearningScheduleControl>("/stock/learning-cycles/schedule-control", { action, reason });
+}
 export async function getTradeCandidates(limit = 12, refresh = false): Promise<TradeCandidateResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (refresh) {
@@ -3072,6 +3094,7 @@ export type StockLearningCycle = {
   gates: Record<string, { status: string; reason?: string; evidence?: unknown }>;
   evidence: Record<string, unknown>;
   last_reason: string | null;
+  scheduled_learning_paused: boolean;
   paper_only: boolean;
   live_authorized: boolean;
   automatic_promotion: StockPaperPromotionDecision | null;
