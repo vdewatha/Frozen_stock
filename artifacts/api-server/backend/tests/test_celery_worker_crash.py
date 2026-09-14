@@ -34,11 +34,37 @@ def _wait_for(predicate, timeout: float, description: str):
     raise AssertionError(f"Timed out waiting for {description}")
 
 
+def _require_redis_server() -> str:
+    redis_server = shutil.which("redis-server")
+    if redis_server is None:
+        raise RuntimeError(
+            "Redis-backed crash-recovery validation requires redis-server; "
+            "the integration test cannot be skipped."
+        )
+    return redis_server
+
+
+def _wait_for_redis(client: redis.Redis, redis_process: subprocess.Popen):
+    def redis_ready():
+        if _ping_redis(client):
+            return True
+        if redis_process.poll() is not None:
+            details = ""
+            if redis_process.stderr is not None:
+                details = redis_process.stderr.read().strip()
+            raise RuntimeError(
+                "Ephemeral Redis exited before becoming ready "
+                f"(exit code {redis_process.returncode})."
+                + (f" stderr: {details}" if details else "")
+            )
+        return False
+
+    _wait_for(redis_ready, timeout=5, description="ephemeral Redis")
+
+
 class CeleryWorkerCrashIntegrationTests(unittest.TestCase):
     def test_intraday_lease_expires_after_worker_termination(self):
-        redis_server = shutil.which("redis-server")
-        if redis_server is None:
-            self.skipTest("redis-server is required for this integration scenario")
+        redis_server = _require_redis_server()
 
         port = _free_tcp_port()
         redis_url = f"redis://127.0.0.1:{port}/0"
@@ -58,7 +84,8 @@ class CeleryWorkerCrashIntegrationTests(unittest.TestCase):
                 "no",
             ],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
         worker_processes: list[subprocess.Popen] = []
@@ -80,11 +107,7 @@ class CeleryWorkerCrashIntegrationTests(unittest.TestCase):
             }
 
             try:
-                _wait_for(
-                    lambda: _ping_redis(client),
-                    timeout=5,
-                    description="ephemeral Redis",
-                )
+                _wait_for_redis(client, redis_process)
                 client.delete(phase_key, release_key, lock_key)
 
                 test_celery_app = Celery(
@@ -174,9 +197,7 @@ class CeleryWorkerCrashIntegrationTests(unittest.TestCase):
                     redis_process.wait(timeout=5)
 
     def test_scheduled_intraday_poll_resumes_after_worker_termination(self):
-        redis_server = shutil.which("redis-server")
-        if redis_server is None:
-            self.skipTest("redis-server is required for this integration scenario")
+        redis_server = _require_redis_server()
 
         port = _free_tcp_port()
         redis_url = f"redis://127.0.0.1:{port}/0"
@@ -196,7 +217,8 @@ class CeleryWorkerCrashIntegrationTests(unittest.TestCase):
                 "no",
             ],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
         processes: list[subprocess.Popen] = []
@@ -219,11 +241,7 @@ class CeleryWorkerCrashIntegrationTests(unittest.TestCase):
             }
 
             try:
-                _wait_for(
-                    lambda: _ping_redis(client),
-                    timeout=5,
-                    description="ephemeral Redis",
-                )
+                _wait_for_redis(client, redis_process)
                 client.delete(phase_key, release_key, lock_key)
 
                 first_worker = _start_worker(worker_environment)

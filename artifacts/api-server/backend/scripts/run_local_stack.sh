@@ -14,7 +14,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-redis-server \
+if ! redis_server="$(command -v redis-server)"; then
+  echo "Cannot start the local stack: redis-server is required for ephemeral Redis." >&2
+  exit 1
+fi
+
+"$redis_server" \
   --bind 127.0.0.1 \
   --port 6379 \
   --save "" \
