@@ -163,6 +163,11 @@ export type StockPaperRecoveryStatus = {
   automatic_review_enabled: boolean;
   automatic_review_status: "blocked" | "complete" | "not_required" | string;
   account_status: string;
+  accounting_residual: boolean;
+  account_reconciliation_required: boolean;
+  account_halt_reason: string | null;
+  accounting_verified: boolean;
+  costs_known: boolean;
   events: Array<{ id: number; action: string; status: string; actor: string; reason: string; created_at: string | null; payload: Record<string, unknown> }>;
 };
 

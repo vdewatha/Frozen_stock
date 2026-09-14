@@ -65,7 +65,9 @@ export function StockRecoveryPanel() {
     }
   }
 
-  const needsRecovery = recovery && recovery.status !== "armed" && recovery.status !== "resumable";
+  const accountHalted = recovery?.account_status === "halted" || recovery?.accounting_residual || recovery?.account_reconciliation_required;
+  const needsRecovery = recovery && (accountHalted || (recovery.status !== "armed" && recovery.status !== "resumable"));
+  const displayedStatus = accountHalted ? "halted" : recovery?.status ?? "loading";
 
   return (
     <section className="rounded-md border border-line bg-white" data-testid="panel-stock-recovery">
@@ -74,7 +76,7 @@ export function StockRecoveryPanel() {
           <div className="flex items-center gap-2">
             {needsRecovery ? <ShieldAlert size={19} className="text-coral" /> : <ShieldCheck size={19} className="text-mint" />}
             <h2 className="text-base font-semibold">Rollback and Recovery</h2>
-            <span className="rounded border border-line bg-slate-50 px-2 py-1 text-xs font-semibold capitalize">{recovery?.status ?? "loading"}</span>
+            <span className="rounded border border-line bg-slate-50 px-2 py-1 text-xs font-semibold capitalize">{displayedStatus}</span>
           </div>
           <p className="mt-1 text-sm text-slate-500">
             Cancel in-flight paper orders, optionally flatten positions, and restore the recorded last-known-good model only after fresh evidence passes.
@@ -99,6 +101,23 @@ export function StockRecoveryPanel() {
           <div className="mt-1 text-slate-600">{formatTime(recovery?.last_watchdog_heartbeat_at ?? null)}</div>
         </div>
       </div>
+      {recovery ? (
+        <div className="grid gap-3 border-t border-line p-4 text-xs md:grid-cols-3">
+          <div className={`rounded-md border p-3 ${recovery.accounting_residual ? "border-red-200 bg-red-50 text-red-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
+            <div className="font-semibold">Accounting residual</div>
+            <div className="mt-1">{recovery.accounting_residual ? "Unexplained residual remains" : recovery.accounting_verified ? "Broker accounting verified" : "No unresolved residual recorded"}</div>
+          </div>
+          <div className="rounded-md border border-line p-3">
+            <div className="font-semibold">Account state</div>
+            <div className="mt-1 text-slate-600">{recovery.account_status}</div>
+            <div className="mt-1 text-slate-500">{recovery.account_reconciliation_required ? "Fresh reconciliation required" : recovery.costs_known ? "Reported costs complete" : "Reported costs remain unknown"}</div>
+          </div>
+          <div className="rounded-md border border-line p-3">
+            <div className="font-semibold">Broker halt reason</div>
+            <div className="mt-1 text-slate-600">{recovery.account_halt_reason ?? "None recorded"}</div>
+          </div>
+        </div>
+      ) : null}
       <RoleGate requires="operator" className="flex flex-wrap gap-2 border-t border-line p-4">
         {recovery?.accounting_review_required ? (
           <div className="w-full rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">

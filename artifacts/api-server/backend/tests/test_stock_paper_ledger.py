@@ -735,7 +735,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
             with self.assertRaises(StockPaperError):
                 resume_stock_paper_after_revalidation(db, actor="operator-test")
 
-    def test_unexplained_residual_requires_explicit_accounting_review_before_resume(self):
+    def test_unexplained_residual_cannot_be_cleared_by_manual_accounting_review(self):
         from app.models import StockPaperRecoveryState
         from app.models.stock_paper import StockPaperAccount
         residual = FakeAlpaca(account=StockPaperLedgerTests.account_payload(cash="999", equity="999", last_equity="999"))
@@ -757,12 +757,13 @@ class StockPaperRecoveryTests(unittest.TestCase):
                 reason="Reviewed the matching Alpaca account snapshot and activity history",
                 confirm_residual_review=True,
             )
-            self.assertFalse(reviewed["account_status"] == "halted")
-            self.assertFalse(db.query(StockPaperRecoveryState).one().accounting_review_required)
-            with self.assertRaisesRegex(StockPaperError, "monitoring"):
+            self.assertEqual(reviewed["account_status"], "reconciled")
+            self.assertTrue(db.query(StockPaperRecoveryState).one().accounting_review_required)
+            self.assertTrue(db.query(StockPaperAccount).one().unexplained_residual)
+            with self.assertRaisesRegex(StockPaperError, "accounting review"):
                 resume_stock_paper_after_revalidation(db, actor="admin-test")
 
-    def test_late_known_commission_automatically_reviews_and_resumes_after_all_gates(self):
+    def test_late_known_commission_automatically_reviews_and_requires_operator_resume(self):
         from app.models import StockPaperRecoveryState
         from app.models.stock_paper import StockPaperAccount
 
@@ -796,6 +797,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
 
             second = reconcile_stock_paper_account(db, enriched_account)
             self.assertEqual(second["automatic_recovery"]["status"], "waiting")
+            self.assertTrue(second["costs_known"])
             state = db.query(StockPaperRecoveryState).one()
             account = db.query(StockPaperAccount).one()
             self.assertFalse(state.accounting_review_required)
@@ -808,14 +810,55 @@ class StockPaperRecoveryTests(unittest.TestCase):
             db.commit()
             with patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "clear")):
                 third = reconcile_stock_paper_account(db, enriched_account)
-            self.assertEqual(third["automatic_recovery"]["status"], "resumed")
-            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "resumable")
+            self.assertEqual(third["automatic_recovery"]["status"], "awaiting_operator_revalidation")
+            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "cooldown")
             self.assertEqual(db.query(StockPaperAccount).one().status, "reconciled")
+
+            with patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "clear")):
+                resumed = resume_stock_paper_after_revalidation(db, actor="admin-test")
+            self.assertEqual(resumed["status"], "resumable")
+            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "resumable")
 
             with patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "clear")):
                 repeated = reconcile_stock_paper_account(db, enriched_account)
             self.assertEqual(repeated["automatic_recovery"]["status"], "already_resumed")
+            self.assertTrue(repeated["costs_known"])
             self.assertEqual(db.query(StockPaperRecoveryState).one().status, "resumable")
+
+    def test_created_at_is_a_stable_fill_timestamp_and_old_created_at_halts(self):
+        fill_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+        valid = FakeAlpaca(
+            positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
+            activities=[{
+                "id": "created-at-fill",
+                "activity_type": "FILL",
+                "symbol": "SPY",
+                "side": "buy",
+                "qty": "1",
+                "price": "100",
+                "commission": "0",
+                "created_at": fill_time,
+            }],
+            account=StockPaperLedgerTests.account_payload(cash="900"),
+        )
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            self.assertEqual(reconcile_stock_paper_account(db, valid)["status"], "reconciled")
+
+        old_fill = {**valid.activity_rows[0], "id": "old-created-at-fill", "created_at": "2000-01-01T00:00:00Z"}
+        with Session(self.engine) as db:
+            # The prior valid fill is already part of the baseline. The old
+            # activity must not be accepted as a current-time observation.
+            result = reconcile_stock_paper_account(
+                db,
+                FakeAlpaca(
+                    positions=[{"symbol": "SPY", "qty": "2", "market_value": "200"}],
+                    activities=[old_fill],
+                    account=StockPaperLedgerTests.account_payload(cash="800"),
+                ),
+            )
+            self.assertEqual(result["status"], "halted")
+            self.assertIn("watermark", result["reason"].lower())
 
     def test_automatic_review_stays_blocked_for_unknown_fee_and_notifies_operator(self):
         from app.models import Notification

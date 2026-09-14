@@ -452,7 +452,9 @@ def _equation_failure(raw_activities: list[dict], previous_cash: Decimal, curren
     new_rows = []
     allowed_late_activity_ids = allowed_late_activity_ids or set()
     for row in raw_activities:
-        filled_at = _timestamp(row.get("transaction_time"), fallback=datetime.now(UTC))
+        if not (row.get("transaction_time") or row.get("created_at")):
+            return "Broker fill lacks a stable broker timestamp"
+        filled_at = _activity_timestamp(row, fallback=datetime.now(UTC))
         if since and filled_at <= _utc(since) and str(row.get("id") or "") not in allowed_late_activity_ids:
             return "Late broker fill predates the reconciliation watermark; full accounting reconstruction is required"
         new_rows.append(row)
@@ -615,6 +617,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
     try:
         prior_cash = account.cash
         prior_positions = {row.symbol: row.quantity for row in db.query(StockPaperPosition).filter_by(account_id=account.id).all()}
+        prior_accounting_verified = account.accounting_verified
         previous_reconciled_at = account.last_reconciled_at
         prior_activity_ids = {
             row.broker_activity_id for row in db.query(StockPaperBrokerActivity.broker_activity_id)
@@ -689,6 +692,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             and equation_error is None
             and not unresolved_nonterminal
             and not external_outstanding
+            and not outstanding
             and not actions
             and not drift
             and all(
@@ -699,8 +703,24 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             and all(fill.fee is not None and fill.cost_known for fill in db.query(StockPaperFill).filter_by(account_id=account.id).all())
         )
         account.last_reconciled_at = observed
-        account.costs_known = False
-        account.accounting_verified = False
+        fills_complete = all(
+            fill.fee is not None and fill.cost_known
+            for fill in db.query(StockPaperFill).filter_by(account_id=account.id).all()
+        )
+        accounting_evidence_complete = bool(
+            prior_accounting_verified
+            and fills_complete
+            and equation_error is None
+            and not unresolved_nonterminal
+            and not external_outstanding
+            and not actions
+            and not drift
+        )
+        # Preserve a qualifying accounting proof only while fresh broker
+        # evidence remains fully supported. Initial imports and ordinary
+        # reconciliations stay non-qualifying until that proof exists.
+        account.costs_known = accounting_evidence_complete
+        account.accounting_verified = accounting_evidence_complete
         if any(row.get("commission") is None for row in new_activities):
             _event(db, account, "accounting_residual", "costs_unknown",
                    "Reported fill commissions are incomplete; P/L remains unavailable",
