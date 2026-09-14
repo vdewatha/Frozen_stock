@@ -16,3 +16,4 @@
 - [Recovery evidence linkage](recovery-evidence-linkage.md) — link low-level pause events to cycles while keeping demotion fail-closed and last-known-good bindings immutable.
 - [Recovery evidence export](recovery-evidence-export.md) — expose proof digests and stable identifiers, never raw broker payloads or financial fields.
 - [Intraday repair priority](intraday-repair-priority.md) — retry the newest completed slice before older bounded backfill; readiness must remain incomplete while historical gaps remain.
+- [Control-room E2E routing](control-room-e2e-routing.md) — run browser tests through the artifact proxy and derive localized timestamps in-browser.
