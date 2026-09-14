@@ -77,6 +77,8 @@ function classificationClasses(classification: string): string {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
+const TRIAL_HISTORY_PAGE_SIZE = 20;
+
 function EvidenceSymbolRow({ symbol, trialId }: { symbol: ForwardTrialEvidenceSymbol; trialId: string }) {
   const sources = symbol.execution_sources ?? [];
   return (
@@ -158,7 +160,14 @@ function EvidenceSessionRow({ session, trialId }: { session: ForwardTrialEvidenc
 
 function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onActionComplete: () => void }) {
   const [latestMetric, setLatestMetric] = useState<ForwardTrialMetricHistoryItem | null>(null);
+  const [metricHistory, setMetricHistory] = useState<ForwardTrialMetricHistoryItem[]>([]);
+  const [metricHistoryTotal, setMetricHistoryTotal] = useState(0);
+  const [metricHistoryHasMore, setMetricHistoryHasMore] = useState(false);
+  const [loadingMoreMetrics, setLoadingMoreMetrics] = useState(false);
   const [decisions, setDecisions] = useState<ForwardTrialDecision[]>([]);
+  const [decisionHistoryTotal, setDecisionHistoryTotal] = useState(0);
+  const [decisionHistoryHasMore, setDecisionHistoryHasMore] = useState(false);
+  const [loadingMoreDecisions, setLoadingMoreDecisions] = useState(false);
   const [readiness, setReadiness] = useState<PromotionReadinessReport | null>(null);
   const [preflight, setPreflight] = useState<ForwardTrialPreflight | null>(null);
   const [evidence, setEvidence] = useState<ForwardTrialEvidence | null>(null);
@@ -180,8 +189,8 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
     try {
       setLoading(true);
       const [m, d, r, p, h] = await Promise.all([
-        getForwardTrialMetrics(trial.id),
-        getForwardTrialDecisions(trial.id),
+        getForwardTrialMetrics(trial.id, { limit: TRIAL_HISTORY_PAGE_SIZE, offset: 0 }),
+        getForwardTrialDecisions(trial.id, { limit: TRIAL_HISTORY_PAGE_SIZE, offset: 0 }),
         getForwardTrialPromotionReadiness(trial.id, { includeSessionEvidence: false }),
         getForwardTrialPreflight(trial.id),
         getForwardTrialReportHistory(trial.id, { limit: 10, offset: 0 }).catch(() => null),
@@ -194,8 +203,13 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
         : sessionPage
           ? forwardTrialEvidenceFromSessionPage(r, sessionPage)
           : null;
-      setLatestMetric(m.length > 0 ? m[m.length - 1] : null);
-      setDecisions(d);
+      setMetricHistory(m.items);
+      setLatestMetric(m.items[0] ?? null);
+      setMetricHistoryTotal(m.total);
+      setMetricHistoryHasMore(m.has_more);
+      setDecisions(d.items);
+      setDecisionHistoryTotal(d.total);
+      setDecisionHistoryHasMore(d.has_more);
       setReadiness(r);
       setPreflight(p);
       setEvidence(nextEvidence);
@@ -211,6 +225,42 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
       setLoading(false);
     }
   }, [trial.id]);
+
+  const loadMoreMetrics = async () => {
+    if (loadingMoreMetrics || !metricHistoryHasMore) return;
+    try {
+      setLoadingMoreMetrics(true);
+      const page = await getForwardTrialMetrics(trial.id, {
+        limit: TRIAL_HISTORY_PAGE_SIZE,
+        offset: metricHistory.length,
+      });
+      setMetricHistory(current => [...current, ...page.items]);
+      setMetricHistoryTotal(page.total);
+      setMetricHistoryHasMore(page.has_more);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoadingMoreMetrics(false);
+    }
+  };
+
+  const loadMoreDecisions = async () => {
+    if (loadingMoreDecisions || !decisionHistoryHasMore) return;
+    try {
+      setLoadingMoreDecisions(true);
+      const page = await getForwardTrialDecisions(trial.id, {
+        limit: TRIAL_HISTORY_PAGE_SIZE,
+        offset: decisions.length,
+      });
+      setDecisions(current => [...current, ...page.items]);
+      setDecisionHistoryTotal(page.total);
+      setDecisionHistoryHasMore(page.has_more);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoadingMoreDecisions(false);
+    }
+  };
 
   const loadMoreEvidence = async () => {
     if (!readiness || !evidence || loadingMoreEvidence || !evidenceHasMore) return;
@@ -407,7 +457,8 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
           {loading ? (
             <div className="mt-2 text-xs text-slate-500">Loading metrics...</div>
           ) : latestMetric ? (
-            <div className="grid grid-cols-2 gap-2 text-xs xl:grid-cols-3">
+            <>
+              <div className="grid grid-cols-2 gap-2 text-xs xl:grid-cols-3">
               <div className="rounded bg-panel p-2">
                 <div className="text-slate-500">Closed Trades</div>
                 <div className="mt-1 font-medium text-slate-800">{payload.closed_trades as number ?? "0"}</div>
@@ -453,7 +504,45 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
                   Costs are unknown; performance may be optimistic.
                 </div>
               )}
-            </div>
+              </div>
+            {(metricHistoryHasMore || metricHistory.length > 0) && (
+              <div className="mt-4 border-t border-line pt-3" data-testid={`forward-trial-metric-history-${trial.id}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-slate-700">Metric history</div>
+                  <span className="text-[11px] text-slate-500" data-testid={`text-forward-trial-metric-history-loaded-${trial.id}`}>
+                    Showing {metricHistory.length} of {metricHistoryTotal || metricHistory.length} snapshots
+                  </span>
+                </div>
+                <div className="mt-2 grid gap-1.5">
+                  {metricHistory.map((metric, index) => (
+                    <div
+                      key={`${metric.as_of}-${index}`}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded border border-line bg-panel px-2 py-1.5 text-[11px]"
+                      data-testid={`row-forward-trial-metric-${trial.id}-${index}`}
+                    >
+                      <span className="text-slate-600">
+                        {metric.as_of ? new Date(metric.as_of).toLocaleString() : "Unknown"}
+                      </span>
+                      <span className={`rounded border px-1.5 py-0.5 ${classificationClasses(metric.classification)}`}>
+                        {metric.classification}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {metricHistoryHasMore && (
+                  <button
+                    type="button"
+                    className="mt-2 rounded border border-line bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={loadingMoreMetrics}
+                    onClick={() => void loadMoreMetrics()}
+                    data-testid={`button-load-more-forward-trial-metrics-${trial.id}`}
+                  >
+                    {loadingMoreMetrics ? "Loading…" : "Load more metrics"}
+                  </button>
+                )}
+              </div>
+            )}
+            </>
           ) : (
             <div className="mt-2 text-xs text-slate-500">Metrics unavailable.</div>
           )}
@@ -464,18 +553,36 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
           {loading ? (
             <div className="mt-2 text-xs text-slate-500">Loading decisions...</div>
           ) : decisions.length > 0 ? (
-            <div className="mt-2 flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
-              {decisions.map(d => (
-                <div key={d.id} className="rounded border border-line p-2 text-xs">
-                  <div className="flex justify-between font-medium">
-                    <span className={!d.qualifying ? "text-coral" : "text-slate-800"}>{d.action} {d.symbol}</span>
-                    <span className="text-slate-500">{new Date(d.bar_timestamp).toLocaleString()}</span>
+            <>
+              <div className="mt-2 flex max-h-48 flex-col gap-2 overflow-y-auto pr-1">
+                {decisions.map(d => (
+                  <div key={d.id} className="rounded border border-line p-2 text-xs">
+                    <div className="flex justify-between font-medium">
+                      <span className={!d.qualifying ? "text-coral" : "text-slate-800"}>{d.action} {d.symbol}</span>
+                      <span className="text-slate-500">{new Date(d.bar_timestamp).toLocaleString()}</span>
+                    </div>
+                    {d.rejection_reason && <div className="mt-0.5 text-slate-600">Rejection: {d.rejection_reason}</div>}
+                    {d.order_id && <div className="mt-0.5 text-slate-500">Order: {d.order_id}</div>}
                   </div>
-                  {d.rejection_reason && <div className="mt-0.5 text-slate-600">Rejection: {d.rejection_reason}</div>}
-                  {d.order_id && <div className="mt-0.5 text-slate-500">Order: {d.order_id}</div>}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500" data-testid={`forward-trial-decision-history-${trial.id}`}>
+                <span data-testid={`text-forward-trial-decision-history-loaded-${trial.id}`}>
+                  Showing {decisions.length} of {decisionHistoryTotal || decisions.length} decisions
+                </span>
+                {decisionHistoryHasMore && (
+                  <button
+                    type="button"
+                    className="rounded border border-line bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={loadingMoreDecisions}
+                    onClick={() => void loadMoreDecisions()}
+                    data-testid={`button-load-more-forward-trial-decisions-${trial.id}`}
+                  >
+                    {loadingMoreDecisions ? "Loading…" : "Load more decisions"}
+                  </button>
+                )}
+              </div>
+            </>
           ) : (
             <div className="mt-2 text-xs text-slate-500">No decisions recorded.</div>
           )}

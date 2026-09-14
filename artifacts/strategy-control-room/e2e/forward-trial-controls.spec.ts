@@ -24,7 +24,7 @@ const trial = {
 };
 
 test.beforeEach(async ({ page }) => {
-  await page.route(`**/api/stock/forward-trials/${trialId}/metrics`, route => route.fulfill({
+  await page.route(`**/api/stock/forward-trials/${trialId}/metrics**`, route => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify({ items: [{
       as_of: "2026-09-10T21:00:00Z",
@@ -45,7 +45,7 @@ test.beforeEach(async ({ page }) => {
       },
     }] }),
   }));
-  await page.route(`**/api/stock/forward-trials/${trialId}/decisions`, route => route.fulfill({
+  await page.route(`**/api/stock/forward-trials/${trialId}/decisions**`, route => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify({ items: [{
       id: "decision-fixture",
@@ -74,6 +74,24 @@ test.beforeEach(async ({ page }) => {
       reason: "Regular-session authenticated preflight is required",
       paper_only: true,
       live_authorized: false,
+    }),
+  }));
+  await page.route(`**/api/stock/forward-trials/${trialId}/promotion-readiness**`, route => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      id: 1,
+      trial_id: trialId,
+      source_metric_id: null,
+      as_of: "2026-09-10T21:00:00Z",
+      report_hash: "readiness-fixture",
+      decision: "unknown",
+      gates: {},
+      lineage: trial.lineage,
+      policy: trial.policy,
+      evidence: {},
+      paper_only: true,
+      live_authorized: false,
+      promotion_authorized: false,
     }),
   }));
   await page.route("**/api/stock/forward-trials/bindings/eligible", route => route.fulfill({

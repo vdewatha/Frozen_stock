@@ -2419,6 +2419,15 @@ export type ForwardTrialDecision = {
   order_id: number | null;
 };
 
+export type ForwardTrialDecisionHistory = {
+  trial_id: string;
+  items: ForwardTrialDecision[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+};
+
 export type ForwardTrialMetricHistoryItem = {
   as_of: string;
   classification: string;
@@ -2439,6 +2448,15 @@ export type ForwardTrialMetricHistoryItem = {
     costs_known?: boolean;
     [key: string]: unknown;
   };
+};
+
+export type ForwardTrialMetricHistory = {
+  trial_id: string;
+  items: ForwardTrialMetricHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
 };
 
 /**
@@ -2833,16 +2851,64 @@ export async function getForwardTrialDetail(id: string): Promise<ForwardTrial> {
   return handleResponse<ForwardTrial>(response);
 }
 
-export async function getForwardTrialDecisions(id: string): Promise<ForwardTrialDecision[]> {
-  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/decisions`, { cache: "no-store" });
-  const data = await handleResponse<{items: ForwardTrialDecision[]}>(response);
-  return data.items;
+export async function getForwardTrialDecisions(
+  id: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<ForwardTrialDecisionHistory> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  const query = params.toString();
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/decisions${query ? `?${query}` : ""}`,
+    { cache: "no-store" },
+  );
+  const data = await handleResponse<{
+    items: ForwardTrialDecision[];
+    total?: number;
+    limit?: number;
+    offset?: number;
+    has_more?: boolean;
+  }>(response);
+  const items = data.items;
+  return {
+    trial_id: id,
+    items,
+    total: data.total ?? items.length,
+    limit: data.limit ?? options.limit ?? items.length,
+    offset: data.offset ?? options.offset ?? 0,
+    has_more: data.has_more ?? false,
+  };
 }
 
-export async function getForwardTrialMetrics(id: string): Promise<ForwardTrialMetricHistoryItem[]> {
-  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/metrics`, { cache: "no-store" });
-  const data = await handleResponse<{items: ForwardTrialMetricHistoryItem[]}>(response);
-  return data.items;
+export async function getForwardTrialMetrics(
+  id: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<ForwardTrialMetricHistory> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  const query = params.toString();
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/metrics${query ? `?${query}` : ""}`,
+    { cache: "no-store" },
+  );
+  const data = await handleResponse<{
+    items: ForwardTrialMetricHistoryItem[];
+    total?: number;
+    limit?: number;
+    offset?: number;
+    has_more?: boolean;
+  }>(response);
+  const items = data.items;
+  return {
+    trial_id: id,
+    items,
+    total: data.total ?? items.length,
+    limit: data.limit ?? options.limit ?? items.length,
+    offset: data.offset ?? options.offset ?? 0,
+    has_more: data.has_more ?? false,
+  };
 }
 
 export async function getForwardTrialPreflight(id: string): Promise<ForwardTrialPreflight> {

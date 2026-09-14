@@ -17,7 +17,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 import app.models
-from app.api.stock_forward_trial import router
+from app.api.stock_forward_trial import decisions as decisions_endpoint, metrics as metrics_endpoint, router
 from app.core.config import Settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
@@ -331,6 +331,60 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(evidence_page["total"], 0)
             self.assertFalse(evidence_page["has_more"])
             self.assertEqual(evidence_page["items"], [])
+
+    def test_forward_trial_decision_and_metric_histories_are_bounded(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused")
+            db.add_all([
+                StockPaperTrialDecision(
+                    trial_id=row.id,
+                    symbol="SPY",
+                    bar_timestamp=datetime(2025, 1, day, 20, 59, tzinfo=timezone.utc),
+                    decision_timestamp=datetime(2025, 1, day, 21, tzinfo=timezone.utc),
+                    action="hold",
+                    qualifying=True,
+                    lineage=row.lineage,
+                )
+                for day in (1, 2, 3)
+            ])
+            db.add_all([
+                StockPaperTrialMetric(
+                    trial_id=row.id,
+                    as_of=datetime(2025, 1, day, 21, tzinfo=timezone.utc),
+                    classification="accumulating",
+                    payload={"observed_sessions": day},
+                )
+                for day in (1, 2, 3)
+            ])
+            db.flush()
+
+            first_decisions = decisions_endpoint(row.id, limit=2, offset=0, db=db)
+            next_decisions = decisions_endpoint(row.id, limit=2, offset=2, db=db)
+            first_metrics = metrics_endpoint(row.id, limit=2, offset=0, db=db)
+            next_metrics = metrics_endpoint(row.id, limit=2, offset=2, db=db)
+
+            self.assertEqual(first_decisions["total"], 3)
+            self.assertEqual(first_decisions["limit"], 2)
+            self.assertEqual(first_decisions["offset"], 0)
+            self.assertTrue(first_decisions["has_more"])
+            self.assertEqual(
+                [item["bar_timestamp"].day for item in first_decisions["items"]],
+                [3, 2],
+            )
+            self.assertFalse(next_decisions["has_more"])
+            self.assertEqual([item["bar_timestamp"].day for item in next_decisions["items"]], [1])
+
+            self.assertEqual(first_metrics["total"], 3)
+            self.assertTrue(first_metrics["has_more"])
+            self.assertEqual(
+                [item["payload"]["observed_sessions"] for item in first_metrics["items"]],
+                [3, 2],
+            )
+            self.assertFalse(next_metrics["has_more"])
+            self.assertEqual(
+                [item["payload"]["observed_sessions"] for item in next_metrics["items"]],
+                [1],
+            )
 
     def test_invalid_binding_cannot_create_trial(self):
         with Session(self.engine) as db:

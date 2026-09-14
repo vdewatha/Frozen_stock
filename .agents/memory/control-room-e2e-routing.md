@@ -7,4 +7,4 @@ Control-room browser tests should run through the artifact proxy so the frontend
 
 **Why:** The managed workflow injects a frontend port while API routing is provided by the preview proxy, and browser locale formatting differs from server-side assumptions.
 
-**How to apply:** Use the preview proxy URL for E2E runs and compare displayed dates against a browser-evaluated `new Date(...).toLocaleString()` value.
+**How to apply:** Use the preview proxy URL for E2E runs, make mocked route globs include query strings when callers add pagination parameters, and compare displayed dates against a browser-evaluated `new Date(...).toLocaleString()` value.

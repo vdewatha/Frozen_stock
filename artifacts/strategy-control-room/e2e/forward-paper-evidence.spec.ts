@@ -187,9 +187,9 @@ const readinessReport = {
 };
 
 test.beforeEach(async ({ page }) => {
-  await page.route(`**/api/stock/forward-trials/${trialId}/metrics`, route => route.fulfill({
-    contentType: "application/json",
-    body: JSON.stringify({ items: [{
+  await page.route(`**/api/stock/forward-trials/${trialId}/metrics**`, route => {
+    const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? "0");
+    const items = offset === 0 ? [{
       as_of: "2026-09-02T20:00:00Z",
       classification: "insufficient",
       payload: {
@@ -206,12 +206,49 @@ test.beforeEach(async ({ page }) => {
         decision_coverage: "0.75",
         costs_known: false,
       },
-    }] }),
-  }));
-  await page.route(`**/api/stock/forward-trials/${trialId}/decisions`, route => route.fulfill({
-    contentType: "application/json",
-    body: JSON.stringify({ items: [] }),
-  }));
+    }] : [{
+      as_of: "2026-09-01T20:00:00Z",
+      classification: "accumulating",
+      payload: {
+        closed_trades: 1,
+        observed_observations: 2,
+        expected_observations: 4,
+        observed_sessions: 4,
+        decision_coverage: "0.50",
+        costs_known: false,
+      },
+    }];
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ items, total: 2, limit: 20, offset, has_more: offset === 0 }),
+    });
+  });
+  await page.route(`**/api/stock/forward-trials/${trialId}/decisions**`, route => {
+    const offset = Number(new URL(route.request().url()).searchParams.get("offset") ?? "0");
+    const items = offset === 0 ? [{
+      id: 71,
+      symbol: "SPY",
+      bar_timestamp: "2026-09-02T19:59:00Z",
+      action: "hold",
+      qualifying: true,
+      rejection_reason: null,
+      lineage: trial.lineage,
+      order_id: null,
+    }] : [{
+      id: 70,
+      symbol: "SPY",
+      bar_timestamp: "2026-09-01T19:59:00Z",
+      action: "reject",
+      qualifying: false,
+      rejection_reason: "stale_feature",
+      lineage: trial.lineage,
+      order_id: null,
+    }];
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ items, total: 2, limit: 20, offset, has_more: offset === 0 }),
+    });
+  });
   await page.route(`**/api/stock/forward-trials/${trialId}/preflight`, route => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify({
@@ -274,6 +311,22 @@ for (const role of ["viewer", "operator", "admin"] as TrialRole[]) {
     await expect(detail.getByTestId(`status-forward-trial-report-safety-${trialId}`)).toContainText("no promotion, resume, or live authorization");
   });
 }
+
+test("decision and metric histories load older pages on demand", async ({ page, authenticateAs }) => {
+  await authenticateAs("viewer");
+  await page.getByTestId(`forward-trial-row-${trialId}`).click();
+
+  const detail = page.getByTestId(`forward-trial-detail-${trialId}`);
+  await expect(detail.getByTestId(`text-forward-trial-metric-history-loaded-${trialId}`)).toContainText("Showing 1 of 2 snapshots");
+  await expect(detail.getByTestId(`text-forward-trial-decision-history-loaded-${trialId}`)).toContainText("Showing 1 of 2 decisions");
+
+  await detail.getByTestId(`button-load-more-forward-trial-metrics-${trialId}`).click();
+  await detail.getByTestId(`button-load-more-forward-trial-decisions-${trialId}`).click();
+
+  await expect(detail.getByTestId(`text-forward-trial-metric-history-loaded-${trialId}`)).toContainText("Showing 2 of 2 snapshots");
+  await expect(detail.getByTestId(`text-forward-trial-decision-history-loaded-${trialId}`)).toContainText("Showing 2 of 2 decisions");
+  await expect(detail).toContainText("stale_feature");
+});
 
 test("report download retrieves the selected immutable version", async ({ page, authenticateAs }) => {
   await authenticateAs("viewer");

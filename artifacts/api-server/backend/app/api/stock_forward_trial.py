@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models import StockPaperTrial, StockPaperModelBinding, StockModelRegistry, StockDatasetSnapshot, StockPaperTrialDecision, StockPaperTrialMetric
@@ -66,18 +66,55 @@ def get_trial(trial_id: str, db: Session = Depends(get_db)):
     return _out(row)
 
 @router.get("/{trial_id}/decisions")
-def decisions(trial_id: str, db: Session = Depends(get_db)):
+def decisions(
+    trial_id: str,
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
     if not db.get(StockPaperTrial, trial_id): raise HTTPException(404, "Trial not found")
-    rows = db.scalars(select(StockPaperTrialDecision).where(StockPaperTrialDecision.trial_id == trial_id).order_by(StockPaperTrialDecision.bar_timestamp)).all()
-    return {"items": [{"id": x.id, "symbol": x.symbol, "bar_timestamp": x.bar_timestamp, "action": x.action,
-                       "qualifying": x.qualifying, "rejection_reason": x.rejection_reason, "lineage": x.lineage,
-                       "order_id": x.order_id} for x in rows]}
+    base = select(StockPaperTrialDecision).where(
+        StockPaperTrialDecision.trial_id == trial_id,
+    )
+    rows = db.scalars(base.order_by(
+        StockPaperTrialDecision.bar_timestamp.desc(),
+        StockPaperTrialDecision.id.desc(),
+    ).offset(offset).limit(limit)).all()
+    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    return {
+        "items": [{"id": x.id, "symbol": x.symbol, "bar_timestamp": x.bar_timestamp, "action": x.action,
+                   "qualifying": x.qualifying, "rejection_reason": x.rejection_reason, "lineage": x.lineage,
+                   "order_id": x.order_id} for x in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(rows) < total,
+    }
 
 @router.get("/{trial_id}/metrics")
-def metrics(trial_id: str, db: Session = Depends(get_db)):
+def metrics(
+    trial_id: str,
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
     if not db.get(StockPaperTrial, trial_id): raise HTTPException(404, "Trial not found")
-    return {"items": [{"as_of": x.as_of, "classification": x.classification, "payload": x.payload}
-                      for x in db.scalars(select(StockPaperTrialMetric).where(StockPaperTrialMetric.trial_id == trial_id).order_by(StockPaperTrialMetric.as_of)).all()]}
+    base = select(StockPaperTrialMetric).where(
+        StockPaperTrialMetric.trial_id == trial_id,
+    )
+    rows = db.scalars(base.order_by(
+        StockPaperTrialMetric.as_of.desc(),
+        StockPaperTrialMetric.id.desc(),
+    ).offset(offset).limit(limit)).all()
+    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    return {
+        "items": [{"as_of": x.as_of, "classification": x.classification, "payload": x.payload}
+                  for x in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(rows) < total,
+    }
 
 @router.get("/{trial_id}/preflight")
 def preflight(trial_id: str, db: Session = Depends(get_db)):
