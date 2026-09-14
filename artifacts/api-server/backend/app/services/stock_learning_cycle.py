@@ -433,10 +433,15 @@ def sync_cycle_from_training_job(db: Session, job_id: str, *, actor: str = "trai
         and manifest.get("final_holdout_consumption")
         and int(manifest.get("embargo_days", -1)) >= 0
     )
+    admission_deferral_reason = (
+        cycle.last_reason
+        if cycle.status == "deferred" and cycle.stage == "admission"
+        else None
+    )
     cycle.model_run_id = model.run_id
     cycle.stage = "admission"
     cycle.status = "awaiting_admission" if cycle.trigger == "scheduled" else "awaiting_forward_evidence"
-    cycle.last_reason = (
+    cycle.last_reason = admission_deferral_reason or (
         "Training completed; awaiting automatic paper-canary admission"
         if cycle.trigger == "scheduled"
         else "Awaiting a completed, aligned forward paper trial"
@@ -461,6 +466,22 @@ def sync_cycle_from_training_job(db: Session, job_id: str, *, actor: str = "trai
 
 
 HANDOFF_ACTOR = "paper_learning_automation"
+RESOLVED_PAPER_TRIAL_STATUSES = {"stopped", "completed"}
+
+
+def _active_scheduled_binding_is_resolved(
+    db: Session,
+    binding: StockPaperModelBinding,
+) -> bool:
+    """Return whether a scheduled binding no longer owns an active trial."""
+    if not binding.source_cycle_id:
+        return False
+    trial_status = db.scalar(
+        select(StockPaperTrial.status).where(
+            StockPaperTrial.source_cycle_id == binding.source_cycle_id,
+        )
+    )
+    return trial_status in RESOLVED_PAPER_TRIAL_STATUSES
 
 
 def _handoff_failure(
@@ -585,6 +606,7 @@ def admit_scheduled_learning_cycle(
         active_binding
         and active_binding.source_cycle_id
         and active_binding.source_cycle_id != cycle.cycle_id
+        and not _active_scheduled_binding_is_resolved(db, active_binding)
     ):
         return _handoff_failure(
             db,

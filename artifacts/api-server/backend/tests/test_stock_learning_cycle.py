@@ -502,6 +502,158 @@ def test_concurrent_scheduled_handoff_workers_defer_cross_cycle_paper_binding():
         admin_engine.dispose()
 
 
+def test_deferred_scheduled_cycle_retries_after_active_trial_completes():
+    db = _db()
+    cycle_ids = ("a" * 64, "b" * 64)
+    snapshot_ids = ("c" * 64, "d" * 64)
+    model_ids = ("e" * 64, "f" * 64)
+    job_ids = (
+        "00000000-0000-0000-0000-000000000101",
+        "00000000-0000-0000-0000-000000000102",
+    )
+
+    def manifest_for(job_id):
+        return {
+            "purged_expanding_walkforward": True,
+            "final_holdout_evaluation_count": 1,
+            "final_holdout_consumption": {"count": 1, "job_id": job_id},
+            "embargo_days": 0,
+        }
+
+    for index, (cycle_id, snapshot_id, model_id, job_id) in enumerate(
+        zip(cycle_ids, snapshot_ids, model_ids, job_ids)
+    ):
+        dataset_hash = f"{index + 1}" * 64
+        db.add(StockDatasetSnapshot(
+            snapshot_id=snapshot_id, dataset_sha256=dataset_hash,
+            cutoff_date=date(2026, 9, 12), universe=["SPY"],
+            provider="yfinance", feature_config_id="features", horizon_days=5,
+            artifact_path=f"/immutable/snapshot-{index}",
+            artifact_sha256=f"{index + 3}" * 64,
+            metadata_json={
+                "binding_eligible": True,
+                "snapshot_id": snapshot_id,
+                "dataset_sha256": dataset_hash,
+                "artifact_path": f"/immutable/snapshot-{index}",
+                "artifact_sha256": f"{index + 3}" * 64,
+                "provider": "yfinance",
+                "universe": ["SPY"],
+                "horizon_days": 5,
+                "feature_config_id": "features",
+                "identity_sha256": f"{index + 5}" * 64,
+            },
+        ))
+        db.add(StockModelRegistry(
+            run_id=model_id, snapshot_id=snapshot_id,
+            manifest_sha256=f"{index + 7}" * 64,
+            artifact_path=f"/immutable/model-{index}",
+            training_metadata=manifest_for(job_id),
+        ))
+        db.add(StockModelLifecycleState(
+            model_run_id=model_id, lifecycle_state="challenger",
+            updated_by="scheduler", reason="scheduled retry test",
+        ))
+        db.add(StockTrainingJob(
+            id=job_id, dedupe_key=f"{index + 9}" * 64,
+            trigger="scheduled", status="succeeded", requested_by="scheduler",
+            request_payload={"symbols": ["SPY"], "horizon_bars": 5},
+            snapshot_id=snapshot_id, result_run_id=model_id,
+        ))
+        db.add(StockLearningCycle(
+            cycle_id=cycle_id, request_sha256=f"{index + 11}" * 64,
+            trigger="scheduled", status="awaiting_admission",
+            stage="admission", requested_by="scheduler", symbols=["SPY"],
+            cutoff_date=date(2026, 9, 12), horizon_days=5, provider="yfinance",
+            seed=42, snapshot_id=snapshot_id, training_job_id=job_id,
+            model_run_id=model_id, gates={}, evidence={},
+            last_reason="Training completed; awaiting automatic paper-canary admission",
+        ))
+    db.commit()
+
+    def _start(db, trial_id, actor):
+        trial = db.get(StockPaperTrial, trial_id)
+        trial.status = "running"
+        return trial
+
+    with (
+        patch("app.services.stock_learning_cycle.validate_trial_artifact", return_value={}),
+        patch(
+            "app.services.stock_learning_cycle.trial_feed_preflight",
+            return_value={
+                "ready": True, "status": "ready", "regular_session": True,
+                "reason": None, "paper_ledger": {"status": "reconciled"},
+            },
+        ),
+        patch("app.services.stock_learning_cycle.start_trial", side_effect=_start),
+        patch(
+            "app.services.stock_training_jobs.validate_registered_stock_model",
+            side_effect=lambda model, dataset: model.training_metadata,
+        ),
+        patch("app.services.stock_training_jobs._dataset_from_record", return_value=object()),
+        patch("app.services.stock_training_jobs._validate_holdout_consumption"),
+        patch(
+            "app.services.stock_forward_trial.validate_registered_stock_model",
+            side_effect=lambda model, dataset: model.training_metadata,
+        ),
+        patch("app.services.stock_forward_trial._dataset_from_record", return_value=object()),
+    ):
+        first_handoff = run_scheduled_paper_trial_handoff_job(db)
+        assert first_handoff["status"] == "complete"
+        first_results = {
+            result["cycle_id"]: result for result in first_handoff["results"]
+        }
+        assert any(
+            result["status"] == "running_forward_trial"
+            for result in first_results.values()
+        ), {
+            cycle_id: (result["status"], result["stage"], result["reason"])
+            for cycle_id, result in first_results.items()
+        }
+        winner_id = next(
+            cycle_id
+            for cycle_id, result in first_results.items()
+            if result["status"] == "running_forward_trial"
+        )
+        deferred_id = next(cycle_id for cycle_id in cycle_ids if cycle_id != winner_id)
+        contention_reason = first_results[deferred_id]["reason"]
+        assert contention_reason == (
+            "Another scheduled cycle owns the active paper canary; "
+            "retry admission after its trial resolves"
+        )
+        assert first_results[deferred_id]["binding_id"] is None
+        assert first_results[deferred_id]["trial_id"] is None
+
+        winner = db.get(StockLearningCycle, winner_id)
+        winner_trial = db.get(StockPaperTrial, winner.trial_id)
+        winner_trial.status = "completed"
+        db.commit()
+
+        second_handoff = run_scheduled_paper_trial_handoff_job(db)
+        second_results = {
+            result["cycle_id"]: result for result in second_handoff["results"]
+        }
+
+    retried = db.get(StockLearningCycle, deferred_id)
+    assert second_results[deferred_id]["status"] == "running_forward_trial"
+    assert retried.binding_id is not None
+    assert retried.trial_id is not None
+    assert retried.last_reason == "Authenticated paper preflight passed; forward trial started"
+    assert retried.binding_id != db.get(StockLearningCycle, winner_id).binding_id
+    events = db.scalars(
+        select(StockLearningCycleEvent)
+        .where(StockLearningCycleEvent.cycle_id == deferred_id)
+        .order_by(StockLearningCycleEvent.id)
+    ).all()
+    assert any(event.decision == "deferred" and event.reason == contention_reason for event in events)
+    assert any(event.stage == "admission" and event.decision == "pass" for event in events)
+    retried_binding = db.get(StockPaperModelBinding, retried.binding_id)
+    retried_trial = db.get(StockPaperTrial, retried.trial_id)
+    assert retried_binding.source_cycle_id == deferred_id
+    assert retried_trial.source_cycle_id == deferred_id
+    assert retried_trial.binding_id == retried.binding_id
+    db.close()
+
+
 def _client() -> TestClient:
     keys = {
         f"auth_{role}_key": role * 16
