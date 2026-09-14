@@ -249,7 +249,7 @@ def test_concurrent_scheduled_handoffs_share_one_binding_and_trial():
         admin_engine.dispose()
 
 
-def test_concurrent_scheduled_handoffs_defer_cross_cycle_paper_binding():
+def test_concurrent_scheduled_handoff_workers_defer_cross_cycle_paper_binding():
     schema, admin_engine, engine = _postgres_schema_engine()
     cycle_ids = ("a" * 64, "b" * 64)
     snapshot_ids = ("c" * 64, "d" * 64)
@@ -325,26 +325,18 @@ def test_concurrent_scheduled_handoffs_defer_cross_cycle_paper_binding():
                 ))
             db.commit()
 
-        admission_barrier = Barrier(2)
+        handoff_barrier = Barrier(2)
         started_trial_ids = []
 
-        def worker(cycle_id, job_id):
+        real_sync_cycle_from_training_job = sync_cycle_from_training_job
+
+        def synchronize_handoff(db, job_id, *, actor):
+            handoff_barrier.wait(timeout=10)
+            return real_sync_cycle_from_training_job(db, job_id, actor=actor)
+
+        def worker():
             with Session(engine) as db:
-                sync_cycle_from_training_job(
-                    db, job_id, actor="paper_learning_automation"
-                )
-                admission_barrier.wait(timeout=10)
-                cycle = start_scheduled_learning_trial(
-                    db, cycle_id, actor="paper_learning_automation"
-                )
-                db.commit()
-                return {
-                    "cycle_id": cycle.cycle_id,
-                    "status": cycle.status,
-                    "binding_id": cycle.binding_id,
-                    "trial_id": cycle.trial_id,
-                    "reason": cycle.last_reason,
-                }
+                return run_scheduled_paper_trial_handoff_job(db)
 
         def start_trial_once(db, trial_id, *, actor):
             started_trial_ids.append(trial_id)
@@ -353,6 +345,10 @@ def test_concurrent_scheduled_handoffs_defer_cross_cycle_paper_binding():
             return trial
 
         with (
+            patch(
+                "app.services.stock_learning_cycle.sync_cycle_from_training_job",
+                side_effect=synchronize_handoff,
+            ),
             patch(
                 "app.services.stock_training_jobs.validate_registered_stock_model",
                 side_effect=lambda model, dataset: model.training_metadata,
@@ -390,28 +386,49 @@ def test_concurrent_scheduled_handoffs_defer_cross_cycle_paper_binding():
             ),
         ):
             with ThreadPoolExecutor(max_workers=2) as workers:
-                results = list(
-                    workers.map(
-                        lambda item: worker(*item),
-                        zip(cycle_ids, job_ids),
-                    )
-                )
+                results = list(workers.map(lambda _: worker(), range(2)))
 
-        assert {result["status"] for result in results} == {
+        assert all(result["status"] == "complete" for result in results)
+        assert all(
+            worker_result["evaluated"] == len(cycle_ids)
+            and {
+                result["cycle_id"] for result in worker_result["results"]
+            } == set(cycle_ids)
+            for worker_result in results
+        )
+        handoff_results = [
+            result
+            for worker_result in results
+            for result in worker_result["results"]
+        ]
+        assert len(handoff_results) == len(cycle_ids) * len(results)
+        assert {result["cycle_id"] for result in handoff_results} == set(cycle_ids)
+        assert {result["status"] for result in handoff_results} == {
             "running_forward_trial",
             "deferred",
         }
         winner = next(
-            result for result in results if result["status"] == "running_forward_trial"
+            result
+            for result in handoff_results
+            if result["status"] == "running_forward_trial"
         )
-        deferred = next(
-            result for result in results if result["status"] == "deferred"
-        )
+        deferred_results = [
+            result
+            for result in handoff_results
+            if result["status"] == "deferred"
+        ]
         assert winner["binding_id"] is not None
         assert winner["trial_id"] is not None
-        assert deferred["binding_id"] is None
-        assert deferred["trial_id"] is None
-        assert "retry admission" in deferred["reason"]
+        assert deferred_results
+        assert all(
+            result["cycle_id"] != winner["cycle_id"]
+            and result["binding_id"] is None
+            and result["trial_id"] is None
+            and "retry" in result["reason"]
+            for result in deferred_results
+        )
+        deferred_cycle_ids = {result["cycle_id"] for result in deferred_results}
+        assert deferred_cycle_ids == set(cycle_ids) - {winner["cycle_id"]}
         assert len(started_trial_ids) == 1
 
         with Session(engine) as db:
@@ -432,8 +449,25 @@ def test_concurrent_scheduled_handoffs_defer_cross_cycle_paper_binding():
             assert trials[0].binding_id == bindings[0].id
             assert cycles[winner["cycle_id"]].binding_id == bindings[0].id
             assert cycles[winner["cycle_id"]].trial_id == trials[0].id
-            assert cycles[deferred["cycle_id"]].binding_id is None
-            assert cycles[deferred["cycle_id"]].trial_id is None
+            deferred_cycle_id = next(iter(deferred_cycle_ids))
+            assert cycles[deferred_cycle_id].binding_id is None
+            assert cycles[deferred_cycle_id].trial_id is None
+            for cycle in cycles.values():
+                if cycle.binding_id is not None:
+                    binding = db.get(StockPaperModelBinding, cycle.binding_id)
+                    assert binding.source_cycle_id == cycle.cycle_id
+                if cycle.trial_id is not None:
+                    trial = db.get(StockPaperTrial, cycle.trial_id)
+                    assert trial.source_cycle_id == cycle.cycle_id
+                    assert trial.binding_id == cycle.binding_id
+            for result in handoff_results:
+                if result["binding_id"] is not None:
+                    binding = db.get(StockPaperModelBinding, result["binding_id"])
+                    assert binding.source_cycle_id == result["cycle_id"]
+                if result["trial_id"] is not None:
+                    trial = db.get(StockPaperTrial, result["trial_id"])
+                    assert trial.source_cycle_id == result["cycle_id"]
+                    assert trial.binding_id == result["binding_id"]
             assert db.scalar(
                 select(StockPaperBindingState.active_binding_id)
             ) == bindings[0].id
@@ -446,18 +480,21 @@ def test_concurrent_scheduled_handoffs_defer_cross_cycle_paper_binding():
                 cycle_id=winner["cycle_id"], stage="admission", decision="pass"
             ).count() == 1
             assert db.query(StockLearningCycleEvent).filter_by(
-                cycle_id=deferred["cycle_id"], stage="admission", decision="deferred"
-            ).count() == 1
+                cycle_id=deferred_cycle_id, stage="admission", decision="deferred"
+            ).count() >= 1
             deferred_audits = db.scalars(
                 select(AuditLog).where(
                     AuditLog.action == "automatic_paper_trial_handoff",
                     AuditLog.status == "deferred",
                 )
             ).all()
-            assert len(deferred_audits) == 1
-            assert deferred_audits[0].payload["cycle_id"] == deferred["cycle_id"]
-            assert deferred_audits[0].payload["binding_id"] is None
-            assert deferred_audits[0].payload["trial_id"] is None
+            assert deferred_audits
+            assert all(
+                audit.payload["cycle_id"] in deferred_cycle_ids
+                and audit.payload["binding_id"] is None
+                and audit.payload["trial_id"] is None
+                for audit in deferred_audits
+            )
     finally:
         engine.dispose()
         with admin_engine.begin() as connection:
