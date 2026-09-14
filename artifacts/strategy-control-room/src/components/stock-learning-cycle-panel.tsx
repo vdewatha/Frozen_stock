@@ -87,7 +87,7 @@ export function StockLearningCyclePanel() {
       ) : (
         <div className="mt-4 grid gap-3">
           {cycles.map((cycle) => (
-            <article className="rounded border border-line bg-panel p-3" key={cycle.cycle_id}>
+            <article className="rounded border border-line bg-panel p-3" data-testid={`stock-learning-cycle-${cycle.cycle_id}`} key={cycle.cycle_id}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <StatusPill status={cycle.status} />
