@@ -17,7 +17,7 @@ from app.core.config import Settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
 from app.db.session import get_db
-from app.models import RiskRule
+from app.models import RiskRule, StockPaperRecoveryState
 from app.services.stock_paper_ledger import (
     AlpacaPaperClient,
     StockPaperError,
@@ -734,6 +734,119 @@ class StockPaperRecoveryTests(unittest.TestCase):
             run_stock_watchdog(db)
             with self.assertRaises(StockPaperError):
                 resume_stock_paper_after_revalidation(db, actor="operator-test")
+
+    def test_monitoring_evidence_must_follow_current_pause_and_accounting_halt(self):
+        from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
+        from app.models.stock_paper import StockPaperAccount
+        from app.services.stock_recovery import recovery_status
+
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            enter_stock_recovery(db, reason="Monitoring boundary test", actor="watchdog")
+            state = db.query(StockPaperRecoveryEvent).filter_by(action="pause").order_by(StockPaperRecoveryEvent.id.desc()).one()
+            pause_at = state.created_at
+            account = db.query(StockPaperAccount).one()
+            account.status = "reconciled"
+            account.reconciliation_required = False
+            recovery_state = db.query(StockPaperRecoveryState).one()
+            recovery_state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.commit()
+
+            db.add(StockMonitoringSnapshot(
+                monitor_key="stock_continuous_monitor",
+                status="clear",
+                generated_at=pause_at - timedelta(seconds=1),
+                checks=[],
+                actions=[],
+                source="test",
+            ))
+            db.commit()
+            with self.assertRaisesRegex(StockPaperError, "generated before the current recovery pause"):
+                resume_stock_paper_after_revalidation(db, actor="operator-test")
+            status = recovery_status(db)
+            self.assertIn("generated before the current recovery pause", status["last_monitoring_preflight"]["reason"])
+
+            # A clear snapshot after the pause still cannot satisfy a later
+            # broker-account halt boundary.
+            account.halted_at = pause_at + timedelta(minutes=1)
+            db.add(StockMonitoringSnapshot(
+                monitor_key="stock_continuous_monitor",
+                status="clear",
+                generated_at=pause_at + timedelta(seconds=30),
+                checks=[],
+                actions=[],
+                source="test",
+            ))
+            db.commit()
+            with self.assertRaisesRegex(StockPaperError, "generated before the current recovery pause"):
+                resume_stock_paper_after_revalidation(db, actor="operator-test")
+            self.assertGreaterEqual(
+                db.query(StockPaperRecoveryEvent).filter_by(action="monitoring_preflight", status="blocked").count(),
+                2,
+            )
+
+            db.add(StockMonitoringSnapshot(
+                monitor_key="stock_continuous_monitor",
+                status="clear",
+                generated_at=account.halted_at + timedelta(seconds=1),
+                checks=[],
+                actions=[],
+                source="test",
+            ))
+            db.commit()
+            resumed = resume_stock_paper_after_revalidation(db, actor="operator-test")
+            self.assertEqual(resumed["status"], "resumable")
+
+    def test_repeated_recovery_attempt_requires_monitoring_after_new_pause(self):
+        from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
+        from app.models.stock_paper import StockPaperAccount
+
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            enter_stock_recovery(db, reason="First recovery attempt", actor="watchdog")
+            first_pause = db.query(StockPaperRecoveryEvent).filter_by(action="pause").order_by(StockPaperRecoveryEvent.id.desc()).one()
+            account = db.query(StockPaperAccount).one()
+            account.status = "reconciled"
+            account.reconciliation_required = False
+            recovery_state = db.query(StockPaperRecoveryState).one()
+            recovery_state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.add(StockMonitoringSnapshot(
+                monitor_key="stock_continuous_monitor",
+                status="clear",
+                generated_at=first_pause.created_at + timedelta(seconds=1),
+                checks=[],
+                actions=[],
+                source="test",
+            ))
+            db.commit()
+            self.assertEqual(
+                resume_stock_paper_after_revalidation(db, actor="operator-test")["status"],
+                "resumable",
+            )
+
+            enter_stock_recovery(db, reason="Second recovery attempt", actor="watchdog")
+            account.status = "reconciled"
+            account.reconciliation_required = False
+            prior_snapshot = db.query(StockMonitoringSnapshot).order_by(StockMonitoringSnapshot.generated_at.desc()).one()
+            account.halted_at = prior_snapshot.generated_at + timedelta(seconds=1)
+            recovery_state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.commit()
+            with self.assertRaisesRegex(StockPaperError, "generated before the current recovery pause"):
+                resume_stock_paper_after_revalidation(db, actor="operator-test")
+
+            db.add(StockMonitoringSnapshot(
+                monitor_key="stock_continuous_monitor",
+                status="clear",
+                generated_at=account.halted_at + timedelta(seconds=1),
+                checks=[],
+                actions=[],
+                source="test",
+            ))
+            db.commit()
+            self.assertEqual(
+                resume_stock_paper_after_revalidation(db, actor="operator-test")["status"],
+                "resumable",
+            )
 
     def test_unexplained_residual_cannot_be_cleared_by_manual_accounting_review(self):
         from app.models import StockPaperRecoveryState

@@ -345,6 +345,25 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
     if not snapshot:
         return False, "No monitoring evidence exists after the recovery pause"
     generated = _utc(snapshot.generated_at)
+    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    pause_event = db.query(StockPaperRecoveryEvent).filter(
+        StockPaperRecoveryEvent.action == "pause",
+    ).order_by(
+        StockPaperRecoveryEvent.created_at.desc(),
+        StockPaperRecoveryEvent.id.desc(),
+    ).first()
+    boundaries = [
+        _utc(pause_event.created_at) if pause_event and pause_event.created_at else None,
+        _utc(account.halted_at) if account and account.halted_at else None,
+    ]
+    boundaries = [boundary for boundary in boundaries if boundary is not None]
+    if boundaries:
+        boundary = max(boundaries)
+        if generated <= boundary:
+            return False, (
+                "Monitoring evidence was generated before the current recovery pause "
+                f"or accounting halt ({boundary.isoformat()})"
+            )
     if now - generated > HEARTBEAT_TIMEOUT:
         return False, "Monitoring evidence is stale"
     if snapshot.status != "clear":
@@ -352,6 +371,32 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
     if any(check.get("status") in {"warning", "breach", "unknown"} for check in snapshot.checks):
         return False, "Every monitoring check must be clear before resuming"
     return True, "Monitoring evidence is fresh and clear"
+
+
+def _record_monitoring_preflight_rejection(
+    db: Session,
+    *,
+    actor: str,
+    reason: str,
+    now: datetime,
+) -> None:
+    _event(
+        db,
+        action="monitoring_preflight",
+        status="blocked",
+        actor=actor,
+        reason=reason,
+        payload={"checked_at": now.isoformat()},
+    )
+    write_audit_log(
+        db,
+        event_type="stock_recovery",
+        action="monitoring_preflight",
+        status="blocked",
+        message=reason,
+        entity_type="stock_paper",
+        payload={"actor": actor, "checked_at": now.isoformat()},
+    )
 
 
 def resume_stock_paper_after_revalidation(db: Session, *, actor: str) -> dict:
@@ -380,6 +425,8 @@ def resume_stock_paper_after_revalidation(db: Session, *, actor: str) -> dict:
         raise StockPaperError("In-flight orders must be terminal before recovery can resume")
     okay, reason = _fresh_monitoring_is_clear(db, now)
     if not okay:
+        _record_monitoring_preflight_rejection(db, actor=actor, reason=reason, now=now)
+        db.commit()
         raise StockPaperError(reason)
     state.status = "resumable"
     state.last_revalidation_at = now
@@ -582,6 +629,12 @@ def attempt_automatic_stock_recovery(
     okay, reason = _fresh_monitoring_is_clear(db, now)
     if not okay:
         _halt(account, reason, reconciliation_required=False)
+        _record_monitoring_preflight_rejection(
+            db,
+            actor=AUTOMATIC_RECOVERY_ACTOR,
+            reason=reason,
+            now=now,
+        )
         _automatic_recovery_notification(db, reason=reason, payload={"evidence": evidence})
         _event(db, action="automatic_resume", status="blocked", actor=AUTOMATIC_RECOVERY_ACTOR, reason=reason, payload={"evidence": evidence})
         db.commit()
@@ -692,6 +745,23 @@ def recovery_status(db: Session) -> dict:
     state = _state(db, for_update=False)
     account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
     events = db.query(StockPaperRecoveryEvent).order_by(StockPaperRecoveryEvent.created_at.desc()).limit(25).all()
+    monitoring_event = db.query(StockPaperRecoveryEvent).filter(
+        StockPaperRecoveryEvent.action == "monitoring_preflight",
+    ).order_by(
+        StockPaperRecoveryEvent.created_at.desc(),
+        StockPaperRecoveryEvent.id.desc(),
+    ).first()
+    monitoring_preflight = (
+        {
+            "status": monitoring_event.status,
+            "actor": monitoring_event.actor,
+            "reason": monitoring_event.reason,
+            "created_at": monitoring_event.created_at.isoformat() if monitoring_event.created_at else None,
+            "payload": monitoring_event.payload,
+        }
+        if monitoring_event
+        else None
+    )
     automatic_review_status = (
         "blocked"
         if state.accounting_review_required
@@ -715,6 +785,7 @@ def recovery_status(db: Session) -> dict:
         "accounting_review_reason": state.accounting_review_reason,
         "automatic_review_enabled": True,
         "automatic_review_status": automatic_review_status,
+        "last_monitoring_preflight": monitoring_preflight,
         "account_status": account.status if account else "uninitialized",
         "accounting_residual": bool(account.unexplained_residual) if account else False,
         "account_reconciliation_required": bool(account.reconciliation_required) if account else True,
