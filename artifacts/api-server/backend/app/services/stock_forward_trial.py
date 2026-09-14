@@ -682,7 +682,17 @@ def trial_feed_preflight(
         "live_authorized": False,
     }
 
-def create_trial(db: Session, *, binding_id: int, actor: str) -> StockPaperTrial:
+def create_trial(
+    db: Session, *, binding_id: int, actor: str, source_cycle_id: str | None = None,
+) -> StockPaperTrial:
+    if source_cycle_id:
+        existing = db.scalar(select(StockPaperTrial).where(
+            StockPaperTrial.source_cycle_id == source_cycle_id,
+        ))
+        if existing:
+            if existing.binding_id != binding_id:
+                raise StockTrainingError("Scheduled cycle already owns a different forward trial")
+            return existing
     binding = db.get(StockPaperModelBinding, binding_id)
     if not binding or not binding.paper_only or binding.live_authorized:
         raise StockTrainingError("Only an immutable paper-only model binding may approve a trial")
@@ -704,6 +714,7 @@ def create_trial(db: Session, *, binding_id: int, actor: str) -> StockPaperTrial
         blocked = snapshot.metadata_json.get("binding_eligibility_reason", "Snapshot is not binding eligible")
     lineage["lineage_sha256"] = _hash(lineage)
     row = StockPaperTrial(id=str(uuid4()), binding_id=binding.id, actor=actor,
+                          source_cycle_id=source_cycle_id,
                           status="blocked" if blocked else "approved", policy=dict(POLICY),
                           lineage=lineage, blocked_reason=blocked)
     db.add(row)

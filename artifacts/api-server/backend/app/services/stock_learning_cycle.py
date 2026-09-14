@@ -42,11 +42,13 @@ from app.services.stock_training_jobs import (
     _current_lifecycle,
     _lock_lifecycle_admission,
     _transition_model,
+    create_stock_paper_binding,
     create_stock_training_job,
     transition_stock_model_lifecycle,
 )
+from app.services.stock_forward_trial import create_trial, start_trial, validate_trial_artifact
 
-TERMINAL_STATUSES = {"complete", "demoted", "rolled_back", "failed"}
+TERMINAL_STATUSES = {"complete", "promoted", "demoted", "rolled_back", "failed"}
 VALID_TRIGGERS = {"manual", "scheduled"}
 
 
@@ -355,9 +357,13 @@ def sync_cycle_from_training_job(db: Session, job_id: str, *, actor: str = "trai
         and int(manifest.get("embargo_days", -1)) >= 0
     )
     cycle.model_run_id = model.run_id
-    cycle.stage = "forward_trial"
-    cycle.status = "awaiting_forward_evidence"
-    cycle.last_reason = "Awaiting a completed, aligned forward paper trial"
+    cycle.stage = "admission"
+    cycle.status = "awaiting_admission" if cycle.trigger == "scheduled" else "awaiting_forward_evidence"
+    cycle.last_reason = (
+        "Training completed; awaiting automatic paper-canary admission"
+        if cycle.trigger == "scheduled"
+        else "Awaiting a completed, aligned forward paper trial"
+    )
     _event(
         db, cycle=cycle, stage="validation",
         decision="pass" if validation_ok else "fail", actor=actor,
@@ -374,6 +380,320 @@ def sync_cycle_from_training_job(db: Session, job_id: str, *, actor: str = "trai
     if not validation_ok:
         cycle.status = "blocked"
         cycle.last_reason = "Leakage-safe validation and exactly-once holdout evidence are incomplete"
+    return cycle
+
+
+HANDOFF_ACTOR = "paper_learning_automation"
+
+
+def _handoff_failure(
+    db: Session,
+    cycle: StockLearningCycle,
+    *,
+    stage: str,
+    status: str,
+    reason: str,
+    evidence: dict | None = None,
+) -> StockLearningCycle:
+    attempt_evidence = {
+        **(evidence or {}),
+        "attempted_at": _now().isoformat(),
+    }
+    cycle.stage = stage
+    cycle.status = status
+    cycle.last_reason = reason.strip()
+    _event(
+        db,
+        cycle=cycle,
+        stage=stage,
+        decision="deferred" if status == "deferred" else "blocked",
+        actor=HANDOFF_ACTOR,
+        reason=cycle.last_reason,
+        evidence=attempt_evidence,
+    )
+    write_audit_log(
+        db,
+        event_type="stock_learning_cycle",
+        action="automatic_paper_trial_handoff",
+        status=status,
+        message=cycle.last_reason,
+        entity_type="stock_learning_cycle",
+        payload={
+            "cycle_id": cycle.cycle_id,
+            "binding_id": cycle.binding_id,
+            "trial_id": cycle.trial_id,
+            "paper_only": True,
+            "live_authorized": False,
+            **attempt_evidence,
+        },
+    )
+    return cycle
+
+
+def admit_scheduled_learning_cycle(
+    db: Session,
+    cycle_id: str,
+    *,
+    actor: str = HANDOFF_ACTOR,
+) -> StockLearningCycle:
+    """Admit one completed scheduled challenger into exactly one paper trial.
+
+    The cycle-owned source keys on the binding and trial are the durable
+    idempotency fence. Lifecycle transitions remain delegated to the existing
+    binding service; this coordinator never mutates the immutable registry row.
+    """
+    cycle = db.get(StockLearningCycle, cycle_id)
+    if not cycle:
+        raise StockTrainingError("Learning cycle not found")
+    if cycle.trigger != "scheduled":
+        raise StockTrainingError("Automatic paper admission is limited to scheduled cycles")
+    if cycle.binding_id and cycle.trial_id:
+        return cycle
+    if cycle.status in {"complete", "promoted", "demoted", "rolled_back", "failed"}:
+        return cycle
+
+    job = db.get(StockTrainingJob, cycle.training_job_id) if cycle.training_job_id else None
+    if not job or job.status != "succeeded" or not job.result_run_id:
+        return _handoff_failure(
+            db, cycle, stage="admission", status="deferred",
+            reason="Scheduled challenger is not yet a successfully completed training job",
+            evidence={"training_job_id": cycle.training_job_id, "job_status": job.status if job else None},
+        )
+    if cycle.model_run_id != job.result_run_id:
+        cycle.model_run_id = job.result_run_id
+    validation = _automatic_validation_gate(db, cycle)
+    cycle.gates = {**(cycle.gates or {}), "admission_validation": validation}
+    if validation["status"] != "pass":
+        return _handoff_failure(
+            db, cycle, stage="admission", status="blocked",
+            reason=validation.get("reason", "Leakage-safe training validation is incomplete"),
+            evidence={"validation": validation},
+        )
+
+    model = db.get(StockModelRegistry, cycle.model_run_id)
+    snapshot = db.get(StockDatasetSnapshot, cycle.snapshot_id)
+    if not model or not snapshot or model.snapshot_id != cycle.snapshot_id:
+        return _handoff_failure(
+            db, cycle, stage="admission", status="blocked",
+            reason="Completed challenger is missing its exact immutable model or dataset snapshot",
+            evidence={"model_run_id": cycle.model_run_id, "snapshot_id": cycle.snapshot_id},
+        )
+    if snapshot.metadata_json.get("binding_eligible") is not True:
+        return _handoff_failure(
+            db, cycle, stage="admission", status="blocked",
+            reason=snapshot.metadata_json.get(
+                "binding_eligibility_reason", "Dataset snapshot is not eligible for paper binding"
+            ),
+            evidence={"snapshot_id": snapshot.snapshot_id, "binding_eligible": False},
+        )
+
+    _lock_lifecycle_admission(db)
+    binding = db.get(StockPaperModelBinding, cycle.binding_id) if cycle.binding_id else db.scalar(
+        select(StockPaperModelBinding).where(
+            StockPaperModelBinding.source_cycle_id == cycle.cycle_id,
+        )
+    )
+    try:
+        if binding is None:
+            binding = create_stock_paper_binding(
+                db,
+                model_run_id=model.run_id,
+                snapshot_id=snapshot.snapshot_id,
+                actor=actor,
+                purpose="scheduled paper trial",
+                reason=f"Automatic admission for scheduled learning cycle {cycle.cycle_id}",
+                source_cycle_id=cycle.cycle_id,
+            )
+        if (
+            binding.model_run_id != model.run_id
+            or binding.snapshot_id != snapshot.snapshot_id
+            or binding.paper_only is not True
+            or binding.live_authorized is not False
+        ):
+            raise StockTrainingError("Paper binding lineage or authorization policy is invalid")
+        cycle.binding_id = binding.id
+        cycle.active_binding_id = binding.id
+        state = db.get(StockPaperBindingState, 1)
+        if not state or state.active_binding_id != binding.id:
+            raise StockTrainingError("Scheduled paper binding is not the active paper canary")
+        lifecycle = db.get(StockModelLifecycleState, model.run_id)
+        if not lifecycle or lifecycle.lifecycle_state != "paper_canary":
+            raise StockTrainingError("Scheduled challenger did not reach the paper-canary lifecycle state")
+        trial = db.get(StockPaperTrial, cycle.trial_id) if cycle.trial_id else db.scalar(
+            select(StockPaperTrial).where(StockPaperTrial.source_cycle_id == cycle.cycle_id)
+        )
+        if trial is None:
+            trial = create_trial(
+                db, binding_id=binding.id, actor=actor, source_cycle_id=cycle.cycle_id,
+            )
+        if trial.binding_id != binding.id:
+            raise StockTrainingError("Forward trial is linked to a different paper binding")
+        cycle.trial_id = trial.id
+    except StockTrainingError as exc:
+        return _handoff_failure(
+            db, cycle, stage="admission", status="blocked", reason=str(exc),
+            evidence={"model_run_id": model.run_id, "snapshot_id": snapshot.snapshot_id},
+        )
+
+    if trial.status == "blocked" and trial.blocked_reason:
+        return _handoff_failure(
+            db, cycle, stage="admission", status="blocked",
+            reason=trial.blocked_reason,
+            evidence={"binding_id": binding.id, "trial_id": trial.id},
+        )
+    cycle.stage = "preflight"
+    cycle.status = "awaiting_preflight"
+    cycle.last_reason = "Paper canary and forward trial admitted; awaiting authenticated preflight"
+    cycle.gates = {
+        **(cycle.gates or {}),
+        "paper_binding": _gate(
+            "pass",
+            evidence={
+                "binding_id": binding.id,
+                "model_run_id": binding.model_run_id,
+                "snapshot_id": binding.snapshot_id,
+                "paper_only": True,
+                "live_authorized": False,
+            },
+        ),
+        "forward_trial": _gate(
+            "pass",
+            evidence={"trial_id": trial.id, "binding_id": trial.binding_id, "policy": trial.policy},
+        ),
+    }
+    cycle.evidence = {
+        **(cycle.evidence or {}),
+        "handoff": {
+            "binding_id": binding.id,
+            "trial_id": trial.id,
+            "admitted_at": _now().isoformat(),
+            "paper_only": True,
+            "live_authorized": False,
+        },
+    }
+    _event(
+        db,
+        cycle=cycle,
+        stage="admission",
+        decision="pass",
+        actor=actor,
+        reason=cycle.last_reason,
+        evidence={"binding_id": binding.id, "trial_id": trial.id},
+    )
+    db.flush()
+    return cycle
+
+
+def start_scheduled_learning_trial(
+    db: Session,
+    cycle_id: str,
+    *,
+    actor: str = HANDOFF_ACTOR,
+) -> StockLearningCycle:
+    """Retry only the admitted trial's safe, authenticated start gates."""
+    cycle = admit_scheduled_learning_cycle(db, cycle_id, actor=actor)
+    if not cycle.binding_id or not cycle.trial_id:
+        return cycle
+    if cycle.status in {"complete", "promoted", "demoted", "rolled_back", "failed"}:
+        return cycle
+    trial = db.get(StockPaperTrial, cycle.trial_id)
+    binding_state = db.get(StockPaperBindingState, 1)
+    if not trial:
+        return _handoff_failure(
+            db, cycle, stage="admission", status="blocked",
+            reason="Scheduled cycle points to a missing forward trial",
+        )
+    if not binding_state or binding_state.active_binding_id != cycle.binding_id:
+        return _handoff_failure(
+            db, cycle, stage="preflight", status="blocked",
+            reason="The cycle paper binding is no longer the active paper canary",
+            evidence={"binding_id": cycle.binding_id},
+        )
+    if trial.status == "running":
+        cycle.stage, cycle.status = "forward_trial", "running_forward_trial"
+        cycle.last_reason = "Forward paper trial is running"
+        return cycle
+    if trial.status == "completed":
+        cycle.stage, cycle.status = "promotion", "awaiting_forward_evidence"
+        cycle.last_reason = "Forward paper trial completed; awaiting immutable readiness evidence"
+        return cycle
+
+    recovery = db.get(StockPaperRecoveryState, 1)
+    if recovery and recovery.status != "armed":
+        return _handoff_failure(
+            db, cycle, stage="preflight", status="deferred",
+            reason="Paper recovery is paused or awaiting operator revalidation",
+            evidence={"recovery_status": recovery.status},
+        )
+    try:
+        validate_trial_artifact(db, trial)
+    except StockTrainingError as exc:
+        return _handoff_failure(
+            db, cycle, stage="preflight", status="blocked", reason=str(exc),
+            evidence={"trial_id": trial.id},
+        )
+    preflight = trial_feed_preflight(db, trial, authenticated_probe=True)
+    cycle.gates = {**(cycle.gates or {}), "preflight": _gate(
+        "pass" if preflight.get("ready") else "unknown",
+        reason=None if preflight.get("ready") else preflight.get("reason") or "Authenticated paper preflight is incomplete",
+        evidence=preflight,
+    )}
+    cycle.evidence = {**(cycle.evidence or {}), "preflight": preflight}
+    if not preflight.get("ready") or not preflight.get("regular_session"):
+        reason = preflight.get("reason") or "Regular-session authenticated preflight is required"
+        return _handoff_failure(
+            db, cycle, stage="preflight", status="deferred",
+            reason=reason, evidence={"trial_id": trial.id, "preflight": preflight},
+        )
+    started = start_trial(db, trial.id, actor=actor)
+    if started.status == "running":
+        cycle.stage, cycle.status = "forward_trial", "running_forward_trial"
+        cycle.last_reason = "Authenticated paper preflight passed; forward trial started"
+        _event(
+            db, cycle=cycle, stage="preflight", decision="pass", actor=actor,
+            reason=cycle.last_reason,
+            evidence={"trial_id": trial.id, "preflight": preflight},
+        )
+    else:
+        reason = started.blocked_reason or started.pause_reason or "Forward trial did not start"
+        return _handoff_failure(
+            db, cycle, stage="preflight", status="deferred",
+            reason=reason, evidence={"trial_id": trial.id, "preflight": preflight},
+        )
+    db.flush()
+    return cycle
+
+
+def sync_cycle_from_trial(
+    db: Session,
+    trial_id: str,
+    *,
+    report_id: int | None = None,
+    actor: str = "forward_trial_worker",
+) -> StockLearningCycle | None:
+    """Attach worker progress to the exact originating scheduled cycle."""
+    cycle = db.scalar(select(StockLearningCycle).where(StockLearningCycle.trial_id == trial_id))
+    trial = db.get(StockPaperTrial, trial_id)
+    if not cycle or not trial:
+        return cycle
+    if trial.status == "running":
+        cycle.stage, cycle.status = "forward_trial", "running_forward_trial"
+        cycle.last_reason = "Forward paper trial is running"
+    elif trial.status == "completed":
+        cycle.stage, cycle.status = "promotion", "awaiting_forward_evidence"
+        cycle.last_reason = "Forward paper trial completed; awaiting immutable readiness evidence"
+    elif trial.status in {"blocked", "paused"}:
+        cycle.stage, cycle.status = "preflight", "awaiting_preflight"
+        cycle.last_reason = trial.blocked_reason or trial.pause_reason or "Forward trial is waiting for a safe retry"
+    if report_id:
+        cycle.evidence = {
+            **(cycle.evidence or {}),
+            "forward_report": {"trial_id": trial_id, "report_id": report_id},
+        }
+    _event(
+        db, cycle=cycle, stage=cycle.stage, decision="pass" if trial.status in {"running", "completed"} else "deferred",
+        actor=actor, reason=cycle.last_reason, evidence={"trial_id": trial_id, "report_id": report_id},
+    )
     return cycle
 
 
@@ -523,13 +843,10 @@ def _automatic_monitor_gate(db: Session) -> tuple[dict, int | None]:
 def _automatic_trial_and_report(
     db: Session, cycle: StockLearningCycle, active_binding: StockPaperModelBinding | None,
 ) -> tuple[StockPaperTrial | None, dict | None]:
+    # Never infer a scheduled trial from the current active binding. The cycle
+    # owns one immutable trial link, and a later binding must not redirect old
+    # evidence or promotion decisions.
     trial = db.get(StockPaperTrial, cycle.trial_id) if cycle.trial_id else None
-    if trial is None and active_binding is not None:
-        candidates = db.scalars(select(StockPaperTrial).where(
-            StockPaperTrial.binding_id == active_binding.id,
-        ).order_by(StockPaperTrial.created_at.desc(), StockPaperTrial.id.desc())).all()
-        if len(candidates) == 1:
-            trial = candidates[0]
     if trial is None:
         return None, None
     try:
@@ -589,7 +906,7 @@ def automate_paper_promotion(
     prior_decision = db.query(StockPaperPromotionDecision).filter_by(
         cycle_id=cycle.cycle_id,
     ).order_by(StockPaperPromotionDecision.id.desc()).first()
-    if cycle.status == "complete" and prior_decision and prior_decision.decision == "promoted":
+    if cycle.status in {"complete", "promoted"} and prior_decision and prior_decision.decision == "promoted":
         return _decision_projection(prior_decision)
 
     _lock_lifecycle_admission(db)
@@ -697,13 +1014,20 @@ def automate_paper_promotion(
     lineage_gate = _gate(
         "pass" if report and lineage.get("model_run_id") == cycle.model_run_id
         and lineage.get("snapshot_id") == cycle.snapshot_id
-        and trial and trial.binding_id == before_binding_id
+        and trial and cycle.binding_id == trial.binding_id
+        and trial.binding_id == before_binding_id
         else "unknown",
         reason=None if report and lineage.get("model_run_id") == cycle.model_run_id
         and lineage.get("snapshot_id") == cycle.snapshot_id
-        and trial and trial.binding_id == before_binding_id
+        and trial and cycle.binding_id == trial.binding_id
+        and trial.binding_id == before_binding_id
         else "model, dataset, trial, and active binding lineage is incomplete or conflicting",
-        evidence={"lineage": lineage, "cycle_snapshot_id": cycle.snapshot_id, "active_binding_id": before_binding_id},
+        evidence={
+            "lineage": lineage,
+            "cycle_snapshot_id": cycle.snapshot_id,
+            "cycle_binding_id": cycle.binding_id,
+            "active_binding_id": before_binding_id,
+        },
     )
     report_gates = (report or {}).get("gates") or {}
     data_gate_names = ("regular_sessions", "historical_feed_health", "decision_coverage")
@@ -806,7 +1130,7 @@ def automate_paper_promotion(
             ).order_by(StockPaperModelBinding.id.desc()).first()
             else None
         )
-        cycle.status, cycle.stage = "complete", "promotion"
+        cycle.status, cycle.stage = "promoted", "promotion"
         cycle.monitor_snapshot_id = monitor_snapshot_id
         cycle.active_binding_id = after_binding_id
         cycle.last_reason = reason
@@ -873,17 +1197,86 @@ def automate_paper_promotion(
     return _decision_projection(row)
 
 
+def run_scheduled_paper_trial_handoff_job(
+    db: Session,
+    *,
+    source_job: str = "scheduled_stock_paper_trial_handoff_job",
+) -> dict:
+    """Advance completed scheduled challengers through admission and start.
+
+    Every candidate is evaluated independently so one unavailable feed or
+    account does not erase the durable reason for another cycle. Re-running
+    this job is safe because the cycle, binding, and trial source keys are
+    unique.
+    """
+    rows = db.scalars(select(StockLearningCycle).where(
+        StockLearningCycle.trigger == "scheduled",
+        StockLearningCycle.training_job_id.is_not(None),
+        StockLearningCycle.status.not_in((
+            "blocked", "complete", "promoted", "demoted", "rolled_back", "failed",
+        )),
+    ).order_by(StockLearningCycle.created_at, StockLearningCycle.cycle_id)).all()
+    results: list[dict] = []
+    for cycle in rows:
+        try:
+            sync_cycle_from_training_job(db, cycle.training_job_id, actor=HANDOFF_ACTOR)
+            cycle = start_scheduled_learning_trial(db, cycle.cycle_id, actor=HANDOFF_ACTOR)
+            db.commit()
+            results.append({
+                "cycle_id": cycle.cycle_id,
+                "binding_id": cycle.binding_id,
+                "trial_id": cycle.trial_id,
+                "status": cycle.status,
+                "stage": cycle.stage,
+                "reason": cycle.last_reason,
+                "paper_only": True,
+                "live_authorized": False,
+            })
+        except Exception as exc:
+            db.rollback()
+            cycle = db.get(StockLearningCycle, cycle.cycle_id)
+            if cycle:
+                _handoff_failure(
+                    db,
+                    cycle,
+                    stage="admission",
+                    status="deferred",
+                    reason=f"Scheduled paper handoff retry unavailable: {exc.__class__.__name__}",
+                    evidence={"error_type": exc.__class__.__name__},
+                )
+                db.commit()
+                results.append({
+                    "cycle_id": cycle.cycle_id,
+                    "binding_id": cycle.binding_id,
+                    "trial_id": cycle.trial_id,
+                    "status": cycle.status,
+                    "stage": cycle.stage,
+                    "reason": cycle.last_reason,
+                    "paper_only": True,
+                    "live_authorized": False,
+                })
+    return {
+        "status": "complete",
+        "job": source_job,
+        "evaluated": len(results),
+        "results": results,
+        "paper_only": True,
+        "live_authorized": False,
+    }
+
+
 def run_automatic_paper_promotion_job(
     db: Session,
     *,
     source_job: str = AUTOMATIC_PROMOTION_JOB,
 ) -> dict:
-    """Evaluate every scheduled cycle that has reached the promotion stage."""
+    """Admit/start scheduled trials, then evaluate exact completed evidence."""
+    handoff = run_scheduled_paper_trial_handoff_job(db, source_job=source_job)
     rows = db.scalars(select(StockLearningCycle).where(
         StockLearningCycle.trigger == "scheduled",
         StockLearningCycle.model_run_id.is_not(None),
         StockLearningCycle.stage.in_(("forward_trial", "operator_review", "promotion")),
-        StockLearningCycle.status.not_in(("complete", "demoted", "rolled_back", "failed")),
+        StockLearningCycle.status.not_in(("complete", "promoted", "demoted", "rolled_back", "failed")),
     ).order_by(StockLearningCycle.created_at, StockLearningCycle.cycle_id)).all()
     results: list[dict] = []
     for cycle in rows:
@@ -935,6 +1328,7 @@ def run_automatic_paper_promotion_job(
     return {
         "status": "complete",
         "job": source_job,
+        "handoff": handoff,
         "evaluated": len(results),
         "results": results,
         "paper_only": True,
@@ -945,6 +1339,14 @@ def run_automatic_paper_promotion_job(
 def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
     binding_state = db.get(StockPaperBindingState, 1)
     active_binding = db.get(StockPaperModelBinding, binding_state.active_binding_id) if binding_state else None
+    binding = db.get(StockPaperModelBinding, cycle.binding_id) if cycle.binding_id else None
+    trial = db.get(StockPaperTrial, cycle.trial_id) if cycle.trial_id else None
+    latest_report = db.scalar(select(StockPaperPromotionReadinessReport).where(
+        StockPaperPromotionReadinessReport.trial_id == cycle.trial_id,
+    ).order_by(
+        StockPaperPromotionReadinessReport.report_version.desc().nullslast(),
+        StockPaperPromotionReadinessReport.id.desc(),
+    )) if cycle.trial_id else None
     monitor = db.get(StockMonitoringSnapshot, cycle.monitor_snapshot_id) if cycle.monitor_snapshot_id else None
     if monitor is None:
         monitor = db.query(StockMonitoringSnapshot).order_by(StockMonitoringSnapshot.generated_at.desc()).first()
@@ -959,9 +1361,21 @@ def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
         "symbols": cycle.symbols, "cutoff_date": cycle.cutoff_date,
         "horizon_days": cycle.horizon_days, "provider": cycle.provider,
         "snapshot_id": cycle.snapshot_id, "training_job_id": cycle.training_job_id,
-        "model_run_id": cycle.model_run_id, "trial_id": cycle.trial_id,
+        "model_run_id": cycle.model_run_id, "binding_id": cycle.binding_id,
+        "trial_id": cycle.trial_id,
         "active_binding_id": active_binding.id if active_binding else cycle.active_binding_id,
         "active_binding_model_run_id": active_binding.model_run_id if active_binding else None,
+        "handoff": {
+            "stage": cycle.stage,
+            "status": cycle.status,
+            "binding_id": binding.id if binding else None,
+            "trial_id": trial.id if trial else None,
+            "trial_status": trial.status if trial else None,
+            "preflight": (cycle.gates or {}).get("preflight"),
+            "reason": cycle.last_reason,
+            "report_id": latest_report.id if latest_report else None,
+            "report_decision": latest_report.decision if latest_report else None,
+        },
         "gates": cycle.gates, "evidence": cycle.evidence,
         "last_reason": cycle.last_reason, "paper_only": True, "live_authorized": False,
         "automatic_promotion": _decision_projection(automatic_decision) if automatic_decision else None,

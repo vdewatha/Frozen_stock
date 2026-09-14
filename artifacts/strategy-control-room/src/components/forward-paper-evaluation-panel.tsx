@@ -1016,7 +1016,10 @@ export function ForwardPaperEvaluationPanel() {
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm text-slate-900">{trial.id}</span>
-                        <span className="text-sm text-slate-500">Binding {trial.binding_id}</span>
+                        <span className="text-sm text-slate-500">
+                          Binding {trial.binding_id}
+                          {trial.source_cycle_id ? ` · cycle ${trial.source_cycle_id.slice(0, 12)}…` : ""}
+                        </span>
                       </div>
                       <div className="flex gap-3 text-xs text-slate-500">
                         {trial.policy?.paper_only !== false && <span className="text-mint flex items-center gap-1"><ShieldCheck size={12}/> Paper</span>}

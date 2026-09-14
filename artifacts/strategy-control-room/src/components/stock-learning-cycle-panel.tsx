@@ -99,8 +99,26 @@ export function StockLearningCyclePanel() {
               <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
                 <div><span className="font-semibold text-ink">Dataset:</span> {cycle.snapshot_id ?? "not admitted"}</div>
                 <div><span className="font-semibold text-ink">Model:</span> {cycle.model_run_id ?? "not registered"}</div>
+                <div><span className="font-semibold text-ink">Paper binding:</span> {cycle.binding_id ?? "awaiting admission"}</div>
+                <div><span className="font-semibold text-ink">Forward trial:</span> {cycle.trial_id ?? "awaiting admission"}</div>
                 <div><span className="font-semibold text-ink">Monitor:</span> {cycle.monitoring.status}</div>
                 <div><span className="font-semibold text-ink">Recovery:</span> {cycle.recovery.status}</div>
+              </div>
+              <div className="mt-3 rounded border border-line bg-white p-2 text-xs" data-testid="learning-cycle-handoff">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-ink">Automatic paper handoff</span>
+                  <span className={gateClass(cycle.handoff.status === "running_forward_trial" ? "pass" : cycle.handoff.status === "blocked" ? "blocked" : "unknown")}>
+                    {cycle.handoff.status.replaceAll("_", " ")}
+                  </span>
+                </div>
+                <div className="mt-1 text-slate-600">
+                  {cycle.handoff.reason ?? "Waiting for scheduled training evidence"}
+                </div>
+                <div className="mt-1 text-slate-500">
+                  Preflight: {cycle.handoff.preflight?.status ?? "not checked"}
+                  {cycle.handoff.report_id ? ` · report ${cycle.handoff.report_id}` : ""}
+                  {cycle.handoff.report_decision ? ` · ${cycle.handoff.report_decision}` : ""}
+                </div>
               </div>
               <div className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">

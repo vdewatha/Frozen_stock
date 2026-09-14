@@ -43,7 +43,9 @@ from app.models import Asset, PaperTrade, Strategy, StockTrainingJob
 from app.services.stock_learning_cycle import (
     create_learning_cycle,
     run_automatic_paper_promotion_job,
+    run_scheduled_paper_trial_handoff_job,
     sync_cycle_from_training_job,
+    sync_cycle_from_trial,
     sync_cycle_observability,
 )
 
@@ -495,6 +497,15 @@ def scheduled_stock_challenger_retraining_job() -> dict:
 
 
 @celery_app.task
+def scheduled_stock_paper_trial_handoff_job() -> dict:
+    """Admit and safely start completed scheduled challengers."""
+    return _run_job(
+        "scheduled_stock_paper_trial_handoff_job",
+        lambda db: run_scheduled_paper_trial_handoff_job(db),
+    )
+
+
+@celery_app.task
 def scheduled_stock_paper_promotion_job() -> dict:
     """Evaluate completed scheduled challengers; promote paper canaries only."""
     return _run_job(
@@ -534,6 +545,9 @@ def stock_forward_trial_observe_job(trial_id: str | None = None) -> dict:
                     db.rollback()
                     classification = "unavailable"
                     metric_error = f"{exc.__class__.__name__}: {exc}"
+                db.refresh(row)
+                sync_cycle_from_trial(db, row.id, actor="forward_trial_worker")
+                db.commit()
                 result = {"trial_id": row.id, "status": row.status, "classification": classification}
                 if metric_error:
                     result["metric_error"] = metric_error
@@ -552,6 +566,8 @@ def stock_forward_trial_evaluate_job(trial_id: str) -> dict:
         if not row:
             return {"status": "missing", "trial_id": trial_id}
         metric = evaluate_trial(db, trial_id)
+        db.commit()
+        sync_cycle_from_trial(db, trial_id, report_id=None, actor="forward_trial_worker")
         db.commit()
         return {"status": metric.classification, "trial_id": trial_id, **metric.payload}
     return _run_job("stock_forward_trial_evaluate_job", work)

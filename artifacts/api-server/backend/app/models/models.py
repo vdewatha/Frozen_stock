@@ -570,10 +570,12 @@ class StockLearningCycle(Base):
         UniqueConstraint("request_sha256", name="uq_stock_learning_cycle_request"),
         CheckConstraint(
             "status IN ('blocked', 'deferred', 'queued', 'running', "
-            "'awaiting_forward_evidence', 'operator_review', 'complete', "
+            "'awaiting_admission', 'awaiting_preflight', 'running_forward_trial', "
+            "'awaiting_forward_evidence', 'operator_review', 'complete', 'promoted', "
             "'demoted', 'rolled_back', 'failed')",
             name="ck_stock_learning_cycle_status",
         ),
+        UniqueConstraint("binding_id", name="uq_stock_learning_cycle_binding"),
     )
 
     cycle_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -590,6 +592,7 @@ class StockLearningCycle(Base):
     snapshot_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_dataset_snapshots.snapshot_id"))
     training_job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_training_jobs.id"))
     model_run_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_model_registry.run_id"))
+    binding_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_model_bindings.id"))
     trial_id: Mapped[Optional[str]] = mapped_column(String(36))
     active_binding_id: Mapped[Optional[int]] = mapped_column()
     monitor_snapshot_id: Mapped[Optional[int]] = mapped_column()
@@ -605,6 +608,7 @@ class StockPaperModelBinding(Base):
         CheckConstraint("paper_only = true", name="ck_stock_binding_paper_only"),
         CheckConstraint("live_authorized = false", name="ck_stock_binding_live_disabled"),
         UniqueConstraint("binding_sha256", name="uq_stock_binding_digest"),
+        UniqueConstraint("source_cycle_id", name="uq_stock_binding_source_cycle"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -616,6 +620,9 @@ class StockPaperModelBinding(Base):
     live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     bound_by: Mapped[str] = mapped_column(String(32), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    # Scheduled cycles use this immutable idempotency key. Manual bindings
+    # leave it null so the existing operator workflow remains unchanged.
+    source_cycle_id: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -730,6 +737,7 @@ class StockPaperTrial(Base):
     __tablename__ = "stock_paper_trials"
     __table_args__ = (
         CheckConstraint("status IN ('approved','blocked','paused','running','stopped','completed')", name="ck_stock_trial_status"),
+        UniqueConstraint("source_cycle_id", name="uq_stock_trial_source_cycle"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -737,6 +745,9 @@ class StockPaperTrial(Base):
     strategy_id: Mapped[Optional[int]] = mapped_column(ForeignKey("strategies.id"), index=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="approved", index=True)
     actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    # A scheduled handoff owns at most one trial. Manual trials leave this
+    # nullable and continue to be governed by binding_id.
+    source_cycle_id: Mapped[Optional[str]] = mapped_column(String(64))
     policy: Mapped[dict] = mapped_column(JSON, nullable=False)
     lineage: Mapped[dict] = mapped_column(JSON, nullable=False)
     blocked_reason: Mapped[Optional[str]] = mapped_column(Text)

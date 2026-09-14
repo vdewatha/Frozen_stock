@@ -840,9 +840,18 @@ def recover_stock_training_jobs(db: Session, *, stale_after_minutes: int = 30) -
 
 
 def create_stock_paper_binding(
-    db: Session, *, model_run_id: str, snapshot_id: str, actor: str, purpose: str, reason: str
+    db: Session, *, model_run_id: str, snapshot_id: str, actor: str, purpose: str, reason: str,
+    source_cycle_id: str | None = None,
 ) -> StockPaperModelBinding:
     _lock_lifecycle_admission(db)
+    if source_cycle_id:
+        existing = db.scalar(select(StockPaperModelBinding).where(
+            StockPaperModelBinding.source_cycle_id == source_cycle_id,
+        ))
+        if existing:
+            if existing.model_run_id != model_run_id or existing.snapshot_id != snapshot_id:
+                raise StockTrainingError("Scheduled cycle already owns a different immutable paper binding")
+            return existing
     model = db.scalar(
         select(StockModelRegistry)
         .where(StockModelRegistry.run_id == model_run_id)
@@ -906,6 +915,7 @@ def create_stock_paper_binding(
     row = StockPaperModelBinding(
         model_run_id=model_run_id, snapshot_id=snapshot_id, binding_sha256=digest, purpose=purpose.strip(),
         paper_only=True, live_authorized=False, bound_by=actor, reason=reason.strip(), created_at=activated_at,
+        source_cycle_id=source_cycle_id,
     )
     db.add(row)
     db.flush()

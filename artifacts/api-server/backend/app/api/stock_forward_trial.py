@@ -33,6 +33,7 @@ class Reason(Strict):
     reason: str = Field(min_length=3, max_length=500)
 def _out(x):
     return {"id": x.id, "status": x.status, "binding_id": x.binding_id, "policy": x.policy,
+            "source_cycle_id": x.source_cycle_id,
             "lineage": x.lineage, "blocked_reason": x.blocked_reason, "pause_reason": x.pause_reason,
             "started_at": x.started_at, "stopped_at": x.stopped_at,
             "baseline_equity": x.baseline_equity, "baseline_at": x.baseline_at,

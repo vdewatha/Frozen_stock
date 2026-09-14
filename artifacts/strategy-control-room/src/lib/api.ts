@@ -2372,6 +2372,7 @@ export type ForwardTrial = {
   id: string;
   status: "approved" | "blocked" | "paused" | "running" | "stopped" | "completed" | string;
   binding_id: number;
+  source_cycle_id?: string | null;
   policy: Record<string, unknown>;
   lineage: Record<string, unknown>;
   blocked_reason: string | null;
@@ -3053,9 +3054,21 @@ export type StockLearningCycle = {
   snapshot_id: string | null;
   training_job_id: string | null;
   model_run_id: string | null;
+  binding_id: number | null;
   trial_id: string | null;
   active_binding_id: number | null;
   active_binding_model_run_id: string | null;
+  handoff: {
+    stage: string;
+    status: string;
+    binding_id: number | null;
+    trial_id: string | null;
+    trial_status: string | null;
+    preflight: { status: string; reason?: string; evidence?: unknown } | null;
+    reason: string | null;
+    report_id: number | null;
+    report_decision: string | null;
+  };
   gates: Record<string, { status: string; reason?: string; evidence?: unknown }>;
   evidence: Record<string, unknown>;
   last_reason: string | null;

@@ -11,11 +11,22 @@ import app.api.stock_learning_cycle as learning_cycle_api
 from app.core.config import Settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
-from app.models import StockLearningCycleEvent
+from app.models import (
+    StockDatasetSnapshot,
+    StockLearningCycle,
+    StockLearningCycleEvent,
+    StockModelLifecycleState,
+    StockModelRegistry,
+    StockPaperBindingState,
+    StockPaperModelBinding,
+    StockPaperTrial,
+)
+from app.services.stock_forward_trial import POLICY
 from app.services.stock_learning_cycle import (
     create_learning_cycle,
     cycle_projection,
     review_learning_cycle,
+    start_scheduled_learning_trial,
 )
 
 
@@ -192,4 +203,80 @@ def test_cycle_review_remains_blocked_without_registered_validation_and_forward_
     assert projection["gates"]["validation"]["status"] == "fail"
     assert projection["gates"]["forward_trial"]["status"] == "unknown"
     assert len(projection["events"]) == 2
+    db.close()
+
+
+def test_scheduled_handoff_retries_transient_preflight_without_blocking_trial():
+    db = _db()
+    snapshot_id = "c" * 64
+    model_id = "d" * 64
+    cycle_id = "e" * 64
+    db.add(StockDatasetSnapshot(
+        snapshot_id=snapshot_id, dataset_sha256="f" * 64, cutoff_date=date(2026, 9, 12),
+        universe=["SPY"], provider="yfinance", feature_config_id="features", horizon_days=5,
+        artifact_path="/immutable/snapshot", artifact_sha256="a" * 64,
+        metadata_json={"binding_eligible": True},
+    ))
+    db.add(StockModelRegistry(
+        run_id=model_id, snapshot_id=snapshot_id, manifest_sha256="b" * 64,
+        artifact_path="/immutable/model", training_metadata={},
+    ))
+    db.add(StockModelLifecycleState(
+        model_run_id=model_id, lifecycle_state="paper_canary",
+        updated_by="scheduler", reason="scheduled test canary",
+    ))
+    binding = StockPaperModelBinding(
+        model_run_id=model_id, snapshot_id=snapshot_id, binding_sha256="1" * 64,
+        purpose="scheduled paper trial", paper_only=True, live_authorized=False,
+        bound_by="scheduler", reason="scheduled test canary", source_cycle_id=cycle_id,
+    )
+    db.add(binding)
+    db.flush()
+    db.add(StockPaperBindingState(
+        id=1, active_binding_id=binding.id, changed_by="scheduler",
+        reason="scheduled test canary",
+    ))
+    trial = StockPaperTrial(
+        id="00000000-0000-0000-0000-000000000087", binding_id=binding.id,
+        actor="scheduler", source_cycle_id=cycle_id, status="approved",
+        policy=dict(POLICY), lineage={"model_run_id": model_id, "snapshot_id": snapshot_id},
+    )
+    db.add(trial)
+    cycle = StockLearningCycle(
+        cycle_id=cycle_id, request_sha256="2" * 64, trigger="scheduled",
+        status="awaiting_preflight", stage="preflight", requested_by="scheduler",
+        symbols=["SPY"], cutoff_date=date(2026, 9, 12), horizon_days=5,
+        provider="yfinance", seed=42, snapshot_id=snapshot_id, model_run_id=model_id,
+        binding_id=binding.id, trial_id=trial.id, active_binding_id=binding.id,
+        gates={}, evidence={}, last_reason="awaiting preflight",
+    )
+    db.add(cycle)
+    db.commit()
+
+    blocked_preflight = {
+        "ready": False, "status": "blocked", "regular_session": False,
+        "reason": "Regular-session authenticated preflight is required",
+    }
+    ready_preflight = {
+        "ready": True, "status": "ready", "regular_session": True,
+        "reason": None, "paper_ledger": {"status": "reconciled"},
+    }
+    def _start(db, trial_id, actor):
+        row = db.get(StockPaperTrial, trial_id)
+        row.status = "running"
+        return row
+    with (
+        patch("app.services.stock_learning_cycle.validate_trial_artifact", return_value={}),
+        patch("app.services.stock_learning_cycle.trial_feed_preflight", side_effect=[blocked_preflight, ready_preflight]),
+        patch("app.services.stock_learning_cycle.start_trial", side_effect=_start),
+    ):
+        first = start_scheduled_learning_trial(db, cycle_id)
+        assert first.status == "deferred"
+        assert trial.status == "approved"
+        second = start_scheduled_learning_trial(db, cycle_id)
+        assert second.status == "running_forward_trial"
+        assert trial.status == "running"
+
+    assert cycle.gates["preflight"]["status"] == "pass"
+    assert cycle.evidence["preflight"]["ready"] is True
     db.close()
