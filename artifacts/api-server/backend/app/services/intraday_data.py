@@ -116,6 +116,27 @@ def _aware_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def next_regular_session_open(now: datetime) -> datetime:
+    """Return the next NYSE regular-session open after the observed time.
+
+    The current day's open is eligible when the market has not opened yet.
+    Otherwise, advance through weekends and full-day holidays until a session
+    is found. The returned timestamp is timezone-aware UTC.
+    """
+    observed_at = _aware_utc(now)
+    candidate = observed_at.astimezone(NY).date()
+    bounds = session_bounds(candidate)
+    if bounds is not None and observed_at < bounds[0]:
+        return bounds[0]
+
+    candidate += timedelta(days=1)
+    while True:
+        bounds = session_bounds(candidate)
+        if bounds is not None:
+            return bounds[0]
+        candidate += timedelta(days=1)
+
+
 def _symbol(symbol: str) -> str:
     value = symbol.strip().upper()
     if value not in ALLOWED_SYMBOLS:

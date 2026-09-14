@@ -29,7 +29,7 @@ from app.services.stock_forward_trial import (
     POLICY, _hash, create_trial, evaluate_trial, observe_trial, record_decision,
     start_trial, validate_trial_artifact,
     execute_pending_decisions, _trial_allocated_notional, stop_trial,
-    _trial_equity_curve_max_drawdown, _evidence_allows_trade,
+    _trial_equity_curve_max_drawdown, _evidence_allows_trade, trial_feed_preflight,
 )
 from app.services.stock_promotion_readiness import evaluate_promotion_readiness
 from app.services.stock_paper_ledger import reserve_stock_paper_order
@@ -177,6 +177,20 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(audit.action, "resume")
             self.assertEqual(audit.status, "blocked")
             self.assertEqual(audit.payload["operator"], "operator")
+
+    def test_trial_preflight_exposes_next_open_when_session_is_closed(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused", universe=("AAPL", "MSFT", "QQQ", "SPY"))
+            self.account(db)
+            observed_at = datetime(2026, 11, 26, 15, 0, tzinfo=timezone.utc)
+            with patch("app.services.stock_forward_trial.settings.alpaca_feed", "sip"):
+                result = trial_feed_preflight(db, row, now=observed_at)
+
+        self.assertFalse(result["regular_session"])
+        self.assertEqual(
+            result["next_regular_session_open"],
+            "2026-11-27T14:30:00+00:00",
+        )
 
     def test_successful_resume_audits_operator_and_preflight_without_rebinding(self):
         with Session(self.engine) as db:

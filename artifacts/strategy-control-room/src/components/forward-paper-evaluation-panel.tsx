@@ -27,11 +27,27 @@ import {
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
 const decimal = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const easternDateTime = new Intl.DateTimeFormat("en-US", {
+  weekday: "long",
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: "America/New_York",
+  timeZoneName: "short",
+});
 
 function formatNull(val: number | string | null | undefined, formatter: Intl.NumberFormat): string {
   if (val === null || val === undefined || val === "") return "Unavailable";
   const numeric = typeof val === "number" ? val : Number(val);
   return Number.isFinite(numeric) ? formatter.format(numeric) : "Unavailable";
+}
+
+function formatNextSessionOpen(value: string | null | undefined): string {
+  if (!value) return "Unavailable";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unavailable" : easternDateTime.format(date);
 }
 
 function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onActionComplete: () => void }) {
@@ -170,6 +186,12 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
               <span>Paper only: {preflight.paper_only ? "yes" : "no"}</span>
               <span>Live authorized: {preflight.live_authorized ? "yes" : "no"}</span>
             </div>
+            {!preflight.regular_session && (
+              <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800" data-testid="forward-trial-next-session">
+                NYSE regular session is closed. Next eligible open:{" "}
+                <span className="font-semibold">{formatNextSessionOpen(preflight.next_regular_session_open)}</span>
+              </div>
+            )}
             {preflight.reason && <div className="mt-2 text-xs font-medium text-amber-700">{preflight.reason}</div>}
           </>
         ) : (

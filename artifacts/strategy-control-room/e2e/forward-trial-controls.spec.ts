@@ -58,6 +58,24 @@ test.beforeEach(async ({ page }) => {
       order_id: null,
     }] }),
   }));
+  await page.route(`**/api/stock/forward-trials/${trialId}/preflight`, route => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      status: "blocked",
+      ready: false,
+      checked_at: "2026-09-12T16:00:00Z",
+      regular_session: false,
+      next_regular_session_open: "2026-09-14T13:30:00Z",
+      symbols: [
+        { symbol: "SPY", status: "out_of_session", exchange_timestamp: null, ingestion_timestamp: null, latency_seconds: null, missing_intervals: [], unavailable_reason: "Regular-session authenticated preflight is required" },
+        { symbol: "QQQ", status: "out_of_session", exchange_timestamp: null, ingestion_timestamp: null, latency_seconds: null, missing_intervals: [], unavailable_reason: "Regular-session authenticated preflight is required" },
+      ],
+      paper_ledger: { status: "reconciled", reason: null },
+      reason: "Regular-session authenticated preflight is required",
+      paper_only: true,
+      live_authorized: false,
+    }),
+  }));
   await page.route("**/api/stock/forward-trials/bindings/eligible", route => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify({ items: [{
@@ -89,6 +107,8 @@ for (const role of ["viewer", "operator", "admin"] as TrialRole[]) {
     await expect(detail).toContainText("2026-08-31");
     await expect(detail).toContainText('["SPY","QQQ"]');
     await expect(detail).toContainText("feed_entitlement_unavailable");
+    await expect(detail.getByTestId("forward-trial-next-session")).toContainText("Next eligible open");
+    await expect(detail.getByTestId("forward-trial-next-session")).toContainText("Sep 14, 2026");
     await expect(detail.getByText("Unavailable", { exact: true })).toHaveCount(7);
     await expect(detail).toContainText("Costs are unknown; performance may be optimistic.");
 

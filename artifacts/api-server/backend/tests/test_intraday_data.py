@@ -44,6 +44,24 @@ class IntradayDataTests(unittest.TestCase):
         bounds = intraday_data.session_bounds(date(2026, 11, 27))
         self.assertEqual(bounds[1].astimezone(intraday_data.NY).time(), datetime.strptime("13:00", "%H:%M").time())
 
+    def test_next_regular_session_open_skips_weekends_and_holidays(self):
+        before_open = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+        after_close = datetime(2026, 9, 11, 21, 0, tzinfo=UTC)
+        thanksgiving = datetime(2026, 11, 26, 15, 0, tzinfo=UTC)
+
+        self.assertEqual(
+            intraday_data.next_regular_session_open(before_open),
+            datetime(2026, 9, 11, 13, 30, tzinfo=UTC),
+        )
+        self.assertEqual(
+            intraday_data.next_regular_session_open(after_close),
+            datetime(2026, 9, 14, 13, 30, tzinfo=UTC),
+        )
+        self.assertEqual(
+            intraday_data.next_regular_session_open(thanksgiving),
+            datetime(2026, 11, 27, 14, 30, tzinfo=UTC),
+        )
+
     def test_completed_deduplicated_and_out_of_order_bars(self):
         observed = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
         first = datetime(2026, 9, 11, 14, 0, tzinfo=UTC)

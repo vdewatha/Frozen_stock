@@ -2395,6 +2395,7 @@ export type ForwardTrialPreflight = {
     unavailable_reason: string | null;
   }>;
   paper_ledger: { status: string; reason: string | null };
+  next_regular_session_open: string | null;
   reason: string | null;
   paper_only: boolean;
   live_authorized: boolean;

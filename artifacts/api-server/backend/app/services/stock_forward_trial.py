@@ -33,6 +33,7 @@ from app.services.intraday_data import (
     ALLOWED_SYMBOLS,
     NY,
     feed_status,
+    next_regular_session_open,
     preflight_intraday,
     session_bounds,
 )
@@ -338,6 +339,7 @@ def trial_feed_preflight(
     statuses = []
     bounds = session_bounds(observed_at.astimezone(NY).date())
     in_session = bool(bounds and bounds[0] <= observed_at < bounds[1])
+    next_open = None if in_session else next_regular_session_open(observed_at).isoformat()
     frozen_universe = set(symbols) == set(ALLOWED_SYMBOLS)
     probe_results = None
     if frozen_universe and in_session and authenticated_probe:
@@ -438,6 +440,7 @@ def trial_feed_preflight(
         "ready": feed_ready and ledger_ready,
         "checked_at": observed_at.isoformat(),
         "regular_session": in_session,
+        "next_regular_session_open": next_open,
         "symbols": statuses,
         "paper_ledger": {
             "status": "reconciled" if ledger_ready else "blocked",
