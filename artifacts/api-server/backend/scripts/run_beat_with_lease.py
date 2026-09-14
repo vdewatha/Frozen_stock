@@ -31,7 +31,7 @@ def main() -> int:
             "app.tasks.celery_app:celery_app",
             "beat",
             "--loglevel=INFO",
-            "--schedule=/tmp/frozen-stock-celerybeat-schedule",
+            f"--schedule={os.environ.get('CELERY_BEAT_SCHEDULE_FILE', '/tmp/frozen-stock-celerybeat-schedule')}",
         ]
     )
 
@@ -62,7 +62,13 @@ def main() -> int:
     try:
         while child.poll() is None:
             time.sleep(LEASE_SECONDS / 3)
-            if not refresh(keys=[LEASE_KEY], args=[owner, LEASE_SECONDS]):
+            try:
+                refreshed = refresh(keys=[LEASE_KEY], args=[owner, LEASE_SECONDS])
+            except redis.RedisError:
+                child.terminate()
+                print("Celery beat lease coordination is unavailable.", file=sys.stderr)
+                return 1
+            if not refreshed:
                 child.terminate()
                 print("Celery beat lease was lost.", file=sys.stderr)
                 return 1

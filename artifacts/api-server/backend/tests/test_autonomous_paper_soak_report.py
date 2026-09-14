@@ -1,0 +1,35 @@
+from datetime import datetime, timezone
+
+from scripts.report_autonomous_paper_soak import (
+    _forward_evidence_status,
+    _parse_interruption,
+    _parse_since,
+)
+
+
+def test_soak_report_requires_explicit_utc_interruption_shape():
+    assert _parse_interruption("redis=recovered:coordination resumed") == {
+        "name": "redis",
+        "status": "recovered",
+        "reason": "coordination resumed",
+    }
+
+
+def test_soak_report_rejects_malformed_interruption():
+    try:
+        _parse_interruption("worker")
+    except ValueError as exc:
+        assert "NAME=STATUS:REASON" in str(exc)
+    else:
+        raise AssertionError("malformed interruption was accepted")
+
+
+def test_soak_report_keeps_forward_evidence_incomplete_without_reports():
+    result = _forward_evidence_status([])
+    assert result["complete"] is False
+    assert "No cycle-owned" in result["reason"]
+
+
+def test_soak_report_normalizes_naive_since_timestamp():
+    result = _parse_since("2026-09-14T12:00:00")
+    assert result == datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)

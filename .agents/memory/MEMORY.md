@@ -21,3 +21,4 @@
 - [Celery worker crash tests](celery-worker-crash-tests.md) — use isolated broker clients for real-worker lifecycle tests; shared app config can leak across test order.
 - [PostgreSQL concurrency test isolation](postgres-concurrency-test-isolation.md) — use schema translation, not only search_path, when creating isolated SQLAlchemy test schemas.
 - [Scheduled cycle admission serialization](scheduled-cycle-admission-serialization.md) — defer a competing scheduled cycle instead of replacing an active cycle's paper canary.
+- [Bounded soak report scope](soak-report-scope.md) — preserve cycle lineage while scoping high-volume ancillary evidence to the soak window.

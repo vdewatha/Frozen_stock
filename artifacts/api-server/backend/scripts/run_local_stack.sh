@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export REDIS_URL="redis://127.0.0.1:6379/0"
+redis_port="${REDIS_PORT:-6379}"
+export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:${redis_port}/0}"
 export ALLOW_LIVE_TRADING="false"
 
 pids=()
 cleanup() {
   trap - EXIT INT TERM
-  for pid in "${pids[@]:-}"; do
+  # Stop beat/workers/API before Redis so lease refreshers can exit cleanly.
+  for ((index=${#pids[@]}-1; index>=0; index--)); do
+    pid="${pids[index]}"
     kill -TERM "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
@@ -21,7 +24,7 @@ fi
 
 "$redis_server" \
   --bind 127.0.0.1 \
-  --port 6379 \
+  --port "$redis_port" \
   --save "" \
   --appendonly no \
   --daemonize no &

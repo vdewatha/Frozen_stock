@@ -1,0 +1,1398 @@
+{
+  "checks": {
+    "all_cycle_stages_observed": {
+      "admission": false,
+      "dataset": false,
+      "preflight": true,
+      "promotion": false,
+      "qualification": false,
+      "recovery": false,
+      "training": false,
+      "validation": false
+    },
+    "duplicate_lineage": {
+      "cycle_owned_order_ids_unique": true,
+      "cycle_request_ids_unique": true,
+      "scheduled_binding_per_cycle": true,
+      "scheduled_trial_per_cycle": true
+    },
+    "forward_trial_links_observed": false,
+    "recovery_prior_binding": {
+      "active_binding_id": 1,
+      "last_known_good_binding_id": null,
+      "status": "cooldown"
+    }
+  },
+  "environment": "local",
+  "forward_evidence": {
+    "complete": false,
+    "reason": "No cycle-owned promotion-readiness report exists",
+    "reports": 0
+  },
+  "generated_at": "2026-09-14T20:58:19.700311+00:00",
+  "interruptions": [],
+  "lineage": {
+    "active_binding_id": 1,
+    "audit_log_ids": [
+      454,
+      456,
+      458,
+      461,
+      463,
+      465,
+      467,
+      469,
+      471,
+      473,
+      474,
+      476,
+      477,
+      478,
+      480,
+      481,
+      483,
+      485,
+      487,
+      488,
+      490,
+      491,
+      493,
+      495,
+      497,
+      498,
+      500,
+      501,
+      503,
+      505,
+      507,
+      508,
+      510,
+      511,
+      513,
+      515,
+      517,
+      518,
+      520,
+      521,
+      523,
+      525,
+      527,
+      528,
+      530,
+      531,
+      533,
+      535,
+      537,
+      538,
+      540,
+      541,
+      543,
+      545,
+      547,
+      548,
+      550,
+      551,
+      553,
+      555,
+      557,
+      558,
+      560,
+      561,
+      562,
+      564,
+      565,
+      567,
+      569,
+      571,
+      572,
+      574,
+      575,
+      577,
+      581,
+      583,
+      590,
+      592,
+      593,
+      595,
+      597,
+      599,
+      600,
+      602,
+      603,
+      605,
+      607,
+      609,
+      611,
+      613,
+      615,
+      617,
+      618,
+      620,
+      621,
+      623,
+      626,
+      628,
+      630,
+      632,
+      637,
+      639,
+      641,
+      643,
+      644,
+      646,
+      647,
+      649,
+      651,
+      653,
+      654,
+      656,
+      657,
+      659,
+      661,
+      663,
+      664,
+      666,
+      667,
+      669,
+      671,
+      673,
+      674,
+      676,
+      677,
+      679,
+      681,
+      683,
+      684,
+      686,
+      687,
+      689,
+      691,
+      693,
+      694,
+      696,
+      697,
+      699,
+      701,
+      703,
+      704,
+      706,
+      707,
+      709,
+      711,
+      713,
+      714,
+      716,
+      717,
+      718,
+      720,
+      721,
+      723,
+      725,
+      727,
+      729,
+      731,
+      732,
+      734,
+      735,
+      737,
+      739,
+      741,
+      742,
+      744,
+      745,
+      747,
+      749,
+      751,
+      752,
+      754,
+      755,
+      757,
+      759,
+      761,
+      762,
+      764,
+      765,
+      767,
+      768,
+      770,
+      773,
+      775,
+      776,
+      778,
+      779,
+      781,
+      782,
+      784,
+      786,
+      788,
+      789,
+      791,
+      792,
+      794,
+      796,
+      798,
+      800,
+      802,
+      804,
+      806,
+      807,
+      809,
+      810,
+      812,
+      814,
+      816,
+      817,
+      819,
+      820,
+      822,
+      823,
+      825,
+      827,
+      829,
+      830,
+      832,
+      833,
+      835,
+      837,
+      839,
+      840,
+      842,
+      843,
+      845,
+      847,
+      849,
+      851,
+      853,
+      854,
+      856,
+      858,
+      859,
+      860,
+      862,
+      863,
+      864,
+      866,
+      867,
+      868,
+      870,
+      871,
+      872,
+      874,
+      875,
+      876,
+      878,
+      879,
+      880,
+      882,
+      883,
+      884,
+      886,
+      887,
+      888,
+      890,
+      891,
+      892,
+      894,
+      895,
+      896,
+      898,
+      899,
+      900,
+      902,
+      934,
+      935,
+      936,
+      938,
+      939,
+      940,
+      942,
+      943,
+      944,
+      946,
+      947,
+      948,
+      950,
+      951,
+      952,
+      954,
+      955,
+      956,
+      958,
+      959,
+      960,
+      962,
+      963,
+      964,
+      966,
+      967,
+      968,
+      970,
+      971,
+      972,
+      974,
+      975,
+      976,
+      978,
+      979,
+      980,
+      982,
+      983,
+      984,
+      986,
+      987,
+      988,
+      990,
+      991,
+      992,
+      993,
+      994,
+      996,
+      997,
+      998,
+      1000,
+      1001,
+      1002,
+      1004,
+      1005,
+      1006,
+      1008,
+      1009,
+      1011,
+      1012,
+      1013,
+      1015,
+      1016,
+      1017,
+      1019,
+      1020,
+      1021,
+      1023,
+      1024,
+      1025,
+      1027,
+      1028,
+      1029,
+      1031,
+      1032,
+      1033,
+      1035,
+      1036,
+      1037,
+      1039,
+      1040,
+      1041,
+      1043,
+      1044,
+      1045,
+      1047,
+      1048,
+      1049,
+      1051,
+      1052,
+      1053,
+      1055,
+      1056,
+      1057,
+      1059,
+      1060,
+      1061,
+      1063,
+      1064,
+      1065,
+      1067,
+      1068,
+      1069,
+      1071,
+      1072,
+      1073,
+      1075,
+      1076,
+      1077,
+      1079,
+      1080,
+      1081,
+      1083,
+      1084,
+      1085,
+      1118,
+      1119,
+      1120,
+      1122,
+      1124,
+      1125,
+      1127,
+      1128,
+      1129,
+      1131,
+      1132,
+      1133,
+      1135,
+      1136,
+      1137,
+      1139,
+      1140,
+      1141,
+      1143,
+      1144,
+      1145,
+      1147,
+      1148,
+      1149,
+      1151,
+      1153,
+      1186,
+      1187
+    ],
+    "bindings": [],
+    "cycle_event_ids": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "cycles": [
+      {
+        "binding_id": null,
+        "created_at": "2026-09-14T20:48:35.186141+00:00",
+        "cycle_id": "c4be285327582ff26e8740b3df98c82b64d008bd85622a16a88bbb82593d42c4",
+        "event_ids": [
+          1
+        ],
+        "last_reason": "Scheduled cycle deferred pending prerequisite evidence",
+        "model_run_id": null,
+        "monitor_snapshot_id": null,
+        "recovery_event_id": null,
+        "report_id": null,
+        "snapshot_id": null,
+        "stage": "preflight",
+        "status": "deferred",
+        "symbols": [
+          "AAPL"
+        ],
+        "training_job_id": null,
+        "trial_id": null,
+        "trigger": "scheduled",
+        "updated_at": "2026-09-14T20:48:35.186141+00:00"
+      },
+      {
+        "binding_id": null,
+        "created_at": "2026-09-14T20:48:37.376428+00:00",
+        "cycle_id": "16f7049bd8320a73f7f93fa0ba78376494dbe0d33cab919043fbbac1983dbd3a",
+        "event_ids": [
+          2
+        ],
+        "last_reason": "Scheduled cycle deferred pending prerequisite evidence",
+        "model_run_id": null,
+        "monitor_snapshot_id": null,
+        "recovery_event_id": null,
+        "report_id": null,
+        "snapshot_id": null,
+        "stage": "preflight",
+        "status": "deferred",
+        "symbols": [
+          "MSFT"
+        ],
+        "training_job_id": null,
+        "trial_id": null,
+        "trigger": "scheduled",
+        "updated_at": "2026-09-14T20:48:37.376428+00:00"
+      },
+      {
+        "binding_id": null,
+        "created_at": "2026-09-14T20:48:39.446663+00:00",
+        "cycle_id": "0529b769d90cb05366b4921ffb5bdfb0109526ca7482e12e4d2d2d2547045fe6",
+        "event_ids": [
+          3
+        ],
+        "last_reason": "Scheduled cycle deferred pending prerequisite evidence",
+        "model_run_id": null,
+        "monitor_snapshot_id": null,
+        "recovery_event_id": null,
+        "report_id": null,
+        "snapshot_id": null,
+        "stage": "preflight",
+        "status": "deferred",
+        "symbols": [
+          "QQQ"
+        ],
+        "training_job_id": null,
+        "trial_id": null,
+        "trigger": "scheduled",
+        "updated_at": "2026-09-14T20:48:39.446663+00:00"
+      },
+      {
+        "binding_id": null,
+        "created_at": "2026-09-14T20:48:41.551012+00:00",
+        "cycle_id": "67db48c421832e42bedff2aaf3b31503e090fc0c486493547c6a5255834ea977",
+        "event_ids": [
+          4
+        ],
+        "last_reason": "Scheduled cycle deferred pending prerequisite evidence",
+        "model_run_id": null,
+        "monitor_snapshot_id": null,
+        "recovery_event_id": null,
+        "report_id": null,
+        "snapshot_id": null,
+        "stage": "preflight",
+        "status": "deferred",
+        "symbols": [
+          "SPY"
+        ],
+        "training_job_id": null,
+        "trial_id": null,
+        "trigger": "scheduled",
+        "updated_at": "2026-09-14T20:48:41.551012+00:00"
+      }
+    ],
+    "datasets": [],
+    "models": [],
+    "monitoring_snapshots": [],
+    "promotion_decisions": [],
+    "readiness_reports": [],
+    "recovery_events": [
+      {
+        "action": "watchdog_heartbeat",
+        "actor": "stock_watchdog",
+        "id": 5726,
+        "status": "clear"
+      },
+      {
+        "action": "automatic_accounting_review",
+        "actor": "stock_recovery_automation",
+        "id": 5727,
+        "status": "blocked"
+      },
+      {
+        "action": "restart_reconciliation",
+        "actor": "restart_reconciler",
+        "id": 5728,
+        "status": "halted"
+      },
+      {
+        "action": "watchdog_heartbeat",
+        "actor": "stock_watchdog",
+        "id": 5729,
+        "status": "clear"
+      },
+      {
+        "action": "watchdog_heartbeat",
+        "actor": "stock_watchdog",
+        "id": 5730,
+        "status": "clear"
+      },
+      {
+        "action": "automatic_accounting_review",
+        "actor": "stock_recovery_automation",
+        "id": 5731,
+        "status": "blocked"
+      },
+      {
+        "action": "restart_reconciliation",
+        "actor": "restart_reconciler",
+        "id": 5732,
+        "status": "halted"
+      },
+      {
+        "action": "watchdog_heartbeat",
+        "actor": "stock_watchdog",
+        "id": 5733,
+        "status": "clear"
+      },
+      {
+        "action": "automatic_accounting_review",
+        "actor": "stock_recovery_automation",
+        "id": 5734,
+        "status": "blocked"
+      },
+      {
+        "action": "restart_reconciliation",
+        "actor": "restart_reconciler",
+        "id": 5735,
+        "status": "halted"
+      },
+      {
+        "action": "watchdog_heartbeat",
+        "actor": "stock_watchdog",
+        "id": 5736,
+        "status": "clear"
+      },
+      {
+        "action": "watchdog_heartbeat",
+        "actor": "stock_watchdog",
+        "id": 5737,
+        "status": "clear"
+      }
+    ],
+    "training_jobs": [],
+    "trials": []
+  },
+  "readiness": {
+    "blockers": [
+      "runtime health is not ready",
+      "recovery state is cooldown"
+    ],
+    "forward_evidence_complete": false,
+    "live_trading_ready": false,
+    "profitability_claim": false,
+    "ready_for_continued_paper_operation": false
+  },
+  "report_type": "bounded_autonomous_paper_soak",
+  "runtime": {
+    "broker": {
+      "live_trading_blocked": true,
+      "live_trading_enabled": false,
+      "message": "Version 1 routes broker-shaped orders to paper only. Live order placement is blocked.",
+      "paper_broker": "internal_paper_stub",
+      "paper_trading_enabled": true
+    },
+    "broker_error": null,
+    "deployment_monitor": {
+      "blockers": [],
+      "checks": [
+        {
+          "details": {},
+          "message": "Database connection succeeded.",
+          "name": "Database",
+          "status": "ready"
+        },
+        {
+          "details": {
+            "configured": true,
+            "reachable": true
+          },
+          "message": "Redis connection succeeded.",
+          "name": "Redis",
+          "status": "ready"
+        },
+        {
+          "details": {
+            "active_assets": 4,
+            "invalid_histories": {},
+            "latest_prices": {
+              "AAPL": "2026-09-10",
+              "MSFT": "2026-09-10",
+              "QQQ": "2026-09-10",
+              "SPY": "2026-09-10"
+            },
+            "latest_sources": {
+              "AAPL": "yahoo_chart",
+              "MSFT": "yahoo_chart",
+              "QQQ": "yahoo_chart",
+              "SPY": "yahoo_chart"
+            },
+            "missing_assets": [],
+            "stale_assets": [],
+            "trusted_sources": [
+              "yahoo_chart",
+              "yfinance"
+            ],
+            "untrusted_assets": []
+          },
+          "message": "Active assets have recent trusted market data.",
+          "name": "Trusted market data",
+          "status": "ready"
+        },
+        {
+          "details": {
+            "configured_jobs": [
+              "daily-economic-data-import",
+              "daily-feature-generation",
+              "daily-market-data-import",
+              "daily-market-regime-detection",
+              "daily-news-import",
+              "deployment-monitor-job",
+              "intraday-market-data-import",
+              "memory-replay-gate-monitor-job",
+              "nightly-backtest-job",
+              "nightly-learning-job",
+              "paper-trade-reconciliation-job",
+              "paper-trading-signal-job",
+              "risk-monitor-job",
+              "scheduled-stock-challenger-retraining",
+              "scheduled-stock-paper-promotion",
+              "scheduled-stock-paper-trial-handoff",
+              "stock-forward-trial-observe",
+              "stock-forward-trial-reconcile",
+              "stock-monitoring-job",
+              "stock-training-recovery-job",
+              "strategy-learning-batch-job",
+              "strategy-promotion-job",
+              "trade-candidate-scan-job"
+            ],
+            "missing_required_jobs": []
+          },
+          "message": "Required scheduled jobs are defined.",
+          "name": "Scheduled job definitions",
+          "status": "ready"
+        },
+        {
+          "details": {
+            "dedicated_intraday_worker_count": 1,
+            "dedicated_intraday_workers": [
+              "intraday@repl"
+            ],
+            "general_worker_count": 1,
+            "general_workers": [
+              "general@repl"
+            ],
+            "intraday_worker_count": 1,
+            "intraday_workers": [
+              "intraday@repl"
+            ],
+            "required_general_queues": [
+              "default",
+              "learning",
+              "market_data",
+              "paper_trading",
+              "risk"
+            ],
+            "required_intraday_queue": "intraday_market_data",
+            "worker_count": 2,
+            "worker_queues": {
+              "general@repl": [
+                "default",
+                "learning",
+                "market_data",
+                "paper_trading",
+                "risk"
+              ],
+              "intraday@repl": [
+                "intraday_market_data"
+              ]
+            },
+            "workers": [
+              "general@repl",
+              "intraday@repl"
+            ]
+          },
+          "message": "Dedicated intraday and general Celery workers are listening to their queues.",
+          "name": "Celery workers",
+          "status": "ready"
+        },
+        {
+          "details": {
+            "count": 1,
+            "evidence": [
+              "celery:beat:lease:primary"
+            ]
+          },
+          "message": "Exactly one Celery beat scheduler is evidenced by a Redis lease/heartbeat.",
+          "name": "Celery beat scheduler",
+          "status": "ready"
+        },
+        {
+          "details": {
+            "allow_live_trading": false,
+            "broker": {
+              "live_trading_blocked": true,
+              "live_trading_enabled": false,
+              "message": "Version 1 routes broker-shaped orders to paper only. Live order placement is blocked.",
+              "paper_broker": "internal_paper_stub",
+              "paper_trading_enabled": true
+            }
+          },
+          "message": "Live trading is disabled and paper trading is the only allowed broker mode.",
+          "name": "Live trading safety",
+          "status": "ready"
+        }
+      ],
+      "deployable": false,
+      "environment": "local",
+      "generated_at": "2026-09-14 20:58:19.621278",
+      "live_trading_allowed": false,
+      "message": "Deployment is not ready for trusted paper operation.",
+      "paper_trading_allowed": false,
+      "readiness": {
+        "checks": [
+          {
+            "details": {
+              "active_assets": 4,
+              "invalid_histories": {},
+              "latest_prices": {
+                "AAPL": "2026-09-10",
+                "MSFT": "2026-09-10",
+                "QQQ": "2026-09-10",
+                "SPY": "2026-09-10"
+              },
+              "latest_sources": {
+                "AAPL": "yahoo_chart",
+                "MSFT": "yahoo_chart",
+                "QQQ": "yahoo_chart",
+                "SPY": "yahoo_chart"
+              },
+              "missing_assets": [],
+              "stale_assets": [],
+              "trusted_sources": [
+                "yahoo_chart",
+                "yfinance"
+              ],
+              "untrusted_assets": []
+            },
+            "message": "Active assets have recent trusted market data.",
+            "name": "Market data",
+            "status": "ready"
+          },
+          {
+            "details": {
+              "cadence": "1m",
+              "data_mode": "real-time",
+              "deferred_window": null,
+              "deferred_windows": {},
+              "exchange_timestamp": "2026-09-14 19:59:00+00:00",
+              "failures": {},
+              "feed_class": "sip",
+              "ingestion_time": "2026-09-14 20:57:29.483282+00:00",
+              "latency_seconds": 3449.483282,
+              "missing_intervals": [],
+              "oldest_unresolved_interval": null,
+              "oldest_unresolved_intervals": {},
+              "provider": "alpaca",
+              "symbols": {
+                "AAPL": {
+                  "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
+                  "checked_at": "2026-09-14 20:58:13.208369+00:00",
+                  "data_mode": "real-time",
+                  "deferred_window": null,
+                  "entitlement_configured": true,
+                  "entitlement_state": "verified",
+                  "exchange_timestamp": "2026-09-14 19:59:00+00:00",
+                  "feed_class": "sip",
+                  "ingestion_timestamp": "2026-09-14 20:57:29.483282+00:00",
+                  "latency_seconds": 3449.483282,
+                  "missing_intervals": [],
+                  "oldest_unresolved_interval": null,
+                  "provider": "alpaca",
+                  "session": "regular",
+                  "status": "market_closed",
+                  "symbol": "AAPL",
+                  "timeframe": "1m",
+                  "unavailable_reason": null
+                },
+                "MSFT": {
+                  "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
+                  "checked_at": "2026-09-14 20:58:13.223427+00:00",
+                  "data_mode": "real-time",
+                  "deferred_window": null,
+                  "entitlement_configured": true,
+                  "entitlement_state": "verified",
+                  "exchange_timestamp": "2026-09-14 19:59:00+00:00",
+                  "feed_class": "sip",
+                  "ingestion_timestamp": "2026-09-14 20:57:29.483282+00:00",
+                  "latency_seconds": 3449.483282,
+                  "missing_intervals": [],
+                  "oldest_unresolved_interval": null,
+                  "provider": "alpaca",
+                  "session": "regular",
+                  "status": "market_closed",
+                  "symbol": "MSFT",
+                  "timeframe": "1m",
+                  "unavailable_reason": null
+                },
+                "QQQ": {
+                  "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
+                  "checked_at": "2026-09-14 20:58:13.227175+00:00",
+                  "data_mode": "real-time",
+                  "deferred_window": null,
+                  "entitlement_configured": true,
+                  "entitlement_state": "verified",
+                  "exchange_timestamp": "2026-09-14 19:59:00+00:00",
+                  "feed_class": "sip",
+                  "ingestion_timestamp": "2026-09-14 20:57:29.483282+00:00",
+                  "latency_seconds": 3449.483282,
+                  "missing_intervals": [],
+                  "oldest_unresolved_interval": null,
+                  "provider": "alpaca",
+                  "session": "regular",
+                  "status": "market_closed",
+                  "symbol": "QQQ",
+                  "timeframe": "1m",
+                  "unavailable_reason": null
+                },
+                "SPY": {
+                  "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
+                  "checked_at": "2026-09-14 20:58:13.231229+00:00",
+                  "data_mode": "real-time",
+                  "deferred_window": null,
+                  "entitlement_configured": true,
+                  "entitlement_state": "verified",
+                  "exchange_timestamp": "2026-09-14 19:59:00+00:00",
+                  "feed_class": "sip",
+                  "ingestion_timestamp": "2026-09-14 20:57:29.483282+00:00",
+                  "latency_seconds": 3449.483282,
+                  "missing_intervals": [],
+                  "oldest_unresolved_interval": null,
+                  "provider": "alpaca",
+                  "session": "regular",
+                  "status": "market_closed",
+                  "symbol": "SPY",
+                  "timeframe": "1m",
+                  "unavailable_reason": null
+                }
+              },
+              "unavailable_reason": null,
+              "unsupported_active_assets": []
+            },
+            "message": "Completed Alpaca SIP bars are fresh.",
+            "name": "Intraday feed",
+            "status": "ready"
+          },
+          {
+            "details": {
+              "age_hours": 92.28,
+              "latest_model_run": "2026-09-11T00:41:11.518279"
+            },
+            "message": "No recent stored model predictions.",
+            "name": "Model freshness",
+            "status": "warning"
+          },
+          {
+            "details": {
+              "live_trading_blocked": true,
+              "live_trading_enabled": false,
+              "message": "Version 1 routes broker-shaped orders to paper only. Live order placement is blocked.",
+              "paper_broker": "internal_paper_stub",
+              "paper_trading_enabled": true
+            },
+            "message": "Version 1 routes broker-shaped orders to paper only. Live order placement is blocked.",
+            "name": "Broker safety",
+            "status": "ready"
+          },
+          {
+            "details": {
+              "breach_alerts": [
+                {
+                  "label": "Kill switch",
+                  "message": "Global kill switch is enabled. New paper trades are blocked.",
+                  "severity": "breach",
+                  "utilization": 1.0
+                }
+              ],
+              "kill_switch_enabled": true,
+              "paper_only": true,
+              "risk_rule_present": true
+            },
+            "message": "Risk state blocks new paper signals.",
+            "name": "Risk state",
+            "status": "blocked"
+          },
+          {
+            "details": {
+              "active_strategies": 1,
+              "candidate_strategies": 2
+            },
+            "message": "At least one strategy is active for paper trading.",
+            "name": "Strategy availability",
+            "status": "ready"
+          },
+          {
+            "details": {
+              "unresolved_critical": 4
+            },
+            "message": "Critical notifications need review.",
+            "name": "Critical notifications",
+            "status": "blocked"
+          },
+          {
+            "details": {
+              "beat_count": 1,
+              "beat_error": null,
+              "beat_evidence": [
+                "celery:beat:lease:primary"
+              ],
+              "configuration_only": true,
+              "configured_jobs": [
+                "daily-economic-data-import",
+                "daily-feature-generation",
+                "daily-market-data-import",
+                "daily-market-regime-detection",
+                "daily-news-import",
+                "deployment-monitor-job",
+                "intraday-market-data-import",
+                "memory-replay-gate-monitor-job",
+                "nightly-backtest-job",
+                "nightly-learning-job",
+                "paper-trade-reconciliation-job",
+                "paper-trading-signal-job",
+                "risk-monitor-job",
+                "scheduled-stock-challenger-retraining",
+                "scheduled-stock-paper-promotion",
+                "scheduled-stock-paper-trial-handoff",
+                "stock-forward-trial-observe",
+                "stock-forward-trial-reconcile",
+                "stock-monitoring-job",
+                "stock-training-recovery-job",
+                "strategy-learning-batch-job",
+                "strategy-promotion-job",
+                "trade-candidate-scan-job"
+              ],
+              "healthy": true,
+              "recent_unresolved_failures": 0,
+              "worker_count": 2,
+              "worker_error": null,
+              "workers": [
+                "general@repl",
+                "intraday@repl"
+              ]
+            },
+            "message": "Celery workers and exactly one beat scheduler are evidenced.",
+            "name": "Scheduler health",
+            "status": "ready"
+          }
+        ],
+        "generated_at": "2026-09-14 20:58:15.391861",
+        "overall_status": "blocked",
+        "paper_trading_allowed": false,
+        "summary": {
+          "blocked": 2,
+          "ready": 5,
+          "warning": 1
+        }
+      },
+      "readiness_blockers": [
+        "Risk state",
+        "Critical notifications"
+      ],
+      "readiness_status": "blocked",
+      "readiness_warnings": [
+        "Model freshness"
+      ],
+      "status": "blocked",
+      "warnings": []
+    },
+    "deployment_monitor_error": null,
+    "recovery_status": {
+      "account_halt_reason": "Alpaca paper broker is unavailable or returned invalid data",
+      "account_reconciliation_required": true,
+      "account_status": "halted",
+      "accounting_residual": true,
+      "accounting_review_reason": null,
+      "accounting_review_required": true,
+      "accounting_reviewed_at": null,
+      "accounting_reviewed_by": null,
+      "accounting_verified": false,
+      "automatic_review_enabled": true,
+      "automatic_review_status": "blocked",
+      "cooldown_until": "2026-09-14T05:56:40.899163+00:00",
+      "costs_known": false,
+      "events": [
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:58:02.379656+00:00",
+          "id": 5737,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:57:32.320806+00:00",
+          "id": 5736,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "restart_reconciliation",
+          "actor": "restart_reconciler",
+          "created_at": "2026-09-14T20:57:30.366230+00:00",
+          "id": 5735,
+          "payload": {
+            "in_flight_order_ids": [],
+            "result_status": "halted"
+          },
+          "reason": "Restart reconciliation imported broker truth for durable in-flight orders",
+          "status": "halted"
+        },
+        {
+          "action": "automatic_accounting_review",
+          "actor": "stock_recovery_automation",
+          "created_at": "2026-09-14T20:57:30.356205+00:00",
+          "id": 5734,
+          "payload": {
+            "evidence": {
+              "enriched_activity_ids": [],
+              "observed_at": "2026-09-14T20:57:29.485519+00:00"
+            }
+          },
+          "reason": "Automatic review requires a later broker commission enrichment that exactly explains the residual; stable account values are insufficient.",
+          "status": "blocked"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:57:02.198274+00:00",
+          "id": 5733,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "restart_reconciliation",
+          "actor": "restart_reconciler",
+          "created_at": "2026-09-14T20:56:58.009288+00:00",
+          "id": 5732,
+          "payload": {
+            "in_flight_order_ids": [],
+            "result_status": "halted"
+          },
+          "reason": "Restart reconciliation imported broker truth for durable in-flight orders",
+          "status": "halted"
+        },
+        {
+          "action": "automatic_accounting_review",
+          "actor": "stock_recovery_automation",
+          "created_at": "2026-09-14T20:56:57.923012+00:00",
+          "id": 5731,
+          "payload": {
+            "evidence": {
+              "enriched_activity_ids": [],
+              "observed_at": "2026-09-14T20:56:56.976781+00:00"
+            }
+          },
+          "reason": "Automatic review requires a later broker commission enrichment that exactly explains the residual; stable account values are insufficient.",
+          "status": "blocked"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:56:52.505263+00:00",
+          "id": 5730,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:56:32.019145+00:00",
+          "id": 5729,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "restart_reconciliation",
+          "actor": "restart_reconciler",
+          "created_at": "2026-09-14T20:56:30.365858+00:00",
+          "id": 5728,
+          "payload": {
+            "in_flight_order_ids": [],
+            "result_status": "halted"
+          },
+          "reason": "Restart reconciliation imported broker truth for durable in-flight orders",
+          "status": "halted"
+        },
+        {
+          "action": "automatic_accounting_review",
+          "actor": "stock_recovery_automation",
+          "created_at": "2026-09-14T20:56:30.355099+00:00",
+          "id": 5727,
+          "payload": {
+            "evidence": {
+              "enriched_activity_ids": [],
+              "observed_at": "2026-09-14T20:56:29.489431+00:00"
+            }
+          },
+          "reason": "Automatic review requires a later broker commission enrichment that exactly explains the residual; stable account values are insufficient.",
+          "status": "blocked"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:56:22.473620+00:00",
+          "id": 5726,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:56:01.980951+00:00",
+          "id": 5725,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "restart_reconciliation",
+          "actor": "restart_reconciler",
+          "created_at": "2026-09-14T20:55:43.814675+00:00",
+          "id": 5724,
+          "payload": {
+            "in_flight_order_ids": [],
+            "result_status": "halted"
+          },
+          "reason": "Restart reconciliation imported broker truth for durable in-flight orders",
+          "status": "halted"
+        },
+        {
+          "action": "automatic_accounting_review",
+          "actor": "stock_recovery_automation",
+          "created_at": "2026-09-14T20:55:43.730273+00:00",
+          "id": 5723,
+          "payload": {
+            "evidence": {
+              "enriched_activity_ids": [],
+              "observed_at": "2026-09-14T20:55:42.790903+00:00"
+            }
+          },
+          "reason": "Automatic review requires a later broker commission enrichment that exactly explains the residual; stable account values are insufficient.",
+          "status": "blocked"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:55:36.429806+00:00",
+          "id": 5722,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:55:31.962104+00:00",
+          "id": 5721,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "restart_reconciliation",
+          "actor": "restart_reconciler",
+          "created_at": "2026-09-14T20:55:30.715713+00:00",
+          "id": 5720,
+          "payload": {
+            "in_flight_order_ids": [],
+            "result_status": "halted"
+          },
+          "reason": "Restart reconciliation imported broker truth for durable in-flight orders",
+          "status": "halted"
+        },
+        {
+          "action": "automatic_accounting_review",
+          "actor": "stock_recovery_automation",
+          "created_at": "2026-09-14T20:55:30.699928+00:00",
+          "id": 5719,
+          "payload": {
+            "evidence": {
+              "enriched_activity_ids": [],
+              "observed_at": "2026-09-14T20:55:29.489278+00:00"
+            }
+          },
+          "reason": "Automatic review requires a later broker commission enrichment that exactly explains the residual; stable account values are insufficient.",
+          "status": "blocked"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:55:06.320911+00:00",
+          "id": 5718,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:55:01.808821+00:00",
+          "id": 5717,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:54:31.761344+00:00",
+          "id": 5716,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        },
+        {
+          "action": "restart_reconciliation",
+          "actor": "restart_reconciler",
+          "created_at": "2026-09-14T20:54:30.357787+00:00",
+          "id": 5715,
+          "payload": {
+            "in_flight_order_ids": [],
+            "result_status": "halted"
+          },
+          "reason": "Restart reconciliation imported broker truth for durable in-flight orders",
+          "status": "halted"
+        },
+        {
+          "action": "automatic_accounting_review",
+          "actor": "stock_recovery_automation",
+          "created_at": "2026-09-14T20:54:30.346342+00:00",
+          "id": 5714,
+          "payload": {
+            "evidence": {
+              "enriched_activity_ids": [],
+              "observed_at": "2026-09-14T20:54:29.469494+00:00"
+            }
+          },
+          "reason": "Automatic review requires a later broker commission enrichment that exactly explains the residual; stable account values are insufficient.",
+          "status": "blocked"
+        },
+        {
+          "action": "watchdog_heartbeat",
+          "actor": "stock_watchdog",
+          "created_at": "2026-09-14T20:54:01.601148+00:00",
+          "id": 5713,
+          "payload": {
+            "reasons": []
+          },
+          "reason": "Independent watchdog evaluation",
+          "status": "clear"
+        }
+      ],
+      "flatten_policy": "none",
+      "last_known_good_binding_id": null,
+      "last_known_good_model_run_id": null,
+      "last_monitor_heartbeat_at": "2026-09-14T20:55:29.463037+00:00",
+      "last_monitoring_preflight": null,
+      "last_revalidation_at": null,
+      "last_watchdog_heartbeat_at": "2026-09-14T20:58:02.400338+00:00",
+      "pause_reason": "Automatic stock-paper pause after persistent monitoring breach: data.freshness_provenance, health.broker, health.reconciliation",
+      "status": "cooldown"
+    },
+    "recovery_status_error": null,
+    "schedule_control": {
+      "pause_reason": null,
+      "paused": false,
+      "updated_at": null,
+      "updated_by": "system"
+    }
+  },
+  "schema_version": 1,
+  "soak_started_at": "2026-09-14T20:56:17+00:00"
+}
