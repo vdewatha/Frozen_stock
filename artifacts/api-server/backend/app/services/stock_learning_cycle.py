@@ -16,10 +16,13 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.models import (
+    StockPaperAccount,
     StockDatasetSnapshot,
     StockLearningCycle,
     StockLearningCycleEvent,
+    StockPaperPromotionDecision,
     StockModelRegistry,
+    StockModelLifecycleState,
     StockPaperBindingState,
     StockPaperModelBinding,
     StockPaperPromotionReadinessReport,
@@ -29,12 +32,16 @@ from app.models import (
     StockMonitoringSnapshot,
     StockTrainingJob,
 )
+from app.services.audit import write_audit_log
 from app.services.intraday_data import NY, feed_status, session_bounds
 from app.services.readiness import _scheduler_health
 from app.services.stock_forward_trial import trial_feed_preflight
 from app.services.stock_promotion_readiness import evaluate_promotion_readiness
 from app.services.stock_training_jobs import (
     StockTrainingError,
+    _current_lifecycle,
+    _lock_lifecycle_admission,
+    _transition_model,
     create_stock_training_job,
     transition_stock_model_lifecycle,
 )
@@ -461,6 +468,480 @@ def cycle_action(
     return cycle
 
 
+AUTOMATIC_PROMOTION_ACTOR = "paper_learning_automation"
+AUTOMATIC_PROMOTION_JOB = "scheduled_stock_paper_promotion_job"
+
+
+def _automatic_validation_gate(db: Session, cycle: StockLearningCycle) -> dict:
+    job = db.get(StockTrainingJob, cycle.training_job_id) if cycle.training_job_id else None
+    model = db.get(StockModelRegistry, cycle.model_run_id) if cycle.model_run_id else None
+    manifest = model.training_metadata if model else {}
+    passed = bool(
+        job and job.status == "succeeded" and job.result_run_id == cycle.model_run_id
+        and model and model.snapshot_id == cycle.snapshot_id
+        and bool(manifest.get("purged_expanding_walkforward"))
+        and manifest.get("final_holdout_consumption")
+        and manifest.get("final_holdout_evaluation_count") == 1
+        and int(manifest.get("embargo_days", -1)) >= 0
+    )
+    return _gate(
+        "pass" if passed else "fail",
+        reason=None if passed else "completed model is missing exact leakage-safe validation or one-use holdout proof",
+        evidence={
+            "job_id": job.id if job else None,
+            "job_status": job.status if job else None,
+            "model_run_id": model.run_id if model else None,
+            "snapshot_id": model.snapshot_id if model else None,
+            "purged_expanding_walkforward": manifest.get("purged_expanding_walkforward"),
+            "embargo_days": manifest.get("embargo_days"),
+            "final_holdout_evaluation_count": manifest.get("final_holdout_evaluation_count"),
+            "final_holdout_consumption": manifest.get("final_holdout_consumption"),
+        },
+    )
+
+
+def _automatic_monitor_gate(db: Session) -> tuple[dict, int | None]:
+    snapshot = db.query(StockMonitoringSnapshot).filter_by(
+        monitor_key="stock_continuous_monitor",
+    ).order_by(
+        StockMonitoringSnapshot.generated_at.desc(),
+        StockMonitoringSnapshot.id.desc(),
+    ).first()
+    if not snapshot:
+        return _gate("unknown", reason="current monitoring evidence is unavailable"), None
+    checks = snapshot.checks or []
+    passed = snapshot.status == "clear" and bool(checks) and all(
+        check.get("status") == "clear" for check in checks
+    )
+    return _gate(
+        "pass" if passed else "fail",
+        reason=None if passed else "current monitoring health is not clear",
+        evidence={"snapshot_id": snapshot.id, "status": snapshot.status, "checks": checks},
+    ), snapshot.id
+
+
+def _automatic_trial_and_report(
+    db: Session, cycle: StockLearningCycle, active_binding: StockPaperModelBinding | None,
+) -> tuple[StockPaperTrial | None, dict | None]:
+    trial = db.get(StockPaperTrial, cycle.trial_id) if cycle.trial_id else None
+    if trial is None and active_binding is not None:
+        candidates = db.scalars(select(StockPaperTrial).where(
+            StockPaperTrial.binding_id == active_binding.id,
+        ).order_by(StockPaperTrial.created_at.desc(), StockPaperTrial.id.desc())).all()
+        if len(candidates) == 1:
+            trial = candidates[0]
+    if trial is None:
+        return None, None
+    try:
+        report = evaluate_promotion_readiness(db, trial.id)
+    except Exception:
+        # A malformed or unavailable report is evidence of uncertainty, never
+        # permission to promote.
+        report = None
+    return trial, report
+
+
+def _decision_projection(row: StockPaperPromotionDecision) -> dict:
+    return {
+        "id": row.id,
+        "cycle_id": row.cycle_id,
+        "trial_id": row.trial_id,
+        "report_id": row.report_id,
+        "model_run_id": row.model_run_id,
+        "snapshot_id": row.snapshot_id,
+        "decision": row.decision,
+        "gates": row.gates,
+        "lineage": row.lineage,
+        "evidence": row.evidence,
+        "actor": row.actor,
+        "source_job": row.source_job,
+        "correlation_id": row.correlation_id,
+        "reason": row.reason,
+        "before_binding_id": row.before_binding_id,
+        "before_model_run_id": row.before_model_run_id,
+        "after_binding_id": row.after_binding_id,
+        "after_model_run_id": row.after_model_run_id,
+        "decision_sha256": row.decision_sha256,
+        "paper_only": row.paper_only,
+        "live_authorized": row.live_authorized,
+        "created_at": row.created_at,
+    }
+
+
+def automate_paper_promotion(
+    db: Session,
+    cycle_id: str,
+    *,
+    source_job: str = AUTOMATIC_PROMOTION_JOB,
+    actor: str = AUTOMATIC_PROMOTION_ACTOR,
+) -> dict:
+    """Evaluate and, only when every persisted gate passes, promote a paper canary.
+
+    The coordinator deliberately requires an already-created paper canary and a
+    completed forward trial. It never creates a trial, changes its policy, or
+    treats a missing observation as evidence.
+    """
+    cycle = db.get(StockLearningCycle, cycle_id)
+    if cycle is None:
+        raise StockTrainingError("Learning cycle not found")
+    if cycle.trigger != "scheduled":
+        raise StockTrainingError("Automatic promotion is limited to scheduled paper cycles")
+    prior_decision = db.query(StockPaperPromotionDecision).filter_by(
+        cycle_id=cycle.cycle_id,
+    ).order_by(StockPaperPromotionDecision.id.desc()).first()
+    if cycle.status == "complete" and prior_decision and prior_decision.decision == "promoted":
+        return _decision_projection(prior_decision)
+
+    _lock_lifecycle_admission(db)
+    binding_state = db.scalar(select(StockPaperBindingState).where(
+        StockPaperBindingState.id == 1,
+    ).with_for_update())
+    active_binding = db.get(
+        StockPaperModelBinding,
+        binding_state.active_binding_id,
+    ) if binding_state else None
+    before_binding_id = active_binding.id if active_binding else None
+    before_model_run_id = active_binding.model_run_id if active_binding else None
+    trial, report = _automatic_trial_and_report(db, cycle, active_binding)
+    validation = _automatic_validation_gate(db, cycle)
+    monitor, monitor_snapshot_id = _automatic_monitor_gate(db)
+    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    recovery = db.get(StockPaperRecoveryState, 1)
+    target_model = db.get(StockModelRegistry, cycle.model_run_id) if cycle.model_run_id else None
+    target_state = _current_lifecycle(db, target_model, for_update=False) if target_model else None
+    trial_gate = _gate(
+        "pass" if trial and trial.status == "completed" else "unknown",
+        reason=None if trial and trial.status == "completed"
+        else "one completed forward paper trial must be linked to the scheduled cycle",
+        evidence={"trial_id": trial.id if trial else None, "status": trial.status if trial else None},
+    )
+    validation_evidence = validation.get("evidence") or {}
+    holdout_count = validation_evidence.get("final_holdout_evaluation_count")
+    holdout_consumption = validation_evidence.get("final_holdout_consumption")
+    holdout_gate = _gate(
+        "pass" if holdout_count == 1 and isinstance(holdout_consumption, dict)
+        and holdout_consumption.get("count") == 1 else "fail",
+        reason=None if holdout_count == 1 and isinstance(holdout_consumption, dict)
+        and holdout_consumption.get("count") == 1
+        else "final holdout evidence is absent or was consumed more than once",
+        evidence={"evaluation_count": holdout_count, "consumption": holdout_consumption},
+    )
+    report_gate = _gate(
+        "pass" if report and report.get("decision") == "pass"
+        and all(gate.get("status") == "pass" for gate in (report.get("gates") or {}).values())
+        else "unknown" if report is None else "fail",
+        reason=None if report and report.get("decision") == "pass"
+        and all(gate.get("status") == "pass" for gate in (report.get("gates") or {}).values())
+        else "promotion-readiness report is missing, incomplete, or not passing",
+        evidence={
+            "report_id": report.get("id") if report else None,
+            "report_hash": report.get("report_hash") if report else None,
+            "decision": report.get("decision") if report else None,
+            "gates": report.get("gates") if report else None,
+        },
+    )
+    binding_gate = _gate(
+        "pass" if active_binding and cycle.model_run_id
+        and active_binding.model_run_id == cycle.model_run_id
+        and active_binding.paper_only is True
+        and active_binding.live_authorized is False
+        and target_state and target_state.lifecycle_state == "paper_canary"
+        else "fail" if active_binding and active_binding.model_run_id != cycle.model_run_id
+        else "unknown",
+        reason=None if active_binding and cycle.model_run_id
+        and active_binding.model_run_id == cycle.model_run_id
+        and active_binding.paper_only is True
+        and active_binding.live_authorized is False
+        and target_state and target_state.lifecycle_state == "paper_canary"
+        else "the scheduled model must already be the active paper canary",
+        evidence={
+            "active_binding_id": before_binding_id,
+            "active_model_run_id": before_model_run_id,
+            "target_model_run_id": cycle.model_run_id,
+            "target_lifecycle_state": target_state.lifecycle_state if target_state else None,
+        },
+    )
+    ledger_gate = _gate(
+        "pass" if account and account.status == "reconciled"
+        and not account.reconciliation_required and account.accounting_verified
+        else "fail",
+        reason=None if account and account.status == "reconciled"
+        and not account.reconciliation_required and account.accounting_verified
+        else "paper ledger reconciliation is not verified",
+        evidence={
+            "account_status": account.status if account else "uninitialized",
+            "reconciliation_required": account.reconciliation_required if account else None,
+            "accounting_verified": account.accounting_verified if account else False,
+        },
+    )
+    recovery_gate = _gate(
+        "pass" if recovery is None or recovery.status == "armed" else "fail",
+        reason=None if recovery is None or recovery.status == "armed"
+        else "paper recovery is paused or awaiting revalidation",
+        evidence={"status": recovery.status if recovery else "uninitialized"},
+    )
+    paper_gate = _gate(
+        "pass" if (not report or report.get("paper_only") is True)
+        and (not report or report.get("live_authorized") is False)
+        and (not active_binding or active_binding.paper_only is True)
+        and (not active_binding or active_binding.live_authorized is False)
+        else "fail",
+        reason=None if (not report or report.get("paper_only") is True)
+        and (not report or report.get("live_authorized") is False)
+        and (not active_binding or active_binding.paper_only is True)
+        and (not active_binding or active_binding.live_authorized is False)
+        else "live authorization is not permitted",
+        evidence={"paper_only": True, "live_authorized": False},
+    )
+    lineage = (report or {}).get("lineage") or {}
+    lineage_gate = _gate(
+        "pass" if report and lineage.get("model_run_id") == cycle.model_run_id
+        and lineage.get("snapshot_id") == cycle.snapshot_id
+        and trial and trial.binding_id == before_binding_id
+        else "unknown",
+        reason=None if report and lineage.get("model_run_id") == cycle.model_run_id
+        and lineage.get("snapshot_id") == cycle.snapshot_id
+        and trial and trial.binding_id == before_binding_id
+        else "model, dataset, trial, and active binding lineage is incomplete or conflicting",
+        evidence={"lineage": lineage, "cycle_snapshot_id": cycle.snapshot_id, "active_binding_id": before_binding_id},
+    )
+    report_gates = (report or {}).get("gates") or {}
+    data_gate_names = ("regular_sessions", "historical_feed_health", "decision_coverage")
+    data_gate_values = [report_gates.get(name) for name in data_gate_names]
+    data_ready = bool(data_gate_values) and all(
+        gate and gate.get("status") == "pass" for gate in data_gate_values
+    )
+    data_readiness_gate = _gate(
+        "pass" if data_ready else "unknown" if report is None else "fail",
+        reason=None if data_ready else "aligned forward data-quality evidence is not explicitly passing",
+        evidence={name: report_gates.get(name) for name in data_gate_names},
+    )
+    gates = {
+        "leakage_safe_validation": validation,
+        "single_use_holdout": holdout_gate,
+        "forward_trial": trial_gate,
+        "promotion_readiness_report": report_gate,
+        "immutable_lineage": lineage_gate,
+        "paper_canary": binding_gate,
+        "paper_ledger": ledger_gate,
+        "data_readiness": data_readiness_gate,
+        "monitor_health": monitor,
+        "recovery_state": recovery_gate,
+        "paper_only": paper_gate,
+    }
+    evidence = {
+        "report_hash": report.get("report_hash") if report else None,
+        "report_id": report.get("id") if report else None,
+        "monitor_snapshot_id": monitor_snapshot_id,
+        "trial_id": trial.id if trial else None,
+        "gates": gates,
+    }
+    decision_basis = {
+        "cycle_id": cycle.cycle_id,
+        "model_run_id": cycle.model_run_id,
+        "snapshot_id": cycle.snapshot_id,
+        "trial_id": trial.id if trial else None,
+        "report_hash": report.get("report_hash") if report else None,
+        "gates": gates,
+        "before_binding_id": before_binding_id,
+        "before_model_run_id": before_model_run_id,
+    }
+    digest = _digest(decision_basis)
+    existing = db.scalar(select(StockPaperPromotionDecision).where(
+        StockPaperPromotionDecision.decision_sha256 == digest,
+    ))
+    if existing:
+        return _decision_projection(existing)
+
+    passed = _all_pass(gates)
+    reason = (
+        "Every immutable paper promotion gate passed"
+        if passed
+        else next(
+            (gate.get("reason") for gate in gates.values() if gate.get("status") != "pass"),
+            "Promotion evidence is incomplete",
+        )
+    )
+    after_binding_id = before_binding_id if passed else None
+    after_model_run_id = cycle.model_run_id if passed else None
+    if passed:
+        if target_model is None or target_state is None:
+            raise StockTrainingError("Promotion target model is unavailable")
+        champions = db.scalars(select(StockModelLifecycleState).where(
+            StockModelLifecycleState.lifecycle_state == "champion",
+            StockModelLifecycleState.model_run_id != target_model.run_id,
+        ).with_for_update()).all()
+        recovery_state = recovery or StockPaperRecoveryState(
+            id=1, status="armed", flatten_policy="none", updated_by=actor,
+        )
+        if recovery is None:
+            db.add(recovery_state)
+            db.flush()
+        for champion in champions:
+            previous_binding = db.query(StockPaperModelBinding).filter_by(
+                model_run_id=champion.model_run_id,
+            ).order_by(StockPaperModelBinding.id.desc()).first()
+            _transition_model(
+                db,
+                model=db.get(StockModelRegistry, champion.model_run_id),
+                action="demote",
+                actor=actor,
+                reason=f"Automatic paper promotion replaced champion: {cycle.cycle_id}",
+                binding_id=previous_binding.id if previous_binding else None,
+            )
+        _transition_model(
+            db, model=target_model, action="promote", actor=actor,
+            reason=f"Automatic paper promotion: {cycle.cycle_id}",
+            binding_id=active_binding.id if active_binding else None,
+        )
+        recovery_state.last_known_good_model_run_id = (
+            champions[0].model_run_id if champions else None
+        )
+        recovery_state.last_known_good_binding_id = (
+            db.query(StockPaperModelBinding).filter_by(
+                model_run_id=champions[0].model_run_id,
+            ).order_by(StockPaperModelBinding.id.desc()).first().id
+            if champions and db.query(StockPaperModelBinding).filter_by(
+                model_run_id=champions[0].model_run_id,
+            ).order_by(StockPaperModelBinding.id.desc()).first()
+            else None
+        )
+        cycle.status, cycle.stage = "complete", "promotion"
+        cycle.monitor_snapshot_id = monitor_snapshot_id
+        cycle.active_binding_id = after_binding_id
+        cycle.last_reason = reason
+        decision_name = "promoted"
+    else:
+        cycle.status, cycle.stage = "blocked", "promotion"
+        cycle.monitor_snapshot_id = monitor_snapshot_id
+        cycle.active_binding_id = before_binding_id
+        cycle.last_reason = reason
+        decision_name = "blocked"
+    cycle.trial_id = trial.id if trial else cycle.trial_id
+    cycle.gates = gates
+    cycle.evidence = {**(cycle.evidence or {}), "automatic_promotion": evidence}
+    decision_identity = {
+        **decision_basis,
+        "decision": decision_name,
+        "reason": reason,
+        "after_binding_id": after_binding_id,
+        "after_model_run_id": after_model_run_id,
+    }
+    row = StockPaperPromotionDecision(
+        cycle_id=cycle.cycle_id,
+        trial_id=trial.id if trial else None,
+        report_id=report.get("id") if report else None,
+        model_run_id=cycle.model_run_id,
+        snapshot_id=cycle.snapshot_id,
+        decision=decision_name,
+        gates=gates,
+        lineage=lineage,
+        evidence=evidence,
+        actor=actor,
+        source_job=source_job,
+        correlation_id=cycle.cycle_id,
+        reason=reason,
+        before_binding_id=before_binding_id,
+        before_model_run_id=before_model_run_id,
+        after_binding_id=after_binding_id,
+        after_model_run_id=after_model_run_id,
+        decision_sha256=digest,
+        paper_only=True,
+        live_authorized=False,
+    )
+    db.add(row)
+    _event(
+        db, cycle=cycle, stage="promotion",
+        decision="complete" if passed else "blocked", actor=actor,
+        reason=reason,
+        evidence={"automatic_decision": decision_name, **evidence, "before_binding_id": before_binding_id,
+                  "after_binding_id": after_binding_id},
+    )
+    write_audit_log(
+        db, event_type="stock_learning_cycle", action="automatic_paper_promotion",
+        status="complete" if passed else "blocked", message=reason,
+        entity_type="stock_learning_cycle", payload={
+            "cycle_id": cycle.cycle_id, "actor": actor, "source_job": source_job,
+            "correlation_id": cycle.cycle_id, "decision": decision_name,
+            "model_run_id": cycle.model_run_id, "snapshot_id": cycle.snapshot_id,
+            "trial_id": trial.id if trial else None, "report_id": report.get("id") if report else None,
+            "gates": gates, "before_binding_id": before_binding_id, "after_binding_id": after_binding_id,
+            "decision_sha256": row.decision_sha256, "paper_only": True, "live_authorized": False,
+        },
+    )
+    db.flush()
+    return _decision_projection(row)
+
+
+def run_automatic_paper_promotion_job(
+    db: Session,
+    *,
+    source_job: str = AUTOMATIC_PROMOTION_JOB,
+) -> dict:
+    """Evaluate every scheduled cycle that has reached the promotion stage."""
+    rows = db.scalars(select(StockLearningCycle).where(
+        StockLearningCycle.trigger == "scheduled",
+        StockLearningCycle.model_run_id.is_not(None),
+        StockLearningCycle.stage.in_(("forward_trial", "operator_review", "promotion")),
+        StockLearningCycle.status.not_in(("complete", "demoted", "rolled_back", "failed")),
+    ).order_by(StockLearningCycle.created_at, StockLearningCycle.cycle_id)).all()
+    results: list[dict] = []
+    for cycle in rows:
+        try:
+            result = automate_paper_promotion(db, cycle.cycle_id, source_job=source_job)
+            db.commit()
+            results.append({
+                "cycle_id": cycle.cycle_id,
+                "decision": result["decision"],
+                "reason": result["reason"],
+                "decision_id": result["id"],
+            })
+        except Exception as exc:
+            db.rollback()
+            cycle = db.get(StockLearningCycle, cycle.cycle_id)
+            if cycle is not None:
+                reason = f"Automatic promotion evaluation unavailable: {exc.__class__.__name__}"
+                cycle.status, cycle.stage, cycle.last_reason = "deferred", "promotion", reason
+                _event(
+                    db,
+                    cycle=cycle,
+                    stage="promotion",
+                    decision="deferred",
+                    actor=AUTOMATIC_PROMOTION_ACTOR,
+                    reason=reason,
+                    evidence={"source_job": source_job, "error_type": exc.__class__.__name__},
+                )
+                write_audit_log(
+                    db,
+                    event_type="stock_learning_cycle",
+                    action="automatic_paper_promotion",
+                    status="deferred",
+                    message=reason,
+                    entity_type="stock_learning_cycle",
+                    payload={
+                        "cycle_id": cycle.cycle_id,
+                        "actor": AUTOMATIC_PROMOTION_ACTOR,
+                        "source_job": source_job,
+                        "paper_only": True,
+                        "live_authorized": False,
+                    },
+                )
+                db.commit()
+            results.append({
+                "cycle_id": cycle.cycle_id,
+                "decision": "deferred",
+                "reason": reason,
+            })
+    return {
+        "status": "complete",
+        "job": source_job,
+        "evaluated": len(results),
+        "results": results,
+        "paper_only": True,
+        "live_authorized": False,
+    }
+
+
 def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
     binding_state = db.get(StockPaperBindingState, 1)
     active_binding = db.get(StockPaperModelBinding, binding_state.active_binding_id) if binding_state else None
@@ -469,6 +950,9 @@ def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
         monitor = db.query(StockMonitoringSnapshot).order_by(StockMonitoringSnapshot.generated_at.desc()).first()
     recovery = db.get(StockPaperRecoveryState, 1)
     recovery_event = db.query(StockPaperRecoveryEvent).order_by(StockPaperRecoveryEvent.created_at.desc()).first()
+    automatic_decision = db.query(StockPaperPromotionDecision).filter_by(
+        cycle_id=cycle.cycle_id,
+    ).order_by(StockPaperPromotionDecision.id.desc()).first()
     return {
         "cycle_id": cycle.cycle_id, "status": cycle.status, "stage": cycle.stage,
         "trigger": cycle.trigger, "requested_by": cycle.requested_by,
@@ -480,6 +964,7 @@ def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
         "active_binding_model_run_id": active_binding.model_run_id if active_binding else None,
         "gates": cycle.gates, "evidence": cycle.evidence,
         "last_reason": cycle.last_reason, "paper_only": True, "live_authorized": False,
+        "automatic_promotion": _decision_projection(automatic_decision) if automatic_decision else None,
         "monitoring": {
             "snapshot_id": monitor.id if monitor else None,
             "status": monitor.status if monitor else "unknown",

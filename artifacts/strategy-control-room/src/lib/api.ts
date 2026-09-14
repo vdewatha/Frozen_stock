@@ -3061,6 +3061,7 @@ export type StockLearningCycle = {
   last_reason: string | null;
   paper_only: boolean;
   live_authorized: boolean;
+  automatic_promotion: StockPaperPromotionDecision | null;
   monitoring: {
     snapshot_id: number | null;
     status: string;
@@ -3078,4 +3079,29 @@ export type StockLearningCycle = {
   created_at: string;
   updated_at: string;
   deduplicated?: boolean;
+};
+
+export type StockPaperPromotionDecision = {
+  id: number;
+  cycle_id: string;
+  trial_id: string | null;
+  report_id: number | null;
+  model_run_id: string | null;
+  snapshot_id: string | null;
+  decision: string;
+  gates: Record<string, { status: string; reason?: string; evidence?: unknown }>;
+  lineage: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  actor: string;
+  source_job: string;
+  correlation_id: string;
+  reason: string;
+  before_binding_id: number | null;
+  before_model_run_id: string | null;
+  after_binding_id: number | null;
+  after_model_run_id: string | null;
+  decision_sha256: string;
+  paper_only: boolean;
+  live_authorized: boolean;
+  created_at: string;
 };

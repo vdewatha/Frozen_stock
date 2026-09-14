@@ -692,6 +692,39 @@ class StockModelLifecycleEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class StockPaperPromotionDecision(Base):
+    """Append-only result of one automated paper promotion evaluation."""
+    __tablename__ = "stock_paper_promotion_decisions"
+    __table_args__ = (
+        CheckConstraint("paper_only = true", name="ck_stock_promotion_decision_paper_only"),
+        CheckConstraint("live_authorized = false", name="ck_stock_promotion_decision_live_disabled"),
+        UniqueConstraint("decision_sha256", name="uq_stock_promotion_decision_digest"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cycle_id: Mapped[str] = mapped_column(ForeignKey("stock_learning_cycles.cycle_id"), nullable=False, index=True)
+    trial_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_paper_trials.id"), index=True)
+    report_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_promotion_readiness_reports.id"), index=True)
+    model_run_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_model_registry.run_id"), index=True)
+    snapshot_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_dataset_snapshots.snapshot_id"))
+    decision: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    gates: Mapped[dict] = mapped_column(JSON, nullable=False)
+    lineage: Mapped[dict] = mapped_column(JSON, nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_job: Mapped[str] = mapped_column(String(128), nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    before_binding_id: Mapped[Optional[int]] = mapped_column()
+    before_model_run_id: Mapped[Optional[str]] = mapped_column(String(64))
+    after_binding_id: Mapped[Optional[int]] = mapped_column()
+    after_model_run_id: Mapped[Optional[str]] = mapped_column(String(64))
+    decision_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    paper_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
 class StockPaperTrial(Base):
     """Immutable, separately governed controlled forward-paper trial."""
     __tablename__ = "stock_paper_trials"

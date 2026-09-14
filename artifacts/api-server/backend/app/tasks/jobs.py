@@ -42,6 +42,7 @@ from app.tasks.celery_app import celery_app
 from app.models import Asset, PaperTrade, Strategy, StockTrainingJob
 from app.services.stock_learning_cycle import (
     create_learning_cycle,
+    run_automatic_paper_promotion_job,
     sync_cycle_from_training_job,
     sync_cycle_observability,
 )
@@ -491,6 +492,15 @@ def scheduled_stock_challenger_retraining_job() -> dict:
         }
 
     return _run_job("scheduled_stock_challenger_retraining_job", work)
+
+
+@celery_app.task
+def scheduled_stock_paper_promotion_job() -> dict:
+    """Evaluate completed scheduled challengers; promote paper canaries only."""
+    return _run_job(
+        "scheduled_stock_paper_promotion_job",
+        lambda db: run_automatic_paper_promotion_job(db),
+    )
 
 @celery_app.task
 def stock_forward_trial_observe_job(trial_id: str | None = None) -> dict:

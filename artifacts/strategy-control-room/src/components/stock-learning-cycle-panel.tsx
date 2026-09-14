@@ -102,6 +102,25 @@ export function StockLearningCyclePanel() {
                 <div><span className="font-semibold text-ink">Monitor:</span> {cycle.monitoring.status}</div>
                 <div><span className="font-semibold text-ink">Recovery:</span> {cycle.recovery.status}</div>
               </div>
+              <div className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-ink">Automatic paper promotion</span>
+                  <span className={gateClass(cycle.automatic_promotion?.decision === "promoted" ? "pass" : cycle.automatic_promotion ? "blocked" : "unknown")}>
+                    {cycle.automatic_promotion?.decision ?? "pending"}
+                  </span>
+                </div>
+                {cycle.automatic_promotion ? (
+                  <>
+                    <div className="mt-1 text-slate-600">{cycle.automatic_promotion.reason}</div>
+                    <div className="mt-1 text-slate-500">
+                      {cycle.automatic_promotion.actor} · {cycle.automatic_promotion.source_job}
+                      {cycle.automatic_promotion.after_binding_id ? ` · binding ${cycle.automatic_promotion.after_binding_id}` : ""}
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-1 text-slate-500">No scheduled decision has been recorded; missing evidence is not a pass.</div>
+                )}
+              </div>
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 {Object.entries(cycle.gates).map(([name, gate]) => (
                   <div className={`flex items-center gap-1 text-xs ${gateClass(gate.status)}`} key={name}>
@@ -118,7 +137,7 @@ export function StockLearningCyclePanel() {
                   <div className="flex flex-wrap gap-2">
                     <button className="focus-ring rounded bg-mint px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy || !reason.trim()} onClick={() => void review(cycle)} type="button">Review evidence</button>
                     {cycle.status === "operator_review" ? <button className="focus-ring rounded border border-mint px-2 py-1.5 text-xs font-semibold text-mint disabled:opacity-50" disabled={busy || !reason.trim()} onClick={() => void act(cycle, "mark_eligible")} type="button">Mark eligible</button> : null}
-                    {cycle.status === "operator_review" ? <span className="self-center text-xs text-amber-800">Bind and start canary through the existing lifecycle controls before promotion.</span> : null}
+                    {cycle.status === "operator_review" ? <span className="self-center text-xs text-amber-800">Automatic promotion runs only for a completed, aligned paper canary; live trading remains disabled.</span> : null}
                   </div>
                 </div>
               </RoleGate>

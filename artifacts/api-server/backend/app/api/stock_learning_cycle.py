@@ -9,9 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import StockLearningCycle, StockTrainingJob
+from app.models import StockLearningCycle, StockPaperPromotionDecision, StockTrainingJob
 from app.services.audit import write_audit_log
 from app.services.stock_learning_cycle import (
+    _decision_projection,
     StockTrainingError,
     create_learning_cycle,
     cycle_action,
@@ -91,6 +92,25 @@ def get_cycle(
     if not row:
         raise HTTPException(404, "Learning cycle not found")
     return cycle_projection(db, row)
+
+
+@router.get("/{cycle_id}/automatic-promotion")
+def get_automatic_promotion(
+    cycle_id: str = Path(..., pattern=r"^[0-9a-f]{64}$"),
+    db: Session = Depends(get_db),
+) -> dict:
+    row = db.get(StockLearningCycle, cycle_id)
+    if not row:
+        raise HTTPException(404, "Learning cycle not found")
+    decision = db.query(StockPaperPromotionDecision).filter_by(
+        cycle_id=cycle_id,
+    ).order_by(StockPaperPromotionDecision.id.desc()).first()
+    return {
+        "cycle_id": cycle_id,
+        "decision": _decision_projection(decision) if decision else None,
+        "paper_only": True,
+        "live_authorized": False,
+    }
 
 
 @router.post("")

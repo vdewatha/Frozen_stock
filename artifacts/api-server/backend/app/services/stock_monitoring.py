@@ -18,6 +18,7 @@ from app.models import (
     StockMonitoringBreach,
     StockMonitoringSnapshot,
     StockPaperBindingState,
+    StockPaperRecoveryState,
     StockPaperRecoveryEvent,
 )
 from app.models.stock_paper import (
@@ -356,6 +357,18 @@ def _persist_breach(db: Session, check: dict, now: datetime) -> dict:
 
 def _pause_stock_path(db: Session, reasons: list[str], now: datetime) -> dict:
     reason = "Automatic stock-paper pause after persistent monitoring breach: " + ", ".join(reasons)
+    current_recovery = db.get(StockPaperRecoveryState, 1)
+    if current_recovery and current_recovery.status in {"cooldown", "paused", "revalidation_required"}:
+        existing = db.query(StockPaperRecoveryEvent).filter(
+            StockPaperRecoveryEvent.action == "pause",
+            StockPaperRecoveryEvent.actor == "stock_monitor",
+        ).order_by(StockPaperRecoveryEvent.id.desc()).first()
+        return {
+            "action": "pause_stock_path",
+            "reasons": reasons,
+            "recovery_event_id": existing.id if existing else None,
+            "deduplicated": True,
+        }
     enter_stock_recovery(db, reason=reason, actor="stock_monitor", flatten_policy="none")
     # The recovery event is created by enter_stock_recovery before the
     # monitoring snapshot is written.  Expose its durable id so the cycle
