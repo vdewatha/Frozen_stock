@@ -45,8 +45,21 @@ python3.11 -m alembic upgrade head
 PYTHONPATH=. python3.11 scripts/run_stock_watchdog.py &
 pids+=("$!")
 
+# Keep the one-minute poll independent from daily imports and feature jobs.
+# This launcher is used by both the local development workflow and the API
+# artifact's production run command, so both environments use the same queue
+# split and exactly one worker for each path.
 python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
   --loglevel=INFO \
+  --hostname=intraday@%h \
+  --queues=intraday_market_data \
+  --concurrency=1 &
+pids+=("$!")
+
+python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
+  --loglevel=INFO \
+  --hostname=general@%h \
+  --queues=default,market_data,learning,paper_trading,risk \
   --concurrency=2 &
 pids+=("$!")
 

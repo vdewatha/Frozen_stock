@@ -10,6 +10,7 @@ celery_app.conf.timezone = "America/New_York"
 celery_app.conf.task_queues = (
     Queue("default", Exchange("default"), routing_key="default"),
     Queue("market_data", Exchange("market_data"), routing_key="market_data"),
+    Queue("intraday_market_data", Exchange("intraday_market_data"), routing_key="intraday_market_data"),
     Queue("learning", Exchange("learning"), routing_key="learning"),
     Queue("paper_trading", Exchange("paper_trading"), routing_key="paper_trading"),
     Queue("risk", Exchange("risk"), routing_key="risk"),
@@ -18,7 +19,7 @@ celery_app.conf.task_default_queue = "default"
 celery_app.conf.worker_prefetch_multiplier = 1
 celery_app.conf.task_routes = {
     "app.tasks.jobs.daily_market_data_import": {"queue": "market_data"},
-    "app.tasks.jobs.intraday_market_data_import": {"queue": "market_data"},
+    "app.tasks.jobs.intraday_market_data_import": {"queue": "intraday_market_data"},
     "app.tasks.jobs.daily_economic_data_import": {"queue": "market_data"},
     "app.tasks.jobs.daily_news_import": {"queue": "market_data"},
     "app.tasks.jobs.daily_feature_generation": {"queue": "market_data"},
