@@ -42,7 +42,8 @@ class MonitorSecurityTests(unittest.TestCase):
     def test_worker_evidence_requires_a_ping_response(self):
         inspector = MagicMock()
         with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):
-            for responses, healthy in (({}, False), ({"worker-a": {"ok": "pong"}}, True), ({"worker-a": {}, "worker-b": {}}, True)):
+            inspector.active_queues.return_value = {}
+            for responses, healthy in (({}, False), ({"worker-a": {"ok": "pong"}}, False), ({"worker-a": {}, "worker-b": {}}, False)):
                 with self.subTest(responses=responses):
                     inspector.ping.return_value = responses
                     result = deployment_monitor._check_celery_workers()
@@ -53,6 +54,44 @@ class MonitorSecurityTests(unittest.TestCase):
             result = deployment_monitor._check_celery_workers()
             self.assertEqual(result["status"], "blocked")
             self.assertEqual(result["details"]["workers"], [])
+
+    def test_worker_evidence_distinguishes_intraday_and_general_queues(self):
+        inspector = MagicMock()
+        inspector.ping.return_value = {
+            "intraday@host": {"ok": "pong"},
+            "general@host": {"ok": "pong"},
+        }
+        inspector.active_queues.return_value = {
+            "intraday@host": [{"name": "intraday_market_data"}],
+            "general@host": [{"name": "market_data"}, {"name": "risk"}],
+        }
+        with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector), patch.object(
+            deployment_monitor.celery_app, "send_task"
+        ) as send_task:
+            result = deployment_monitor._check_celery_workers()
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["details"]["intraday_workers"], ["intraday@host"])
+        self.assertEqual(result["details"]["dedicated_intraday_workers"], ["intraday@host"])
+        self.assertEqual(result["details"]["general_workers"], ["general@host"])
+        self.assertEqual(result["details"]["worker_queues"]["intraday@host"], ["intraday_market_data"])
+        self.assertEqual(result["details"]["worker_queues"]["general@host"], ["market_data", "risk"])
+        inspector.ping.assert_called_once_with()
+        inspector.active_queues.assert_called_once_with()
+        send_task.assert_not_called()
+
+    def test_worker_evidence_blocks_when_intraday_queue_is_unserved(self):
+        inspector = MagicMock()
+        inspector.ping.return_value = {"general@host": {"ok": "pong"}}
+        inspector.active_queues.return_value = {"general@host": [{"name": "market_data"}]}
+        with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):
+            result = deployment_monitor._check_celery_workers()
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("one-minute market polling is blocked", result["message"])
+        self.assertEqual(result["details"]["intraday_worker_count"], 0)
+        self.assertEqual(result["details"]["dedicated_intraday_worker_count"], 0)
+        self.assertEqual(result["details"]["general_workers"], ["general@host"])
 
     def test_scheduler_evidence_requires_exactly_one_heartbeat(self):
         client = MagicMock()

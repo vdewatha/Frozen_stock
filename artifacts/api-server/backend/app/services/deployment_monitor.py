@@ -14,7 +14,7 @@ from app.services.audit import write_audit_log
 from app.services.broker import broker_status
 from app.services.notifications import create_notification
 from app.services.readiness import readiness_snapshot
-from app.tasks.celery_app import celery_app
+from app.tasks.celery_app import GENERAL_WORKER_QUEUES, INTRADAY_MARKET_DATA_QUEUE, celery_app
 
 
 def _status(ok: bool) -> str:
@@ -104,22 +104,86 @@ def _check_celery_schedule() -> dict:
 
 
 def _check_celery_workers() -> dict:
-    """Require an actual Celery broadcast response, never configuration alone."""
+    """Require ping and queue-subscription evidence, never configuration alone."""
     try:
-        responses = celery_app.control.inspect(timeout=2).ping() or {}
+        inspector = celery_app.control.inspect(timeout=2)
+        responses = inspector.ping() or {}
         workers = sorted(responses)
+        active_queues = inspector.active_queues() or {}
     except Exception as exc:
         return {
             "name": "Celery workers",
             "status": "blocked",
-            "message": "Celery worker ping failed; worker availability is unconfirmed.",
-            "details": {"workers": [], "error_type": exc.__class__.__name__},
+            "message": "Celery worker or queue inspection failed; worker availability is unconfirmed.",
+            "details": {
+                "workers": [],
+                "worker_count": 0,
+                "intraday_workers": [],
+                "intraday_worker_count": 0,
+                "dedicated_intraday_workers": [],
+                "dedicated_intraday_worker_count": 0,
+                "general_workers": [],
+                "general_worker_count": 0,
+                "worker_queues": {},
+                "error_type": exc.__class__.__name__,
+            },
         }
+
+    worker_queues = {}
+    for worker in workers:
+        queue_names = {
+            entry.get("name")
+            for entry in (active_queues.get(worker) or [])
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+        }
+        worker_queues[worker] = sorted(queue_names)
+
+    intraday_workers = sorted(
+        worker
+        for worker, queues in worker_queues.items()
+        if INTRADAY_MARKET_DATA_QUEUE in queues
+    )
+    dedicated_intraday_workers = sorted(
+        worker
+        for worker, queues in worker_queues.items()
+        if queues == [INTRADAY_MARKET_DATA_QUEUE]
+    )
+    general_workers = sorted(
+        worker
+        for worker, queues in worker_queues.items()
+        if GENERAL_WORKER_QUEUES.intersection(queues)
+    )
+    if not dedicated_intraday_workers:
+        message = (
+            "No dedicated Celery worker is listening exclusively to the intraday "
+            "market-data queue; "
+            "one-minute market polling is blocked."
+        )
+    elif not general_workers:
+        message = (
+            "The dedicated intraday Celery worker is listening, but no general "
+            "Celery worker is evidenced."
+        )
+    else:
+        message = "Dedicated intraday and general Celery workers are listening to their queues."
+
     return {
         "name": "Celery workers",
-        "status": _status(bool(workers)),
-        "message": "Celery workers responded to ping." if workers else "No Celery workers responded to ping.",
-        "details": {"workers": workers, "worker_count": len(workers)},
+        "status": _status(bool(workers) and bool(dedicated_intraday_workers) and bool(general_workers)),
+        "message": message if workers else "No Celery workers responded to ping.",
+        "details": {
+            "workers": workers,
+            "worker_count": len(workers),
+            "intraday_workers": intraday_workers,
+            "intraday_worker_count": len(intraday_workers),
+            "dedicated_intraday_workers": dedicated_intraday_workers,
+            "dedicated_intraday_worker_count": len(dedicated_intraday_workers),
+            "general_workers": general_workers,
+            "general_worker_count": len(general_workers),
+            "worker_queues": worker_queues,
+            "required_intraday_queue": INTRADAY_MARKET_DATA_QUEUE,
+            "required_general_queues": sorted(GENERAL_WORKER_QUEUES),
+        },
     }
 
 
