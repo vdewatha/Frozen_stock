@@ -5,7 +5,7 @@ from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -41,10 +41,26 @@ class ReviewCycleBody(StrictBody):
     reason: str = Field(min_length=3, max_length=1000)
     trial_id: str | None = Field(default=None, min_length=1, max_length=36)
 
+    @field_validator("reason")
+    @classmethod
+    def require_non_blank_reason(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("reason must contain at least three non-whitespace characters")
+        return value
+
 
 class CycleActionBody(StrictBody):
     action: Literal["mark_eligible", "start_canary", "promote", "demote", "retire"]
     reason: str = Field(min_length=3, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def require_non_blank_reason(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("reason must contain at least three non-whitespace characters")
+        return value
 
 
 def _audit(db: Session, request: Request, action: str, cycle_id: str, payload: dict) -> None:

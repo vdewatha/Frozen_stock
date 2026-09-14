@@ -2,6 +2,7 @@
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from alembic import command
@@ -31,6 +32,7 @@ from app.services.stock_training_jobs import (
     _owned_update, run_stock_training_job, summarize_job, transition_stock_model_lifecycle,
 )
 from app.services.stock_recovery import rollback_to_last_known_good
+import app.tasks.jobs as scheduled_jobs
 
 
 def _snapshot() -> StockDatasetSnapshot:
@@ -90,6 +92,49 @@ def test_stock_training_post_rejects_viewer_before_database_work():
     client = TestClient(app)
     response = client.post("/stock/training/jobs", headers={"Authorization": "Bearer " + "viewer" * 16}, json={})
     assert response.status_code == 403
+
+
+def test_scheduled_challenger_execution_never_binds_or_promotes():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(Asset(symbol="SPY", name="S&P 500", asset_type="stock", is_active=True))
+        db.commit()
+        cycle = SimpleNamespace(
+            cycle_id="a" * 64,
+            training_job_id=None,
+            status="queued",
+            stage="training",
+            last_reason="queued",
+        )
+        with (
+            patch.object(scheduled_jobs, "SessionLocal", return_value=db),
+            patch.object(
+                scheduled_jobs,
+                "_run_job",
+                side_effect=lambda _name, work: work(db),
+            ),
+            patch.object(
+                scheduled_jobs,
+                "create_learning_cycle",
+                return_value=(cycle, False),
+            ),
+            patch.object(scheduled_jobs, "enqueue_stock_training_job") as enqueue,
+            patch(
+                "app.services.stock_training_jobs.create_stock_paper_binding"
+            ) as bind,
+            patch(
+                "app.services.stock_training_jobs.transition_stock_model_lifecycle"
+            ) as transition,
+        ):
+            result = scheduled_jobs.scheduled_stock_challenger_retraining_job()
+
+        assert result["status"] == "complete"
+        assert result["binding_changed"] is False
+        assert result["live_authorized"] is False
+        assert enqueue.not_called
+        assert bind.not_called
+        assert transition.not_called
 
 
 def test_lost_running_job_is_redelivered_from_database_state():

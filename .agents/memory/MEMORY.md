@@ -12,3 +12,4 @@
 - [Interim migration compatibility](interim-migration-compatibility.md) — legacy stock-only schemas may omit shared tables; historical migrations must preserve rows and skip unavailable cross-domain constraints.
 - [Automatic accounting recovery](automatic-accounting-recovery.md) — only an exact late-commission enrichment can resolve a residual automatically; stable snapshots never qualify.
 - [Recovery timestamp precision](recovery-timestamp-precision.md) — use precise application-side halt timestamps when qualifying post-pause monitoring evidence.
+- [Backend test module path](backend-test-module-path.md) — run backend pytest with PYTHONPATH=. so app imports resolve from the workspace.
