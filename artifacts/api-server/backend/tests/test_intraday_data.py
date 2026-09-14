@@ -188,6 +188,25 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(result["symbols"], ["AAPL", "MSFT", "QQQ", "SPY"])
         self.assertEqual({row["symbol"] for row in result["results"]}, set(statuses))
 
+    def test_session_repair_uses_bounded_windows_and_stays_fail_closed(self):
+        calls = []
+
+        def fetch(symbol, start, end):
+            calls.append((symbol, start, end))
+            return [], 0, False
+
+        observed = datetime(2026, 9, 11, 20, 0, tzinfo=UTC)
+        with patch.object(intraday_data, "_fetch_bars", side_effect=fetch):
+            result = intraday_data.ingest_intraday(self.db, ["SPY"], now=observed)
+
+        self.assertTrue(calls)
+        self.assertTrue(
+            all(end - start <= intraday_data.INTRADAY_BACKFILL_WINDOW for _, start, end in calls)
+        )
+        symbol_result = result["results"][0]
+        self.assertEqual(symbol_result["status"], "incomplete")
+        self.assertTrue(symbol_result["missing_intervals"])
+
     def test_unsupported_symbol_is_structured_untrusted_data(self):
         with self.assertRaisesRegex(UntrustedMarketData, "must be one of"):
             validate_intraday_readiness(self.db, "TSLA")

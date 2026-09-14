@@ -22,6 +22,7 @@ ALLOWED_SYMBOLS = frozenset({"AAPL", "MSFT", "QQQ", "SPY"})
 ENTITLEMENT_VERIFICATION_MAX_AGE = timedelta(minutes=5)
 BAR_CADENCE = timedelta(minutes=1)
 LATE_TRADE_ALLOWANCE = timedelta(seconds=60)
+INTRADAY_BACKFILL_WINDOW = timedelta(minutes=60)
 
 
 def _easter(year: int) -> date:
@@ -206,12 +207,21 @@ def upsert_intraday_bars(
     duplicate_count = len(timestamps) - len(set(timestamps))
     out_of_order = timestamps != sorted(timestamps)
     deduplicated = {timestamp: values for timestamp, values in parsed}
-    for opened_at, values in sorted(deduplicated.items()):
-        row = (
-            db.query(IntradayBar)
-            .filter_by(symbol=symbol, timeframe="1m", opened_at=opened_at)
-            .one_or_none()
+    existing_rows = (
+        db.query(IntradayBar)
+        .filter(
+            IntradayBar.symbol == symbol,
+            IntradayBar.timeframe == "1m",
+            IntradayBar.opened_at.in_(list(deduplicated)),
         )
+        .all()
+    )
+    existing_by_timestamp = {
+        _aware_utc(row.opened_at): row
+        for row in existing_rows
+    }
+    new_rows = []
+    for opened_at, values in sorted(deduplicated.items()):
         provenance = {
             **values,
             "provider": "alpaca",
@@ -219,11 +229,16 @@ def upsert_intraday_bars(
             "exchange_timestamp": opened_at,
             "ingested_at": observed_at,
         }
+        row = existing_by_timestamp.get(opened_at)
         if row:
             for key, value in provenance.items():
                 setattr(row, key, value)
         else:
-            db.add(IntradayBar(symbol=symbol, timeframe="1m", opened_at=opened_at, **provenance))
+            new_rows.append(
+                IntradayBar(symbol=symbol, timeframe="1m", opened_at=opened_at, **provenance)
+            )
+    if new_rows:
+        db.add_all(new_rows)
     db.commit()
     return {
         "rows_imported": len(deduplicated),
@@ -258,6 +273,20 @@ def _session_missing(
             missing.append(cursor.isoformat())
         cursor += BAR_CADENCE
     return missing
+
+
+def _bounded_missing_window(
+    db: Session,
+    symbol: str,
+    start: datetime,
+    end: datetime,
+) -> tuple[datetime, datetime] | None:
+    """Return the next missing slice without turning one poll into a full replay."""
+    missing = _session_missing(db, symbol, start, end, cap=1)
+    if not missing:
+        return None
+    window_start = datetime.fromisoformat(missing[0])
+    return window_start, min(end, window_start + INTRADAY_BACKFILL_WINDOW)
 
 
 def upsert_corporate_actions(db: Session, symbol: str, actions: list[dict]) -> int:
@@ -394,6 +423,7 @@ def ingest_intraday(
     for symbol in selected:
         try:
             windows: list[tuple[datetime, datetime]] = []
+            target_ranges: list[tuple[datetime, datetime]] = []
             today_bounds = session_bounds(local_now.date())
             if today_bounds and observed_at >= today_bounds[0]:
                 completed_through = min(
@@ -403,11 +433,29 @@ def ingest_intraday(
                     ) + BAR_CADENCE,
                 )
                 if completed_through > today_bounds[0]:
-                    windows.append((today_bounds[0], completed_through))
+                    target_ranges.append((today_bounds[0], completed_through))
+                    latest_start = max(
+                        today_bounds[0],
+                        completed_through - INTRADAY_BACKFILL_WINDOW,
+                    )
+                    # Always poll the newest completed slice so a historical
+                    # repair cannot make the live feed stale.
+                    windows.append((latest_start, completed_through))
+                    if latest_start > today_bounds[0]:
+                        backfill_window = _bounded_missing_window(
+                            db, symbol, today_bounds[0], latest_start
+                        )
+                        if backfill_window:
+                            windows.append(backfill_window)
             previous_bounds = session_bounds(_previous_session(local_now.date()))
             assert previous_bounds is not None
             if _session_missing(db, symbol, previous_bounds[0], previous_bounds[1]):
-                windows.append(previous_bounds)
+                target_ranges.append(previous_bounds)
+                backfill_window = _bounded_missing_window(
+                    db, symbol, previous_bounds[0], previous_bounds[1]
+                )
+                if backfill_window:
+                    windows.append(backfill_window)
             if not windows:
                 # Continuously verify the configured credentials and SIP
                 # entitlement even when the latest session is already complete.
@@ -425,20 +473,10 @@ def ingest_intraday(
                 saved["out_of_order"] = saved["out_of_order"] or persisted["out_of_order"]
                 provider_duplicates += duplicates
                 provider_out_of_order = provider_out_of_order or out_of_order
-                window_missing = _session_missing(db, symbol, window_start, window_end)
-                if window_missing:
-                    recovery_start = datetime.fromisoformat(window_missing[0])
-                    recovery_end = datetime.fromisoformat(window_missing[-1]) + BAR_CADENCE
-                    recovery_rows, duplicates, out_of_order = _fetch_bars(
-                        symbol, recovery_start, recovery_end
-                    )
-                    persisted = upsert_intraday_bars(
-                        db, symbol, recovery_rows, ingested_at=observed_at
-                    )
-                    saved["rows_imported"] += persisted["rows_imported"]
-                    provider_duplicates += duplicates
-                    provider_out_of_order = provider_out_of_order or out_of_order
-                    missing.extend(_session_missing(db, symbol, window_start, window_end))
+                missing.extend(_session_missing(db, symbol, window_start, window_end))
+            for target_start, target_end in target_ranges:
+                missing.extend(_session_missing(db, symbol, target_start, target_end))
+            missing = sorted(set(missing))
             latest = (
                 db.query(IntradayBar)
                 .filter_by(symbol=symbol, timeframe="1m")

@@ -79,6 +79,9 @@ REDIS_LOCKED_JOBS = frozenset(
     }
 )
 REDIS_JOB_LOCK_TTL_SECONDS = 15 * 60
+INTRADAY_TASK_SOFT_TIME_LIMIT_SECONDS = 45
+INTRADAY_TASK_TIME_LIMIT_SECONDS = 55
+INTRADAY_JOB_LOCK_TTL_SECONDS = INTRADAY_TASK_TIME_LIMIT_SECONDS + 65
 
 
 def _acquire_job_lock(job_name: str):
@@ -97,9 +100,14 @@ def _acquire_job_lock(job_name: str):
     )
     try:
         client.ping()
+        lock_ttl = (
+            INTRADAY_JOB_LOCK_TTL_SECONDS
+            if job_name == "intraday_market_data_import"
+            else REDIS_JOB_LOCK_TTL_SECONDS
+        )
         lock = client.lock(
             f"trading:scheduled-job:{job_name}",
-            timeout=REDIS_JOB_LOCK_TTL_SECONDS,
+            timeout=lock_ttl,
             blocking=False,
         )
         if not lock.acquire(blocking=False):
@@ -178,7 +186,10 @@ def daily_market_data_import() -> dict:
 
     return _run_job("daily_market_data_import", work)
 
-@celery_app.task
+@celery_app.task(
+    soft_time_limit=INTRADAY_TASK_SOFT_TIME_LIMIT_SECONDS,
+    time_limit=INTRADAY_TASK_TIME_LIMIT_SECONDS,
+)
 def intraday_market_data_import() -> dict:
     return _run_job("intraday_market_data_import", lambda db: ingest_intraday(db))
 
