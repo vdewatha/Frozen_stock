@@ -203,6 +203,81 @@ class ForwardTrialTests(unittest.TestCase):
                 before_report_count,
             )
 
+    def test_authenticated_report_download_cannot_cross_trial_boundary(self):
+        owner_trial_id = "00000000-0000-0000-0000-000000000001"
+        other_trial_id = "00000000-0000-0000-0000-000000000002"
+        with Session(self.engine) as db:
+            owner = self.trial(db, status="paused", trial_id=owner_trial_id)
+            other = self.trial(db, status="paused", trial_id=other_trial_id)
+            created = evaluate_promotion_readiness(db, owner.id)
+            db.commit()
+            before_trials = {
+                trial.id: (
+                    trial.status,
+                    trial.pause_reason,
+                    trial.binding_id,
+                    dict(trial.policy),
+                    dict(trial.lineage),
+                )
+                for trial in (owner, other)
+            }
+            before_report_count = db.query(StockPaperPromotionReadinessReport).count()
+            report_id = created["id"]
+
+        app = FastAPI()
+        app.add_middleware(
+            AuthenticationMiddleware,
+            configuration=Settings(
+                _env_file=None,
+                auth_viewer_key="v" * 32,
+                auth_researcher_key="r" * 32,
+                auth_operator_key="o" * 32,
+                auth_admin_key="a" * 32,
+            ),
+        )
+        app.include_router(router, prefix="/api")
+
+        def db_session():
+            with Session(self.engine) as db:
+                yield db
+
+        app.dependency_overrides[get_db] = db_session
+        path = (
+            f"/api/stock/forward-trials/{other_trial_id}/"
+            f"promotion-readiness/reports/{report_id}/download"
+        )
+        with TestClient(app) as client:
+            response = client.get(
+                path,
+                headers={"Authorization": "Bearer " + "v" * 32},
+            )
+
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertNotIn("report_hash", response.text)
+        self.assertNotIn("evidence", response.text)
+        self.assertNotIn("Content-Disposition", response.headers)
+        with Session(self.engine) as db:
+            self.assertEqual(
+                before_trials,
+                {
+                    trial.id: (
+                        trial.status,
+                        trial.pause_reason,
+                        trial.binding_id,
+                        dict(trial.policy),
+                        dict(trial.lineage),
+                    )
+                    for trial in (
+                        db.get(StockPaperTrial, owner_trial_id),
+                        db.get(StockPaperTrial, other_trial_id),
+                    )
+                },
+            )
+            self.assertEqual(
+                db.query(StockPaperPromotionReadinessReport).count(),
+                before_report_count,
+            )
+
     def test_session_evidence_uses_first_completed_sessions_after_start(self):
         with Session(self.engine) as db:
             row = self.trial(db)
