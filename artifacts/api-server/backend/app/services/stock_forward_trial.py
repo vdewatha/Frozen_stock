@@ -628,6 +628,7 @@ def trial_feed_preflight(
         and account.status == "reconciled"
         and not account.reconciliation_required
         and account.accounting_verified
+        and not account.unexplained_residual
     )
     # The approved trial is the four-symbol frozen universe and must only be
     # resumed from an active regular-session preflight. Older synthetic
@@ -760,7 +761,12 @@ def start_trial(
     # Starting is intentionally conservative: observe/reconcile task must establish these facts.
     from app.models.stock_paper import StockPaperAccount
     account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
-    if not account or account.status != "reconciled" or account.reconciliation_required:
+    if (
+        not account
+        or account.status != "reconciled"
+        or account.reconciliation_required
+        or account.unexplained_residual
+    ):
         row.status, row.blocked_reason = "blocked", "Alpaca paper ledger is not reconciled"
         write_audit_log(
             db,

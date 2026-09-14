@@ -584,6 +584,89 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(result.status, "blocked")
             self.assertIn("not reconciled", result.blocked_reason)
 
+    def test_authenticated_operator_resume_blocks_unresolved_ledger_without_credentials(self):
+        first_trial_id = "00000000-0000-0000-0000-000000000001"
+        second_trial_id = "00000000-0000-0000-0000-000000000002"
+        with Session(self.engine) as db:
+            self.trial(db, status="paused", trial_id=first_trial_id)
+            self.account(db, reconciled=False)
+            account = db.query(StockPaperAccount).one()
+            account.raw_payload = {
+                "api_key": "broker-api-key-must-not-leak",
+                "secret_key": "broker-secret-must-not-leak",
+            }
+            db.commit()
+
+        app = FastAPI()
+        app.add_middleware(
+            AuthenticationMiddleware,
+            configuration=Settings(
+                _env_file=None,
+                auth_viewer_key="v" * 32,
+                auth_researcher_key="r" * 32,
+                auth_operator_key="o" * 32,
+                auth_admin_key="a" * 32,
+            ),
+        )
+        app.include_router(router, prefix="/api")
+
+        def db_session():
+            with Session(self.engine) as db:
+                yield db
+
+        app.dependency_overrides[get_db] = db_session
+        headers = {"Authorization": "Bearer " + "o" * 32}
+        with patch("app.services.stock_forward_trial.validate_trial_artifact", return_value={}), \
+             TestClient(app) as client:
+            first_response = client.post(
+                f"/api/stock/forward-trials/{first_trial_id}/resume",
+                headers=headers,
+            )
+            self.assertEqual(first_response.status_code, 200, first_response.text)
+            self.assertEqual(first_response.json()["status"], "blocked")
+            self.assertIn("not reconciled", first_response.json()["blocked_reason"])
+            self.assertNotIn("broker-api-key-must-not-leak", first_response.text)
+            self.assertNotIn("broker-secret-must-not-leak", first_response.text)
+
+            with Session(self.engine) as db:
+                first_trial = db.get(StockPaperTrial, first_trial_id)
+                first_audit = db.query(AuditLog).one()
+                self.assertEqual(first_trial.status, "blocked")
+                self.assertNotEqual(first_trial.status, "running")
+                self.assertEqual(first_audit.action, "resume")
+                self.assertEqual(first_audit.status, "blocked")
+                self.assertIn("not reconciled", first_audit.message)
+                self.assertEqual(first_audit.payload["operator"], "operator")
+                self.assertNotIn("broker-api-key-must-not-leak", json.dumps(first_audit.payload))
+                self.assertNotIn("broker-secret-must-not-leak", json.dumps(first_audit.payload))
+
+                account = db.query(StockPaperAccount).one()
+                account.status = "reconciled"
+                account.reconciliation_required = False
+                account.accounting_verified = True
+                account.unexplained_residual = True
+                self.trial(db, status="paused", trial_id=second_trial_id)
+                db.commit()
+
+            second_response = client.post(
+                f"/api/stock/forward-trials/{second_trial_id}/resume",
+                headers=headers,
+            )
+            self.assertEqual(second_response.status_code, 200, second_response.text)
+            self.assertEqual(second_response.json()["status"], "blocked")
+            self.assertIn("not reconciled", second_response.json()["blocked_reason"])
+            self.assertNotIn("broker-api-key-must-not-leak", second_response.text)
+            self.assertNotIn("broker-secret-must-not-leak", second_response.text)
+
+        with Session(self.engine) as db:
+            second_trial = db.get(StockPaperTrial, second_trial_id)
+            audits = db.query(AuditLog).order_by(AuditLog.id).all()
+            self.assertEqual(second_trial.status, "blocked")
+            self.assertNotEqual(second_trial.status, "running")
+            self.assertEqual(len(audits), 2)
+            self.assertTrue(all(audit.status == "blocked" for audit in audits))
+            self.assertTrue(all("not reconciled" in audit.message for audit in audits))
+
     def test_start_feed_unavailable_blocks_during_session(self):
         with Session(self.engine) as db:
             row = self.trial(db, status="approved")
