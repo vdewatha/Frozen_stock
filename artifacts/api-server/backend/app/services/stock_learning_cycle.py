@@ -52,10 +52,16 @@ from app.services.stock_forward_trial import create_trial, start_trial, validate
 
 TERMINAL_STATUSES = {"complete", "promoted", "demoted", "rolled_back", "failed"}
 VALID_TRIGGERS = {"manual", "scheduled"}
+MIN_COMPARISON_SAMPLES = 30
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _utc(value: datetime) -> datetime:
+    """Normalize legacy naive database timestamps before comparisons."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 SCHEDULE_CONTROL_ID = 1
@@ -283,6 +289,294 @@ def evaluate_cycle_prerequisites(
 
 def _all_pass(gates: dict[str, dict]) -> bool:
     return bool(gates) and all(item.get("status") == "pass" for item in gates.values())
+
+
+def _number(value: Any) -> float | None:
+    """Parse finite metric values without allowing malformed evidence to pass."""
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return result if result == result and abs(result) != float("inf") else None
+
+
+def _metric_gate(
+    *,
+    name: str,
+    challenger: dict,
+    comparison: dict | None,
+    direction: str,
+    minimum_samples: int,
+    challenger_sample_count: Any = None,
+    comparison_sample_count: Any = None,
+) -> dict:
+    """Compare one immutable metric; every metric remains independently visible."""
+    challenger_value = _number(challenger.get(name))
+    comparison_value = _number(comparison.get(name)) if comparison else None
+    challenger_samples = _number(
+        challenger.get("sample_count") if challenger_sample_count is None else challenger_sample_count
+    )
+    comparison_samples = _number(
+        comparison.get("sample_count") if comparison and comparison_sample_count is None
+        else comparison_sample_count
+    ) if comparison else None
+    evidence = {
+        "challenger": challenger_value,
+        "comparison": comparison_value,
+        "challenger_sample_count": challenger_samples,
+        "comparison_sample_count": comparison_samples,
+        "direction": direction,
+        "minimum_sample_count": minimum_samples,
+    }
+    if challenger_value is None or challenger_samples is None or challenger_samples < minimum_samples:
+        return _gate(
+            "fail",
+            reason=f"challenger {name} evidence is missing or below the minimum sample count",
+            evidence=evidence,
+        )
+    if comparison is None:
+        return _gate("unknown", reason=f"comparison {name} evidence is unavailable", evidence=evidence)
+    if comparison_value is None or comparison_samples is None or comparison_samples < minimum_samples:
+        return _gate(
+            "unknown",
+            reason=f"comparison {name} evidence is missing or below the minimum sample count",
+            evidence=evidence,
+        )
+    passed = (
+        challenger_value <= comparison_value
+        if direction == "lower"
+        else challenger_value >= comparison_value
+    )
+    return _gate(
+        "pass" if passed else "fail",
+        reason=None if passed else f"challenger {name} is weaker than its comparison",
+        evidence=evidence,
+    )
+
+
+def _model_comparison_gate(
+    db: Session,
+    cycle: StockLearningCycle,
+    target_model: StockModelRegistry | None,
+    *,
+    before_model_run_id: str | None,
+    readiness_report: dict | None,
+) -> dict:
+    """Require independent accuracy, calibration, cost, and risk comparisons.
+
+    A single aggregate score is deliberately not used.  A challenger must
+    clear each dimension against the simple training baseline and, when one is
+    available, the incumbent model.  The comparison uses only immutable model
+    manifests; forward-trial readiness and operational gates remain separate.
+    """
+    if target_model is None:
+        return _gate("unknown", reason="challenger model evidence is unavailable")
+
+    manifest = target_model.training_metadata or {}
+    challenger = manifest.get("final_holdout_metrics") or {}
+    baseline = manifest.get("final_holdout_baseline") or {}
+    calibration = manifest.get("calibration_metrics") or {}
+    selected_calibration = calibration.get("selected_calibrated") or {}
+    baseline_calibration = calibration.get("training_prevalence_baseline") or {}
+
+    incumbent_id = (
+        (cycle.evidence or {}).get("handoff", {}).get("incumbent_model_run_id")
+        or (cycle.evidence or {}).get("admission", {}).get("incumbent_model_run_id")
+        or before_model_run_id
+    )
+    if incumbent_id == target_model.run_id:
+        incumbent_id = None
+    if incumbent_id is None:
+        incumbent_state = db.scalar(
+            select(StockModelLifecycleState)
+            .where(
+                StockModelLifecycleState.lifecycle_state == "champion",
+                StockModelLifecycleState.model_run_id != target_model.run_id,
+            )
+            .order_by(StockModelLifecycleState.updated_at.desc())
+        )
+        incumbent_id = incumbent_state.model_run_id if incumbent_state else None
+    incumbent_model = db.get(StockModelRegistry, incumbent_id) if incumbent_id else None
+    incumbent_manifest = incumbent_model.training_metadata if incumbent_model else {}
+    incumbent_metrics = incumbent_manifest.get("final_holdout_metrics") or {}
+    incumbent_calibration = (incumbent_manifest.get("calibration_metrics") or {}).get(
+        "selected_calibrated"
+    ) or {}
+
+    sample_gate = _gate(
+        "pass" if _number(challenger.get("sample_count")) is not None
+        and _number(challenger.get("sample_count")) >= MIN_COMPARISON_SAMPLES else "fail",
+        reason=None if _number(challenger.get("sample_count")) is not None
+        and _number(challenger.get("sample_count")) >= MIN_COMPARISON_SAMPLES
+        else "challenger final holdout has fewer than the minimum comparison samples",
+        evidence={
+            "challenger_sample_count": challenger.get("sample_count"),
+            "minimum_sample_count": MIN_COMPARISON_SAMPLES,
+        },
+    )
+    baseline_accuracy = {
+        "brier_score": baseline.get("brier_score"),
+        "log_loss": baseline.get("log_loss"),
+        "sample_count": baseline.get("sample_count"),
+    }
+    selected_accuracy = {
+        "brier_score": challenger.get("brier_score"),
+        "log_loss": challenger.get("log_loss"),
+        "sample_count": challenger.get("sample_count"),
+    }
+    baseline_calibration_values = {
+        "brier_score": baseline_calibration.get("brier_score"),
+        "log_loss": baseline_calibration.get("log_loss"),
+        "sample_count": baseline_calibration.get("sample_count"),
+    }
+    selected_calibration_values = {
+        "brier_score": selected_calibration.get("brier_score"),
+        "log_loss": selected_calibration.get("log_loss"),
+        "sample_count": selected_calibration.get("sample_count"),
+    }
+    challenger_return = (challenger.get("cost_aware_nonoverlapping_returns") or {})
+    baseline_return = (baseline.get("cost_aware_nonoverlapping_returns") or {})
+    incumbent_return = (incumbent_metrics.get("cost_aware_nonoverlapping_returns") or {})
+
+    subgates = {
+        "minimum_samples": sample_gate,
+        "baseline_brier_score": _metric_gate(
+            name="brier_score", challenger=selected_accuracy,
+            comparison=baseline_accuracy, direction="lower",
+            minimum_samples=MIN_COMPARISON_SAMPLES,
+        ),
+        "baseline_log_loss": _metric_gate(
+            name="log_loss", challenger=selected_accuracy,
+            comparison=baseline_accuracy, direction="lower",
+            minimum_samples=MIN_COMPARISON_SAMPLES,
+        ),
+        "baseline_calibration_brier_score": _metric_gate(
+            name="brier_score", challenger=selected_calibration_values,
+            comparison=baseline_calibration_values, direction="lower",
+            minimum_samples=MIN_COMPARISON_SAMPLES,
+        ),
+        "baseline_calibration_log_loss": _metric_gate(
+            name="log_loss", challenger=selected_calibration_values,
+            comparison=baseline_calibration_values, direction="lower",
+            minimum_samples=MIN_COMPARISON_SAMPLES,
+        ),
+        "baseline_total_return": _metric_gate(
+            name="total_return", challenger=challenger_return,
+            comparison=baseline_return, direction="higher",
+            minimum_samples=MIN_COMPARISON_SAMPLES,
+            challenger_sample_count=challenger.get("sample_count"),
+            comparison_sample_count=baseline.get("sample_count"),
+        ),
+        "baseline_max_drawdown": _metric_gate(
+            name="max_drawdown", challenger=challenger_return,
+            comparison=baseline_return, direction="lower",
+            minimum_samples=MIN_COMPARISON_SAMPLES,
+            challenger_sample_count=challenger.get("sample_count"),
+            comparison_sample_count=baseline.get("sample_count"),
+        ),
+    }
+    if incumbent_model is None:
+        incumbent_gate = _gate(
+            "pass",
+            reason="no prior champion exists; baseline comparison is the independent comparator",
+            evidence={"incumbent_model_run_id": None},
+        )
+        incumbent_subgates = {}
+    else:
+        incumbent_subgates = {
+            "brier_score": _metric_gate(
+                name="brier_score", challenger=selected_accuracy,
+                comparison=incumbent_metrics, direction="lower",
+                minimum_samples=MIN_COMPARISON_SAMPLES,
+            ),
+            "log_loss": _metric_gate(
+                name="log_loss", challenger=selected_accuracy,
+                comparison=incumbent_metrics, direction="lower",
+                minimum_samples=MIN_COMPARISON_SAMPLES,
+            ),
+            "calibration_brier_score": _metric_gate(
+                name="brier_score", challenger=selected_calibration_values,
+                comparison=incumbent_calibration, direction="lower",
+                minimum_samples=MIN_COMPARISON_SAMPLES,
+            ),
+            "calibration_log_loss": _metric_gate(
+                name="log_loss", challenger=selected_calibration_values,
+                comparison=incumbent_calibration, direction="lower",
+                minimum_samples=MIN_COMPARISON_SAMPLES,
+            ),
+            "total_return": _metric_gate(
+                name="total_return", challenger=challenger_return,
+                comparison=incumbent_return, direction="higher",
+                minimum_samples=MIN_COMPARISON_SAMPLES,
+                challenger_sample_count=challenger.get("sample_count"),
+                comparison_sample_count=incumbent_metrics.get("sample_count"),
+            ),
+            "max_drawdown": _metric_gate(
+                name="max_drawdown", challenger=challenger_return,
+                comparison=incumbent_return, direction="lower",
+                minimum_samples=MIN_COMPARISON_SAMPLES,
+                challenger_sample_count=challenger.get("sample_count"),
+                comparison_sample_count=incumbent_metrics.get("sample_count"),
+            ),
+        }
+        incumbent_gate = _gate(
+            "fail" if any(item["status"] == "fail" for item in incumbent_subgates.values())
+            else "unknown" if any(item["status"] == "unknown" for item in incumbent_subgates.values())
+            else "pass",
+            reason=next(
+                (item.get("reason") for item in incumbent_subgates.values() if item["status"] != "pass"),
+                None,
+            ),
+            evidence={"incumbent_model_run_id": incumbent_model.run_id, "gates": incumbent_subgates},
+        )
+
+    baseline_gate = _gate(
+        "fail" if any(item["status"] == "fail" for item in subgates.values())
+        else "unknown" if any(item["status"] == "unknown" for item in subgates.values())
+        else "pass",
+        reason=next(
+            (item.get("reason") for item in subgates.values() if item["status"] != "pass"),
+            None,
+        ),
+        evidence={"gates": subgates},
+    )
+    readiness_risk = ((readiness_report or {}).get("gates") or {}).get("risk_per_trade")
+    risk_gate = _gate(
+        "pass" if readiness_risk and readiness_risk.get("status") == "pass" else
+        "unknown" if readiness_report is None else "fail",
+        reason=None if readiness_risk and readiness_risk.get("status") == "pass"
+        else "forward risk evidence is not explicitly passing",
+        evidence=readiness_risk or {},
+    )
+    all_subgates = {"baseline": baseline_gate, "incumbent": incumbent_gate, "forward_risk": risk_gate}
+    status = (
+        "fail" if any(item["status"] == "fail" for item in all_subgates.values())
+        else "unknown" if any(item["status"] == "unknown" for item in all_subgates.values())
+        else "pass"
+    )
+    return _gate(
+        status,
+        reason=next(
+            (item.get("reason") for item in all_subgates.values() if item["status"] != "pass"),
+            None,
+        ),
+        evidence={
+            "challenger_model_run_id": target_model.run_id,
+            "incumbent_model_run_id": incumbent_model.run_id if incumbent_model else None,
+            "minimum_sample_count": MIN_COMPARISON_SAMPLES,
+            "gates": all_subgates,
+            "challenger": {
+                "final_holdout": challenger,
+                "calibration": selected_calibration,
+                "cost_aware": challenger_return,
+            },
+            "baseline": {
+                "final_holdout": baseline,
+                "calibration": baseline_calibration,
+                "cost_aware": baseline_return,
+            },
+        },
+    )
 
 
 def _event(
@@ -609,6 +903,8 @@ def admit_scheduled_learning_cycle(
         if active_state and active_state.active_binding_id
         else None
     )
+    incumbent_binding_id = active_binding.id if active_binding else None
+    incumbent_model_run_id = active_binding.model_run_id if active_binding else None
     if (
         active_binding
         and active_binding.source_cycle_id
@@ -707,6 +1003,8 @@ def admit_scheduled_learning_cycle(
         "handoff": {
             "binding_id": binding.id,
             "trial_id": trial.id,
+            "incumbent_binding_id": incumbent_binding_id,
+            "incumbent_model_run_id": incumbent_model_run_id,
             "admitted_at": _now().isoformat(),
             "paper_only": True,
             "live_authorized": False,
@@ -910,16 +1208,42 @@ def cycle_action(
         raise StockTrainingError("Learning cycle not found")
     if action not in {"mark_eligible", "start_canary", "promote", "demote", "retire"}:
         raise StockTrainingError("Unsupported learning-cycle action")
-    if action in {"mark_eligible", "start_canary", "promote"} and cycle.status != "operator_review":
-        raise StockTrainingError("Cycle evidence must pass operator review before this action")
+    if not reason.strip():
+        raise StockTrainingError("A lifecycle action reason is required")
     if not cycle.model_run_id:
         raise StockTrainingError("Cycle has no registered model")
+    model = db.get(StockModelRegistry, cycle.model_run_id)
+    if model is None:
+        raise StockTrainingError("Cycle model is unavailable")
+    current = _current_lifecycle(db, model)
+    desired_state = {
+        "mark_eligible": "eligible",
+        "start_canary": "paper_canary",
+        "promote": "champion",
+        "demote": "demoted",
+        "retire": "retired",
+    }[action]
+    if (
+        action in {"mark_eligible", "start_canary", "promote"}
+        and cycle.status != "operator_review"
+        and current.lifecycle_state != desired_state
+    ):
+        raise StockTrainingError("Cycle evidence must pass operator review before this action")
+    # Lifecycle actions are retriable requests.  Once the requested mutable
+    # pointer already has the desired state, do not append another history
+    # event or attempt a second invalid transition.
+    if current.lifecycle_state == desired_state:
+        cycle.active_binding_id = db.scalar(select(StockPaperBindingState.active_binding_id).where(
+            StockPaperBindingState.id == 1
+        ))
+        cycle.status = "complete" if desired_state == "champion" else "demoted" if desired_state == "demoted" else cycle.status
+        cycle.stage = "promotion" if action in {"mark_eligible", "start_canary", "promote"} else "recovery"
+        cycle.last_reason = reason.strip()
+        return cycle
     transition_stock_model_lifecycle(
         db, model_run_id=cycle.model_run_id, action=action, actor=actor, reason=reason,
     )
-    state = db.scalar(select(StockModelRegistry.lifecycle_state).where(
-        StockModelRegistry.run_id == cycle.model_run_id
-    ))
+    state = _current_lifecycle(db, model, for_update=False).lifecycle_state
     cycle.active_binding_id = db.scalar(select(StockPaperBindingState.active_binding_id).where(
         StockPaperBindingState.id == 1
     ))
@@ -963,7 +1287,10 @@ def _automatic_validation_gate(db: Session, cycle: StockLearningCycle) -> dict:
     )
 
 
-def _automatic_monitor_gate(db: Session) -> tuple[dict, int | None]:
+def _automatic_monitor_gate(
+    db: Session,
+    trial: StockPaperTrial | None = None,
+) -> tuple[dict, int | None]:
     snapshot = db.query(StockMonitoringSnapshot).filter_by(
         monitor_key="stock_continuous_monitor",
     ).order_by(
@@ -972,6 +1299,19 @@ def _automatic_monitor_gate(db: Session) -> tuple[dict, int | None]:
     ).first()
     if not snapshot:
         return _gate("unknown", reason="current monitoring evidence is unavailable"), None
+    if trial and trial.started_at:
+        generated_at = _utc(snapshot.generated_at)
+        started_at = _utc(trial.started_at)
+        if generated_at < started_at:
+            return _gate(
+                "unknown",
+                reason="a fresh monitoring snapshot after the paper-canary start is required",
+                evidence={
+                    "snapshot_id": snapshot.id,
+                    "generated_at": generated_at.isoformat(),
+                    "canary_started_at": started_at.isoformat(),
+                },
+            ), snapshot.id
     checks = snapshot.checks or []
     passed = snapshot.status == "clear" and bool(checks) and all(
         check.get("status") == "clear" for check in checks
@@ -1065,6 +1405,8 @@ def automate_paper_promotion(
     ).order_by(StockPaperPromotionDecision.id.desc()).first()
     if cycle.status in {"complete", "promoted"} and prior_decision and prior_decision.decision == "promoted":
         return _decision_projection(prior_decision)
+    if cycle.status == "demoted" and prior_decision and prior_decision.decision == "rejected":
+        return _decision_projection(prior_decision)
 
     _lock_lifecycle_admission(db)
     binding_state = db.scalar(select(StockPaperBindingState).where(
@@ -1078,7 +1420,7 @@ def automate_paper_promotion(
     before_model_run_id = active_binding.model_run_id if active_binding else None
     trial, report = _automatic_trial_and_report(db, cycle, active_binding)
     validation = _automatic_validation_gate(db, cycle)
-    monitor, monitor_snapshot_id = _automatic_monitor_gate(db)
+    monitor, monitor_snapshot_id = _automatic_monitor_gate(db, trial)
     account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
     recovery = db.get(StockPaperRecoveryState, 1)
     target_model = db.get(StockModelRegistry, cycle.model_run_id) if cycle.model_run_id else None
@@ -1197,9 +1539,21 @@ def automate_paper_promotion(
         reason=None if data_ready else "aligned forward data-quality evidence is not explicitly passing",
         evidence={name: report_gates.get(name) for name in data_gate_names},
     )
+    comparison = _model_comparison_gate(
+        db,
+        cycle,
+        target_model,
+        before_model_run_id=before_model_run_id,
+        readiness_report=report,
+    )
+    comparison_evidence = comparison.get("evidence") or {}
+    comparison_subgates = comparison_evidence.get("gates") or {}
     gates = {
         "leakage_safe_validation": validation,
         "single_use_holdout": holdout_gate,
+        "challenger_comparison": comparison,
+        "challenger_sample_size": comparison_subgates.get("baseline", {}).get("evidence", {}).get("gates", {}).get("minimum_samples", _gate("unknown", reason="comparison evidence is unavailable")),
+        "incumbent_comparison": comparison_subgates.get("incumbent", _gate("unknown", reason="incumbent comparison evidence is unavailable")),
         "forward_trial": trial_gate,
         "promotion_readiness_report": report_gate,
         "immutable_lineage": lineage_gate,
@@ -1245,6 +1599,13 @@ def automate_paper_promotion(
     )
     after_binding_id = before_binding_id if passed else None
     after_model_run_id = cycle.model_run_id if passed else None
+    rejected = (
+        not passed
+        and comparison.get("status") == "fail"
+        and target_model is not None
+        and target_state is not None
+        and target_state.lifecycle_state == "paper_canary"
+    )
     if passed:
         if target_model is None or target_state is None:
             raise StockTrainingError("Promotion target model is unavailable")
@@ -1293,11 +1654,30 @@ def automate_paper_promotion(
         cycle.last_reason = reason
         decision_name = "promoted"
     else:
-        cycle.status, cycle.stage = "blocked", "promotion"
+        if rejected:
+            # A measured underperformer is a terminal rejection, not a
+            # retryable evidence gap.  Keep its immutable binding and model
+            # rows for audit, but remove the mutable active-canary pointer so
+            # the known-good champion is never silently replaced.
+            _transition_model(
+                db,
+                model=target_model,
+                action="demote",
+                actor=actor,
+                reason=f"Automatic paper challenger rejected: {cycle.cycle_id}",
+                binding_id=before_binding_id,
+            )
+            if binding_state is not None:
+                db.delete(binding_state)
+                db.flush()
+            cycle.status, cycle.stage = "demoted", "promotion"
+            decision_name = "rejected"
+        else:
+            cycle.status, cycle.stage = "blocked", "promotion"
+            decision_name = "blocked"
         cycle.monitor_snapshot_id = monitor_snapshot_id
-        cycle.active_binding_id = before_binding_id
+        cycle.active_binding_id = None if rejected else before_binding_id
         cycle.last_reason = reason
-        decision_name = "blocked"
     cycle.trial_id = trial.id if trial else cycle.trial_id
     cycle.gates = gates
     cycle.evidence = {**(cycle.evidence or {}), "automatic_promotion": evidence}

@@ -21,6 +21,32 @@ function gateClass(status: string): string {
   return "text-amber-700";
 }
 
+function ComparisonSummary({ cycle }: { cycle: StockLearningCycle }) {
+  const gate = cycle.gates.challenger_comparison;
+  if (!gate) return null;
+  const evidence = (gate.evidence ?? {}) as {
+    challenger_model_run_id?: string;
+    incumbent_model_run_id?: string | null;
+    minimum_sample_count?: number;
+  };
+  return (
+    <div className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs" data-testid="learning-cycle-comparison">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-semibold text-ink">Challenger comparison</span>
+        <span className={gateClass(gate.status)}>{gate.status}</span>
+      </div>
+      <div className="mt-1 text-slate-600">
+        {gate.reason ?? "Accuracy, calibration, cost, risk, and sample gates passed independently."}
+      </div>
+      <div className="mt-1 flex flex-wrap gap-3 text-slate-500">
+        <span>Challenger: {evidence.challenger_model_run_id ?? cycle.model_run_id ?? "unavailable"}</span>
+        <span>Incumbent: {evidence.incumbent_model_run_id ?? "baseline only"}</span>
+        <span>Minimum samples: {evidence.minimum_sample_count ?? "unknown"}</span>
+      </div>
+    </div>
+  );
+}
+
 export function StockLearningCyclePanel() {
   const [cycles, setCycles] = useState<StockLearningCycle[]>([]);
   const [scheduleControl, setScheduleControl] = useState<StockLearningScheduleControl | null>(null);
@@ -192,6 +218,7 @@ export function StockLearningCyclePanel() {
                   <div className="mt-1 text-slate-500">No scheduled decision has been recorded; missing evidence is not a pass.</div>
                 )}
               </div>
+              <ComparisonSummary cycle={cycle} />
               <div className="mt-2 grid gap-1 sm:grid-cols-2">
                 {Object.entries(cycle.gates).map(([name, gate]) => (
                   <div className={`flex items-center gap-1 text-xs ${gateClass(gate.status)}`} key={name}>
