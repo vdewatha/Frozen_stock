@@ -419,6 +419,24 @@ class StockPaperRevalidationRequest(BaseModel):
         return value
 
 
+class LiveBrokerOrderRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=32)
+    side: str = Field(pattern="^(buy|sell)$")
+    quantity: Decimal = Field(gt=0)
+    reference_price: Decimal = Field(gt=0)
+    order_type: str = Field(default="market", pattern="^(market|limit)$")
+    time_in_force: str = Field(default="day", pattern="^day$")
+    limit_price: Optional[Decimal] = Field(default=None, gt=0)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    model_run_id: str = Field(min_length=1, max_length=64)
+    signal_id: int = Field(gt=0)
+    risk_decision_id: str = Field(min_length=1, max_length=96)
+
+
+class LiveBrokerCancelRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class PaperTradingRunResponse(BaseModel):
     symbol: str
     strategy: str

@@ -124,6 +124,20 @@ class Settings(BaseSettings):
             self.paper_alpaca_api_secret.get_secret_value(),
         )
 
+    @property
+    def live_credentials_configured(self) -> bool:
+        return bool(
+            self.live_alpaca_api_key.get_secret_value()
+            and self.live_alpaca_api_secret.get_secret_value()
+        )
+
+    def live_broker_credentials(self) -> tuple[str, str]:
+        """Return only the explicitly configured live credential pair."""
+        return (
+            self.live_alpaca_api_key.get_secret_value(),
+            self.live_alpaca_api_secret.get_secret_value(),
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:

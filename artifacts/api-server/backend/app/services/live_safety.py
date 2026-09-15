@@ -94,6 +94,7 @@ def _environment_gate() -> dict:
         bool(settings.allow_live_trading)
         and settings.environment == settings.live_environment_name
         and bool(settings.live_broker_name.strip())
+        and settings.live_credentials_configured
     )
     return _gate(
         "pass" if explicit else "fail",
@@ -105,6 +106,7 @@ def _environment_gate() -> dict:
             "environment": settings.environment,
             "required_environment": settings.live_environment_name,
             "broker_named": bool(settings.live_broker_name.strip()),
+            "live_credentials_configured": settings.live_credentials_configured,
             "configuration_is_not_authorization": True,
         },
     )
@@ -124,11 +126,34 @@ def _approval_gate(state: LiveSafetyState) -> dict:
     )
 
 
-def _broker_account_gate() -> dict:
-    # No code path in the paper application can assert a live account.  A
-    # future isolated-live-broker task must replace this with broker-sourced,
-    # non-secret account and mode evidence.
-    return _gate("unknown", "verified live broker and account state is unavailable")
+def _broker_account_gate(db: Session) -> dict:
+    # This evidence is populated only by the isolated live-broker reconciler.
+    # Paper-account rows and configuration flags are deliberately not accepted
+    # as proof of a live account.
+    from app.models import LiveBrokerAccount
+
+    account = db.query(LiveBrokerAccount).filter_by(broker="alpaca_live").one_or_none()
+    if not account:
+        return _gate("unknown", "verified live broker and account state is unavailable")
+    ready = (
+        account.environment == settings.live_environment_name
+        and account.status == "reconciled"
+        and not account.reconciliation_required
+        and not account.unexplained_residual
+    )
+    return _gate(
+        "pass" if ready else "fail",
+        None if ready else "live broker account requires reconciliation or is halted",
+        {
+            "broker": account.broker,
+            "account_id": account.broker_account_id,
+            "environment": account.environment,
+            "status": account.status,
+            "reconciliation_required": account.reconciliation_required,
+            "unexplained_residual": account.unexplained_residual,
+            "last_reconciled_at": account.last_reconciled_at,
+        },
+    )
 
 
 def _current_data_gate(db: Session, now: datetime) -> dict:
@@ -231,7 +256,7 @@ def evaluate_live_safety(db: Session, *, now: datetime | None = None) -> dict:
     gates = {
         "environment_separation": _environment_gate(),
         "operator_approval": _approval_gate(state),
-        "broker_account": _broker_account_gate(),
+        "broker_account": _broker_account_gate(db),
         "current_data": _current_data_gate(db, observed_at),
         "monitoring_health": _monitoring_gate(db, observed_at),
         "recovery_readiness": _recovery_gate(db),

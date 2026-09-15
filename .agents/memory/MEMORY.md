@@ -25,3 +25,4 @@
 - [Controlled interruption evidence](controlled-interruption-evidence.md) — require all five isolated interruptions before continued-paper readiness can be considered.
 - [Production identity boundary](production-identity-boundary.md) — production callers use signed identities mapped to server-side roles; local role keys remain paper-only compatibility.
 - [Accuracy vintage revalidation](accuracy-vintage-revalidation.md) — immutable outcomes must be rechecked against current feature vintages before receiving later accuracy credit.
+- [Live broker isolation](live-broker-isolation.md) — live provider truth, order lineage, and ambiguity handling must remain separate from paper execution.

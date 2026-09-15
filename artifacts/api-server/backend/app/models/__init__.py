@@ -63,6 +63,15 @@ from app.models.stock_paper import (
     StockPaperStrategyEvidence,
     StockPaperTrialLot,
 )
+from app.models.live_broker import (
+    LiveBrokerAccount,
+    LiveBrokerPosition,
+    LiveBrokerAccountSnapshot,
+    LiveBrokerOrder,
+    LiveBrokerFill,
+    LiveBrokerActivity,
+    LiveBrokerLedgerEvent,
+)
 
 __all__ = [
     "Asset",
@@ -120,4 +129,11 @@ __all__ = [
     "StockPaperOrder",
     "StockPaperPosition",
     "StockPaperStrategyEvidence",
+    "LiveBrokerAccount",
+    "LiveBrokerPosition",
+    "LiveBrokerAccountSnapshot",
+    "LiveBrokerOrder",
+    "LiveBrokerFill",
+    "LiveBrokerActivity",
+    "LiveBrokerLedgerEvent",
 ]
