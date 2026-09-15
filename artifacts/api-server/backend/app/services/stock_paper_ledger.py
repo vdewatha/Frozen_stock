@@ -214,6 +214,44 @@ def _event(db: Session, account: StockPaperAccount | None, event_type: str, stat
            actor=str(db.info.get("stock_paper_actor", "system")), payload=payload))
 
 
+def _event_once(
+    db: Session,
+    account: StockPaperAccount | None,
+    event_type: str,
+    status: str,
+    reason: str | None,
+    payload: dict | None = None,
+) -> None:
+    """Do not append the same reconciliation notice for repeated broker evidence."""
+    query = db.query(StockPaperLedgerEvent).filter(
+        StockPaperLedgerEvent.account_id == (account.id if account else None),
+        StockPaperLedgerEvent.event_type == event_type,
+        StockPaperLedgerEvent.status == status,
+        StockPaperLedgerEvent.reason == reason,
+    )
+    if any((row.payload or {}) == (payload or {}) for row in query.all()):
+        return
+    _event(db, account, event_type, status, reason, payload)
+
+
+def _activity_classification(raw: dict) -> str:
+    """Classify provider activity without treating it as strategy performance."""
+    activity_type = str(raw.get("activity_type") or "FILL").upper()
+    if activity_type == "FILL":
+        return "fill"
+    if activity_type in {"DIV", "DIVNRA"}:
+        return "dividend"
+    if activity_type in {"SPLIT", "REORG", "ROC", "SPIN"}:
+        return "corporate_action"
+    if activity_type in {"FEE", "TAF", "TAX"}:
+        return "fee"
+    if activity_type in {"TRANS", "ACATC", "ACATS", "CSD", "CSW", "DEPOSIT", "WITHDRAWAL"}:
+        return "transfer_or_cash_movement"
+    if activity_type in {"JNL", "JNLC", "JNLS", "MISC", "NC", "PTC", "MA", "SUB", "SSO"}:
+        return "broker_adjustment"
+    return "unsupported"
+
+
 def _halt(account: StockPaperAccount, reason: str, *, reconciliation_required: bool = True) -> None:
     account.status = "halted"
     account.halt_reason = reason
@@ -593,13 +631,42 @@ def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | No
     _upsert_orders(db, account, raw_orders)
     _upsert_fills(db, account, raw_fills, observed)
     _record_snapshot(db, account, observed)
+    review_activity_types = sorted({
+        str(row.get("activity_type") or "FILL").upper()
+        for row in raw_fills
+        if str(row.get("activity_type") or "FILL").upper() != "FILL"
+    })
     external_outstanding = db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id, StockPaperOrder.source == "broker_import",
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
     ).count()
-    if external_outstanding:
-        _halt(account, "Externally submitted nonterminal broker order requires manual review")
-        _event(db, account, "initialize", "halted", account.halt_reason, {"external_outstanding_orders": external_outstanding})
+    if external_outstanding or review_activity_types:
+        reasons = []
+        if external_outstanding:
+            reasons.append("Externally submitted nonterminal broker order requires manual review")
+        if review_activity_types:
+            reasons.append(
+                "Initial broker activity requires accounting review: "
+                + ", ".join(review_activity_types)
+            )
+            account.unexplained_residual = True
+            _mark_accounting_review_required(db)
+        _halt(account, "; ".join(reasons))
+        _event(
+            db,
+            account,
+            "initialize",
+            "halted",
+            account.halt_reason,
+            {
+                "external_outstanding_orders": external_outstanding,
+                "activity_types": review_activity_types,
+                "activity_classifications": {
+                    activity_type: _activity_classification({"activity_type": activity_type})
+                    for activity_type in review_activity_types
+                },
+            },
+        )
     else:
         _event(db, account, "initialize", "reconciled", UNKNOWN_COSTS_REASON,
                {"shorting_capability_ignored": True, "leverage_capability_ignored": True})
@@ -742,13 +809,23 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             _mark_accounting_review_required(db)
             _halt(account, equation_error)
             residual_payload = {"activity_ids": [str(row.get("id")) for row in new_activities]}
-            if new_activities:
+            activity_types = sorted({
+                str(row.get("activity_type") or "FILL").upper()
+                for row in new_activities
+            })
+            if activity_types:
+                residual_payload["activity_types"] = activity_types
+            fill_activities = [
+                row for row in new_activities
+                if str(row.get("activity_type") or "FILL").upper() == "FILL"
+            ]
+            if fill_activities:
                 cash_delta_without_fee = Decimal("0")
-                for row in new_activities:
+                for row in fill_activities:
                     sign = Decimal("1") if str(row.get("side") or "").lower() == "buy" else Decimal("-1")
                     cash_delta_without_fee += -sign * _decimal(row.get("qty"), "fill quantity") * _decimal(row.get("price"), "fill price")
                 residual_payload["cash_residual"] = str(account.cash - (prior_cash + cash_delta_without_fee))
-            _event(db, account, "reconcile", "halted", equation_error, residual_payload)
+            _event_once(db, account, "reconcile", "halted", equation_error, residual_payload)
         elif unresolved_nonterminal:
             _halt(account, "Nonterminal client order has no broker lookup result")
             _event(db, account, "reconcile", "halted", account.halt_reason, {"unresolved_client_order_ids": unresolved_nonterminal})
@@ -765,8 +842,19 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
         elif account.unexplained_residual:
             account.reconciliation_required = True
             _mark_accounting_review_required(db)
-            _event(db, account, "reconcile", "halted",
-                   "Prior unexplained cash or position residual requires manual accounting review")
+            prior_halt = db.query(StockPaperLedgerEvent).filter_by(
+                account_id=account.id,
+                event_type="reconcile",
+                status="halted",
+            ).first()
+            if new_activities or prior_halt is None:
+                _event_once(
+                    db,
+                    account,
+                    "reconcile",
+                    "halted",
+                    "Prior unexplained cash or position residual requires manual accounting review",
+                )
         else:
             account.reconciliation_required = False
             if account.status != "halted":

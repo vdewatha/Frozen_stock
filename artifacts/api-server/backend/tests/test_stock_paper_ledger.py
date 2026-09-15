@@ -186,9 +186,9 @@ class StockPaperLedgerTests(unittest.TestCase):
         first = FakeAlpaca(activities=[activity])
         second = FakeAlpaca(activities=[activity])
         with Session(self.engine) as db:
-            self.assertEqual(initialize_stock_paper_account(db, first)["status"], "reconciled")
+            self.assertEqual(initialize_stock_paper_account(db, first)["status"], "halted")
             result = reconcile_stock_paper_account(db, second)
-            self.assertEqual(result["status"], "reconciled")
+            self.assertEqual(result["status"], "halted")
             self.assertEqual(second.fills_after, [None])
 
     def test_external_nonterminal_and_late_fill_are_fail_closed(self):

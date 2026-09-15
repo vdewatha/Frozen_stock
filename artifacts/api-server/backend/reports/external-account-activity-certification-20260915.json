@@ -1,0 +1,88 @@
+{
+  "activity_classes": {
+    "review_required": [
+      "DIV and DIVNRA dividends",
+      "SPLIT, REORG, ROC, and SPIN corporate actions",
+      "FEE, TAF, and TAX fee activity",
+      "TRANS, ACATC, ACATS, CSD, CSW, DEPOSIT, and WITHDRAWAL cash movement",
+      "JNL, JNLC, JNLS, MISC, NC, PTC, MA, SUB, and SSO broker adjustments",
+      "Unknown or malformed provider activity",
+      "Externally originated nonterminal orders and fills without strategy ownership"
+    ],
+    "supported": [
+      "FILL with immutable broker identifiers and stable broker timestamp",
+      "Late commission enrichment for an existing immutable fill only"
+    ]
+  },
+  "certification_status": "pass",
+  "checks": [
+    {
+      "id": "historical_activity_import_is_classified",
+      "status": "pass"
+    },
+    {
+      "id": "unsupported_activity_blocks_accounting_and_recovery",
+      "status": "pass"
+    },
+    {
+      "id": "external_orders_and_fills_remain_unowned",
+      "status": "pass"
+    },
+    {
+      "id": "corporate_action_snapshot_preserves_immutable_history",
+      "status": "pass"
+    },
+    {
+      "id": "late_commission_enrichment_requires_exact_immutable_match",
+      "status": "pass"
+    },
+    {
+      "id": "post_pause_activity_cannot_clear_recovery",
+      "status": "pass"
+    },
+    {
+      "id": "repeated_activity_is_idempotent",
+      "status": "pass"
+    },
+    {
+      "id": "unknown_costs_withhold_pl_and_performance_fields",
+      "status": "pass"
+    },
+    {
+      "id": "raw_payloads_and_credentials_are_redacted_from_evidence_export",
+      "status": "pass"
+    }
+  ],
+  "generated_at": "2026-09-15T20:50:04.886376+00:00",
+  "recovery_boundary": {
+    "automatic_acceptance_of_external_activity": false,
+    "resume_requires": [
+      "fresh broker reconciliation",
+      "resolved accounting review",
+      "known applicable costs",
+      "terminal in-flight orders",
+      "fresh post-pause monitoring evidence",
+      "authorized operator revalidation"
+    ]
+  },
+  "report_sha256": "f3378279e15449a2c984582f7a41d7f88f8a11b16f970a693ec4fcadb628d9ea",
+  "report_type": "external_account_activity_certification",
+  "schema_version": 1,
+  "scope": {
+    "external_broker_account_contacted": false,
+    "invented_costs_or_activity": false,
+    "live_orders_submitted": false,
+    "paper_or_live_record_mixing": false,
+    "raw_broker_payloads_in_report": false
+  },
+  "test_result": {
+    "exit_code": 0,
+    "status": "pass",
+    "summary": "52 passed, 2 warnings in 91.70s (0:01:31)"
+  },
+  "test_sources": [
+    "tests/test_stock_paper_ledger.py",
+    "tests/test_external_account_activity_certification.py"
+  ],
+  "unresolved_blockers": []
+}
