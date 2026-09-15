@@ -27,6 +27,7 @@ ROLES = {"viewer": 0, "researcher": 1, "operator": 2, "admin": 3}
 ACTION_CONFIRMATION_HEADER = "x-action-confirmation"
 IDEMPOTENCY_HEADER = "x-idempotency-key"
 ACTION_REASON_HEADER = "x-action-reason"
+SECONDARY_AUTHORIZATION_HEADER = "x-secondary-authorization"
 READ_PATHS = {
     "/auth/session",
     "/crypto/status", "/crypto/bindings", "/crypto/decisions", "/crypto/shadow-audits",
@@ -219,17 +220,23 @@ def _decode_identity_token(token: str, configuration, now: int) -> tuple[str, st
     # The role claim is not trusted. The server-side mapping is authoritative.
     if not subject or role not in ROLES:
         return None
-    if claims.get("iss") and configuration.auth_identity_issuer and claims["iss"] != configuration.auth_identity_issuer:
+    if not configuration.auth_identity_issuer or claims.get("iss") != configuration.auth_identity_issuer:
         return None
-    if claims.get("aud") and configuration.auth_identity_audience:
-        audience = claims["aud"]
-        audiences = [audience] if isinstance(audience, str) else audience
-        if configuration.auth_identity_audience not in audiences:
-            return None
+    if not configuration.auth_identity_audience:
+        return None
+    audience = claims.get("aud")
+    audiences = [audience] if isinstance(audience, str) else audience
+    if not isinstance(audiences, list) or configuration.auth_identity_audience not in audiences:
+        return None
     try:
-        if int(claims.get("exp", 0)) <= now:
+        issued_at = int(claims.get("iat", 0))
+        expires_at = int(claims.get("exp", 0))
+        not_before = int(claims.get("nbf", issued_at))
+        if issued_at <= 0 or expires_at <= now or not_before > now:
             return None
-        if int(claims.get("iat", now)) < configuration.auth_identity_revoked_before:
+        if issued_at > now + 30 or expires_at - issued_at > configuration.auth_identity_max_token_seconds:
+            return None
+        if issued_at < configuration.auth_identity_revoked_before:
             return None
     except (TypeError, ValueError):
         return None
@@ -239,6 +246,35 @@ def _decode_identity_token(token: str, configuration, now: int) -> tuple[str, st
         "role": role,
         "issuer": claims.get("iss") or None,
         "key_rotated": bool(secrets[1]),
+    }
+
+
+def secondary_approval_identity(
+    request: Request,
+    *,
+    minimum_role: str,
+    configuration=None,
+) -> dict:
+    """Verify a second production identity without retaining its bearer assertion."""
+    configuration = configuration or settings
+    if configuration.environment != "production":
+        return {"actor": None, "role": None, "method": "local_compatibility"}
+    value = request.headers.get(SECONDARY_AUTHORIZATION_HEADER, "").strip()
+    candidate = value[7:] if value.lower().startswith("bearer ") else ""
+    verified = _decode_identity_token(candidate, configuration, int(time.time()))
+    if not verified:
+        raise ValueError("A valid secondary production identity is required")
+    actor, role, evidence = verified
+    primary = str(getattr(request.state, "actor", "")).strip()
+    if actor == primary:
+        raise ValueError("The secondary approver must be a distinct identity")
+    if ROLES[role] < ROLES[minimum_role]:
+        raise ValueError("The secondary identity lacks the required role")
+    return {
+        "actor": actor,
+        "role": role,
+        "method": evidence["method"],
+        "issuer": evidence.get("issuer"),
     }
 
 

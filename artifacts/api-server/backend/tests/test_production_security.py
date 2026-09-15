@@ -11,10 +11,22 @@ from app.core.config import Settings
 from app.core.security import AuthenticationMiddleware
 
 
-def _token(subject: str, secret: str, *, role_claim: str = "viewer", issued_at: int | None = None) -> str:
+def _token(
+    subject: str,
+    secret: str,
+    *,
+    role_claim: str = "viewer",
+    issued_at: int | None = None,
+    expires_at: int | None = None,
+    issuer: str = "identity.test",
+    audience: str = "trading-api",
+) -> str:
     issued_at = issued_at or int(time.time())
     header = {"alg": "HS256", "typ": "JWT"}
-    claims = {"sub": subject, "role": role_claim, "iat": issued_at, "exp": issued_at + 300}
+    claims = {
+        "sub": subject, "role": role_claim, "iat": issued_at,
+        "exp": expires_at or issued_at + 300, "iss": issuer, "aud": audience,
+    }
 
     def encode(value: dict) -> str:
         return base64.urlsafe_b64encode(
@@ -38,9 +50,27 @@ def _client(**overrides) -> TestClient:
             "alice": "viewer",
             "bob": "operator",
             "root": "admin",
+            "reviewer": "admin",
+            "service": "researcher",
+            "worker": "researcher",
+            "scheduler": "researcher",
+            "emergency": "operator",
         },
+        "auth_identity_principal_types": {
+            "alice": "viewer",
+            "bob": "operator",
+            "root": "reviewer",
+            "reviewer": "reviewer",
+            "service": "service",
+            "worker": "worker",
+            "scheduler": "scheduler",
+            "emergency": "emergency",
+        },
+        "auth_identity_issuer": "identity.test",
+        "auth_identity_audience": "trading-api",
         "paper_alpaca_api_key": "paper-key",
         "paper_alpaca_api_secret": "paper-secret",
+        "paper_broker_account_id": "paper-account",
     }
     config.update(overrides)
     app = FastAPI()
@@ -97,3 +127,99 @@ def test_production_configuration_fails_closed_and_previous_secret_supports_rota
         auth_identity_previous_signing_secret=previous,
     )
     assert client.get("/dashboard", headers=_headers("alice", secret=previous, key="rotated")).status_code == 200
+
+
+def test_expiration_revocation_issuer_audience_and_lifetime_fail_closed():
+    now = int(time.time())
+    assert _client().get(
+        "/dashboard",
+        headers={"Authorization": f"Bearer {_token('alice', 'primary-signing-secret-' * 2, issued_at=now - 400, expires_at=now - 1)}"},
+    ).status_code == 401
+    assert _client(auth_identity_revoked_before=now).get(
+        "/dashboard",
+        headers={"Authorization": f"Bearer {_token('alice', 'primary-signing-secret-' * 2, issued_at=now - 1)}"},
+    ).status_code == 401
+    assert _client().get(
+        "/dashboard",
+        headers={"Authorization": f"Bearer {_token('alice', 'primary-signing-secret-' * 2, issuer='wrong')}"},
+    ).status_code == 401
+    assert _client().get(
+        "/dashboard",
+        headers={"Authorization": f"Bearer {_token('alice', 'primary-signing-secret-' * 2, audience='wrong')}"},
+    ).status_code == 401
+    assert _client().get(
+        "/dashboard",
+        headers={"Authorization": f"Bearer {_token('alice', 'primary-signing-secret-' * 2, expires_at=now + 3601)}"},
+    ).status_code == 401
+
+
+def test_local_role_key_cannot_authorize_production():
+    client = _client(
+        auth_viewer_key="v" * 32,
+        auth_researcher_key="r" * 32,
+        auth_operator_key="o" * 32,
+        auth_admin_key="a" * 32,
+    )
+    assert client.get("/dashboard", headers={"Authorization": f"Bearer {'v' * 32}"}).status_code == 401
+
+
+def test_production_configuration_rejects_shared_broker_identity_and_incomplete_live_boundary():
+    config = Settings(
+        _env_file=None,
+        environment="production",
+        auth_mode="production_identity",
+        auth_identity_signing_secret="s" * 32,
+        auth_identity_roles={
+            "op": "operator", "review": "admin", "review2": "admin",
+            "svc": "researcher", "work": "researcher", "sched": "researcher", "break": "operator",
+        },
+        auth_identity_principal_types={
+            "op": "operator", "review": "reviewer", "review2": "reviewer",
+            "svc": "service", "work": "worker", "sched": "scheduler", "break": "emergency",
+        },
+        auth_identity_issuer="issuer",
+        auth_identity_audience="audience",
+        paper_alpaca_api_key="same-key",
+        paper_alpaca_api_secret="same-secret",
+        live_alpaca_api_key="same-key",
+        live_alpaca_api_secret="same-secret",
+        paper_broker_account_id="same-account",
+        live_broker_account_id="same-account",
+        allow_live_trading=True,
+    )
+    blockers = config.validate_production_configuration()
+    assert "paper and live broker credentials must be distinct" in blockers
+    assert "paper and live broker account bindings must be distinct" in blockers
+    assert "live trading requires the approved-live runtime environment" in blockers
+    assert "live trading requires an explicit live broker" in blockers
+
+
+def test_complete_production_identity_and_live_configuration_has_no_startup_blockers():
+    config = Settings(
+        _env_file=None,
+        environment="approved-live",
+        auth_mode="production_identity",
+        auth_identity_signing_secret="s" * 32,
+        auth_identity_roles={
+            "op": "operator", "review": "admin", "review2": "admin",
+            "svc": "researcher", "work": "researcher", "sched": "researcher",
+            "break": "operator", "view": "viewer",
+        },
+        auth_identity_principal_types={
+            "op": "operator", "review": "reviewer", "review2": "reviewer",
+            "svc": "service", "work": "worker", "sched": "scheduler",
+            "break": "emergency", "view": "viewer",
+        },
+        auth_identity_issuer="issuer",
+        auth_identity_audience="audience",
+        paper_alpaca_api_key="paper-key",
+        paper_alpaca_api_secret="paper-secret",
+        live_alpaca_api_key="live-key",
+        live_alpaca_api_secret="live-secret",
+        paper_broker_account_id="paper-account",
+        live_broker_account_id="live-account",
+        allow_live_trading=True,
+        live_environment_name="approved-live",
+        live_broker_name="alpaca_live",
+    )
+    assert config.validate_production_configuration() == []

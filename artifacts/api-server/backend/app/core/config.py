@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,9 +18,11 @@ class Settings(BaseSettings):
     auth_identity_signing_secret: SecretStr = SecretStr("")
     auth_identity_previous_signing_secret: SecretStr = SecretStr("")
     auth_identity_roles: dict[str, str] = {}
+    auth_identity_principal_types: dict[str, str] = {}
     auth_identity_issuer: str = ""
     auth_identity_audience: str = ""
     auth_identity_revoked_before: int = 0
+    auth_identity_max_token_seconds: int = 900
     database_url: str = "sqlite:///./trading_app.db"
     redis_url: str = "redis://localhost:6379/0"
     allow_live_trading: bool = False
@@ -40,6 +43,8 @@ class Settings(BaseSettings):
     paper_alpaca_api_secret: SecretStr = SecretStr("")
     live_alpaca_api_key: SecretStr = SecretStr("")
     live_alpaca_api_secret: SecretStr = SecretStr("")
+    paper_broker_account_id: str = ""
+    live_broker_account_id: str = ""
     alpaca_api_key: SecretStr = SecretStr("")
     alpaca_api_secret: SecretStr = SecretStr("")
     alpaca_data_url: str = "https://data.alpaca.markets"
@@ -59,7 +64,7 @@ class Settings(BaseSettings):
             return value.replace("postgres://", "postgresql+psycopg://", 1)
         return value
 
-    @field_validator("auth_identity_roles", mode="before")
+    @field_validator("auth_identity_roles", "auth_identity_principal_types", mode="before")
     @classmethod
     def parse_identity_roles(cls, value):
         if value is None or value == "":
@@ -87,8 +92,22 @@ class Settings(BaseSettings):
                 blockers.append("identity-to-role mapping is missing")
             elif any(role not in {"viewer", "researcher", "operator", "admin"} for role in self.auth_identity_roles.values()):
                 blockers.append("identity-to-role mapping contains an unknown role")
+            principal_types = set(self.auth_identity_principal_types.values())
+            required_types = {"operator", "reviewer", "service", "worker", "scheduler", "emergency"}
+            if set(self.auth_identity_principal_types) != set(self.auth_identity_roles):
+                blockers.append("identity principal inventory does not match the role mapping")
+            elif not required_types.issubset(principal_types):
+                blockers.append("identity principal inventory is missing a required production class")
+            if not self.auth_identity_issuer:
+                blockers.append("identity issuer is missing")
+            if not self.auth_identity_audience:
+                blockers.append("identity audience is missing")
+            if self.auth_identity_max_token_seconds < 60 or self.auth_identity_max_token_seconds > 3600:
+                blockers.append("identity token lifetime limit is invalid")
             if not self.paper_credentials_configured:
                 blockers.append("explicit paper broker credentials are missing")
+            if not self.paper_broker_account_id.strip():
+                blockers.append("explicit paper broker account binding is missing")
             live_pair = bool(
                 self.live_alpaca_api_key.get_secret_value()
                 or self.live_alpaca_api_secret.get_secret_value()
@@ -98,6 +117,38 @@ class Settings(BaseSettings):
                 and self.live_alpaca_api_secret.get_secret_value()
             ):
                 blockers.append("live broker credentials must be provided as a complete pair")
+            if live_pair and not self.live_broker_account_id.strip():
+                blockers.append("explicit live broker account binding is missing")
+            if live_pair and (
+                hmac.compare_digest(
+                    self.paper_alpaca_api_key.get_secret_value(),
+                    self.live_alpaca_api_key.get_secret_value(),
+                )
+                or hmac.compare_digest(
+                    self.paper_alpaca_api_secret.get_secret_value(),
+                    self.live_alpaca_api_secret.get_secret_value(),
+                )
+            ):
+                blockers.append("paper and live broker credentials must be distinct")
+            if (
+                self.paper_broker_account_id.strip()
+                and self.live_broker_account_id.strip()
+                and hmac.compare_digest(
+                    self.paper_broker_account_id.strip(),
+                    self.live_broker_account_id.strip(),
+                )
+            ):
+                blockers.append("paper and live broker account bindings must be distinct")
+            if self.allow_live_trading:
+                admin_count = sum(role == "admin" for role in self.auth_identity_roles.values())
+                if self.environment != self.live_environment_name or self.live_environment_name != "approved-live":
+                    blockers.append("live trading requires the approved-live runtime environment")
+                if not self.live_broker_name.strip():
+                    blockers.append("live trading requires an explicit live broker")
+                if not self.live_credentials_configured:
+                    blockers.append("live trading requires explicit live broker credentials")
+                if admin_count < 2:
+                    blockers.append("live trading requires two distinct mapped admin identities")
         return blockers
 
     @property

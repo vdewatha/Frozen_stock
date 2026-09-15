@@ -472,6 +472,9 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
             )
             db.add(account)
             db.flush()
+        elif settings.live_broker_account_id.strip() and values["broker_account_id"] != settings.live_broker_account_id.strip():
+            _halt_account(db, account, "Live broker account does not match the configured production binding", now)
+            raise LiveBrokerError("Live broker account does not match the configured production binding")
         elif values["broker_account_id"] != account.broker_account_id:
             raise LiveBrokerError("Live broker account identifier changed")
         for key, value in values.items():

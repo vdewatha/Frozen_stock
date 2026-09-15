@@ -651,6 +651,8 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             elif not resolved and (not order.broker_order_id or order.broker_order_id not in known_broker_ids):
                 unresolved_nonterminal.append(order.client_order_id)
         values = _account_values(raw_account, observed)
+        if settings.paper_broker_account_id.strip() and values["broker_account_id"] != settings.paper_broker_account_id.strip():
+            raise StockPaperError("Paper broker account does not match the configured production binding")
         if values["broker_account_id"] != account.broker_account_id:
             raise StockPaperError("Broker account identifier changed; refusing to merge accounts")
         for key, value in values.items():
