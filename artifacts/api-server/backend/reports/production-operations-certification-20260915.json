@@ -1,0 +1,95 @@
+{
+  "certification_status": "pass_with_prerequisites",
+  "checks": [
+    {
+      "id": "liveness_readiness_and_health_semantics",
+      "proof_sha256": "907787b8225a2cda91af26b31b197a9c0463126e693314046e1dfc808f4d8a52",
+      "status": "pass"
+    },
+    {
+      "id": "degraded_and_blocked_operation_states",
+      "proof_sha256": "5bad87378b2e0ee6e579df42d6a71d7ca9f5d5e95a96726bc62fbaaeaf8a715a",
+      "status": "pass"
+    },
+    {
+      "id": "redacted_alert_and_audit_trace",
+      "proof_sha256": "da7bbc752c713cbb4d19b6f50f8539a1d8c0f28c3015582c57f0807773377f14",
+      "status": "pass"
+    },
+    {
+      "id": "bounded_evidence_retention",
+      "proof_sha256": "def0f39a0f0d505c560a557b3212f304fd3d4f288842dbe5fff33e48b1e403be",
+      "status": "pass"
+    },
+    {
+      "id": "watchdog_exception_fail_closed",
+      "proof_sha256": "4b050f119b267142be51314762ee4b9f72e3872839390eaba8b52ffea2cabaad",
+      "status": "pass"
+    },
+    {
+      "id": "worker_and_scheduler_loss_detection",
+      "proof_sha256": "e0efd8dc0576940f92f76d1ee7ffec369e09f6af72375f6df69a59aa9425dce2",
+      "status": "pass"
+    },
+    {
+      "id": "api_redis_and_celery_restart_contracts",
+      "proof_sha256": "ac0c270535e1de56b6819a5113f42deb764846bc3267c97a971c55e95287f99d",
+      "status": "pass"
+    },
+    {
+      "id": "disposable_backup_restore_guard",
+      "proof_sha256": "f9e222e3339590bc879326449903371906c6745a7f2d89acfe46f43101b18bb7",
+      "status": "pass"
+    },
+    {
+      "id": "incident_procedure_and_configuration_digest",
+      "proof_sha256": "8745007ad947aacb6f7570f1025337817cb195548b9012ef456c07d19feeae1d",
+      "status": "pass"
+    }
+  ],
+  "generated_at": "2026-09-15T21:06:40.844615+00:00",
+  "health_contract": {
+    "blocked_trading": "Live trading remains disabled and unknown evidence cannot authorize orders.",
+    "degraded_operation": "Partial worker, scheduler, feed, or reconciliation evidence is degraded.",
+    "liveness": "API process health is separate from database/Redis readiness.",
+    "readiness": "Missing, stale, or failed evidence blocks paper operation.",
+    "unknown_evidence": "No observation is represented as unknown rather than healthy."
+  },
+  "measured_outcomes": {
+    "alert_projection_limit": 50,
+    "evidence_export_limit": 50,
+    "restart_drills": "isolated process/control-plane contracts; no active production restart",
+    "watchdog_interval_seconds": 30
+  },
+  "prerequisites": [
+    "A separately authorized disposable PostgreSQL backup and restore run remains required before launch.",
+    "Operator response-time measurement must be collected during a scheduled production-like exercise.",
+    "Live pilot activation remains a separate human-controlled decision and was not attempted."
+  ],
+  "proof_bundle_sha256": "1bc3b574c4076cd6b520953efd3197312f44ed140c50da1dee9ed31f1491c9fe",
+  "report_sha256": "bb2854e5bfe439b8700e07064888f06195ababdb5b3cced71020d0a93e4d7bb2",
+  "report_type": "production_operations_certification",
+  "schema_version": 1,
+  "scope": {
+    "active_production_database_restored_over": false,
+    "balances_prices_fees_and_pnl_in_report": false,
+    "credentials_in_report": false,
+    "disposable_restore_target_required": true,
+    "external_live_account_contacted": false,
+    "live_orders_submitted": false,
+    "raw_broker_payloads_in_report": false
+  },
+  "test_result": {
+    "exit_code": 0,
+    "status": "pass",
+    "summary": "22 passed, 2 warnings, 10 subtests passed in 156.21s (0:02:36)"
+  },
+  "test_sources": [
+    "tests/test_production_operations_certification.py",
+    "tests/test_security.py::SecurityTests::test_liveness_and_readiness_are_public_but_distinct",
+    "tests/test_monitor_security.py",
+    "tests/test_live_operations.py",
+    "tests/test_celery_worker_crash.py"
+  ],
+  "unresolved_blockers": []
+}

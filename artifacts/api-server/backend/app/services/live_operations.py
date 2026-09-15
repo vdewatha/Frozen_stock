@@ -532,6 +532,38 @@ def _alerts(db: Session, components: dict, now: datetime) -> list[dict]:
     return alerts[:MAX_ITEMS]
 
 
+def _health_contract(components: dict, overall: str, *, live_orders_allowed: bool) -> dict:
+    """Expose the operational vocabulary without treating unknown as healthy."""
+    unknown_components = sorted(
+        name for name, component in components.items() if component["status"] == "unknown"
+    )
+    readiness = (
+        "blocked"
+        if overall == "blocked"
+        else "degraded"
+        if overall == "degraded"
+        else "unknown"
+        if overall == "uncertain"
+        else "ready"
+    )
+    evidence = "unknown" if unknown_components else "clear"
+    return {
+        "liveness": {"status": "healthy", "reason": "The read-only operations projection completed."},
+        "readiness": {
+            "status": readiness,
+            "reason": "All required operational evidence is clear."
+            if readiness == "ready"
+            else "Operational evidence is incomplete or requires review.",
+        },
+        "operation": {"status": overall},
+        "trading": {
+            "status": "allowed" if live_orders_allowed else "blocked",
+            "live_orders_allowed": live_orders_allowed,
+        },
+        "evidence": {"status": evidence, "unknown_components": unknown_components},
+    }
+
+
 def live_operations_snapshot(db: Session) -> dict:
     now = _now()
     safety = evaluate_live_safety(db, now=now)
@@ -566,11 +598,17 @@ def live_operations_snapshot(db: Session) -> dict:
         else "uncertain" if "unknown" in statuses
         else "healthy"
     )
+    live_orders_allowed = bool(safety.get("live_orders_allowed"))
     return {
         "generated_at": now,
         "status": overall,
         "mode": safety.get("mode"),
-        "live_orders_allowed": bool(safety.get("live_orders_allowed")),
+        "live_orders_allowed": live_orders_allowed,
+        "health": _health_contract(
+            components,
+            overall,
+            live_orders_allowed=live_orders_allowed,
+        ),
         "components": components,
         "metrics": metrics,
         "account": broker_view["account"],
@@ -593,7 +631,7 @@ def live_operations_snapshot(db: Session) -> dict:
 
 def live_operations_evidence(db: Session, *, limit: int = MAX_ITEMS) -> dict:
     """Export attributable proof summaries without raw broker payloads."""
-    bounded = max(1, min(limit, 200))
+    bounded = max(1, min(limit, MAX_ITEMS))
     audit_rows = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(bounded).all()
     ledger_rows = db.query(LiveBrokerLedgerEvent).order_by(LiveBrokerLedgerEvent.created_at.desc()).limit(bounded).all()
     events = [
