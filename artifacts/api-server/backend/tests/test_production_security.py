@@ -223,3 +223,12 @@ def test_complete_production_identity_and_live_configuration_has_no_startup_bloc
         live_broker_name="alpaca_live",
     )
     assert config.validate_production_configuration() == []
+
+
+def test_named_approved_live_environment_uses_production_identity_path():
+    client = _client(environment="approved-live")
+    assert client.get("/dashboard", headers=_headers("alice", key="approved-live")).status_code == 200
+    assert client.get(
+        "/dashboard",
+        headers={"Authorization": f"Bearer {'v' * 32}"},
+    ).status_code == 401

@@ -71,7 +71,7 @@
       "idempotency_key"
     ]
   },
-  "generated_at": "2026-09-15T20:25:22.801074+00:00",
+  "generated_at": "2026-09-15T20:30:13.785510+00:00",
   "principal_inventory": [
     {
       "maximum_role": "viewer",
@@ -106,7 +106,7 @@
       "type": "emergency"
     }
   ],
-  "report_sha256": "f68917e3b5227acc3141ac5d0013ce01949cfdd6ef5df1de0fca9e9917242687",
+  "report_sha256": "1b68c94efa8d0d1f37621b272d0700719ea5445b8bc3397ccb8d9cc1c13c2b56",
   "report_type": "production_identity_boundary_certification",
   "schema_version": 1,
   "scope": {
@@ -118,7 +118,7 @@
   "test_result": {
     "exit_code": 0,
     "status": "pass",
-    "summary": "10 passed, 1 warning in 1.01s"
+    "summary": "11 passed, 1 warning in 0.92s"
   },
   "test_sources": [
     "tests/test_production_security.py",

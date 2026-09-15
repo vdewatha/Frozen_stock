@@ -257,7 +257,7 @@ def secondary_approval_identity(
 ) -> dict:
     """Verify a second production identity without retaining its bearer assertion."""
     configuration = configuration or settings
-    if configuration.environment != "production":
+    if not configuration.production_identity_required:
         return {"actor": None, "role": None, "method": "local_compatibility"}
     value = request.headers.get(SECONDARY_AUTHORIZATION_HEADER, "").strip()
     candidate = value[7:] if value.lower().startswith("bearer ") else ""
@@ -303,7 +303,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         return validator() if validator else []
 
     def _intent_blocker(self, request: Request, required: str) -> str | None:
-        if self.configuration.environment != "production" or ROLES[required] < ROLES["operator"]:
+        if not self.configuration.production_identity_required or ROLES[required] < ROLES["operator"]:
             return None
         if request.headers.get(ACTION_CONFIRMATION_HEADER, "").lower() != "confirm":
             return "explicit action confirmation is required"
@@ -315,7 +315,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
     def _check_replay(self, request: Request, actor: str) -> str | None:
         key = request.headers.get(IDEMPOTENCY_HEADER, "").strip()
-        if not key or self.configuration.environment != "production":
+        if not key or not self.configuration.production_identity_required:
             return None
         fingerprint = hashlib.sha256(
             f"{request.method}:{request.url.path}:{request.url.query}".encode()
@@ -351,7 +351,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         try:
             token = request.headers.get("authorization", "")
             candidate = token[7:] if token.lower().startswith("bearer ") else ""
-            if self.configuration.environment == "production":
+            if self.configuration.production_identity_required:
                 blockers = self._production_blockers()
                 if blockers:
                     status = 503

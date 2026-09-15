@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     def validate_production_configuration(self) -> list[str]:
         """Return non-secret production blockers without exposing secret values."""
         blockers: list[str] = []
-        if self.environment == "production":
+        if self.production_identity_required:
             signing_secret = self.auth_identity_signing_secret.get_secret_value()
             if self.auth_mode != "production_identity":
                 blockers.append("production identity authentication is not enabled")
@@ -162,6 +162,10 @@ class Settings(BaseSettings):
             self.paper_alpaca_api_key.get_secret_value()
             and self.paper_alpaca_api_secret.get_secret_value()
         )
+
+    @property
+    def production_identity_required(self) -> bool:
+        return self.environment == "production" or self.environment == self.live_environment_name
 
     def paper_broker_credentials(self) -> tuple[str, str]:
         """Return paper credentials without ever falling back across environments."""
