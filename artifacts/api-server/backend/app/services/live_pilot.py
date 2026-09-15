@@ -705,6 +705,20 @@ def pilot_order_decision(
     projected = existing + notional if side == "buy" else existing
     if projected > pilot.max_notional:
         return {"allowed": False, "reason": "order would exceed the live pilot total notional budget"}
+    try:
+        # Keep the pilot API fail-closed with the same risk evaluation used at
+        # reservation and dispatch.  The local import avoids a module cycle.
+        from app.services.live_broker import LiveBrokerError, _live_risk_gate
+        risk = _live_risk_gate(
+            db,
+            account,
+            normalized,
+            side,
+            quantity,
+            reference_price,
+        )
+    except LiveBrokerError as exc:
+        return {"allowed": False, "reason": str(exc), "pilot_status": pilot.status}
     return {
         "allowed": True,
         "pilot_status": pilot.status,
@@ -714,4 +728,5 @@ def pilot_order_decision(
         "projected_notional": str(projected),
         "max_notional": str(pilot.max_notional),
         "max_order_notional": str(pilot.max_order_notional),
+        "risk": risk,
     }

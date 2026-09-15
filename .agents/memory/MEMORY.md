@@ -26,6 +26,7 @@
 - [Production identity boundary](production-identity-boundary.md) — production callers use signed identities mapped to server-side roles; local role keys remain paper-only compatibility.
 - [Accuracy vintage revalidation](accuracy-vintage-revalidation.md) — immutable outcomes must be rechecked against current feature vintages before receiving later accuracy credit.
 - [Live broker isolation](live-broker-isolation.md) — live provider truth, order lineage, and ambiguity handling must remain separate from paper execution.
+- [Live risk and recovery boundary](live-risk-recovery-boundary.md) — ordinary entry evidence gates must not prevent bounded emergency containment.
 - [Live operations projection](live-operations-projection.md) — operational views are bounded, redacted, and fail-closed; missing evidence is never healthy.
 - [Controlled live pilot](live-pilot-controls.md) — live exposure requires a separate two-person, bounded, expiring pilot authorization over paper evidence.
 - [Paper graduation boundary](paper-graduation-boundary.md) — graduation is an immutable human disposition over redacted evidence; approval never grants live authority.

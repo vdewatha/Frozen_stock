@@ -775,7 +775,7 @@ def _live_risk_gate(
 ) -> dict:
     rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
     values = DEFAULT_RISK_RULES | ((rule.value if rule else {}) or {})
-    if bool(values.get("kill_switch_enabled", False)):
+    if bool(values.get("kill_switch_enabled", False)) and not recovery:
         raise LiveBrokerError("Live order blocked by the risk kill switch")
     pending = db.query(LiveBrokerOrder).filter(
         LiveBrokerOrder.account_id == account.id,
@@ -795,8 +795,28 @@ def _live_risk_gate(
     positions = db.query(LiveBrokerPosition).filter_by(account_id=account.id).all()
     gross_exposure = sum((abs(row.market_value or Decimal("0")) for row in positions), Decimal("0"))
     pending_exposure = sum((row.quantity * (row.limit_price or row.reference_price) for row in pending if row.side == "buy"), Decimal("0"))
+    if account.equity <= 0:
+        raise LiveBrokerError("Live leverage cannot be evaluated without positive reconciled equity")
+    risk_metrics = (account.raw_payload or {}).get("risk_metrics") if isinstance(account.raw_payload, dict) else None
+    if not isinstance(risk_metrics, dict) and not recovery:
+        raise LiveBrokerError("Live risk metrics evidence is unavailable")
+    risk_metrics = risk_metrics or {}
+
+    def metric(name: str) -> Decimal:
+        value = risk_metrics.get(name)
+        if value is None:
+            raise LiveBrokerError(f"Live {name.replace('_', ' ')} evidence is unavailable")
+        try:
+            parsed = Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise LiveBrokerError(f"Live {name.replace('_', ' ')} evidence is invalid") from exc
+        if not parsed.is_finite() or parsed < 0:
+            raise LiveBrokerError(f"Live {name.replace('_', ' ')} evidence is invalid")
+        return parsed
+
     max_total = Decimal(str(values.get("max_total_exposure", "1.0")))
-    if not recovery and side == "buy" and gross_exposure + pending_exposure + notional > account.equity * max_total:
+    projected_exposure = gross_exposure + pending_exposure + (notional if side == "buy" else Decimal("0"))
+    if not recovery and side == "buy" and projected_exposure > account.equity * max_total:
         raise LiveBrokerError("Live order exceeds the configured total exposure limit")
     max_exposure = Decimal(str(values.get("max_symbol_exposure", "0.10")))
     symbol_pending = sum(
@@ -806,19 +826,46 @@ def _live_risk_gate(
     )
     if not recovery and side == "buy" and (position.market_value if position else Decimal("0")) + symbol_pending + notional > account.equity * max_exposure:
         raise LiveBrokerError("Live buy exceeds the configured symbol exposure limit")
-    daily_drawdown = account.raw_payload.get("daily_drawdown") if isinstance(account.raw_payload, dict) else None
-    if daily_drawdown is not None and Decimal(str(daily_drawdown)) > Decimal(str(values["max_daily_drawdown"])):
-        raise LiveBrokerError("Live daily drawdown limit exceeded")
+    leverage = projected_exposure / account.equity
+    max_leverage = Decimal(str(values.get("max_live_leverage", max_total)))
+    if not recovery and leverage > max_leverage:
+        raise LiveBrokerError("Live leverage limit exceeded")
+    if not recovery:
+        daily_drawdown = metric("daily_drawdown")
+        strategy_drawdown = metric("strategy_drawdown")
+        daily_turnover = metric("daily_turnover")
+        average_daily_volume = metric("average_daily_volume")
+        if daily_drawdown > Decimal(str(values["max_daily_drawdown"])):
+            raise LiveBrokerError("Live daily drawdown limit exceeded")
+        if strategy_drawdown > Decimal(str(values["max_strategy_drawdown"])):
+            raise LiveBrokerError("Live strategy drawdown limit exceeded")
+        projected_turnover = daily_turnover + (notional / account.equity if side == "buy" else Decimal("0"))
+        if projected_turnover > Decimal(str(values.get("max_live_turnover", "0.50"))):
+            raise LiveBrokerError("Live turnover limit exceeded")
+        liquidity_fraction = quantity / average_daily_volume
+        if liquidity_fraction > Decimal(str(values.get("max_order_liquidity_fraction", "0.10"))):
+            raise LiveBrokerError("Live order exceeds the configured liquidity participation limit")
+    else:
+        daily_drawdown = strategy_drawdown = daily_turnover = Decimal("0")
+        average_daily_volume = Decimal("0")
+        projected_turnover = Decimal("0")
+        liquidity_fraction = Decimal("0")
     return {
         "status": "pass",
         "rule_id": rule.id if rule else None,
         "kill_switch_enabled": False,
-        "leverage": False,
+        "leverage": str(leverage),
         "available_buying_power": str(available_buying_power),
         "pending_order_count": len(pending),
         "gross_exposure": str(gross_exposure),
         "max_total_exposure": str(max_total),
         "max_symbol_exposure": str(max_exposure),
+        "daily_drawdown": str(daily_drawdown),
+        "strategy_drawdown": str(strategy_drawdown),
+        "daily_turnover": str(daily_turnover),
+        "projected_turnover": str(projected_turnover),
+        "average_daily_volume": str(average_daily_volume),
+        "liquidity_fraction": str(liquidity_fraction),
     }
 
 
@@ -1077,20 +1124,24 @@ def flatten_live_positions(
     db.commit()
     dispatched: list[int] = []
     failures: list[dict] = []
+    unresolved: list[int] = []
     for order in orders:
         try:
             result = dispatch_live_order(db, order.id, gateway=gateway)
-            if result.status not in {"unknown", "submitting"}:
+            if result.status in TERMINAL:
                 dispatched.append(result.id)
+            else:
+                unresolved.append(result.id)
         except LiveBrokerError as exc:
             failures.append({"order_id": order.id, "symbol": order.symbol, "error": str(exc)})
     return {
         "mode": "live",
-        "status": "flattened" if not failures else "halted",
+        "status": "flattened" if not failures and not unresolved else "halted",
         "actor": actor,
         "reason": reason,
         "reserved_order_ids": [order.id for order in orders],
         "dispatched_order_ids": dispatched,
+        "unresolved_order_ids": unresolved,
         "failures": failures,
     }
 
@@ -1100,6 +1151,10 @@ def cancel_live_order(db: Session, order_id: int, *, actor: str, reason: str, ga
         raise LiveBrokerError("Live cancellation requires a non-empty reason")
     order = db.query(LiveBrokerOrder).filter_by(id=order_id).with_for_update().one()
     if order.status in TERMINAL:
+        return order
+    if order.status == "pending_cancel":
+        # The first cancellation request is still in flight at the broker.
+        # Repeating it cannot improve certainty and may create provider races.
         return order
     if order.status in {"submitting", "unknown"} or order.uncertain_submission:
         raise LiveBrokerError("Uncertain live submission requires broker reconciliation before cancellation")

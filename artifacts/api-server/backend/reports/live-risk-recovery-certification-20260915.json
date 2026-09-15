@@ -1,0 +1,135 @@
+{
+  "certification_status": "pass_with_prerequisites",
+  "checks": [
+    {
+      "id": "default_live_denial_and_paper_only_boundary",
+      "proof_sha256": "66c3e8c579f5589e093df013464e769659c591233cd52e19fee170b7d60a69bd",
+      "status": "pass"
+    },
+    {
+      "id": "environment_identity_and_two_person_approval",
+      "proof_sha256": "bc96191cc8835858f81137712b68a60b57eba3bb83e65237ec8d8ca206705d69",
+      "status": "pass"
+    },
+    {
+      "id": "symbol_allowlist_and_order_notional",
+      "proof_sha256": "f25ed1f2e699f1ee98052a982a1f6dc6fc13f14befe9d75dbf4f4bfa1f60b5f3",
+      "status": "pass"
+    },
+    {
+      "id": "concentration_and_total_exposure",
+      "proof_sha256": "6d09a50ebd9679ad443364cb22f381ebcfa1bbe8f2ca12865a1928db647198b7",
+      "status": "pass"
+    },
+    {
+      "id": "liquidity_participation",
+      "proof_sha256": "78d0d1f619def1c6d2b8dba192ac3a19a291fd23cfb752e5021d128ba116c4fa",
+      "status": "pass"
+    },
+    {
+      "id": "leverage_and_buying_power",
+      "proof_sha256": "3152887f2a804f8911a7dd735821c10c26b53c7844d563e6eace40863b04b085",
+      "status": "pass"
+    },
+    {
+      "id": "long_only_shorting_boundary",
+      "proof_sha256": "73b7f0c2b0be14340139fe6e568be4153eafc92d0f5fbc0163270a22d91e7ed7",
+      "status": "pass"
+    },
+    {
+      "id": "daily_loss_and_strategy_drawdown",
+      "proof_sha256": "96a2ec76e26f80078f7c7e04b42b9492f25a926f34079c319ba16726ea29296b",
+      "status": "pass"
+    },
+    {
+      "id": "turnover_limit",
+      "proof_sha256": "bde73434b6da716b2834a75783a0e87e65a5df769e4a4c1fed5e7111adb2b6e6",
+      "status": "pass"
+    },
+    {
+      "id": "fresh_regular_session_data",
+      "proof_sha256": "3a9d1532ea3460d1e73ca8aefe13424f24e2241605c4f9b44f669aa60bd930e4",
+      "status": "pass"
+    },
+    {
+      "id": "watchdog_and_scheduler_loss_blocks_recovery",
+      "proof_sha256": "9fd9e4b5fd3e4b006eebc5612b45123a9c8288acd32d7322db34d8d0aa50b735",
+      "status": "pass"
+    },
+    {
+      "id": "emergency_stop_preserves_last_known_good_lineage",
+      "proof_sha256": "9ace84fea9382fde52130ae24d6f503153545120eef73be91e372a02677b8cd6",
+      "status": "pass"
+    },
+    {
+      "id": "cooldown_and_explicit_revalidation",
+      "proof_sha256": "fbd1e66f5b5df71fa7b291f5634012e857e807ed454fc9f6927ccbed91304784",
+      "status": "pass"
+    },
+    {
+      "id": "uncertain_submission_halts_without_retry",
+      "proof_sha256": "dcb5f4651dc50ebe919acc73ef23ce07ba0ffcf22ed5f720c2a36190c5722a06",
+      "status": "pass"
+    },
+    {
+      "id": "cancel_is_idempotent",
+      "proof_sha256": "fb215c6a5e085c3f5c6f6fcf435bb3cbc899a69a09fa84bf8eb86d17eb044bb3",
+      "status": "pass"
+    },
+    {
+      "id": "flatten_is_bounded_and_nonterminal_is_not_success",
+      "proof_sha256": "a1f5cce4abcf150f29f8d902fc9c962a2cbd337570ff848301b6bbd6c6b015d8",
+      "status": "pass"
+    },
+    {
+      "id": "broker_accounting_residual_blocks_recovery",
+      "proof_sha256": "38cbdb2a90c95d89326927e6ede71e4bd4079e17c6ace97e6497d8dedc86dfa4",
+      "status": "pass"
+    },
+    {
+      "id": "redacted_reviewer_safe_evidence",
+      "proof_sha256": "f8958be3dbe78c6fc60ed273a6dd62492f10d1fd39d05ae61187aaf184825b56",
+      "status": "pass"
+    }
+  ],
+  "generated_at": "2026-09-15T20:57:52.621183+00:00",
+  "prerequisites": [
+    "A separately authorized read-only production probe remains required for provider account binding and permissions.",
+    "Live pilot activation remains a separate human-controlled decision and was not attempted by this certification."
+  ],
+  "proof_bundle_sha256": "49698590c4a770c1b3e7e458a0816d9d87fc2460f1602aa753b55435c69004cc",
+  "recovery_contract": {
+    "last_known_good_lineage_is_immutable": true,
+    "missing_or_uncertain_evidence_blocks": true,
+    "nonterminal_flatten_state_is_not_success": true,
+    "normal_order_risk_checks_do_not_override_containment": true,
+    "repeated_cancel_and_flatten_actions_are_idempotent": true
+  },
+  "report_sha256": "785f486adc3391d36b254380addf4209ea7ccc119666fc858002607e257d330b",
+  "report_type": "live_risk_recovery_certification",
+  "schema_version": 1,
+  "scope": {
+    "balances_prices_fees_and_pnl_in_report": false,
+    "credentials_in_report": false,
+    "external_live_account_contacted": false,
+    "live_activation_attempted": false,
+    "live_cancels_submitted": false,
+    "live_orders_submitted": false,
+    "paper_and_live_ledgers_mixed": false,
+    "raw_broker_payloads_in_report": false
+  },
+  "test_result": {
+    "exit_code": 0,
+    "status": "pass",
+    "summary": "34 passed in 11.61s"
+  },
+  "test_sources": [
+    "tests/test_live_risk_recovery_certification.py",
+    "tests/test_live_safety_contract.py",
+    "tests/test_live_pilot.py",
+    "tests/test_live_operations.py",
+    "tests/test_live_broker_certification.py",
+    "tests/test_live_broker.py"
+  ],
+  "unresolved_blockers": []
+}

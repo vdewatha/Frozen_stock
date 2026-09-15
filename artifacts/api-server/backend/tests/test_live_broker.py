@@ -137,7 +137,13 @@ def _seed_order_context(db: Session):
         environment="approved-live", currency="USD", cash=Decimal("10000"),
         buying_power=Decimal("10000"), equity=Decimal("10000"),
         status="reconciled", reconciliation_required=False,
-        unexplained_residual=False, source_timestamp=observed_now, raw_payload={},
+        unexplained_residual=False, source_timestamp=observed_now,
+        raw_payload={"risk_metrics": {
+            "daily_drawdown": "0",
+            "strategy_drawdown": "0",
+            "daily_turnover": "0",
+            "average_daily_volume": "1000",
+        }},
     )
     db.add_all([signal, account])
     db.flush()

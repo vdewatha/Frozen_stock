@@ -118,7 +118,12 @@ def test_active_pilot_enforces_allowlist_order_type_and_budget():
             status="reconciled",
             reconciliation_required=False,
             unexplained_residual=False,
-            raw_payload={},
+            raw_payload={"risk_metrics": {
+                "daily_drawdown": "0",
+                "strategy_drawdown": "0",
+                "daily_turnover": "0",
+                "average_daily_volume": "1000",
+            }},
         ))
         db.commit()
         allowed = pilot_order_decision(
