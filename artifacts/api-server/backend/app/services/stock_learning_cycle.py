@@ -38,6 +38,7 @@ from app.services.intraday_data import NY, feed_status, session_bounds
 from app.services.readiness import _scheduler_health
 from app.services.stock_forward_trial import trial_feed_preflight
 from app.services.stock_promotion_readiness import evaluate_promotion_readiness
+from app.services.live_safety import evaluate_live_safety
 from app.services.stock_training_jobs import (
     StockTrainingError,
     _current_lifecycle,
@@ -64,13 +65,19 @@ SCHEDULE_PAUSED_REASON = "Scheduled paper learning is paused by operator"
 
 def scheduled_learning_control_projection(db: Session) -> dict:
     control = db.get(StockLearningScheduleControl, SCHEDULE_CONTROL_ID)
+    live_safety = evaluate_live_safety(db)
     return {
         "paused": bool(control.paused) if control else False,
         "pause_reason": control.pause_reason if control and control.paused else None,
         "updated_by": control.updated_by if control else "system",
         "updated_at": control.updated_at if control else None,
         "paper_only": True,
-        "live_authorized": False,
+        "live_authorized": live_safety["live_authorized"],
+        "live_safety": {
+            "mode": live_safety["mode"],
+            "status": live_safety["status"],
+            "live_orders_allowed": live_safety["live_orders_allowed"],
+        },
         "recovery_independent": True,
     }
 

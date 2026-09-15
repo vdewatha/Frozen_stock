@@ -71,13 +71,15 @@ def submit_paper_order(
     return order
 
 
-def block_live_order(db: Session, payload: dict) -> dict:
+def block_live_order(db: Session, payload: dict, *, safety: dict | None = None) -> dict:
+    safety = safety or {"status": "blocked", "live_orders_allowed": False}
     result = {
         "broker": "live_broker",
         "status": "blocked",
         "paper_only": False,
         "live_trading_enabled": False,
-        "reason": "Live trading is disabled in Version 1.",
+        "reason": safety.get("reason", "Live order execution is blocked by the live safety contract."),
+        "safety_contract": safety,
         "requested_order": payload,
         "blocked_at": datetime.utcnow().isoformat(),
     }

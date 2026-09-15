@@ -17,6 +17,7 @@ from app.models import (
 )
 from app.models.stock_paper import StockPaperAccount, StockPaperFill, StockPaperOrder, StockPaperTrialLot
 from app.services.stock_forward_trial import _hash, _trial_allocated_notional
+from app.services.live_safety import evaluate_live_safety
 
 DEFAULT_HISTORY_LIMIT = 10
 MAX_HISTORY_LIMIT = 50
@@ -375,6 +376,7 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
     historical_health_unknown = aggregates.get("unknown_historical_feed_health")
     frozen_evidence = _frozen_session_evidence_gate(trial, metric, session_evidence)
     frozen_window_complete = frozen_evidence["status"] == "pass"
+    live_safety = evaluate_live_safety(db)
     gates = {
         "regular_sessions": _gate("pass" if frozen_window_complete and sessions is not None and sessions >= required_sessions else
                                   ("fail" if trial.status in {"completed", "stopped"} else "unknown"),
@@ -411,6 +413,15 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
         "paper_only": _gate("pass" if trial.policy.get("paper_only") is True and trial.policy.get("live_authorized") is False else "fail"),
         "live_trading_disabled": _gate("pass" if trial.policy.get("live_authorized") is False else "fail"),
         "frozen_forward_evidence": frozen_evidence,
+        "live_safety_contract": _gate(
+            "pass" if not live_safety["live_orders_allowed"] else "fail",
+            reason=None if not live_safety["live_orders_allowed"] else "live order authority must not coexist with paper promotion",
+            value={
+                "mode": live_safety["mode"],
+                "status": live_safety["status"],
+                "live_orders_allowed": live_safety["live_orders_allowed"],
+            },
+        ),
     }
     lineage_gate, lineage = _lineage_gate(db, trial)
     gates["immutable_lineage"] = lineage_gate
@@ -434,6 +445,11 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
         "paper_only": True,
         "live_authorized": False,
         "promotion_authorized": False,
+        "live_safety": {
+            "mode": live_safety["mode"],
+            "status": live_safety["status"],
+            "live_orders_allowed": live_safety["live_orders_allowed"],
+        },
     }
     report_hash = _hash(evidence)
     existing = db.scalar(select(StockPaperPromotionReadinessReport).where(

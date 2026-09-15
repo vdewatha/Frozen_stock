@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./trading_app.db"
     redis_url: str = "redis://localhost:6379/0"
     allow_live_trading: bool = False
+    live_environment_name: str = "approved-live"
+    live_broker_name: str = ""
     freqtrade_paper_execution_enabled: bool = False
     freqtrade_url: str = "http://127.0.0.1:8080"
     freqtrade_username: str = ""

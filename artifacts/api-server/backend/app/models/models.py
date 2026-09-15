@@ -618,6 +618,63 @@ class StockLearningScheduleControl(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class LiveSafetyState(Base):
+    """Singleton, fail-closed control plane for the future live executor."""
+    __tablename__ = "live_safety_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_live_safety_state_singleton"),
+        CheckConstraint(
+            "mode IN ('research', 'paper', 'shadow', 'canary-live', 'approved-live', 'emergency-stop')",
+            name="ck_live_safety_mode",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mode: Mapped[str] = mapped_column(String(24), nullable=False, default="research", index=True)
+    approval_actor: Mapped[Optional[str]] = mapped_column(String(128))
+    approval_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    secondary_approval_actor: Mapped[Optional[str]] = mapped_column(String(128))
+    secondary_approval_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    gates: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    lineage: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    last_reason: Mapped[str] = mapped_column(Text, nullable=False, default="Live execution is not approved")
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False, default="system")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class LiveSafetyEvent(Base):
+    """Append-only evidence for every live-safety transition or denial."""
+    __tablename__ = "live_safety_events"
+    __table_args__ = (
+        CheckConstraint(
+            "from_mode IS NULL OR from_mode IN ('research', 'paper', 'shadow', 'canary-live', 'approved-live', 'emergency-stop')",
+            name="ck_live_safety_event_from_mode",
+        ),
+        CheckConstraint(
+            "to_mode IN ('research', 'paper', 'shadow', 'canary-live', 'approved-live', 'emergency-stop')",
+            name="ck_live_safety_event_to_mode",
+        ),
+        UniqueConstraint("event_sha256", name="uq_live_safety_event_digest"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    from_mode: Mapped[Optional[str]] = mapped_column(String(24))
+    to_mode: Mapped[str] = mapped_column(String(24), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    approval_actor: Mapped[Optional[str]] = mapped_column(String(128))
+    secondary_approval_actor: Mapped[Optional[str]] = mapped_column(String(128))
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    gates: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    event_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
 class StockPaperModelBinding(Base):
     __tablename__ = "stock_paper_model_bindings"
     __table_args__ = (

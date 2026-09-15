@@ -265,10 +265,13 @@ def readiness_snapshot(db: Session) -> dict:
     }
     overall_status = "blocked" if summary["blocked"] else ("warning" if summary["warning"] else "ready")
 
+    from app.services.live_safety import evaluate_live_safety
+    live_safety = evaluate_live_safety(db)
     return {
         "generated_at": datetime.utcnow(),
         "overall_status": overall_status,
         "summary": summary,
         "checks": checks,
         "paper_trading_allowed": overall_status == "ready",
+        "live_safety": live_safety,
     }

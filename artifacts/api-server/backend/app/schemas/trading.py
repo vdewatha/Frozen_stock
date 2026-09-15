@@ -669,6 +669,32 @@ class ReadinessResponse(BaseModel):
     summary: dict
     checks: list[ReadinessCheck]
     paper_trading_allowed: bool
+    live_safety: Optional[dict] = None
+
+
+class LiveSafetyTransitionRequest(BaseModel):
+    target_mode: str = Field(
+        pattern="^(research|paper|shadow|canary-live|approved-live|emergency-stop)$"
+    )
+    reason: str = Field(min_length=3)
+    approval_actor: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    secondary_approval_actor: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    evidence: dict = Field(default_factory=dict)
+
+
+class LiveSafetyResponse(BaseModel):
+    mode: str
+    gates: dict
+    status: str
+    live_orders_allowed: bool
+    paper_only: bool
+    live_authorized: bool
+    last_reason: str
+    updated_by: str
+    updated_at: Optional[datetime] = None
+    approval_actor: Optional[str] = None
+    secondary_approval_actor: Optional[str] = None
+    contract: dict
 
 
 class DeploymentMonitorResponse(BaseModel):

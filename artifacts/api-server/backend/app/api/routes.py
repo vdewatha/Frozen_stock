@@ -39,6 +39,8 @@ from app.schemas.trading import (
     LearningWorkerLaunchResponse,
     LearningWorkerScopeRequest,
     LearningWorkerStatusResponse,
+    LiveSafetyResponse,
+    LiveSafetyTransitionRequest,
     MemoryReplayResponse,
     ModelPerformanceResponse,
     ModelPredictionRequest,
@@ -94,6 +96,7 @@ from app.schemas.trading import (
 )
 from app.services.backtester import BacktestConfig, run_backtest
 from app.services.broker import block_live_order, broker_status, submit_paper_order
+from app.services.live_safety import LiveSafetyError, live_order_decision, evaluate_live_safety, transition_live_safety
 from app.services.candidate_activation import review_candidate_activation
 from app.services.candidate_evidence import candidate_evidence_drilldown
 from app.services.decision_journal import decision_journal_scorecard, list_candidate_decisions, record_candidate_decision, refresh_decision_journal_outcomes, update_journal_realized_outcomes, update_strategy_memory_from_journal
@@ -177,6 +180,35 @@ def auth_session(request: Request) -> dict:
 @router.get("/system/readiness", response_model=ReadinessResponse)
 def system_readiness(db: Session = Depends(get_db)) -> dict:
     return readiness_snapshot(db)
+
+
+@router.get("/system/live-safety", response_model=LiveSafetyResponse)
+def system_live_safety(db: Session = Depends(get_db)) -> dict:
+    return evaluate_live_safety(db)
+
+
+@router.post("/system/live-safety/transition", response_model=LiveSafetyResponse)
+def transition_system_live_safety(
+    payload: LiveSafetyTransitionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        result = transition_live_safety(
+            db,
+            target_mode=payload.target_mode,
+            actor=str(getattr(request.state, "actor", "admin")),
+            reason=payload.reason,
+            approval_actor=payload.approval_actor,
+            secondary_approval_actor=payload.secondary_approval_actor,
+            evidence=payload.evidence,
+        )
+        db.commit()
+        return result
+    except LiveSafetyError as exc:
+        # Denied transitions are themselves durable safety evidence.
+        db.commit()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/system/deployment-monitor", response_model=DeploymentMonitorResponse)
@@ -711,7 +743,7 @@ def submit_manual_paper_order(payload: BrokerOrderRequest, db: Session = Depends
 
 @router.post("/broker/live/orders", response_model=BrokerOrderResponse)
 def block_manual_live_order(payload: BrokerOrderRequest, db: Session = Depends(get_db)) -> dict:
-    result = block_live_order(db, payload.model_dump())
+    result = block_live_order(db, payload.model_dump(), safety=live_order_decision(db))
     db.commit()
     return result
 

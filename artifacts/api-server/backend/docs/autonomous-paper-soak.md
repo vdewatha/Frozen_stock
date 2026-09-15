@@ -105,3 +105,8 @@ audit identifiers. Review `checks.all_cycle_stages_observed`,
 `forward_evidence.complete` is separate and must be true before any paper
 promotion claim. `readiness.live_trading_ready` and
 `readiness.profitability_claim` are always false by contract.
+
+The live activation contract is documented separately in
+`docs/live-safety-contract.md`. The soak cannot advance that state machine:
+paper evidence, a paper binding, or a passing paper readiness report never
+authorizes live orders.
