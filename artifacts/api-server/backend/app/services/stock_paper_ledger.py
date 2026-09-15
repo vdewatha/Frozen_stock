@@ -62,8 +62,7 @@ class AlpacaPaperClient:
     base_url = ALPACA_PAPER_URL
 
     def _headers(self) -> dict[str, str]:
-        key = settings.alpaca_api_key.get_secret_value()
-        secret = settings.alpaca_api_secret.get_secret_value()
+        key, secret = settings.paper_broker_credentials()
         if not key or not secret:
             raise StockPaperUnavailable("Alpaca paper credentials are not configured")
         return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret, "Accept": "application/json"}

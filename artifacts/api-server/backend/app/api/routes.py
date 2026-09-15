@@ -7,6 +7,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.core.security import authorization_evidence
 from app.db.session import get_db
 from app.models import Asset, PaperTrade, RiskRule, Strategy
 from app.schemas.trading import (
@@ -173,8 +175,32 @@ def ready(db: Session = Depends(get_db)) -> dict:
 
 @router.get("/auth/session")
 def auth_session(request: Request) -> dict:
-    """Return the service principal's role, never its credential."""
-    return {"role": request.state.actor}
+    """Return non-secret identity and authorization metadata."""
+    if settings.environment != "production":
+        # Preserve the deliberately small local-paper response contract.
+        return {"role": request.state.auth_role}
+    role = request.state.auth_role
+    return {
+        "identity": request.state.actor,
+        "role": role,
+        "permissions": [name for name, level in {"viewer": 0, "researcher": 1, "operator": 2, "admin": 3}.items()
+                        if level <= {"viewer": 0, "researcher": 1, "operator": 2, "admin": 3}[role]],
+        "auth_method": request.state.auth_evidence.get("method"),
+        "environment": settings.environment,
+        "live_mode": "blocked",
+        "live_orders_allowed": False,
+    }
+
+
+@router.get("/auth/config")
+def auth_config() -> dict:
+    """Expose only how the browser should authenticate, never secret material."""
+    return {
+        "mode": settings.auth_mode,
+        "requires_identity_provider": settings.auth_mode == "production_identity",
+        "paper_only": True,
+        "live_orders_allowed": False,
+    }
 
 
 @router.get("/system/readiness", response_model=ReadinessResponse)
@@ -202,6 +228,8 @@ def transition_system_live_safety(
             approval_actor=payload.approval_actor,
             secondary_approval_actor=payload.secondary_approval_actor,
             evidence=payload.evidence,
+            correlation_id=request.state.request_id,
+            authorization=authorization_evidence(request),
         )
         db.commit()
         return result
@@ -706,29 +734,35 @@ def get_risk_settings(db: Session = Depends(get_db)) -> RiskRule:
 
 
 @router.patch("/risk/settings", response_model=RiskRuleRead)
-def patch_risk_settings(payload: RiskSettingsUpdateRequest, db: Session = Depends(get_db)) -> RiskRule:
+def patch_risk_settings(payload: RiskSettingsUpdateRequest, request: Request, db: Session = Depends(get_db)) -> RiskRule:
     updates = payload.model_dump(exclude_unset=True, exclude={"reason"})
-    return update_risk_settings(db, updates, payload.reason)
+    return update_risk_settings(
+        db,
+        updates,
+        payload.reason,
+        actor=request.state.actor,
+        authorization=authorization_evidence(request),
+    )
 
 
 @router.post("/safety/kill-switch/enable", response_model=SafetyControlResponse)
-def enable_global_kill_switch(payload: SafetyControlRequest, db: Session = Depends(get_db)) -> dict:
-    return enable_kill_switch(db, payload.reason)
+def enable_global_kill_switch(payload: SafetyControlRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    return enable_kill_switch(db, payload.reason, actor=request.state.actor, authorization=authorization_evidence(request))
 
 
 @router.post("/safety/kill-switch/disable", response_model=SafetyControlResponse)
-def disable_global_kill_switch(payload: SafetyControlRequest, db: Session = Depends(get_db)) -> dict:
-    return disable_kill_switch(db, payload.reason)
+def disable_global_kill_switch(payload: SafetyControlRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    return disable_kill_switch(db, payload.reason, actor=request.state.actor, authorization=authorization_evidence(request))
 
 
 @router.post("/safety/strategies/pause", response_model=SafetyControlResponse)
-def pause_strategies(payload: SafetyControlRequest, db: Session = Depends(get_db)) -> dict:
-    return pause_all_strategies(db, payload.reason)
+def pause_strategies(payload: SafetyControlRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    return pause_all_strategies(db, payload.reason, actor=request.state.actor, authorization=authorization_evidence(request))
 
 
 @router.post("/safety/strategies/resume", response_model=SafetyControlResponse)
-def resume_strategies(payload: SafetyControlRequest, db: Session = Depends(get_db)) -> dict:
-    return resume_candidate_strategies(db, payload.reason)
+def resume_strategies(payload: SafetyControlRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    return resume_candidate_strategies(db, payload.reason, actor=request.state.actor, authorization=authorization_evidence(request))
 
 
 @router.get("/broker/status", response_model=BrokerStatusResponse)

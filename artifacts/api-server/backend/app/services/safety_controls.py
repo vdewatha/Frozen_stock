@@ -18,7 +18,14 @@ def _active_risk_rule(db: Session) -> RiskRule:
     return rule
 
 
-def _set_kill_switch(db: Session, enabled: bool, reason: str) -> dict:
+def _set_kill_switch(
+    db: Session,
+    enabled: bool,
+    reason: str,
+    *,
+    actor: str = "system",
+    authorization: dict | None = None,
+) -> dict:
     rule = _active_risk_rule(db)
     old_value = rule.value or {}
     new_value = DEFAULT_RISK_RULES | old_value | {"kill_switch_enabled": enabled, "paper_only": True}
@@ -32,7 +39,7 @@ def _set_kill_switch(db: Session, enabled: bool, reason: str) -> dict:
         action="set_kill_switch",
         status=status,
         message=reason,
-        payload={"old_value": old_value, "new_value": new_value},
+        payload={"old_value": old_value, "new_value": new_value, "actor": actor, "authorization": authorization or {}},
     )
     db.commit()
     return {
@@ -46,15 +53,15 @@ def _set_kill_switch(db: Session, enabled: bool, reason: str) -> dict:
     }
 
 
-def enable_kill_switch(db: Session, reason: str = "Manual kill switch from control room.") -> dict:
-    return _set_kill_switch(db, True, reason)
+def enable_kill_switch(db: Session, reason: str = "Manual kill switch from control room.", *, actor: str = "system", authorization: dict | None = None) -> dict:
+    return _set_kill_switch(db, True, reason, actor=actor, authorization=authorization)
 
 
-def disable_kill_switch(db: Session, reason: str = "Manual kill switch reset from control room.") -> dict:
-    return _set_kill_switch(db, False, reason)
+def disable_kill_switch(db: Session, reason: str = "Manual kill switch reset from control room.", *, actor: str = "system", authorization: dict | None = None) -> dict:
+    return _set_kill_switch(db, False, reason, actor=actor, authorization=authorization)
 
 
-def pause_all_strategies(db: Session, reason: str = "Manual pause from control room.") -> dict:
+def pause_all_strategies(db: Session, reason: str = "Manual pause from control room.", *, actor: str = "system", authorization: dict | None = None) -> dict:
     strategies = db.query(Strategy).order_by(Strategy.name).all()
     affected_ids: list[int] = []
     old_statuses = {}
@@ -73,7 +80,7 @@ def pause_all_strategies(db: Session, reason: str = "Manual pause from control r
         action="pause_all_strategies",
         status="complete",
         message=reason,
-        payload={"affected_strategy_ids": affected_ids, "old_statuses": old_statuses},
+        payload={"affected_strategy_ids": affected_ids, "old_statuses": old_statuses, "actor": actor, "authorization": authorization or {}},
     )
     db.commit()
     return {
@@ -87,7 +94,7 @@ def pause_all_strategies(db: Session, reason: str = "Manual pause from control r
     }
 
 
-def resume_candidate_strategies(db: Session, reason: str = "Manual resume from control room.") -> dict:
+def resume_candidate_strategies(db: Session, reason: str = "Manual resume from control room.", *, actor: str = "system", authorization: dict | None = None) -> dict:
     strategies = db.query(Strategy).filter(Strategy.current_status == "paused").order_by(Strategy.name).all()
     affected_ids: list[int] = []
     for strategy in strategies:
@@ -102,7 +109,7 @@ def resume_candidate_strategies(db: Session, reason: str = "Manual resume from c
         action="resume_candidate_strategies",
         status="complete",
         message=reason,
-        payload={"affected_strategy_ids": affected_ids, "new_status": "paper_trading_candidate"},
+        payload={"affected_strategy_ids": affected_ids, "new_status": "paper_trading_candidate", "actor": actor, "authorization": authorization or {}},
     )
     db.commit()
     return {

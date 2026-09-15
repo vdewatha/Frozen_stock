@@ -25,6 +25,12 @@ router = APIRouter(prefix="/stock-paper", tags=["stock-paper"])
 
 def _attribute(db: Session, request: Request) -> None:
     db.info["stock_paper_actor"] = getattr(request.state, "actor", "unknown")
+    db.info["stock_paper_authorization"] = {
+        "actor": getattr(request.state, "actor", "unknown"),
+        "role": getattr(request.state, "auth_role", "unknown"),
+        "request_id": getattr(request.state, "request_id", None),
+        "auth_method": (getattr(request.state, "auth_evidence", {}) or {}).get("method", "unknown"),
+    }
 
 
 @router.get("/status")

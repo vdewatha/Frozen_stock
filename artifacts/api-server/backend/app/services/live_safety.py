@@ -319,6 +319,8 @@ def transition_live_safety(
     approval_actor: str | None = None,
     secondary_approval_actor: str | None = None,
     evidence: dict | None = None,
+    correlation_id: str | None = None,
+    authorization: dict | None = None,
 ) -> dict:
     """Apply one explicit transition, recording denied attempts as evidence."""
     reason = reason.strip()
@@ -356,7 +358,10 @@ def transition_live_safety(
         write_audit_log(
             db, event_type="live_safety", entity_type="live_safety_state", entity_id=state.id,
             action="transition_denied", status="blocked", message=denial_reason,
-            payload={"event_id": event.id, "from_mode": prior_mode, "to_mode": target_mode},
+            payload={
+                "event_id": event.id, "from_mode": prior_mode, "to_mode": target_mode,
+                "actor": actor, "correlation_id": correlation_id, "authorization": authorization or {},
+            },
         )
         raise LiveSafetyError(denial_reason)
 
@@ -379,6 +384,9 @@ def transition_live_safety(
     write_audit_log(
         db, event_type="live_safety", entity_type="live_safety_state", entity_id=state.id,
         action="transition", status="complete", message=reason,
-        payload={"event_id": event.id, "from_mode": prior_mode, "to_mode": target_mode},
+        payload={
+            "event_id": event.id, "from_mode": prior_mode, "to_mode": target_mode,
+            "actor": actor, "correlation_id": correlation_id, "authorization": authorization or {},
+        },
     )
     return evaluate_live_safety(db)

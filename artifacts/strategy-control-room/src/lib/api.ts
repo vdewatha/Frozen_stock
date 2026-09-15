@@ -42,7 +42,21 @@ export type DashboardSnapshot = {
 };
 
 export type AccessRole = "viewer" | "researcher" | "operator" | "admin";
-export type AuthSession = { role: AccessRole };
+export type AuthSession = {
+  role: AccessRole;
+  identity?: string;
+  permissions?: AccessRole[];
+  auth_method?: string;
+  environment?: string;
+  live_mode?: string;
+  live_orders_allowed?: boolean;
+};
+export type AuthConfig = {
+  mode: "local_role_keys" | "production_identity" | string;
+  requires_identity_provider: boolean;
+  paper_only: boolean;
+  live_orders_allowed: boolean;
+};
 
 export type OperationalHardeningReport = {
   status: "clear" | "unknown" | "breach" | string;
@@ -1461,7 +1475,9 @@ const configuredApi = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const API_BASE_URL = configuredApi.replace(/\/$/, "");
 
 let accessToken = "";
+let authMode: AuthConfig["mode"] = "local_role_keys";
 export function setAccessToken(value: string) { accessToken = value; }
+export function setAuthMode(value: AuthConfig["mode"]) { authMode = value; }
 export class ApiError extends Error {
   readonly status: number;
   readonly detail: string | null;
@@ -1510,10 +1526,21 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
-  if (!accessToken) throw new Error("Sign in to access the trading service.");
+  if (!accessToken && authMode !== "production_identity") throw new Error("Sign in to access the trading service.");
   const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${accessToken}`);
-  const response = await globalThis.fetch(input, { ...init, headers, cache: "no-store", credentials: "omit" });
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+  if (authMode === "production_identity" && init.method && init.method !== "GET") {
+    headers.set("X-Action-Confirmation", "confirm");
+    headers.set("X-Idempotency-Key", globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+    try {
+      const body = typeof init.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : null;
+      const reason = body && typeof body.reason === "string" ? body.reason : "Explicit control-room action";
+      headers.set("X-Action-Reason", reason);
+    } catch {
+      headers.set("X-Action-Reason", "Explicit control-room action");
+    }
+  }
+  const response = await globalThis.fetch(input, { ...init, headers, cache: "no-store", credentials: authMode === "production_identity" ? "include" : "omit" });
   if (!response.ok) throw new ApiError(response.status, await responseDetail(response));
   return response;
 }
@@ -1526,6 +1553,14 @@ export async function getDashboard(): Promise<DashboardSnapshot> {
 export async function getAuthSession(): Promise<AuthSession> {
   const response = await authenticatedFetch(`${API_BASE_URL}/auth/session`);
   return handleResponse<AuthSession>(response);
+}
+
+export async function getAuthConfig(): Promise<AuthConfig> {
+  const response = await globalThis.fetch(`${API_BASE_URL}/auth/config`, {
+    cache: "no-store",
+    credentials: "include",
+  });
+  return handleResponse<AuthConfig>(response);
 }
 
 export type ResearchRunSummary = {

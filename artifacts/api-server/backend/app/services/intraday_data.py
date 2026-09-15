@@ -193,8 +193,7 @@ def _parse_bar(raw: dict) -> tuple[datetime, dict]:
 
 
 def _request(path: str, params: dict, attempts: int = 3) -> dict:
-    api_key = settings.alpaca_api_key.get_secret_value()
-    api_secret = settings.alpaca_api_secret.get_secret_value()
+    api_key, api_secret = settings.paper_broker_credentials()
     if not api_key or not api_secret:
         raise RuntimeError("Alpaca credentials are not configured in workspace secrets")
     headers = {
@@ -658,10 +657,8 @@ def preflight_intraday(
                 for symbol in selected
             ],
         }
-    if not (
-        settings.alpaca_api_key.get_secret_value()
-        and settings.alpaca_api_secret.get_secret_value()
-    ):
+    paper_key, paper_secret = settings.paper_broker_credentials()
+    if not (paper_key and paper_secret):
         return {
             **base,
             "status": "blocked",
@@ -810,9 +807,8 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         if expected_end > target_bounds[0]
         else []
     )
-    configured = bool(
-        settings.alpaca_api_key.get_secret_value() and settings.alpaca_api_secret.get_secret_value()
-    )
+    paper_key, paper_secret = settings.paper_broker_credentials()
+    configured = bool(paper_key and paper_secret)
     verification_age = (
         observed_at - _aware_utc(latest.ingested_at)
         if latest is not None and latest.ingested_at is not None

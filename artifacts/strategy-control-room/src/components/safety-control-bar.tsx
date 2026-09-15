@@ -24,22 +24,31 @@ export function SafetyControlBar() {
     }
   }
 
+  function deliberate(action: (reason: string) => Promise<SafetyControlResponse>) {
+    const reason = window.prompt("Enter the reason for this safety action:", "Reviewed control-room action");
+    if (!reason?.trim()) {
+      setStatus("Action cancelled: a reason is required");
+      return;
+    }
+    void runAction(() => action(reason.trim()));
+  }
+
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <RoleGate requires="operator"><button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink" disabled={isBusy} onClick={() => runAction(() => pauseStrategies())}>
+        <RoleGate requires="operator"><button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink" disabled={isBusy} onClick={() => deliberate((reason) => pauseStrategies(reason))}>
           <CirclePause size={17} />
           Pause Strategies
         </button></RoleGate>
-        <RoleGate requires="admin"><button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-mint" disabled={isBusy} onClick={() => runAction(() => resumeStrategies())}>
+        <RoleGate requires="admin"><button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-mint" disabled={isBusy} onClick={() => deliberate((reason) => resumeStrategies(reason))}>
           <ShieldCheck size={17} />
           Resume
         </button></RoleGate>
-        <RoleGate requires="operator"><button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(() => enableKillSwitch())}>
+        <RoleGate requires="operator"><button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => deliberate((reason) => enableKillSwitch(reason))}>
           <AlertTriangle size={17} />
           Kill Switch
         </button></RoleGate>
-        <RoleGate requires="admin"><button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink" disabled={isBusy} onClick={() => runAction(() => disableKillSwitch())}>
+        <RoleGate requires="admin"><button className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink" disabled={isBusy} onClick={() => deliberate((reason) => disableKillSwitch(reason))}>
           <RotateCcw size={17} />
           Reset
         </button></RoleGate>

@@ -33,6 +33,11 @@ from app.api.stock_learning_cycle import router as stock_learning_cycle_router
 
 @app.on_event("startup")
 def on_startup() -> None:
+    production_blockers = settings.validate_production_configuration()
+    if production_blockers:
+        # Do not include values from the configuration in the error. The process
+        # must not start in an ambiguous production security state.
+        raise RuntimeError("Production security configuration is incomplete: " + "; ".join(production_blockers))
     assert_schema_current(engine)
     db = SessionLocal()
     try:

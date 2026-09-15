@@ -718,6 +718,7 @@ def trial_feed_preflight(
 
 def create_trial(
     db: Session, *, binding_id: int, actor: str, source_cycle_id: str | None = None,
+    authorization: dict | None = None,
 ) -> StockPaperTrial:
     if source_cycle_id:
         existing = db.scalar(select(StockPaperTrial).where(
@@ -759,6 +760,7 @@ def start_trial(
     trial_id: str,
     *,
     actor: str = "system",
+    authorization: dict | None = None,
 ) -> StockPaperTrial:
     row = db.get(StockPaperTrial, trial_id)
     if not row: raise StockTrainingError("Trial not found")
@@ -788,7 +790,7 @@ def start_trial(
             status="blocked",
             message="Trial resume blocked by immutable paper-only policy",
             entity_type="stock_paper_trial",
-            payload={"trial_id": row.id, "operator": actor, "paper_only": True, "live_authorized": False},
+            payload={"trial_id": row.id, "operator": actor, "authorization": authorization or {}, "paper_only": True, "live_authorized": False},
         )
         return row
     # Starting is intentionally conservative: observe/reconcile task must establish these facts.
@@ -808,7 +810,7 @@ def start_trial(
             status="blocked",
             message=row.blocked_reason,
             entity_type="stock_paper_trial",
-            payload={"trial_id": row.id, "operator": actor, "paper_only": True, "live_authorized": False},
+            payload={"trial_id": row.id, "operator": actor, "authorization": authorization or {}, "paper_only": True, "live_authorized": False},
         )
         return row
     now = _now()
@@ -823,7 +825,7 @@ def start_trial(
             status="blocked",
             message=row.blocked_reason,
             entity_type="stock_paper_trial",
-            payload={"trial_id": row.id, "operator": actor, "preflight": preflight},
+            payload={"trial_id": row.id, "operator": actor, "authorization": authorization or {}, "preflight": preflight},
         )
         return row
     # Binding eligibility blocks are immutable; operational preflight blocks
@@ -843,14 +845,30 @@ def start_trial(
         status="resumed",
         message="Operator resumed paper trial after authenticated SIP and ledger preflight",
         entity_type="stock_paper_trial",
-        payload={"trial_id": row.id, "operator": actor, "preflight": preflight},
+        payload={"trial_id": row.id, "operator": actor, "authorization": authorization or {}, "preflight": preflight},
     )
     return row
 
-def pause_trial(db: Session, trial_id: str, reason: str) -> StockPaperTrial:
+def pause_trial(
+    db: Session,
+    trial_id: str,
+    reason: str,
+    *,
+    actor: str = "system",
+    authorization: dict | None = None,
+) -> StockPaperTrial:
     row = db.get(StockPaperTrial, trial_id)
     if not row: raise StockTrainingError("Trial not found")
     if row.status == "running": row.status, row.pause_reason = "paused", reason
+    write_audit_log(
+        db,
+        event_type="stock_forward_trial",
+        action="pause",
+        status="complete",
+        message=reason,
+        entity_type="stock_paper_trial",
+        payload={"trial_id": row.id, "actor": actor, "authorization": authorization or {}},
+    )
     return row
 
 def _accounting_halt_reason(account: StockPaperAccount | None) -> str | None:
@@ -907,7 +925,14 @@ def _halt_trial_for_accounting(
         )
     return reason
 
-def stop_trial(db: Session, trial_id: str) -> StockPaperTrial:
+def stop_trial(
+    db: Session,
+    trial_id: str,
+    *,
+    actor: str = "system",
+    reason: str = "Operator stopped paper forward trial",
+    authorization: dict | None = None,
+) -> StockPaperTrial:
     row = db.get(StockPaperTrial, trial_id)
     if not row: raise StockTrainingError("Trial not found")
     now = _now()
@@ -915,6 +940,15 @@ def stop_trial(db: Session, trial_id: str) -> StockPaperTrial:
     open_lots = _trial_has_managed_exposure(db, row)
     if row.status not in {"stopped", "completed"}:
         row.status, row.stopped_at = ("stopped", now) if open_lots else ("completed", now)
+    write_audit_log(
+        db,
+        event_type="stock_forward_trial",
+        action="stop",
+        status="complete",
+        message=reason,
+        entity_type="stock_paper_trial",
+        payload={"trial_id": row.id, "actor": actor, "authorization": authorization or {}},
+    )
     return row
 
 def record_decision(db: Session, trial_id: str, *, symbol: str, bar_timestamp: datetime,

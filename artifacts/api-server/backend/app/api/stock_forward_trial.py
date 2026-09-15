@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.db.session import get_db
+from app.core.security import authorization_evidence
 from app.models import StockPaperTrial, StockPaperModelBinding, StockModelRegistry, StockDatasetSnapshot, StockPaperTrialDecision, StockPaperTrialMetric
 from app.services.stock_promotion_readiness import (
     evaluate_promotion_readiness,
@@ -196,21 +197,24 @@ def download_promotion_readiness_report(trial_id: str, report_id: int, db: Sessi
 
 @router.post("")
 def approve(body: Approve, request: Request, db: Session = Depends(get_db)):
-    row = _call(create_trial, db, binding_id=body.binding_id, actor=request.state.actor)
+    row = _call(
+        create_trial, db, binding_id=body.binding_id, actor=request.state.actor,
+        authorization=authorization_evidence(request),
+    )
     db.commit(); return _out(row)
 
 @router.post("/{trial_id}/start")
 def start(trial_id: str, request: Request, db: Session = Depends(get_db)):
-    row = _call(start_trial, db, trial_id, actor=request.state.actor); db.commit(); return _out(row)
+    row = _call(start_trial, db, trial_id, actor=request.state.actor, authorization=authorization_evidence(request)); db.commit(); return _out(row)
 
 @router.post("/{trial_id}/pause")
-def pause(trial_id: str, body: Reason, db: Session = Depends(get_db)):
-    row = _call(pause_trial, db, trial_id, body.reason); db.commit(); return _out(row)
+def pause(trial_id: str, body: Reason, request: Request, db: Session = Depends(get_db)):
+    row = _call(pause_trial, db, trial_id, body.reason, actor=request.state.actor, authorization=authorization_evidence(request)); db.commit(); return _out(row)
 
 @router.post("/{trial_id}/resume")
 def resume(trial_id: str, request: Request, db: Session = Depends(get_db)):
-    row = _call(start_trial, db, trial_id, actor=request.state.actor); db.commit(); return _out(row)
+    row = _call(start_trial, db, trial_id, actor=request.state.actor, authorization=authorization_evidence(request)); db.commit(); return _out(row)
 
 @router.post("/{trial_id}/stop")
-def stop(trial_id: str, db: Session = Depends(get_db)):
-    row = _call(stop_trial, db, trial_id); db.commit(); return _out(row)
+def stop(trial_id: str, request: Request, db: Session = Depends(get_db)):
+    row = _call(stop_trial, db, trial_id, actor=request.state.actor, authorization=authorization_evidence(request)); db.commit(); return _out(row)

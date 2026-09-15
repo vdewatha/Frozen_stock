@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Activity, AlertTriangle, BarChart3, BrainCircuit, FlaskConical, ShieldCheck } from "lucide-react";
 
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
@@ -25,7 +25,7 @@ import { RiskSettingsPanel } from "@/components/risk-settings-panel";
 import { SafetyControlBar } from "@/components/safety-control-bar";
 import { StatusPill } from "@/components/status-pill";
 import { StockPaperLedgerPanel } from "@/components/stock-paper-ledger-panel";
-import { getAuthSession, getDashboard, getErrorMessage, setAccessToken, type AccessRole, type DashboardSnapshot } from "@/lib/api";
+import { getAuthConfig, getAuthSession, getDashboard, getErrorMessage, setAccessToken, setAuthMode, type AccessRole, type AuthConfig, type AuthSession, type DashboardSnapshot } from "@/lib/api";
 import { StockTrainingLab } from "@/components/stock-training-lab";
 import { StockMonitoringPanel } from "@/components/stock-monitoring-panel";
 import { StockRecoveryPanel } from "@/components/stock-recovery-panel";
@@ -55,20 +55,31 @@ export default function Login() {
   const [token, setToken] = useState("");
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
   const [role, setRole] = useState<AccessRole | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  if (dashboard && role) return <AccessRoleProvider role={role}><Home dashboard={dashboard} role={role} onSignOut={() => { setAccessToken(""); setDashboard(null); setRole(null); setToken(""); }} /></AccessRoleProvider>;
+  useEffect(() => {
+    void getAuthConfig()
+      .then((config) => {
+        setAuthConfig(config);
+        setAuthMode(config.mode);
+      })
+      .catch((failure) => setError(getErrorMessage(failure, "Authentication configuration unavailable")));
+  }, []);
+  if (dashboard && role && session) return <AccessRoleProvider role={role}><Home dashboard={dashboard} role={role} session={session} onSignOut={() => { setAccessToken(""); setDashboard(null); setRole(null); setSession(null); setToken(""); }} /></AccessRoleProvider>;
+  const productionIdentity = authConfig?.mode === "production_identity";
   return <main className="mx-auto max-w-lg p-8"><h1>Trading research sign in</h1>
-    <p>Enter your API access key. It is held only in this tab’s memory and cleared when you sign out or reload.</p>
-    <form onSubmit={async event => { event.preventDefault(); setBusy(true); setError(""); setAccessToken(token.trim());
-      try { const [nextDashboard, session] = await Promise.all([getDashboard(), getAuthSession()]); setDashboard(nextDashboard); setRole(session.role); setToken(""); } catch (failure) { setAccessToken(""); setError(getErrorMessage(failure, "Sign in failed")); }
+    <p>{productionIdentity ? "Use your organization identity provider. Credentials are never requested or displayed by this control room." : "Enter your local paper-development access key. It is held only in this tab’s memory and cleared when you sign out or reload."}</p>
+    <form onSubmit={async event => { event.preventDefault(); setBusy(true); setError(""); setAccessToken(productionIdentity ? "" : token.trim());
+      try { const [nextDashboard, nextSession] = await Promise.all([getDashboard(), getAuthSession()]); setDashboard(nextDashboard); setRole(nextSession.role); setSession(nextSession); setToken(""); } catch (failure) { setAccessToken(""); setError(getErrorMessage(failure, "Sign in failed")); }
       finally { setBusy(false); }
-    }}><label>Access key<input className="m-4 border p-2" type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} /></label>
-    <button disabled={busy || !token.trim()} type="submit">{busy ? "Connecting…" : "Sign in"}</button></form>
+    }}>{productionIdentity ? null : <label>Local paper access key<input className="m-4 border p-2" type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} /></label>}
+    <button disabled={busy || (!productionIdentity && !token.trim())} type="submit">{busy ? "Connecting…" : productionIdentity ? "Continue with organization sign-in" : "Sign in"}</button></form>
     {error && <p role="alert">{error}</p>}</main>;
 }
 
-function Home({ dashboard, role, onSignOut }: { dashboard: DashboardSnapshot; role: AccessRole; onSignOut: () => void }) {
+function Home({ dashboard, role, session, onSignOut }: { dashboard: DashboardSnapshot; role: AccessRole; session: AuthSession; onSignOut: () => void }) {
 
   return (
     <main className="min-h-screen">
@@ -83,10 +94,13 @@ function Home({ dashboard, role, onSignOut }: { dashboard: DashboardSnapshot; ro
           </div>
           <div className="grid gap-2 md:justify-items-end">
             <div className="flex items-center gap-2">
-              <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold capitalize text-mint">{role}</span>
+               <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold capitalize text-mint">{session.identity ?? "Local paper principal"} · {role}</span>
               <button className="focus-ring rounded-md border border-line px-3 py-1 text-sm font-medium" onClick={onSignOut}>Sign out</button>
             </div>
             <SafetyControlBar />
+            <div className="text-right text-xs text-slate-500">
+              Permissions: {(session.permissions ?? [role]).join(", ")} · Live mode: {session.live_mode ?? "blocked"}
+            </div>
           </div>
         </div>
       </header>

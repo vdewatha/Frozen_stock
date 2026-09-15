@@ -40,7 +40,14 @@ def get_active_risk_rule(db: Session) -> RiskRule:
     return rule
 
 
-def update_risk_settings(db: Session, updates: dict, reason: Optional[str] = None) -> RiskRule:
+def update_risk_settings(
+    db: Session,
+    updates: dict,
+    reason: Optional[str] = None,
+    *,
+    actor: str = "system",
+    authorization: dict | None = None,
+) -> RiskRule:
     rule = get_active_risk_rule(db)
     old_value = DEFAULT_RISK_RULES | ((rule.value or {}).copy())
     next_value = old_value.copy()
@@ -61,7 +68,13 @@ def update_risk_settings(db: Session, updates: dict, reason: Optional[str] = Non
         action="update_risk_settings",
         status="complete",
         message=reason or "Risk settings updated from control room.",
-        payload={"old_value": old_value, "new_value": next_value, "updated_fields": sorted(updates.keys())},
+        payload={
+            "old_value": old_value,
+            "new_value": next_value,
+            "updated_fields": sorted(updates.keys()),
+            "actor": actor,
+            "authorization": authorization or {},
+        },
     )
     db.add(rule)
     db.commit()
