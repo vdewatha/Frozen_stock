@@ -19,6 +19,13 @@ from app.services.stock_promotion_readiness import (
     promotion_readiness_report_history_page,
     promotion_readiness_session_evidence,
 )
+from app.services.stock_paper_graduation import (
+    PaperGraduationBlocked,
+    PaperGraduationError,
+    create_graduation_package,
+    graduation_package,
+    graduation_package_history,
+)
 
 router = APIRouter(prefix="/stock/forward-trials", tags=["stock forward trials"])
 from app.services.stock_forward_trial import (
@@ -36,6 +43,11 @@ class Approve(Strict):
     binding_id: int = Field(gt=0)
 class Reason(Strict):
     reason: str = Field(min_length=3, max_length=500)
+class GraduationReview(Strict):
+    readiness_report_id: int = Field(gt=0)
+    decision: str = Field(pattern="^(approved|rejected)$")
+    reason: str = Field(min_length=3, max_length=1000)
+    soak_report_name: str | None = Field(default=None, min_length=6, max_length=128)
 def _out(x):
     return {"id": x.id, "status": x.status, "binding_id": x.binding_id, "policy": x.policy,
             "source_cycle_id": x.source_cycle_id,
@@ -247,6 +259,62 @@ def download_promotion_readiness_report(trial_id: str, report_id: int, db: Sessi
         jsonable_encoder(report),
         headers={"Content-Disposition": f'attachment; filename="promotion-readiness-{report_id}.json"'},
     )
+
+
+@router.get("/{trial_id}/graduation-packages")
+def get_graduation_packages(trial_id: str, db: Session = Depends(get_db)):
+    try:
+        return {"items": graduation_package_history(db, trial_id)}
+    except PaperGraduationError as exc:
+        raise HTTPException(404, str(exc)) from None
+
+
+@router.get("/{trial_id}/graduation-packages/{package_id}")
+def get_graduation_package(trial_id: str, package_id: int, db: Session = Depends(get_db)):
+    try:
+        return graduation_package(db, trial_id, package_id)
+    except PaperGraduationError as exc:
+        raise HTTPException(404, str(exc)) from None
+
+
+@router.get("/{trial_id}/graduation-packages/{package_id}/download")
+def download_graduation_package(trial_id: str, package_id: int, db: Session = Depends(get_db)):
+    try:
+        package = graduation_package(db, trial_id, package_id)
+    except PaperGraduationError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return JSONResponse(
+        jsonable_encoder(package),
+        headers={"Content-Disposition": f'attachment; filename="paper-graduation-{package_id}.json"'},
+    )
+
+
+@router.post("/{trial_id}/graduation-packages")
+def review_graduation(
+    trial_id: str,
+    body: GraduationReview,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    try:
+        result = create_graduation_package(
+            db,
+            trial_id=trial_id,
+            readiness_report_id=body.readiness_report_id,
+            decision=body.decision,
+            reason=body.reason,
+            actor=request.state.actor,
+            authorization=authorization_evidence(request),
+            soak_report_name=body.soak_report_name,
+        )
+        db.commit()
+        return result
+    except PaperGraduationBlocked as exc:
+        db.commit()
+        raise HTTPException(409, str(exc)) from None
+    except PaperGraduationError as exc:
+        db.rollback()
+        raise HTTPException(400 if "not found" not in str(exc).lower() else 404, str(exc)) from None
 
 @router.post("")
 def approve(body: Approve, request: Request, db: Session = Depends(get_db)):

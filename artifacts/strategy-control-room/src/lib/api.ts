@@ -2955,6 +2955,35 @@ export type PromotionReadinessReport = {
   promotion_authorized: false;
 };
 
+export type PaperGraduationBlocker = {
+  category: string;
+  key: string;
+  status: "blocked";
+  reason: string;
+  source?: unknown;
+};
+
+export type PaperGraduationPackage = {
+  id: number;
+  trial_id: string;
+  cycle_id?: string | null;
+  readiness_report_id: number;
+  accuracy_report_id?: number | null;
+  package_hash: string;
+  readiness_report_hash: string;
+  soak_report_hash?: string | null;
+  decision: "approved" | "rejected";
+  blockers: PaperGraduationBlocker[];
+  evidence?: Record<string, unknown> | null;
+  reviewer_actor: string;
+  reviewer_reason: string;
+  authorization: Record<string, unknown>;
+  paper_only: true;
+  live_authorized: false;
+  live_orders_allowed: false;
+  created_at: string;
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -3324,6 +3353,39 @@ export async function downloadForwardTrialReport(id: string, reportId: string | 
   return {
     blob: await response.blob(),
     filename: filenameMatch?.[1] ?? `forward-trial-${id}-report-${reportId}.json`,
+  };
+}
+
+export async function getPaperGraduationPackages(id: string): Promise<PaperGraduationPackage[]> {
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/graduation-packages`,
+    { cache: "no-store" },
+  );
+  return (await handleResponse<{ items: PaperGraduationPackage[] }>(response)).items;
+}
+
+export async function reviewPaperGraduation(
+  id: string,
+  readinessReportId: number,
+  decision: "approved" | "rejected",
+  reason: string,
+): Promise<PaperGraduationPackage> {
+  return postJson<PaperGraduationPackage>(
+    `/stock/forward-trials/${encodeURIComponent(id)}/graduation-packages`,
+    { readiness_report_id: readinessReportId, decision, reason },
+  );
+}
+
+export async function downloadPaperGraduationPackage(id: string, packageId: number): Promise<{ blob: Blob; filename: string }> {
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/graduation-packages/${packageId}/download`,
+    { cache: "no-store" },
+  );
+  const contentDisposition = response.headers.get("content-disposition") ?? "";
+  const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  return {
+    blob: await response.blob(),
+    filename: filenameMatch?.[1] ?? `paper-graduation-${packageId}.json`,
   };
 }
 

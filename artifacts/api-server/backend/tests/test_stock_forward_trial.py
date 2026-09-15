@@ -27,6 +27,7 @@ from app.models import (
     StockPaperModelBinding, StockPaperTrial, StockPaperTrialDecision,
     StockPaperOrder, StockPaperFill, StockPaperTrialLot, Strategy,
     StockPaperPromotionReadinessReport, StockPaperTrialMetric, AuditLog,
+    StockPaperGraduationPackage,
 )
 from app.services.stock_forward_trial import (
     POLICY, _hash, create_trial, evaluate_trial, observe_trial, record_decision,
@@ -41,6 +42,10 @@ from app.services.stock_promotion_readiness import (
     promotion_readiness_session_evidence,
 )
 from app.services.stock_paper_ledger import reserve_stock_paper_order
+from app.services.stock_paper_graduation import (
+    PaperGraduationBlocked,
+    create_graduation_package,
+)
 from app.tasks.jobs import stock_forward_trial_observe_job
 from app.services.stock_training_jobs import StockTrainingError
 from app.services.stock_training import FEATURES
@@ -2119,6 +2124,84 @@ class ForwardTrialTests(unittest.TestCase):
             stop_trial(db, row.id)
             self.assertEqual(lot.exit_reason, "operator_stop")
             self.assertEqual(row.status, "stopped")
+
+    def test_graduation_rejection_archives_truthful_redacted_blockers(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="completed")
+            self.account(db, reconciled=False)
+            account = db.query(StockPaperAccount).one()
+            account.raw_payload = {"secret": "must-not-be-archived"}
+            report = StockPaperPromotionReadinessReport(
+                trial_id=row.id,
+                report_hash="r" * 64,
+                decision="unknown",
+                gates={"regular_sessions": {"status": "unknown", "reason": "incomplete"}},
+                lineage=row.lineage,
+                policy=row.policy,
+                report_version=1,
+                evidence={"session_evidence": {"window": {"complete": False}, "sessions": []}},
+                paper_only=True,
+                live_authorized=False,
+            )
+            db.add(report)
+            db.flush()
+            result = create_graduation_package(
+                db,
+                trial_id=row.id,
+                readiness_report_id=report.id,
+                decision="rejected",
+                reason="Required campaign evidence is incomplete",
+                actor="operator:test",
+                authorization={"role": "operator", "source": "test"},
+                soak_report={},
+                soak_report_name=None,
+            )
+            db.commit()
+            self.assertEqual(result["decision"], "rejected")
+            self.assertGreater(len(result["blockers"]), 0)
+            self.assertTrue(result["paper_only"])
+            self.assertFalse(result["live_authorized"])
+            serialized = json.dumps(result)
+            self.assertNotIn("must-not-be-archived", serialized)
+            self.assertNotIn("broker_account_id", serialized)
+            self.assertEqual(db.query(StockPaperGraduationPackage).count(), 1)
+
+    def test_graduation_approval_fails_closed_when_evidence_is_missing(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="completed")
+            report = StockPaperPromotionReadinessReport(
+                trial_id=row.id,
+                report_hash="a" * 64,
+                decision="unknown",
+                gates={},
+                lineage=row.lineage,
+                policy=row.policy,
+                report_version=1,
+                evidence={},
+                paper_only=True,
+                live_authorized=False,
+            )
+            db.add(report)
+            db.flush()
+            with self.assertRaises(PaperGraduationBlocked):
+                create_graduation_package(
+                    db,
+                    trial_id=row.id,
+                    readiness_report_id=report.id,
+                    decision="approved",
+                    reason="Approve only if all gates pass",
+                    actor="operator:test",
+                    authorization={"role": "operator"},
+                    soak_report={},
+                )
+            self.assertEqual(db.query(StockPaperGraduationPackage).count(), 0)
+            self.assertEqual(row.status, "completed")
+
+    def test_graduation_routes_have_explicit_roles(self):
+        trial_id = "00000000-0000-0000-0000-000000000001"
+        self.assertEqual(required_role("GET", f"/stock/forward-trials/{trial_id}/graduation-packages"), "viewer")
+        self.assertEqual(required_role("GET", f"/stock/forward-trials/{trial_id}/graduation-packages/1/download"), "viewer")
+        self.assertEqual(required_role("POST", f"/stock/forward-trials/{trial_id}/graduation-packages"), "operator")
 
 if __name__ == "__main__":
     unittest.main()

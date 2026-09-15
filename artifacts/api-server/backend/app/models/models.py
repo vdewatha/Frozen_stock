@@ -941,6 +941,50 @@ class StockPaperPromotionReadinessReport(Base):
     evidence: Mapped[Optional[dict]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+
+class StockPaperGraduationPackage(Base):
+    """Append-only human disposition over one immutable paper evidence package."""
+    __tablename__ = "stock_paper_graduation_packages"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('approved', 'rejected')",
+            name="ck_stock_graduation_decision",
+        ),
+        CheckConstraint("paper_only = true", name="ck_stock_graduation_paper_only"),
+        CheckConstraint("live_authorized = false", name="ck_stock_graduation_live_disabled"),
+        UniqueConstraint("package_hash", name="uq_stock_graduation_package_hash"),
+        Index(
+            "ix_stock_graduation_trial_created",
+            "trial_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trial_id: Mapped[str] = mapped_column(ForeignKey("stock_paper_trials.id"), nullable=False, index=True)
+    cycle_id: Mapped[Optional[str]] = mapped_column(ForeignKey("stock_learning_cycles.cycle_id"), index=True)
+    readiness_report_id: Mapped[int] = mapped_column(
+        ForeignKey("stock_paper_promotion_readiness_reports.id"), nullable=False, index=True
+    )
+    accuracy_report_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("stock_paper_accuracy_reports.id"), index=True
+    )
+    package_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    readiness_report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    soak_report_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    blockers: Mapped[list] = mapped_column(JSON, nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False)
+    reviewer_actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    reviewer_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    authorization: Mapped[dict] = mapped_column(JSON, nullable=False)
+    paper_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
 class StockLearningCycleEvent(Base):
     """Append-only stage and gate evidence for a learning-cycle run."""
     __tablename__ = "stock_learning_cycle_events"

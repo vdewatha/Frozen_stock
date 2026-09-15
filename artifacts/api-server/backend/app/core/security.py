@@ -106,10 +106,16 @@ def required_role(method: str, path: str) -> str:
         return "operator"
     if method == "GET" and re.fullmatch(
         r"/stock/forward-trials/[0-9a-f-]{36}(?:/(decisions|metrics|promotion-readiness|preflight)"
-        r"|/promotion-readiness/reports(?:/[1-9][0-9]*(?:/(download|session-evidence))?)?)?",
+        r"|/promotion-readiness/reports(?:/[1-9][0-9]*(?:/(download|session-evidence))?)?"
+        r"|/graduation-packages(?:/[1-9][0-9]*(?:/download)?)?)?",
         path,
     ):
         return "viewer"
+    if method == "POST" and re.fullmatch(
+        r"/stock/forward-trials/[0-9a-f-]{36}/graduation-packages",
+        path,
+    ):
+        return "operator"
     if method == "POST" and re.fullmatch(r"/stock/forward-trials/[0-9a-f-]{36}/(start|pause|resume|stop)", path):
         return "operator"
     if method == "POST" and re.fullmatch(r"/crypto/paper/intents/[1-9][0-9]*/(dispatch|reconcile|abandon)", path):

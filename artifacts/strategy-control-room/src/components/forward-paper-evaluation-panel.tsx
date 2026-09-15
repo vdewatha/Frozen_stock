@@ -13,6 +13,9 @@ import {
   getForwardTrialReportHistory,
   getForwardTrialSessionEvidence,
   downloadForwardTrialReport,
+  getPaperGraduationPackages,
+  reviewPaperGraduation,
+  downloadPaperGraduationPackage,
   forwardTrialEvidenceFromReadiness,
   forwardTrialEvidenceFromSessionPage,
   startForwardTrial,
@@ -30,6 +33,7 @@ import {
   type ForwardTrialEvidenceSymbol,
   type ForwardTrialEvidenceSource,
   type ForwardTrialReport,
+  type PaperGraduationPackage,
 } from "@/lib/api";
 
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -184,16 +188,22 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
   const [isBusy, setIsBusy] = useState(false);
   const [pauseReason, setPauseReason] = useState("");
   const [showPauseForm, setShowPauseForm] = useState(false);
+  const [graduationPackages, setGraduationPackages] = useState<PaperGraduationPackage[]>([]);
+  const [graduationDecision, setGraduationDecision] = useState<"approved" | "rejected">("rejected");
+  const [graduationReason, setGraduationReason] = useState("");
+  const [graduationError, setGraduationError] = useState("");
+  const [reviewingGraduation, setReviewingGraduation] = useState(false);
 
   const fetchDetails = useCallback(async () => {
     try {
       setLoading(true);
-      const [m, d, r, p, h] = await Promise.all([
+      const [m, d, r, p, h, g] = await Promise.all([
         getForwardTrialMetrics(trial.id, { limit: TRIAL_HISTORY_PAGE_SIZE, offset: 0 }),
         getForwardTrialDecisions(trial.id, { limit: TRIAL_HISTORY_PAGE_SIZE, offset: 0 }),
         getForwardTrialPromotionReadiness(trial.id, { includeSessionEvidence: false }),
         getForwardTrialPreflight(trial.id),
         getForwardTrialReportHistory(trial.id, { limit: 10, offset: 0 }).catch(() => null),
+        getPaperGraduationPackages(trial.id).catch(() => []),
       ]);
       const sessionPage = r.evidence?.session_evidence
         ? null
@@ -219,12 +229,53 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
       setReportHistoryTotal(h?.total ?? h?.items.length ?? 0);
       setReportHistoryHasMore(h?.has_more ?? false);
       setReportError(h ? "" : "Evidence report history is unavailable.");
+      setGraduationPackages(g);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
   }, [trial.id]);
+
+  const handleGraduationReview = async () => {
+    if (!readiness || graduationReason.trim().length < 3) return;
+    try {
+      setReviewingGraduation(true);
+      setGraduationError("");
+      const result = await reviewPaperGraduation(
+        trial.id,
+        readiness.id,
+        graduationDecision,
+        graduationReason,
+      );
+      setGraduationPackages(current => [result, ...current.filter(item => item.id !== result.id)]);
+      setGraduationReason("");
+    } catch (error) {
+      console.error(error);
+      setGraduationError(
+        graduationDecision === "approved"
+          ? "Approval is blocked until every archived evidence gate passes."
+          : "The graduation disposition could not be archived.",
+      );
+    } finally {
+      setReviewingGraduation(false);
+    }
+  };
+
+  const handleGraduationDownload = async (item: PaperGraduationPackage) => {
+    try {
+      const result = await downloadPaperGraduationPackage(trial.id, item.id);
+      const objectUrl = URL.createObjectURL(result.blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = result.filename;
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      console.error(error);
+      setGraduationError("The immutable graduation package could not be downloaded.");
+    }
+  };
 
   const loadMoreMetrics = async () => {
     if (loadingMoreMetrics || !metricHistoryHasMore) return;
@@ -839,6 +890,56 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
       </div>
 
       <RoleGate requires="operator">
+        <div className="rounded-md border border-line bg-white p-3" data-testid={`paper-graduation-${trial.id}`}>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div className="font-semibold text-sm text-slate-800">Paper graduation review</div>
+              <div className="mt-0.5 text-xs text-slate-500">
+                Archive an immutable approval or rejection package. Approval never enables live trading and fails closed when evidence is missing.
+              </div>
+            </div>
+            <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800">
+              Paper only · live disabled
+            </span>
+          </div>
+          {graduationPackages.length > 0 && (
+            <div className="mt-3 grid gap-2">
+              {graduationPackages.map(item => (
+                <div key={item.id} className="rounded border border-line bg-panel p-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className={item.decision === "approved" ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>
+                        {item.decision.toUpperCase()}
+                      </span>
+                      <span className="ml-2 text-slate-500">{new Date(item.created_at).toLocaleString()} · {item.reviewer_actor}</span>
+                    </div>
+                    <button type="button" className="inline-flex items-center gap-1 text-slate-700" onClick={() => void handleGraduationDownload(item)}>
+                      <Download size={13} /> Download
+                    </button>
+                  </div>
+                  <div className="mt-1 text-slate-600">{item.reviewer_reason}</div>
+                  <div className="mt-1 text-[11px] text-slate-500">{item.blockers.length} blocker{item.blockers.length === 1 ? "" : "s"} · hash {item.package_hash.slice(0, 12)}…</div>
+                  {item.blockers.length > 0 && (
+                    <ul className="mt-2 list-disc pl-4 text-[11px] text-amber-800">
+                      {item.blockers.map(blocker => <li key={`${blocker.category}-${blocker.key}`}>{blocker.reason}</li>)}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-3 grid gap-2 sm:grid-cols-[10rem_1fr_auto]">
+            <select className="h-9 rounded border border-line bg-white px-2 text-xs" value={graduationDecision} onChange={event => setGraduationDecision(event.target.value as "approved" | "rejected")}>
+              <option value="rejected">Reject / block</option>
+              <option value="approved">Approve paper graduation</option>
+            </select>
+            <input className="h-9 rounded border border-line px-3 text-xs" value={graduationReason} onChange={event => setGraduationReason(event.target.value)} placeholder="Reviewer reason (required)" />
+            <button type="button" disabled={reviewingGraduation || graduationReason.trim().length < 3 || !readiness} onClick={() => void handleGraduationReview()} className="h-9 rounded bg-slate-900 px-3 text-xs font-semibold text-white disabled:opacity-50">
+              {reviewingGraduation ? "Archiving…" : "Archive review"}
+            </button>
+          </div>
+          {graduationError && <div className="mt-2 text-xs text-red-700">{graduationError}</div>}
+        </div>
         <div className="flex flex-wrap gap-2 pt-2" data-testid="forward-trial-operator-controls">
           {trial.status === "approved" && (
             <button

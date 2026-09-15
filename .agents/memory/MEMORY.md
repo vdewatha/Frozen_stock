@@ -28,3 +28,4 @@
 - [Live broker isolation](live-broker-isolation.md) — live provider truth, order lineage, and ambiguity handling must remain separate from paper execution.
 - [Live operations projection](live-operations-projection.md) — operational views are bounded, redacted, and fail-closed; missing evidence is never healthy.
 - [Controlled live pilot](live-pilot-controls.md) — live exposure requires a separate two-person, bounded, expiring pilot authorization over paper evidence.
+- [Paper graduation boundary](paper-graduation-boundary.md) — graduation is an immutable human disposition over redacted evidence; approval never grants live authority.
