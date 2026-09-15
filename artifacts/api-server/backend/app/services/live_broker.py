@@ -9,7 +9,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
+import json
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy import select
@@ -17,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import (
+    CorporateAction,
     IntradayBar,
     LiveBrokerAccount,
     LiveBrokerAccountSnapshot,
@@ -32,12 +35,15 @@ from app.models import (
 from app.services.audit import write_audit_log
 from app.services.intraday_data import feed_status
 from app.services.live_safety import live_order_decision
+from app.services.risk import DEFAULT_RISK_RULES
+from app.services.intraday_data import session_bounds
 
 LIVE_ALPACA_URL = "https://api.alpaca.markets"
 LIVE_BROKER = "alpaca_live"
 UTC = timezone.utc
 MAX_REFERENCE_PRICE_DEVIATION = Decimal("0.02")
 MAX_ACCOUNT_AGE = timedelta(minutes=5)
+MAX_QUOTE_AGE = timedelta(minutes=5)
 NONTERMINAL = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
 TERMINAL = frozenset({"filled", "canceled", "cancelled", "expired", "rejected", "done_for_day"})
 ALLOWED_ORDER_TYPES = frozenset({"market", "limit"})
@@ -222,6 +228,44 @@ def _halt(account: LiveBrokerAccount, reason: str) -> None:
     account.halted_at = datetime.now(UTC)
 
 
+def _accounting_digest(db: Session, account: LiveBrokerAccount) -> str:
+    """Hash only persisted broker evidence used by an accounting review."""
+    evidence = {
+        "account": account.raw_payload or {},
+        "positions": [
+            row.raw_payload or {}
+            for row in db.query(LiveBrokerPosition)
+            .filter_by(account_id=account.id)
+            .order_by(LiveBrokerPosition.symbol)
+            .all()
+        ],
+        "orders": [
+            row.raw_payload or {}
+            for row in db.query(LiveBrokerOrder)
+            .filter_by(account_id=account.id)
+            .order_by(LiveBrokerOrder.client_order_id)
+            .all()
+        ],
+        "fills": [
+            row.raw_payload or {}
+            for row in db.query(LiveBrokerFill)
+            .filter_by(account_id=account.id)
+            .order_by(LiveBrokerFill.broker_activity_id)
+            .all()
+        ],
+        "activities": [
+            row.raw_payload or {}
+            for row in db.query(LiveBrokerActivity)
+            .filter_by(account_id=account.id)
+            .order_by(LiveBrokerActivity.broker_activity_id)
+            .all()
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+
+
 def _account_values(raw: dict, observed: datetime) -> dict:
     if str(raw.get("currency", "")).upper() != "USD" or str(raw.get("status", "")).upper() != "ACTIVE":
         raise LiveBrokerError("Live Alpaca account must be ACTIVE and report USD")
@@ -316,9 +360,15 @@ def _upsert_orders(db: Session, account: LiveBrokerAccount, rows: list[dict]) ->
     return review_orders
 
 
-def _upsert_activities(db: Session, account: LiveBrokerAccount, rows: list[dict], observed: datetime) -> tuple[set[str], list[str]]:
+def _upsert_activities(
+    db: Session,
+    account: LiveBrokerAccount,
+    rows: list[dict],
+    observed: datetime,
+) -> tuple[set[str], list[str], set[str]]:
     fill_ids: set[str] = set()
     unsupported: list[str] = []
+    enriched_fill_ids: set[str] = set()
     for raw in rows:
         activity_id = str(raw.get("id") or "").strip()
         activity_type = str(raw.get("activity_type") or "FILL").upper()
@@ -343,6 +393,8 @@ def _upsert_activities(db: Session, account: LiveBrokerAccount, rows: list[dict]
                 raise LiveBrokerError("Live broker activity immutable fields changed")
             if enrichment:
                 activity.raw_payload = raw
+                if activity_type == "FILL":
+                    enriched_fill_ids.add(activity_id)
             activity.occurred_at = _timestamp(raw.get("transaction_time") or raw.get("created_at"), activity.occurred_at)
         if activity_type != "FILL":
             continue
@@ -366,6 +418,7 @@ def _upsert_activities(db: Session, account: LiveBrokerAccount, rows: list[dict]
                 raise LiveBrokerError("Live broker fill immutable fields changed")
             if existing.fee is None and fee is not None:
                 existing.fee, existing.raw_payload = fee, raw
+                enriched_fill_ids.add(activity_id)
             continue
         db.add(LiveBrokerFill(
             account_id=account.id, order_id=broker_order.id if broker_order else None,
@@ -373,7 +426,7 @@ def _upsert_activities(db: Session, account: LiveBrokerAccount, rows: list[dict]
             symbol=str(raw.get("symbol") or "").upper(), side=side, quantity=quantity,
             price=price, fee=fee, filled_at=_timestamp(raw.get("transaction_time"), observed), raw_payload=raw,
         ))
-    return fill_ids, unsupported
+    return fill_ids, unsupported, enriched_fill_ids
 
 
 def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None = None) -> dict:
@@ -381,6 +434,8 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
     gateway = gateway or AlpacaLiveClient()
     observed = datetime.now(UTC)
     prior_cash = account.cash if account else None
+    prior_unexplained = bool(account.unexplained_residual) if account else False
+    prior_review_required = bool(account.accounting_review_required) if account else False
     prior_positions = {
         row.symbol: row.quantity
         for row in db.query(LiveBrokerPosition).filter_by(account_id=account.id).all()
@@ -422,7 +477,7 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
             setattr(account, key, value)
         _upsert_positions(db, account, positions, observed)
         external = _upsert_orders(db, account, orders)
-        fill_ids, unsupported = _upsert_activities(db, account, activities, observed)
+        fill_ids, unsupported, enriched_fill_ids = _upsert_activities(db, account, activities, observed)
         db.add(LiveBrokerAccountSnapshot(
             account_id=account.id, cash=account.cash, buying_power=account.buying_power,
             equity=account.equity, observed_at=observed, source=LIVE_BROKER, raw_payload=raw_account,
@@ -435,8 +490,18 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
         if unsupported:
             issues.append("Unsupported live broker activities require manual review: " + ", ".join(sorted(set(unsupported))))
         fills = db.query(LiveBrokerFill).filter_by(account_id=account.id).all()
-        if any(fill.fee is None for fill in fills):
+        if any(fill.fee is None for fill in fills) and not enriched_fill_ids:
             issues.append("Live fill fees are incomplete; exposure remains halted until fee enrichment")
+        external_fills = [
+            fill for fill in fills
+            if fill.order_id is None
+            or (
+                (linked := db.get(LiveBrokerOrder, fill.order_id)) is not None
+                and linked.source == "broker_import"
+            )
+        ]
+        if external_fills:
+            issues.append("External live fills require manual review before further exposure")
         new_activity_rows = [
             row for row in activities
             if str(row.get("id") or "") not in prior_activity_ids
@@ -445,15 +510,21 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
             row for row in new_activity_rows
             if str(row.get("activity_type") or "FILL").upper() == "FILL"
         ]
+        residual_payload: dict[str, str | list[str]] = {}
         if prior_cash is not None and not new_activity_rows and prior_cash != account.cash:
             issues.append("Live broker cash changed without a reported fill or activity")
         elif prior_cash is not None and new_fill_rows and len(new_fill_rows) == len(new_activity_rows):
             cash_delta = Decimal("0")
             quantity_delta: dict[str, Decimal] = {}
+            missing_fee = False
             for row in new_fill_rows:
                 qty = _decimal(row.get("qty"), "fill quantity")
                 price = _decimal(row.get("price"), "fill price")
-                fee = _decimal(row.get("commission"), "commission")
+                if row.get("commission") is None:
+                    missing_fee = True
+                    fee = Decimal("0")
+                else:
+                    fee = _decimal(row.get("commission"), "commission")
                 symbol = str(row.get("symbol") or "").upper()
                 sign = Decimal("1") if str(row.get("side") or "").lower() == "buy" else Decimal("-1")
                 cash_delta += (-sign * qty * price) - fee
@@ -462,18 +533,72 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
                 row.symbol: row.quantity
                 for row in db.query(LiveBrokerPosition).filter_by(account_id=account.id).all()
             }
-            if prior_cash + cash_delta != account.cash:
+            if missing_fee:
+                issues.append("Live fill commission is incomplete; accounting residual remains unknown")
+            elif prior_cash + cash_delta != account.cash:
                 issues.append("Live broker cash does not reconcile to reported fills")
+            if missing_fee or prior_cash + cash_delta != account.cash:
+                residual_payload = {
+                    "activity_ids": [str(row.get("id")) for row in new_fill_rows if row.get("id")],
+                    "cash_residual": str(account.cash - (prior_cash + sum(
+                        (
+                            -(Decimal("1") if str(row.get("side") or "").lower() == "buy" else Decimal("-1"))
+                            * _decimal(row.get("qty"), "fill quantity")
+                            * _decimal(row.get("price"), "fill price")
+                        )
+                        for row in new_fill_rows
+                    ))),
+                }
             for symbol in set(prior_positions) | set(current_positions) | set(quantity_delta):
                 if current_positions.get(symbol, Decimal("0")) - prior_positions.get(symbol, Decimal("0")) != quantity_delta.get(symbol, Decimal("0")):
                     issues.append(f"Live broker position quantity does not reconcile for {symbol}")
+        if prior_unexplained and not enriched_fill_ids:
+            issues.append("Prior unexplained live accounting residual remains unresolved")
+        if prior_review_required and not enriched_fill_ids:
+            issues.append("Explicit live accounting review is required before exposure can resume")
+
+        # The only automatic clearing path is an exact commission enrichment
+        # for the activity ids recorded with the original residual. A repeated
+        # balance snapshot is deliberately not enough.
+        residual_resolved = False
+        if prior_unexplained and enriched_fill_ids and not external and not unresolved and not external_fills:
+            prior_events = db.query(LiveBrokerLedgerEvent).filter(
+                LiveBrokerLedgerEvent.account_id == account.id,
+                LiveBrokerLedgerEvent.event_type == "reconcile",
+                LiveBrokerLedgerEvent.status == "halted",
+            ).order_by(LiveBrokerLedgerEvent.id.desc()).all()
+            prior_event = next(
+                (event for event in prior_events if (event.payload or {}).get("activity_ids")),
+                None,
+            )
+            prior_payload = (prior_event.payload or {}) if prior_event else {}
+            prior_ids = {str(value) for value in prior_payload.get("activity_ids", [])}
+            late_fees = sum(
+                (fill.fee or Decimal("0") for fill in fills if fill.broker_activity_id in enriched_fill_ids),
+                Decimal("0"),
+            )
+            if prior_ids == enriched_fill_ids and Decimal(str(prior_payload.get("cash_residual", "0"))) + late_fees == Decimal("0"):
+                residual_resolved = True
+                issues = [
+                    issue for issue in issues
+                    if "Prior unexplained" not in issue
+                    and "Explicit live accounting review" not in issue
+                    and "commission is incomplete" not in issue
+                    and "fees are incomplete" not in issue
+                ]
         account.last_reconciled_at = observed
         account.status = "halted" if issues else "reconciled"
         account.reconciliation_required = bool(issues)
-        account.unexplained_residual = bool(issues)
+        account.unexplained_residual = False if residual_resolved else (prior_unexplained or bool(issues))
+        account.accounting_review_required = False if residual_resolved else (prior_review_required or bool(issues))
+        if account.unexplained_residual or account.accounting_review_required:
+            account.status = "halted"
+            account.reconciliation_required = True
         account.halt_reason = "; ".join(issues) if issues else None
-        _event(db, account, "reconcile", "halted" if issues else "reconciled", account.halt_reason or "Live broker truth reconciled", {
+        _event(db, account, "reconcile", "halted" if account.status == "halted" else "reconciled",
+               account.halt_reason or "Live broker truth reconciled", {
             "orders": len(orders), "activities": len(activities), "prior_reconciled_at": prior_reconciled.isoformat() if prior_reconciled else None,
+            **residual_payload,
         })
         db.commit()
         return live_broker_status(db)
@@ -488,33 +613,165 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
         raise LiveBrokerError(str(exc)) from exc
 
 
+def review_live_accounting_residual(
+    db: Session,
+    *,
+    actor: str,
+    reason: str,
+    evidence_digest: str,
+) -> dict:
+    """Clear a live residual only after an attributable operator review."""
+    actor, reason, evidence_digest = actor.strip(), reason.strip(), evidence_digest.strip().lower()
+    if not actor or len(reason) < 3:
+        raise LiveBrokerError("Live accounting review requires an explicit actor and reason")
+    account = db.query(LiveBrokerAccount).filter_by(broker=LIVE_BROKER).with_for_update().one_or_none()
+    if not account:
+        raise LiveBrokerError("Live broker account is not initialized")
+    if not account.unexplained_residual and not account.accounting_review_required:
+        raise LiveBrokerError("No unresolved live accounting residual requires review")
+    current_digest = _accounting_digest(db, account)
+    if evidence_digest != current_digest:
+        raise LiveBrokerError("Live accounting review evidence is stale")
+    now = datetime.now(UTC)
+    account.accounting_review_required = False
+    account.accounting_reviewed_at = now
+    account.accounting_reviewed_by = actor
+    account.accounting_review_reason = reason
+    account.accounting_review_digest = current_digest
+    account.unexplained_residual = False
+    account.reconciliation_required = False
+    account.status = "reconciled"
+    account.halt_reason = None
+    _event(db, account, "accounting_review", "complete", reason, {
+        "actor": actor,
+        "evidence_digest": current_digest,
+        "reviewed_at": now.isoformat(),
+    })
+    write_audit_log(
+        db,
+        event_type="live_broker",
+        entity_type="live_account",
+        entity_id=account.id,
+        action="accounting_review",
+        status="complete",
+        message=reason,
+        payload={"actor": actor, "evidence_digest": current_digest},
+    )
+    db.commit()
+    return live_broker_status(db)
+
+
 def _fresh_market_data(db: Session, symbol: str, reference_price: Decimal) -> dict:
+    now = datetime.now(UTC)
     try:
-        market = feed_status(db, symbol, now=datetime.now(UTC))
+        market = feed_status(db, symbol, now=now)
     except Exception as exc:
         raise LiveBrokerError("Live order blocked because approved current market data is unavailable") from exc
     if market.get("status") != "ready":
         raise LiveBrokerError(f"Live order blocked by stale or unavailable market data: {market.get('status')}")
     latest = db.query(IntradayBar).filter_by(symbol=symbol, timeframe="1m").order_by(IntradayBar.opened_at.desc()).first()
-    if latest is None or latest.close <= 0 or abs(reference_price - latest.close) / latest.close > MAX_REFERENCE_PRICE_DEVIATION:
-        raise LiveBrokerError("Live order reference price is stale or outside the allowed deviation")
-    return {"status": "pass", "symbol": symbol, "bar_time": latest.opened_at.isoformat(), "close": str(latest.close)}
-
-
-def _live_risk_gate(db: Session, account: LiveBrokerAccount, symbol: str, side: str, quantity: Decimal, reference_price: Decimal) -> dict:
+    configured_slippage = DEFAULT_RISK_RULES["max_live_slippage"]
     rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
-    values = rule.value if rule else {}
+    if rule and isinstance(rule.value, dict):
+        configured_slippage = rule.value.get("max_live_slippage", configured_slippage)
+    max_slippage = Decimal(str(configured_slippage))
+    deviation = (
+        abs(reference_price - latest.close) / latest.close
+        if latest is not None and latest.close > 0
+        else Decimal("Infinity")
+    )
+    if latest is None or latest.close <= 0 or deviation > max_slippage:
+        raise LiveBrokerError("Live order reference price is stale or outside the allowed deviation")
+    bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
+    if bounds is None or not (bounds[0] <= now < bounds[1]):
+        raise LiveBrokerError("Live order is blocked outside the regular market session")
+    provider_quote_time = market.get("exchange_timestamp")
+    quote_time = _timestamp(provider_quote_time, latest.exchange_timestamp or latest.opened_at)
+    quote_age = now - quote_time
+    if provider_quote_time is not None and (quote_age < timedelta(0) or quote_age > MAX_QUOTE_AGE):
+        raise LiveBrokerError("Live order is blocked because the latest approved quote is stale")
+    return {
+        "status": "pass",
+        "symbol": symbol,
+        "bar_time": latest.opened_at.isoformat(),
+        "exchange_timestamp": _utc(quote_time).isoformat(),
+        "quote_age_seconds": round(quote_age.total_seconds(), 3),
+        "close": str(latest.close),
+        "max_slippage": str(max_slippage),
+    }
+
+
+def _live_risk_gate(
+    db: Session,
+    account: LiveBrokerAccount,
+    symbol: str,
+    side: str,
+    quantity: Decimal,
+    reference_price: Decimal,
+    *,
+    recovery: bool = False,
+) -> dict:
+    rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
+    values = DEFAULT_RISK_RULES | ((rule.value if rule else {}) or {})
     if bool(values.get("kill_switch_enabled", False)):
         raise LiveBrokerError("Live order blocked by the risk kill switch")
-    if quantity * reference_price > account.cash and side == "buy":
-        raise LiveBrokerError("Live buy exceeds current cash; leverage is forbidden")
+    pending = db.query(LiveBrokerOrder).filter(
+        LiveBrokerOrder.account_id == account.id,
+        LiveBrokerOrder.status.in_(NONTERMINAL),
+    ).all()
+    max_orders = int(values.get("max_live_open_orders", values.get("max_open_positions", 10)))
+    if not recovery and len(pending) >= max_orders:
+        raise LiveBrokerError("Live order count limit reached")
+    notional = quantity * reference_price
+    reserved_cash = sum((row.reserved_cash for row in pending if row.side == "buy"), Decimal("0"))
+    available_buying_power = account.buying_power - reserved_cash
+    if side == "buy" and notional > available_buying_power:
+        raise LiveBrokerError("Live buy exceeds current buying power after pending reservations")
     position = db.query(LiveBrokerPosition).filter_by(account_id=account.id, symbol=symbol).one_or_none()
     if side == "sell" and (position is None or quantity > position.quantity):
         raise LiveBrokerError("Live sell exceeds reconciled long inventory")
-    max_exposure = Decimal(str(values.get("max_symbol_exposure", "0.25")))
-    if side == "buy" and (position.market_value if position else Decimal("0")) + quantity * reference_price > account.equity * max_exposure:
+    positions = db.query(LiveBrokerPosition).filter_by(account_id=account.id).all()
+    gross_exposure = sum((abs(row.market_value or Decimal("0")) for row in positions), Decimal("0"))
+    pending_exposure = sum((row.quantity * (row.limit_price or row.reference_price) for row in pending if row.side == "buy"), Decimal("0"))
+    max_total = Decimal(str(values.get("max_total_exposure", "1.0")))
+    if not recovery and side == "buy" and gross_exposure + pending_exposure + notional > account.equity * max_total:
+        raise LiveBrokerError("Live order exceeds the configured total exposure limit")
+    max_exposure = Decimal(str(values.get("max_symbol_exposure", "0.10")))
+    symbol_pending = sum(
+        (row.quantity * (row.limit_price or row.reference_price)
+         for row in pending if row.side == "buy" and row.symbol == symbol),
+        Decimal("0"),
+    )
+    if not recovery and side == "buy" and (position.market_value if position else Decimal("0")) + symbol_pending + notional > account.equity * max_exposure:
         raise LiveBrokerError("Live buy exceeds the configured symbol exposure limit")
-    return {"status": "pass", "rule_id": rule.id if rule else None, "kill_switch_enabled": False, "leverage": False}
+    daily_drawdown = account.raw_payload.get("daily_drawdown") if isinstance(account.raw_payload, dict) else None
+    if daily_drawdown is not None and Decimal(str(daily_drawdown)) > Decimal(str(values["max_daily_drawdown"])):
+        raise LiveBrokerError("Live daily drawdown limit exceeded")
+    return {
+        "status": "pass",
+        "rule_id": rule.id if rule else None,
+        "kill_switch_enabled": False,
+        "leverage": False,
+        "available_buying_power": str(available_buying_power),
+        "pending_order_count": len(pending),
+        "gross_exposure": str(gross_exposure),
+        "max_total_exposure": str(max_total),
+        "max_symbol_exposure": str(max_exposure),
+    }
+
+
+def _model_is_eligible(model: StockModelRegistry) -> bool:
+    metadata = model.training_metadata if isinstance(model.training_metadata, dict) else {}
+    if model.lifecycle_state in {"demoted", "retired"}:
+        return False
+    if metadata.get("live_eligible") is False:
+        return False
+    # Research artifacts explicitly carry this false marker.  Empty metadata
+    # is retained as a compatibility path for already-bound legacy evidence;
+    # it is still subject to the immutable live-safety lineage gate.
+    if metadata and metadata.get("eligible_for_trading") is False and model.lifecycle_state not in {"paper_canary", "champion"}:
+        return False
+    return True
 
 
 def _order_shape(order: LiveBrokerOrder) -> tuple:
@@ -564,6 +821,10 @@ def reserve_live_order(
     signal = db.get(StrategySignal, signal_id)
     if not model or not signal or signal.symbol.upper() != symbol:
         raise LiveBrokerError("Live order requires an existing model version and matching strategy signal")
+    if not _model_is_eligible(model):
+        raise LiveBrokerError("Live order requires an eligible, non-demoted model version")
+    if str(signal.action or "").upper() != side.upper():
+        raise LiveBrokerError("Live order side does not match the persisted strategy signal")
     data_gate = _fresh_market_data(db, symbol, reference_price)
     risk_gate = _live_risk_gate(db, account, symbol, side, quantity, reference_price)
     snapshot = db.query(LiveBrokerAccountSnapshot).filter_by(account_id=account.id).order_by(LiveBrokerAccountSnapshot.observed_at.desc()).first()
@@ -598,16 +859,31 @@ def dispatch_live_order(db: Session, order_id: int, gateway: LiveBrokerGateway |
         return order
     account = db.query(LiveBrokerAccount).filter_by(id=order.account_id).with_for_update().one()
     safety = live_order_decision(db)
-    if not safety.get("live_orders_allowed") or account.status != "reconciled" or account.reconciliation_required:
+    recovery_order = order.source == "live_recovery_flatten" and order.side == "sell"
+    recovery_mode = safety.get("mode") == "emergency-stop"
+    if (
+        (not safety.get("live_orders_allowed") and not (recovery_order and recovery_mode))
+        or account.status != "reconciled"
+        or account.reconciliation_required
+        or account.unexplained_residual
+    ):
         raise LiveBrokerError("Live order dispatch is no longer authorized by the live safety contract")
     if not account.source_timestamp or _utc(account.source_timestamp) < datetime.now(UTC) - MAX_ACCOUNT_AGE:
         raise LiveBrokerError("Live broker account snapshot became stale before dispatch")
     model = db.get(StockModelRegistry, order.model_run_id) if order.model_run_id else None
     signal = db.get(StrategySignal, order.signal_id) if order.signal_id else None
-    if not model or not signal:
-        raise LiveBrokerError("Live order lineage is incomplete at dispatch")
+    if not recovery_order:
+        if not model or not signal:
+            raise LiveBrokerError("Live order lineage is incomplete at dispatch")
+        if not _model_is_eligible(model):
+            raise LiveBrokerError("Live order model is no longer eligible at dispatch")
+        if str(signal.action or "").upper() != order.side.upper():
+            raise LiveBrokerError("Live order signal side changed or no longer matches")
     data_gate = _fresh_market_data(db, order.symbol, order.reference_price)
-    risk_gate = _live_risk_gate(db, account, order.symbol, order.side, order.quantity, order.reference_price)
+    risk_gate = _live_risk_gate(
+        db, account, order.symbol, order.side, order.quantity, order.reference_price,
+        recovery=recovery_order,
+    )
     order.risk_decision = {**(order.risk_decision or {}), "dispatch_evaluated_at": datetime.now(UTC).isoformat(), "dispatch_data": data_gate, "dispatch_risk": risk_gate}
     order.status, order.submission_attempted_at = "submitting", datetime.now(UTC)
     db.commit()
@@ -638,6 +914,95 @@ def dispatch_live_order(db: Session, order_id: int, gateway: LiveBrokerGateway |
                         message=account.halt_reason, payload={"request_id": order.request_id, "error_class": type(exc).__name__})
         db.commit()
     return db.get(LiveBrokerOrder, order_id)
+
+
+def flatten_live_positions(
+    db: Session,
+    *,
+    actor: str,
+    reason: str,
+    gateway: LiveBrokerGateway | None = None,
+) -> dict:
+    """Enter emergency-stop and submit one attributable sell per live position."""
+    actor, reason = actor.strip(), reason.strip()
+    if not actor or len(reason) < 3:
+        raise LiveBrokerError("Live flatten requires an explicit actor and reason")
+    from app.services.live_safety import ensure_live_safety_state, transition_live_safety
+
+    safety_state = ensure_live_safety_state(db)
+    if safety_state.mode in {"canary-live", "approved-live"}:
+        transition_live_safety(
+            db,
+            target_mode="emergency-stop",
+            actor=actor,
+            reason=reason,
+            evidence={"action": "flatten_live_positions"},
+        )
+    elif safety_state.mode != "emergency-stop":
+        raise LiveBrokerError("Live flatten requires canary-live, approved-live, or emergency-stop mode")
+    account = db.query(LiveBrokerAccount).filter_by(broker=LIVE_BROKER).with_for_update().one_or_none()
+    if not account or account.status != "reconciled" or account.reconciliation_required or account.unexplained_residual:
+        raise LiveBrokerError("Live account must be reconciled before an emergency flatten")
+    positions = db.query(LiveBrokerPosition).filter(
+        LiveBrokerPosition.account_id == account.id,
+        LiveBrokerPosition.quantity > 0,
+    ).order_by(LiveBrokerPosition.symbol).with_for_update().all()
+    orders: list[LiveBrokerOrder] = []
+    for position in positions:
+        if position.current_price is None or position.current_price <= 0:
+            raise LiveBrokerError(f"Cannot flatten {position.symbol} without a current broker price")
+        key = f"live-recovery-flatten:{account.id}:{position.symbol}:{position.quantity}"
+        idempotency_key = hashlib.sha256(key.encode()).hexdigest()
+        existing = db.query(LiveBrokerOrder).filter_by(idempotency_key=idempotency_key).one_or_none()
+        if existing:
+            orders.append(existing)
+            continue
+        orders.append(LiveBrokerOrder(
+            account_id=account.id,
+            model_run_id=None,
+            signal_id=None,
+            risk_decision_id=f"recovery:{idempotency_key[:24]}",
+            risk_decision={"status": "recovery", "actor": actor, "reason": reason},
+            actor=actor,
+            idempotency_key=idempotency_key,
+            client_order_id="lb-" + idempotency_key[:45],
+            symbol=position.symbol,
+            side="sell",
+            quantity=position.quantity,
+            order_type="limit",
+            time_in_force="day",
+            reference_price=position.current_price,
+            reference_observed_at=datetime.now(UTC),
+            limit_price=position.current_price,
+            reserved_cash=Decimal("0"),
+            status="reserved",
+            source="live_recovery_flatten",
+        ))
+    db.add_all([order for order in orders if order.id is None])
+    _event(db, account, "flatten", "reserved", reason, {
+        "actor": actor,
+        "order_count": len(orders),
+        "symbols": [order.symbol for order in orders],
+    })
+    db.commit()
+    dispatched: list[int] = []
+    failures: list[dict] = []
+    for order in orders:
+        try:
+            result = dispatch_live_order(db, order.id, gateway=gateway)
+            if result.status not in {"unknown", "submitting"}:
+                dispatched.append(result.id)
+        except LiveBrokerError as exc:
+            failures.append({"order_id": order.id, "symbol": order.symbol, "error": str(exc)})
+    return {
+        "mode": "live",
+        "status": "flattened" if not failures else "halted",
+        "actor": actor,
+        "reason": reason,
+        "reserved_order_ids": [order.id for order in orders],
+        "dispatched_order_ids": dispatched,
+        "failures": failures,
+    }
 
 
 def cancel_live_order(db: Session, order_id: int, *, actor: str, reason: str, gateway: LiveBrokerGateway | None = None) -> LiveBrokerOrder:
@@ -696,7 +1061,12 @@ def live_broker_status(db: Session) -> dict:
         "account": {"broker": account.broker, "account_id": account.broker_account_id, "environment": account.environment,
                     "cash": money(account.cash), "buying_power": money(account.buying_power), "equity": money(account.equity),
                     "status": account.status, "reconciliation_required": account.reconciliation_required,
-                    "unexplained_residual": account.unexplained_residual, "last_reconciled_at": account.last_reconciled_at.isoformat() if account.last_reconciled_at else None},
+                    "unexplained_residual": account.unexplained_residual,
+                    "accounting_review_required": account.accounting_review_required,
+                    "accounting_reviewed_at": account.accounting_reviewed_at.isoformat() if account.accounting_reviewed_at else None,
+                    "accounting_reviewed_by": account.accounting_reviewed_by,
+                    "accounting_review_digest": account.accounting_review_digest,
+                    "last_reconciled_at": account.last_reconciled_at.isoformat() if account.last_reconciled_at else None},
         "positions": [{"symbol": row.symbol, "quantity": money(row.quantity), "current_price": money(row.current_price), "market_value": money(row.market_value)} for row in db.query(LiveBrokerPosition).filter_by(account_id=account.id).order_by(LiveBrokerPosition.symbol).all()],
         "orders": [{"id": row.id, "client_order_id": row.client_order_id, "broker_order_id": row.broker_order_id, "symbol": row.symbol, "side": row.side,
                     "quantity": money(row.quantity), "status": row.status, "model_run_id": row.model_run_id, "signal_id": row.signal_id,

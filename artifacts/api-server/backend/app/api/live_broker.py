@@ -4,14 +4,21 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.trading import LiveBrokerCancelRequest, LiveBrokerOrderRequest
+from app.schemas.trading import (
+    LiveAccountingReviewRequest,
+    LiveBrokerCancelRequest,
+    LiveBrokerOrderRequest,
+    LiveFlattenRequest,
+)
 from app.services.live_broker import (
     LiveBrokerError,
     cancel_live_order,
     dispatch_live_order,
+    flatten_live_positions,
     live_broker_status,
     reconcile_live_broker_account,
     reserve_live_order,
+    review_live_accounting_residual,
 )
 
 router = APIRouter(prefix="/live-broker", tags=["live-broker"])
@@ -60,6 +67,37 @@ def reconcile(request: Request, db: Session = Depends(get_db)) -> dict:
     _attribute(db, request)
     try:
         return reconcile_live_broker_account(db)
+    except LiveBrokerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/recovery/accounting-review")
+def accounting_review(
+    payload: LiveAccountingReviewRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    _attribute(db, request)
+    try:
+        return review_live_accounting_residual(
+            db,
+            actor=str(getattr(request.state, "actor", "unknown")),
+            reason=payload.reason,
+            evidence_digest=payload.evidence_digest,
+        )
+    except LiveBrokerError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/recovery/flatten")
+def flatten(payload: LiveFlattenRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    _attribute(db, request)
+    try:
+        return flatten_live_positions(
+            db,
+            actor=str(getattr(request.state, "actor", "unknown")),
+            reason=payload.reason,
+        )
     except LiveBrokerError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

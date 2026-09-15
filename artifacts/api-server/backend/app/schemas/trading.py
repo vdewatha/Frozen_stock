@@ -715,6 +715,15 @@ class LiveSafetyResponse(BaseModel):
     contract: dict
 
 
+class LiveAccountingReviewRequest(BaseModel):
+    reason: str = Field(min_length=3)
+    evidence_digest: str = Field(min_length=64, max_length=64)
+
+
+class LiveFlattenRequest(BaseModel):
+    reason: str = Field(min_length=3)
+
+
 class DeploymentMonitorResponse(BaseModel):
     generated_at: datetime
     environment: str

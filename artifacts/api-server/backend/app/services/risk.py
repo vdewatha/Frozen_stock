@@ -28,6 +28,11 @@ DEFAULT_RISK_RULES = {
     "max_open_positions": 10,
     "max_open_positions_per_strategy": 5,
     "max_symbol_exposure": 0.10,
+    # Live execution uses these only when explicitly enabled.  The defaults
+    # preserve the paper allocation shape and do not introduce larger limits.
+    "max_total_exposure": 1.0,
+    "max_live_open_orders": 10,
+    "max_live_slippage": 0.02,
     "max_risk_per_trade": 0.01,
     "stop_after_consecutive_losses": 5,
     "candidate_review_score_threshold": 0.70,

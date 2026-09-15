@@ -36,6 +36,7 @@ from app.services.stock_training_jobs import (
 )
 from app.services.stock_monitoring import run_stock_monitoring
 from app.services.stock_recovery import reconcile_inflight_stock_orders_on_restart
+from app.services.live_broker import LiveBrokerError, reconcile_live_broker_account
 from app.services.stock_forward_trial import observe_trial, execute_pending_decisions, start_trial, evaluate_trial
 from app.models import StockPaperTrial
 from app.tasks.celery_app import celery_app
@@ -428,6 +429,30 @@ def stock_monitoring_job() -> dict:
         db.commit()
         return result
     return _run_job("stock_monitoring_job", work)
+
+
+@celery_app.task
+def live_broker_reconciliation_job() -> dict:
+    """Continuously reconcile live broker truth; absence of a live account is safe."""
+    def work(db):
+        from app.models import LiveBrokerAccount
+
+        if db.query(LiveBrokerAccount).filter_by(broker="alpaca_live").one_or_none() is None:
+            return {
+                "status": "skipped",
+                "job": "live_broker_reconciliation_job",
+                "reason": "no live broker account has been initialized",
+            }
+        try:
+            return reconcile_live_broker_account(db)
+        except LiveBrokerError as exc:
+            return {
+                "status": "halted",
+                "job": "live_broker_reconciliation_job",
+                "reason": str(exc),
+            }
+
+    return _run_job("live_broker_reconciliation_job", work)
 
 @celery_app.task
 def stock_training_job(job_id: str) -> dict:

@@ -30,6 +30,7 @@ from app.services.audit import write_audit_log
 
 MODES = {"research", "paper", "shadow", "canary-live", "approved-live", "emergency-stop"}
 LIVE_MODES = {"canary-live", "approved-live"}
+LIVE_RECOVERY_COOLDOWN = timedelta(minutes=5)
 ALLOWED_TRANSITIONS = {
     "research": {"paper", "shadow"},
     "paper": {"research", "shadow"},
@@ -168,8 +169,9 @@ def _current_data_gate(db: Session, now: datetime) -> dict:
     age = (now - generated).total_seconds()
     feed_checks = [
         check for check in (snapshot.checks or [])
-        if check.get("metric") in {"intraday_feed_health", "market_data_health"}
-        or "feed" in str(check.get("key", "")).lower()
+        if check.get("metric") in {"intraday_feed_health", "market_data_health", "data_freshness"}
+        or any(token in str(check.get("key", "")).lower() for token in ("feed", "freshness", "provenance"))
+        or str(check.get("category", "")).lower() in {"market_data", "data"}
     ]
     healthy = snapshot.status == "clear" and age <= 300 and bool(feed_checks) and all(
         check.get("status") == "clear" for check in feed_checks
@@ -191,7 +193,7 @@ def _monitoring_gate(db: Session, now: datetime) -> dict:
     if generated.tzinfo is None:
         generated = generated.replace(tzinfo=timezone.utc)
     age = (now - generated).total_seconds()
-    healthy = snapshot.status == "clear" and age <= 300
+    healthy = snapshot.status == "clear" and age <= 300 and bool(snapshot.checks)
     return _gate(
         "pass" if healthy else "fail",
         None if healthy else "monitoring health is stale or not clear",
@@ -228,16 +230,23 @@ def _lineage_gate(db: Session) -> dict:
     snapshot = db.get(StockDatasetSnapshot, binding.snapshot_id) if binding else None
     if not binding or not model or not snapshot:
         return _gate("unknown", "immutable model and dataset lineage is unavailable")
+    metadata = model.training_metadata if isinstance(model.training_metadata, dict) else {}
+    lifecycle_eligible = model.lifecycle_state in {"paper_canary", "champion"} or (
+        not metadata and model.lifecycle_state == "challenger"
+    )
+    explicitly_eligible = metadata.get("live_eligible") is not False and metadata.get("eligible_for_trading") is not False
     complete = bool(
         binding.binding_sha256
         and model.manifest_sha256
         and snapshot.dataset_sha256
         and binding.model_run_id == model.run_id
         and binding.snapshot_id == snapshot.snapshot_id
+        and lifecycle_eligible
+        and explicitly_eligible
     )
     return _gate(
         "pass" if complete else "fail",
-        None if complete else "immutable model lineage does not match its binding",
+        None if complete else "immutable model lineage or model eligibility does not permit live execution",
         {
             "binding_id": binding.id,
             "binding_sha256": binding.binding_sha256,
@@ -245,6 +254,45 @@ def _lineage_gate(db: Session) -> dict:
             "model_manifest_sha256": model.manifest_sha256,
             "snapshot_id": snapshot.snapshot_id,
             "dataset_sha256": snapshot.dataset_sha256,
+            "lifecycle_state": model.lifecycle_state,
+            "live_eligible": metadata.get("live_eligible"),
+            "eligible_for_trading": metadata.get("eligible_for_trading"),
+        },
+    )
+
+
+def _recovery_control_gate(state: LiveSafetyState, now: datetime) -> dict:
+    recovery = (state.gates or {}).get("_recovery", {})
+    cooldown_until = recovery.get("cooldown_until")
+    if cooldown_until:
+        try:
+            until = datetime.fromisoformat(str(cooldown_until).replace("Z", "+00:00"))
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+            if now < until:
+                return _gate(
+                    "fail",
+                    "live recovery cooldown is still active",
+                    {
+                        "cooldown_until": until,
+                        "kill_switch": bool(recovery.get("kill_switch", False)),
+                        "last_known_good": recovery.get("last_known_good", {}),
+                    },
+                )
+        except ValueError:
+            return _gate("fail", "live recovery cooldown evidence is invalid")
+    if state.mode == "emergency-stop" or recovery.get("kill_switch"):
+        return _gate(
+            "fail",
+            "live kill switch is active; explicit revalidation is required",
+            {"kill_switch": True, "last_known_good": recovery.get("last_known_good", {})},
+        )
+    return _gate(
+        "pass",
+        evidence={
+            "cooldown_until": cooldown_until,
+            "kill_switch": False,
+            "last_known_good": recovery.get("last_known_good", {}),
         },
     )
 
@@ -261,6 +309,7 @@ def evaluate_live_safety(db: Session, *, now: datetime | None = None) -> dict:
         "monitoring_health": _monitoring_gate(db, observed_at),
         "recovery_readiness": _recovery_gate(db),
         "immutable_model_lineage": _lineage_gate(db),
+        "recovery_control": _recovery_control_gate(state, observed_at),
     }
     all_pass = bool(gates) and all(gate["status"] == "pass" for gate in gates.values())
     eligible = state.mode in LIVE_MODES and all_pass
@@ -395,7 +444,32 @@ def transition_live_safety(
     state.approval_at = _now() if target_mode in LIVE_MODES else None
     state.secondary_approval_actor = secondary_approval_actor if target_mode == "approved-live" else None
     state.secondary_approval_at = _now() if target_mode == "approved-live" else None
-    state.gates = _safe(gates)
+    recovery = dict((state.gates or {}).get("_recovery", {}))
+    if target_mode == "emergency-stop":
+        recovery.update({
+            "kill_switch": True,
+            "cooldown_until": (_now() + LIVE_RECOVERY_COOLDOWN).isoformat(),
+            "last_known_good": _safe(state.lineage),
+            "stopped_by": actor,
+            "stopped_reason": reason,
+        })
+    elif target_mode in LIVE_MODES:
+        recovery.update({
+            "kill_switch": False,
+            "last_known_good": _safe(gates.get("immutable_model_lineage", {}).get("evidence", {})),
+            "revalidated_by": actor,
+            "revalidated_at": _now().isoformat(),
+        })
+    elif prior_mode == "emergency-stop" and evidence and evidence.get("revalidation_digest"):
+        # Revalidation clears the kill latch, but deliberately preserves the
+        # cooldown timestamp established by the stop.
+        recovery.update({
+            "kill_switch": False,
+            "revalidated_by": actor,
+            "revalidated_at": _now().isoformat(),
+            "revalidation_digest": evidence["revalidation_digest"],
+        })
+    state.gates = {**_safe(gates), "_recovery": _safe(recovery)}
     state.lineage = _safe(gates.get("immutable_model_lineage", {}).get("evidence", {}))
     state.last_reason = reason
     state.updated_by = actor
