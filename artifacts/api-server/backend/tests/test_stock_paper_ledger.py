@@ -298,7 +298,10 @@ class StockPaperLedgerTests(unittest.TestCase):
             self.assertEqual(second["status"], "halted")
             self.assertTrue(second["account"]["reconciliation_required"])
             self.assertTrue(second["account"]["unexplained_residual"])
-            self.assertIn("cash changed", second["reason"].lower())
+            self.assertEqual(
+                second["reason"],
+                "Prior unexplained cash or position residual requires manual accounting review",
+            )
 
 
     def test_submitting_lookup_and_provider_pagination_are_read_only(self):

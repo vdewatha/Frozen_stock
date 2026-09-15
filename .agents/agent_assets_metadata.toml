@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "9cvKBDEpPrqbIguxx_s7_"
+uri = "file://reports/safe-paper-trading-control-room-20260915.jpg"
+type = "image"
+title = "Safe paper trading control-room check"
+description = "Final visual check of the paper-only control room. The service is intentionally stopped at sign-in because readiness remains blocked by retained accounting and operational evidence."
+logical_id = "48e89225-45f1-4840-b7f6-033a6150672b"
+content_hash = "sha256:e9dc59eddea1ce74dbc526f4714219a28097913af70cb70319d0cf85b4ba0a58"
+size = 24252
+mtime_ms = 1789506016666
+storage_uri = "gcs://replit-rams-assets-spock/rams/assets/repl:42f84b92-955d-4943-892d-c0e5f14f9aa6/48e89225-45f1-4840-b7f6-033a6150672b/5b7698ce-166e-4cb9-88fa-338d432306ff"
+storage_version_token = "1789506057262374"
+content_type = "image/jpeg"

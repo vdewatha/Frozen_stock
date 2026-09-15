@@ -1,0 +1,228 @@
+{
+  "accounting": {
+    "accounting_verified": false,
+    "broker_account_id": "cd605d38-b45b-40ed-848f-901a2871e1ab",
+    "costs_known": false,
+    "evidence_identifiers": {
+      "broker_account_id": "cd605d38-b45b-40ed-848f-901a2871e1ab",
+      "broker_activity_ids": [
+        "20260911000000000::50dd1fed-d3cb-452b-a13d-51ac7c8a3f9e"
+      ],
+      "broker_order_ids": [],
+      "client_order_ids": []
+    },
+    "fill_count": 0,
+    "halt_reason": "Prior unexplained cash or position residual requires manual accounting review",
+    "order_count": 0,
+    "reconciliation_required": true,
+    "status": "halted",
+    "unexplained_residual": true
+  },
+  "blockers": [
+    "Unexplained paper-account residual requires later immutable broker commission enrichment; manual acknowledgement is not sufficient.",
+    "Audit event digest chain does not verify from the retained history; history was not rewritten.",
+    "Critical operational notifications remain open while their underlying conditions are unresolved."
+  ],
+  "critical_notifications": [
+    {
+      "category": "stock_recovery",
+      "id": 7,
+      "message": "Automatic review requires a later broker commission enrichment that exactly explains the residual; stable account values are insufficient.",
+      "severity": "critical",
+      "source": "stock_recovery_automation",
+      "status": "open",
+      "title": "Automatic paper-account recovery is blocked"
+    },
+    {
+      "category": "operational_hardening",
+      "id": 6,
+      "message": "Audit event digest chain does not verify.",
+      "severity": "critical",
+      "source": "operational_hardening",
+      "status": "open",
+      "title": "Operational hardening breach"
+    },
+    {
+      "category": "stock_monitoring",
+      "id": 5,
+      "message": "Automatic stock-paper pause after persistent monitoring breach: data.freshness_provenance, health.broker, health.reconciliation",
+      "severity": "critical",
+      "source": "stock_monitoring",
+      "status": "open",
+      "title": "Stock paper trading paused"
+    },
+    {
+      "category": "deployment_monitor",
+      "id": 4,
+      "message": "Deployment monitor blocked: none. Readiness blockers: Risk state, Critical notifications.",
+      "severity": "critical",
+      "source": "deployment_monitor",
+      "status": "open",
+      "title": "Deployment monitor blocked"
+    },
+    {
+      "category": "scheduled_job",
+      "id": 3,
+      "message": "Verified dataset snapshot is unavailable or invalid: Verified stock dataset artifact is missing: /home/runner/workspace/artifacts/api-server/backend/stock_training_artifacts/snapshots/8b2b1d9dbb856acfcfff190fd649bc4dc8751c275c97e4c927306136f8b3d00f/dataset.csv",
+      "severity": "critical",
+      "source": "stock_forward_trial_observe_job",
+      "status": "open",
+      "title": "Scheduled job failed: stock_forward_trial_observe_job"
+    }
+  ],
+  "external_prerequisites": {
+    "daily_trusted_data": "ready",
+    "paper_account_server_read": "verified",
+    "repair_backlog": {},
+    "sip_feed": "ready"
+  },
+  "first_paper_order": {
+    "reason": "Paper execution remains halted until the accounting residual and all readiness blockers are cleared by qualifying evidence.",
+    "status": "not_dispatched"
+  },
+  "generated_at": "2026-09-15T20:59:52.964572+00:00",
+  "go_no_go": "no_go",
+  "hardening": {
+    "checks": [
+      {
+        "key": "postgresql",
+        "status": "clear"
+      },
+      {
+        "key": "scheduler_ownership",
+        "status": "clear"
+      },
+      {
+        "key": "worker_leases",
+        "status": "clear"
+      },
+      {
+        "key": "audit_chain",
+        "status": "breach"
+      },
+      {
+        "key": "backup_restore_tools",
+        "status": "clear"
+      },
+      {
+        "key": "live_trading_guard",
+        "status": "clear"
+      }
+    ],
+    "status": "breach"
+  },
+  "monitoring": {
+    "checks": [
+      {
+        "key": "model.prediction_distribution",
+        "status": "unknown"
+      },
+      {
+        "key": "model.input_features",
+        "status": "unknown"
+      },
+      {
+        "key": "model.realized_performance",
+        "status": "unknown"
+      },
+      {
+        "key": "data.freshness_provenance",
+        "status": "breach"
+      },
+      {
+        "key": "execution.fill_divergence",
+        "status": "unknown"
+      },
+      {
+        "key": "risk.exposure",
+        "status": "clear"
+      },
+      {
+        "key": "risk.concentration",
+        "status": "unknown"
+      },
+      {
+        "key": "risk.turnover",
+        "status": "clear"
+      },
+      {
+        "key": "risk.volatility",
+        "status": "clear"
+      },
+      {
+        "key": "risk.daily_loss",
+        "status": "clear"
+      },
+      {
+        "key": "health.broker",
+        "status": "breach"
+      },
+      {
+        "key": "health.reconciliation",
+        "status": "breach"
+      },
+      {
+        "key": "health.worker_scheduler",
+        "status": "clear"
+      }
+    ],
+    "generated_at": "2026-09-15 20:56:34.132598+00:00",
+    "status": "breach"
+  },
+  "readiness": {
+    "checks": [
+      {
+        "name": "Market data",
+        "status": "ready"
+      },
+      {
+        "name": "Intraday feed",
+        "status": "ready"
+      },
+      {
+        "name": "Model freshness",
+        "status": "warning"
+      },
+      {
+        "name": "Broker safety",
+        "status": "ready"
+      },
+      {
+        "name": "Risk state",
+        "status": "blocked"
+      },
+      {
+        "name": "Strategy availability",
+        "status": "ready"
+      },
+      {
+        "name": "Critical notifications",
+        "status": "blocked"
+      },
+      {
+        "name": "Scheduler health",
+        "status": "ready"
+      }
+    ],
+    "overall_status": "blocked"
+  },
+  "recovery": {
+    "accounting_review_required": true,
+    "accounting_reviewed_by": null,
+    "automatic_recovery": null,
+    "proof_digest_status": "not_recorded",
+    "status": "cooldown"
+  },
+  "runtime": {
+    "api_liveness": true,
+    "celery_beat": "ready",
+    "celery_workers": "ready",
+    "database": "ready",
+    "live_trading_allowed": false,
+    "paper_trading_allowed": false,
+    "redis": "ready",
+    "scheduler_readiness": "ready",
+    "watchdog": true
+  },
+  "scope": "paper_only"
+}

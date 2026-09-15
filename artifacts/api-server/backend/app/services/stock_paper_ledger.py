@@ -31,6 +31,7 @@ ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
 BROKER = "alpaca_paper"
 UTC = timezone.utc
 UNKNOWN_COSTS_REASON = "Broker-reported commissions/spread/slippage are incomplete; costs are unknown."
+ACCOUNTING_RESIDUAL_REVIEW_REASON = "Prior unexplained cash or position residual requires manual accounting review"
 RECONCILIATION_OVERLAP = timedelta(minutes=10)
 NONTERMINAL_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
 ALLOWED_ORDER_SOURCES = frozenset({"manual_control_room", "manual_close", "manual_reduce", "recovery_flatten", "broker_import"})
@@ -840,7 +841,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             _halt(account, "Broker position drift detected; reconciliation review is required")
             _event(db, account, "reconcile", "drift", account.halt_reason, {"symbols": drift})
         elif account.unexplained_residual:
-            account.reconciliation_required = True
+            _halt(account, ACCOUNTING_RESIDUAL_REVIEW_REASON)
             _mark_accounting_review_required(db)
             prior_halt = db.query(StockPaperLedgerEvent).filter_by(
                 account_id=account.id,
@@ -853,7 +854,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                     account,
                     "reconcile",
                     "halted",
-                    "Prior unexplained cash or position residual requires manual accounting review",
+                    ACCOUNTING_RESIDUAL_REVIEW_REASON,
                 )
         else:
             account.reconciliation_required = False
