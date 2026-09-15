@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 import json
 from pathlib import Path
 import sys
@@ -104,43 +105,69 @@ def _forward_evidence_status(reports: list[StockPaperPromotionReadinessReport]) 
             "reports": 0,
             "reason": "No cycle-owned promotion-readiness report exists",
         }
-    passing = [row for row in reports if row.decision == "pass"]
-    if len(passing) != len(reports):
+    incomplete: list[dict] = []
+    for row in reports:
+        if row.decision != "pass":
+            incomplete.append({
+                "report_id": row.id,
+                "trial_id": row.trial_id,
+                "reason": "readiness report is not passing",
+            })
+            continue
+        gates = row.gates or {}
+        if not gates or any(
+            not isinstance(gate, dict) or gate.get("status") != "pass"
+            for gate in gates.values()
+        ):
+            incomplete.append({
+                "report_id": row.id,
+                "trial_id": row.trial_id,
+                "reason": "readiness report contains a non-passing gate",
+            })
+            continue
+        evidence = row.evidence or {}
+        session_evidence = evidence.get("session_evidence")
+        window = session_evidence.get("window") if isinstance(session_evidence, dict) else None
+        aggregates = session_evidence.get("aggregates") if isinstance(session_evidence, dict) else None
+        policy = row.policy or {}
+        required_sessions = policy.get("regular_sessions")
+        required_coverage = policy.get("minimum_decision_coverage")
+        try:
+            verified_coverage = Decimal(str(
+                (aggregates or {}).get("verified_decision_coverage")
+            ))
+            coverage_threshold = Decimal(str(required_coverage))
+        except (InvalidOperation, TypeError, ValueError):
+            verified_coverage = None
+            coverage_threshold = None
+        if (
+            not isinstance(window, dict)
+            or window.get("complete") is not True
+            or window.get("elapsed_regular_sessions") != required_sessions
+            or not isinstance(aggregates, dict)
+            or aggregates.get("unknown_historical_feed_health") != 0
+            or verified_coverage is None
+            or coverage_threshold is None
+            or verified_coverage < coverage_threshold
+        ):
+            incomplete.append({
+                "report_id": row.id,
+                "trial_id": row.trial_id,
+                "reason": "frozen post-handoff session evidence is incomplete",
+            })
+    if incomplete:
         return {
             "complete": False,
             "reports": len(reports),
-            "passing_reports": len(passing),
-            "reason": "At least one cycle-owned readiness report is not passing",
-        }
-    incomplete_gates = [
-        {
-            "report_id": row.id,
-            "trial_id": row.trial_id,
-            "gates": {
-                name: gate.get("status")
-                for name, gate in (row.gates or {}).items()
-                if isinstance(gate, dict) and gate.get("status") != "pass"
-            },
-        }
-        for row in passing
-        if any(
-            isinstance(gate, dict) and gate.get("status") != "pass"
-            for gate in (row.gates or {}).values()
-        )
-    ]
-    if incomplete_gates:
-        return {
-            "complete": False,
-            "reports": len(reports),
-            "passing_reports": len(passing),
-            "reason": "A readiness report is marked pass but contains a non-passing gate",
-            "incomplete_gates": incomplete_gates,
+            "passing_reports": len(reports) - len(incomplete),
+            "reason": "At least one cycle-owned readiness report lacks complete frozen evidence",
+            "incomplete_reports": incomplete,
         }
     return {
         "complete": True,
         "reports": len(reports),
-        "passing_reports": len(passing),
-        "reason": "Every cycle-owned readiness report and gate is passing",
+        "passing_reports": len(reports),
+        "reason": "Every cycle-owned readiness report and frozen evidence gate is passing",
     }
 
 

@@ -375,6 +375,16 @@ def _source_evidence(decision: StockPaperTrialDecision) -> tuple[str, str | None
     return "verified", None
 
 
+def _lineage_timestamp(lineage: dict, key: str) -> datetime | None:
+    value = lineage.get(key)
+    if not value:
+        return None
+    try:
+        return _utc(datetime.fromisoformat(str(value).replace("Z", "+00:00")))
+    except (TypeError, ValueError):
+        return None
+
+
 def _execution_evidence(
     db: Session, trial: StockPaperTrial, decision: StockPaperTrialDecision,
 ) -> dict:
@@ -456,6 +466,19 @@ def build_trial_session_evidence(
                 lineage_ok = _decision_matches_trial_lineage(trial, canonical)
                 stale = canonical.rejection_reason in _FEATURE_DATA_REJECTIONS
                 source_status, source_reason = _source_evidence(canonical)
+                handoff_at = _utc(trial.started_at) if trial.started_at else None
+                decision_after_handoff = (
+                    handoff_at is None
+                    or _utc(canonical.decision_timestamp) >= handoff_at
+                )
+                observation_at = _lineage_timestamp(
+                    canonical.lineage or {}, "observation_timestamp"
+                )
+                observation_after_handoff = (
+                    observation_at is None
+                    or handoff_at is None
+                    or observation_at >= handoff_at
+                )
                 decision_out = {
                     "id": canonical.id,
                     "bar_timestamp": _utc(canonical.bar_timestamp).isoformat(),
@@ -474,6 +497,16 @@ def build_trial_session_evidence(
                 result["execution"] = _execution_evidence(db, trial, canonical)
                 if not in_session:
                     result.update(status="missing", missing_reason="decision_outside_regular_session")
+                elif not decision_after_handoff:
+                    result.update(
+                        status="missing",
+                        missing_reason="decision_precedes_trial_handoff",
+                    )
+                elif not observation_after_handoff:
+                    result.update(
+                        status="missing",
+                        missing_reason="observation_precedes_trial_handoff",
+                    )
                 elif not lineage_ok:
                     result.update(status="missing", missing_reason="decision_lineage_mismatch")
                 elif stale:

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from scripts.report_autonomous_paper_soak import (
     _forward_evidence_status,
@@ -49,6 +50,21 @@ def test_soak_report_keeps_forward_evidence_incomplete_without_reports():
     result = _forward_evidence_status([])
     assert result["complete"] is False
     assert "No cycle-owned" in result["reason"]
+
+
+def test_soak_report_rejects_passing_report_without_frozen_session_evidence():
+    report = SimpleNamespace(
+        id=7,
+        trial_id="trial-1",
+        decision="pass",
+        gates={"regular_sessions": {"status": "pass"}},
+        evidence={},
+        policy={"regular_sessions": 20, "minimum_decision_coverage": "0.90"},
+    )
+    result = _forward_evidence_status([report])
+    assert result["complete"] is False
+    assert result["passing_reports"] == 0
+    assert "frozen evidence" in result["reason"]
 
 
 def test_soak_report_normalizes_naive_since_timestamp():

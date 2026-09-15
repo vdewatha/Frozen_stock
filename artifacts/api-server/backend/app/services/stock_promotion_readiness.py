@@ -46,6 +46,81 @@ def _number(value: Any) -> Decimal | None:
         return None
 
 
+def _frozen_session_evidence_gate(
+    trial: StockPaperTrial,
+    metric: StockPaperTrialMetric | None,
+    session_evidence: dict | None,
+) -> dict:
+    """Validate the immutable shape of post-handoff session evidence.
+
+    Metrics are durable inputs, but their aggregate fields must not be trusted
+    independently of the session evidence that produced them.  This gate is
+    deliberately structural and read-only; the worker remains the only writer
+    of observations.
+    """
+    if not isinstance(session_evidence, dict):
+        return _gate("unknown", reason="frozen post-handoff session evidence is unavailable")
+    window = session_evidence.get("window")
+    aggregates = session_evidence.get("aggregates")
+    sessions = session_evidence.get("sessions")
+    if not isinstance(window, dict) or not isinstance(aggregates, dict) or not isinstance(sessions, list):
+        return _gate("unknown", reason="frozen session evidence is incomplete")
+    required = int(trial.policy["regular_sessions"])
+    elapsed = window.get("elapsed_regular_sessions")
+    complete = window.get("complete") is True
+    try:
+        elapsed_count = int(elapsed)
+    except (TypeError, ValueError):
+        elapsed_count = -1
+    if not complete or elapsed_count < required or len(sessions) != elapsed_count:
+        return _gate(
+            "fail" if trial.status in {"completed", "stopped"} else "unknown",
+            value=elapsed,
+            required=required,
+            reason="the frozen regular-session window is not complete",
+        )
+    expected = _number(aggregates.get("expected_decisions"))
+    observed = _number(aggregates.get("observed_decisions"))
+    verified = _number(aggregates.get("verified_decisions"))
+    unknown_health = _number(aggregates.get("unknown_historical_feed_health"))
+    metric_verified_coverage = _number(
+        _metric_value(metric, "verified_decision_coverage")
+    )
+    evidence_verified_coverage = _number(
+        aggregates.get("verified_decision_coverage")
+    )
+    universe_size = len(trial.lineage.get("universe") or [])
+    expected_shape = elapsed_count * universe_size
+    if (
+        expected is None
+        or observed is None
+        or verified is None
+        or unknown_health is None
+        or expected != expected_shape
+        or observed < 0
+        or verified < 0
+        or verified > observed
+        or unknown_health != 0
+        or metric_verified_coverage is None
+        or evidence_verified_coverage is None
+        or metric_verified_coverage != evidence_verified_coverage
+    ):
+        return _gate(
+            "fail" if trial.status in {"completed", "stopped"} else "unknown",
+            reason="post-handoff verified session evidence is inconsistent or unavailable",
+        )
+    return _gate(
+        "pass",
+        evidence={
+            "elapsed_regular_sessions": elapsed_count,
+            "expected_decisions": str(expected),
+            "observed_decisions": str(observed),
+            "verified_decisions": str(verified),
+            "verified_decision_coverage": str(metric_verified_coverage),
+        },
+    )
+
+
 def _lineage_gate(db: Session, trial: StockPaperTrial) -> tuple[dict, dict]:
     binding = db.get(StockPaperModelBinding, trial.binding_id)
     model = db.get(StockModelRegistry, binding.model_run_id) if binding else None
@@ -289,7 +364,7 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
     ).order_by(StockPaperTrialMetric.as_of.desc(), StockPaperTrialMetric.id.desc()))
     account = db.scalar(select(StockPaperAccount).where(StockPaperAccount.broker == "alpaca_paper"))
     sessions = _number(_metric_value(metric, "observed_sessions"))
-    coverage = _number(_metric_value(metric, "decision_coverage"))
+    coverage = _number(_metric_value(metric, "verified_decision_coverage"))
     closed = _number(_metric_value(metric, "closed_trades"))
     required_sessions = Decimal(str(trial.policy["regular_sessions"]))
     required_coverage = Decimal(str(trial.policy["minimum_decision_coverage"]))
@@ -298,20 +373,22 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
     session_evidence = metric.payload.get("session_evidence") if metric else None
     aggregates = session_evidence.get("aggregates", {}) if isinstance(session_evidence, dict) else {}
     historical_health_unknown = aggregates.get("unknown_historical_feed_health")
+    frozen_evidence = _frozen_session_evidence_gate(trial, metric, session_evidence)
+    frozen_window_complete = frozen_evidence["status"] == "pass"
     gates = {
-        "regular_sessions": _gate("pass" if sessions is not None and sessions >= required_sessions else
+        "regular_sessions": _gate("pass" if frozen_window_complete and sessions is not None and sessions >= required_sessions else
                                   ("fail" if trial.status in {"completed", "stopped"} else "unknown"),
                                   str(sessions) if sessions is not None else None, str(required_sessions),
-                                  None if sessions is not None and sessions >= required_sessions else "required verified sessions are not complete"),
-        "decision_coverage": _gate("pass" if complete and coverage is not None and coverage >= required_coverage else
+                                   None if frozen_window_complete and sessions is not None and sessions >= required_sessions else "required verified sessions are not complete"),
+        "decision_coverage": _gate("pass" if frozen_window_complete and complete and coverage is not None and coverage >= required_coverage else
                                    ("fail" if complete and coverage is not None else "unknown"),
                                    str(coverage) if coverage is not None else None, str(required_coverage),
-                                   None if complete and coverage is not None and coverage >= required_coverage else "coverage evidence is incomplete or below the frozen threshold"),
+                                   None if frozen_window_complete and complete and coverage is not None and coverage >= required_coverage else "coverage evidence is incomplete or below the frozen threshold"),
         "historical_feed_health": _gate(
-            "pass" if session_evidence and historical_health_unknown == 0 else "unknown",
+            "pass" if frozen_window_complete and session_evidence and historical_health_unknown == 0 else "unknown",
             str(historical_health_unknown) if historical_health_unknown is not None else None,
             "0",
-            None if session_evidence and historical_health_unknown == 0
+            None if frozen_window_complete and session_evidence and historical_health_unknown == 0
             else "historical feed or health evidence is unavailable; it was not reconstructed",
         ),
         "closed_trades": _gate("pass" if closed is not None and closed >= required_closed else
@@ -333,6 +410,7 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
                                        None if metric and metric.classification == "passing" else "trial performance evidence is not passing"),
         "paper_only": _gate("pass" if trial.policy.get("paper_only") is True and trial.policy.get("live_authorized") is False else "fail"),
         "live_trading_disabled": _gate("pass" if trial.policy.get("live_authorized") is False else "fail"),
+        "frozen_forward_evidence": frozen_evidence,
     }
     lineage_gate, lineage = _lineage_gate(db, trial)
     gates["immutable_lineage"] = lineage_gate

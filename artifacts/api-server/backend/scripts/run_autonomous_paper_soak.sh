@@ -135,5 +135,6 @@ elif [[ -n "${SOAK_INTERRUPTION_ARGS:-}" ]]; then
 fi
 
 PYTHONPATH=. python3.11 scripts/report_autonomous_paper_soak.py \
+  --since "$started_at" \
   --output "$report" \
   "${interruption_args[@]}"

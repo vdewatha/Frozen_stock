@@ -441,6 +441,38 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(completed["window"]["session_dates"], ["2025-01-01", "2025-01-02"])
             self.assertEqual(later["window"]["session_dates"], completed["window"]["session_dates"])
 
+    def test_session_evidence_excludes_decisions_before_trial_handoff(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            row.policy = {**row.policy, "regular_sessions": 1}
+            row.started_at = datetime(2025, 1, 1, 14, tzinfo=timezone.utc)
+            decision = StockPaperTrialDecision(
+                trial_id=row.id,
+                symbol="SPY",
+                bar_timestamp=datetime(2025, 1, 1, 20, tzinfo=timezone.utc),
+                decision_timestamp=datetime(2024, 12, 31, 20, tzinfo=timezone.utc),
+                action="reject",
+                qualifying=False,
+                rejection_reason="model_signal_not_qualifying",
+                lineage={
+                    **row.lineage,
+                    "observation_timestamp": "2024-12-31T20:00:00+00:00",
+                },
+            )
+            db.add(decision)
+            bounds = lambda day: (
+                datetime(day.year, day.month, day.day, 14, 30, tzinfo=timezone.utc),
+                datetime(day.year, day.month, day.day, 21, tzinfo=timezone.utc),
+            )
+            with patch("app.services.stock_forward_trial.session_bounds", side_effect=bounds):
+                evidence = build_trial_session_evidence(
+                    db, row, as_of=datetime(2025, 1, 2, 21, tzinfo=timezone.utc)
+                )
+            symbol = evidence["sessions"][0]["symbols"][0]
+            self.assertEqual(symbol["status"], "missing")
+            self.assertEqual(symbol["missing_reason"], "decision_precedes_trial_handoff")
+            self.assertEqual(evidence["aggregates"]["observed_decisions"], 0)
+
     def test_versioned_reports_preserve_frozen_metric_and_history_reads_are_pure(self):
         with Session(self.engine) as db:
             row = self.trial(db, status="paused")
