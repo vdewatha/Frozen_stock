@@ -715,6 +715,39 @@ class LiveSafetyResponse(BaseModel):
     contract: dict
 
 
+class LivePilotActivationRequest(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=10)
+    max_notional: Decimal = Field(gt=0, le=10000)
+    max_order_notional: Decimal = Field(gt=0, le=1000)
+    starts_at: datetime
+    expires_at: datetime
+    observation_window_sessions: int = Field(ge=1, le=20)
+    rollback_target: str = Field(default="paper", pattern="^(paper|shadow)$")
+    model_run_id: str = Field(min_length=1, max_length=64)
+    paper_expectations: dict = Field(default_factory=dict)
+    checklist: dict
+    secondary_approval_actor: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class LivePilotPromotionRequest(BaseModel):
+    secondary_approval_actor: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class LivePilotLimitChangeRequest(BaseModel):
+    max_notional: Decimal = Field(gt=0, le=10000)
+    max_order_notional: Decimal = Field(gt=0, le=1000)
+    secondary_approval_actor: str = Field(min_length=1, max_length=128)
+    evidence_reference: str = Field(min_length=3, max_length=500)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class LivePilotActionRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+    secondary_approval_actor: Optional[str] = Field(default=None, min_length=1, max_length=128)
+
+
 class LiveAccountingReviewRequest(BaseModel):
     reason: str = Field(min_length=3)
     evidence_digest: str = Field(min_length=64, max_length=64)

@@ -301,6 +301,20 @@ def evaluate_live_safety(db: Session, *, now: datetime | None = None) -> dict:
     """Return the authoritative, read-only live activation decision."""
     observed_at = now or _now()
     state = ensure_live_safety_state(db)
+    from app.services.live_pilot import evaluate_live_pilot_launch, ensure_live_pilot
+    pilot = ensure_live_pilot(db)
+    pilot_gate = _gate("unknown", "live pilot is not activated")
+    if pilot.status in {"canary", "active"} and pilot.model_run_id:
+        launch = evaluate_live_pilot_launch(
+            db,
+            model_run_id=pilot.model_run_id,
+            checklist=pilot.launch_checklist or {},
+        )
+        pilot_gate = _gate(
+            launch["status"],
+            None if launch["status"] == "pass" else "live pilot launch evidence is incomplete or stale",
+            {"pilot_status": pilot.status, "launch": launch},
+        )
     gates = {
         "environment_separation": _environment_gate(),
         "operator_approval": _approval_gate(state),
@@ -310,6 +324,7 @@ def evaluate_live_safety(db: Session, *, now: datetime | None = None) -> dict:
         "recovery_readiness": _recovery_gate(db),
         "immutable_model_lineage": _lineage_gate(db),
         "recovery_control": _recovery_control_gate(state, observed_at),
+        "pilot_launch": pilot_gate,
     }
     all_pass = bool(gates) and all(gate["status"] == "pass" for gate in gates.values())
     eligible = state.mode in LIVE_MODES and all_pass

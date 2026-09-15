@@ -36,7 +36,7 @@ READ_PATHS = {
     "/assets", "/strategies", "/market-regimes", "/news", "/paper-trades",
     "/audit-logs", "/notifications", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
-    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs",
+    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs",
     "/stock/training/jobs", "/stock/training/binding", "/stock/learning-cycles",
     "/stock-paper/status",
     "/live-broker/status",
@@ -144,6 +144,14 @@ def required_role(method: str, path: str) -> str:
         return "researcher"
     if method == "POST" and path == "/system/stock-monitoring/run":
         return "operator"
+    if method == "POST" and path in {
+        "/system/live-pilot/stop", "/system/live-pilot/rollback", "/system/live-pilot/review",
+    }:
+        return "operator"
+    if method == "POST" and path in {
+        "/system/live-pilot/activate", "/system/live-pilot/promote", "/system/live-pilot/limits",
+    }:
+        return "admin"
     if method == "POST" and (
         path == "/live-broker/reconcile" or path.startswith("/live-broker/orders")
     ):

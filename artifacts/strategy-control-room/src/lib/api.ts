@@ -168,6 +168,42 @@ export type LiveOperationsSnapshot = {
   };
 };
 
+export type LivePilot = {
+  id: number;
+  status: string;
+  active: boolean;
+  symbols: string[];
+  max_notional: string;
+  max_order_notional: string;
+  allowed_order_types: string[];
+  time_in_force: string;
+  session_policy: string;
+  starts_at: string | null;
+  expires_at: string | null;
+  observation_window_sessions: number;
+  rollback_target: string;
+  model_run_id: string | null;
+  paper_expectations: Record<string, unknown>;
+  launch_checklist: Record<string, unknown>;
+  primary_approval_actor: string | null;
+  secondary_approval_actor: string | null;
+  approved_at: string | null;
+  stopped_at: string | null;
+  stopped_reason: string | null;
+  latest_review: Record<string, unknown> | null;
+  updated_by: string;
+  updated_at: string | null;
+  events: Array<{
+    id: number;
+    action: string;
+    status: string;
+    actor: string;
+    secondary_actor: string | null;
+    reason: string;
+    created_at: string | null;
+  }>;
+};
+
 export type StockPaperStatusValue = "uninitialized" | "reconciled" | "halted" | "drift" | "uncertain" | "unavailable";
 
 export type StockPaperAccount = {
@@ -1959,6 +1995,44 @@ export async function getLiveOperations(): Promise<LiveOperationsSnapshot> {
 export async function getLiveOperationsEvidence(limit = 50): Promise<Record<string, unknown>> {
   const response = await authenticatedFetch(`${API_BASE_URL}/system/live-operations/evidence?limit=${limit}`, { cache: "no-store" });
   return handleResponse<Record<string, unknown>>(response);
+}
+
+export async function getLivePilot(): Promise<LivePilot> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/system/live-pilot`, { cache: "no-store" });
+  return handleResponse<LivePilot>(response);
+}
+
+export async function activateLivePilot(body: {
+  symbols: string[];
+  max_notional: string;
+  max_order_notional: string;
+  starts_at: string;
+  expires_at: string;
+  observation_window_sessions: number;
+  rollback_target: string;
+  model_run_id: string;
+  paper_expectations: Record<string, unknown>;
+  checklist: Record<string, unknown>;
+  secondary_approval_actor: string;
+  reason: string;
+}): Promise<LivePilot> {
+  return postJson<LivePilot>("/system/live-pilot/activate", body);
+}
+
+export async function promoteLivePilot(body: { secondary_approval_actor: string; reason: string }): Promise<LivePilot> {
+  return postJson<LivePilot>("/system/live-pilot/promote", body);
+}
+
+export async function stopLivePilot(reason: string): Promise<LivePilot> {
+  return postJson<LivePilot>("/system/live-pilot/stop", { reason });
+}
+
+export async function rollbackLivePilot(reason: string, secondary_approval_actor?: string): Promise<LivePilot> {
+  return postJson<LivePilot>("/system/live-pilot/rollback", { reason, secondary_approval_actor });
+}
+
+export async function reviewLivePilot(reason: string): Promise<LivePilot> {
+  return postJson<LivePilot>("/system/live-pilot/review", { reason });
 }
 
 export async function getStockMonitoring(): Promise<StockMonitoringSnapshot> {

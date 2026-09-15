@@ -72,6 +72,7 @@ from app.models.live_broker import (
     LiveBrokerActivity,
     LiveBrokerLedgerEvent,
 )
+from app.models.live_pilot import LivePilot, LivePilotEvent
 
 __all__ = [
     "Asset",
@@ -136,4 +137,6 @@ __all__ = [
     "LiveBrokerFill",
     "LiveBrokerActivity",
     "LiveBrokerLedgerEvent",
+    "LivePilot",
+    "LivePilotEvent",
 ]

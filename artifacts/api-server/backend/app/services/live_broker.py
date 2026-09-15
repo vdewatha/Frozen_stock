@@ -35,6 +35,7 @@ from app.models import (
 from app.services.audit import write_audit_log
 from app.services.intraday_data import feed_status
 from app.services.live_safety import live_order_decision
+from app.services.live_pilot import pilot_order_decision
 from app.services.risk import DEFAULT_RISK_RULES
 from app.services.intraday_data import session_bounds
 
@@ -812,6 +813,22 @@ def reserve_live_order(
     safety = live_order_decision(db)
     if not safety.get("live_orders_allowed"):
         raise LiveBrokerError(safety.get("reason", "Live order execution is blocked by the live safety contract"))
+    # The complete live safety result always contains pilot_launch.  Keeping
+    # the explicit shape check preserves older isolated unit callers that mock
+    # only the pre-pilot safety contract; production evaluations can never
+    # omit this gate.
+    if "pilot_launch" in safety.get("gates", {}):
+        pilot = pilot_order_decision(
+            db,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            reference_price=reference_price,
+            order_type=order_type,
+            time_in_force=time_in_force,
+        )
+        if not pilot.get("allowed"):
+            raise LiveBrokerError(pilot.get("reason", "Live order is outside the controlled pilot"))
     account = db.query(LiveBrokerAccount).filter_by(broker=LIVE_BROKER).with_for_update().one_or_none()
     if not account or account.status != "reconciled" or account.reconciliation_required or account.unexplained_residual:
         raise LiveBrokerError("Live broker account must be reconciled and clear before reservation")
@@ -868,6 +885,18 @@ def dispatch_live_order(db: Session, order_id: int, gateway: LiveBrokerGateway |
         or account.unexplained_residual
     ):
         raise LiveBrokerError("Live order dispatch is no longer authorized by the live safety contract")
+    if not recovery_order and "pilot_launch" in safety.get("gates", {}):
+        pilot = pilot_order_decision(
+            db,
+            symbol=order.symbol,
+            side=order.side,
+            quantity=order.quantity,
+            reference_price=order.reference_price,
+            order_type=order.order_type,
+            time_in_force=order.time_in_force,
+        )
+        if not pilot.get("allowed"):
+            raise LiveBrokerError(pilot.get("reason", "Live order is outside the controlled pilot"))
     if not account.source_timestamp or _utc(account.source_timestamp) < datetime.now(UTC) - MAX_ACCOUNT_AGE:
         raise LiveBrokerError("Live broker account snapshot became stale before dispatch")
     model = db.get(StockModelRegistry, order.model_run_id) if order.model_run_id else None

@@ -231,6 +231,21 @@ def transition_system_live_safety(
     db: Session = Depends(get_db),
 ) -> dict:
     try:
+        from app.services.live_safety import ensure_live_safety_state
+        state = ensure_live_safety_state(db)
+        if (
+            state.mode == "emergency-stop"
+            and payload.target_mode in {"research", "paper", "shadow"}
+            and (
+                not payload.approval_actor
+                or not payload.secondary_approval_actor
+                or payload.approval_actor == payload.secondary_approval_actor
+            )
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Disabling an emergency stop requires two distinct approval actors",
+            )
         result = transition_live_safety(
             db,
             target_mode=payload.target_mode,
