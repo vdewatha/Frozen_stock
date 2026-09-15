@@ -122,6 +122,18 @@ for trial_id in trial_ids:
     print(f"scheduled_followup_task=app.tasks.jobs.stock_forward_trial_evaluate_job trial_id={trial_id} id={result.id}")
 PY
 
+interruption_args=()
+if [[ -n "${SOAK_INTERRUPTION_RECORDS:-}" ]]; then
+  while IFS= read -r record; do
+    [[ -z "$record" ]] && continue
+    interruption_args+=(--interruption "$record")
+  done <<< "$SOAK_INTERRUPTION_RECORDS"
+elif [[ -n "${SOAK_INTERRUPTION_ARGS:-}" ]]; then
+  # Keep the original flag-string input for compatibility. Prefer
+  # SOAK_INTERRUPTION_RECORDS when a reason contains spaces.
+  read -r -a interruption_args <<< "$SOAK_INTERRUPTION_ARGS"
+fi
+
 PYTHONPATH=. python3.11 scripts/report_autonomous_paper_soak.py \
   --output "$report" \
-  ${SOAK_INTERRUPTION_ARGS:-}
+  "${interruption_args[@]}"

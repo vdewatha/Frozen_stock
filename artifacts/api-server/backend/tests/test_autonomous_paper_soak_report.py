@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from scripts.report_autonomous_paper_soak import (
     _forward_evidence_status,
+    _interruption_matrix_status,
     _parse_interruption,
     _parse_since,
 )
@@ -22,6 +23,26 @@ def test_soak_report_rejects_malformed_interruption():
         assert "NAME=STATUS:REASON" in str(exc)
     else:
         raise AssertionError("malformed interruption was accepted")
+
+
+def test_soak_report_rejects_interruption_outside_controlled_matrix():
+    try:
+        _parse_interruption("database=blocked:database unavailable")
+    except ValueError as exc:
+        assert "unknown interruption" in str(exc)
+    else:
+        raise AssertionError("unknown interruption was accepted")
+
+
+def test_soak_report_requires_every_controlled_interruption():
+    result = _interruption_matrix_status(
+        [
+            {"name": "feed", "status": "deferred", "reason": "stale"},
+            {"name": "ledger", "status": "blocked", "reason": "residual"},
+        ]
+    )
+    assert result["complete"] is False
+    assert result["missing"] == ["worker", "beat_lease", "redis"]
 
 
 def test_soak_report_keeps_forward_evidence_incomplete_without_reports():

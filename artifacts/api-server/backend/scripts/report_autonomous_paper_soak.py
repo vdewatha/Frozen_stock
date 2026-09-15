@@ -42,6 +42,16 @@ from app.services.deployment_monitor import deployment_monitor_snapshot
 from app.services.stock_recovery import recovery_status
 
 
+INTERRUPTION_MATRIX_NAMES = ("feed", "ledger", "worker", "beat_lease", "redis")
+INTERRUPTION_STATUSES = {
+    "feed": {"deferred", "blocked"},
+    "ledger": {"deferred", "blocked"},
+    "worker": {"deferred", "blocked", "recovered", "resumed"},
+    "beat_lease": {"blocked", "deferred", "recovered", "resumed"},
+    "redis": {"blocked", "deferred", "recovered", "resumed"},
+}
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -282,11 +292,19 @@ def build_report(
                 ).all(),
                 "client_order_id",
             )
+    interruption_matrix = _interruption_matrix_status(interruption_records or [])
+    interruption_evidence = {
+        "scope": "bounded_soak",
+        "recovery_event_ids": [row.id for row in recovery_events],
+        "audit_log_ids": [row.id for row in audit_rows],
+    }
     duplicate_checks = {
         "cycle_request_ids_unique": len(cycle_ids) == len(set(cycle_ids)),
         "scheduled_binding_per_cycle": max(source_binding_counts.values(), default=0) <= 1,
         "scheduled_trial_per_cycle": max(source_trial_counts.values(), default=0) <= 1,
         "cycle_owned_order_ids_unique": len(cycle_order_ids) == len(set(cycle_order_ids)),
+        "recovery_event_ids_unique": len(interruption_evidence["recovery_event_ids"]) == len(set(interruption_evidence["recovery_event_ids"])),
+        "audit_log_ids_unique": len(interruption_evidence["audit_log_ids"]) == len(set(interruption_evidence["audit_log_ids"])),
     }
 
     forward_evidence = _forward_evidence_status(reports)
@@ -311,6 +329,10 @@ def build_report(
         readiness_blockers.append(f"recovery state is {recovery.get('status', 'unknown')}")
     if not all(duplicate_checks.values()):
         readiness_blockers.append("duplicate lineage or order identifiers detected")
+    if not interruption_matrix["complete"]:
+        readiness_blockers.append("controlled interruption matrix is incomplete")
+    if not interruption_evidence["recovery_event_ids"] or not interruption_evidence["audit_log_ids"]:
+        readiness_blockers.append("controlled interruptions have no durable recovery and audit identifiers")
 
     events_by_cycle: dict[str, list[StockLearningCycleEvent]] = {}
     for event in events:
@@ -421,9 +443,13 @@ def build_report(
             "audit_log_ids": [row.id for row in audit_rows],
             "cycle_event_ids": [row.id for row in events],
         },
-        "interruptions": interruption_records or [],
+        "interruptions": [
+            record | {"evidence": interruption_evidence}
+            for record in (interruption_records or [])
+        ],
         "checks": {
             "duplicate_lineage": duplicate_checks,
+            "interruption_matrix": interruption_matrix,
             "all_cycle_stages_observed": {
                 stage: any(event.stage == stage for event in events)
                 for stage in ("preflight", "dataset", "training", "validation", "qualification", "admission", "promotion", "recovery")
@@ -469,7 +495,39 @@ def _parse_interruption(value: str) -> dict:
         raise ValueError("interruption must use NAME=STATUS:REASON") from exc
     if not name.strip() or not status.strip() or not reason.strip():
         raise ValueError("interruption name, status, and reason are required")
-    return {"name": name.strip(), "status": status.strip(), "reason": reason.strip()}
+    name = name.strip()
+    status = status.strip()
+    if name not in INTERRUPTION_MATRIX_NAMES:
+        raise ValueError(f"unknown interruption {name!r}; expected one of {', '.join(INTERRUPTION_MATRIX_NAMES)}")
+    if status not in INTERRUPTION_STATUSES[name]:
+        expected = ", ".join(sorted(INTERRUPTION_STATUSES[name]))
+        raise ValueError(f"invalid status {status!r} for {name}; expected one of {expected}")
+    return {"name": name, "status": status, "reason": reason.strip()}
+
+
+def _interruption_matrix_status(records: list[dict]) -> dict:
+    by_name: dict[str, list[dict]] = {}
+    for record in records:
+        by_name.setdefault(record["name"], []).append(record)
+    missing = [name for name in INTERRUPTION_MATRIX_NAMES if name not in by_name]
+    duplicates = {name: len(rows) for name, rows in by_name.items() if len(rows) > 1}
+    invalid_statuses = [
+        {
+            "name": record["name"],
+            "status": record["status"],
+            "expected": sorted(INTERRUPTION_STATUSES[record["name"]]),
+        }
+        for record in records
+        if record["status"] not in INTERRUPTION_STATUSES[record["name"]]
+    ]
+    return {
+        "required": list(INTERRUPTION_MATRIX_NAMES),
+        "observed": [name for name in INTERRUPTION_MATRIX_NAMES if name in by_name],
+        "missing": missing,
+        "duplicates": duplicates,
+        "invalid_statuses": invalid_statuses,
+        "complete": not missing and not duplicates and not invalid_statuses,
+    }
 
 
 def main(argv: list[str]) -> int:

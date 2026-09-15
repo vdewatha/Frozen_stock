@@ -50,18 +50,21 @@ The command exits non-zero when continued-paper readiness is blocked. Inspect
 the JSON report and the retained schema before deciding whether that is an
 expected fail-closed result or an operational defect.
 
-`SOAK_INTERRUPTION_ARGS` can record operator observations in the report
-without mutating the database:
+`SOAK_INTERRUPTION_RECORDS` can record operator observations in the report
+without mutating the database. Use one `NAME=STATUS:REASON` record per line so
+reasons may contain spaces:
 
 ```bash
-SOAK_INTERRUPTION_ARGS='--interruption feed=deferred:feed was stale \
-  --interruption worker=recovered:dedicated worker restarted' \
+SOAK_INTERRUPTION_RECORDS=$'feed=deferred:feed was stale\nledger=blocked:paper ledger requires reconciliation\nworker=recovered:dedicated worker restarted\nbeat_lease=blocked:beat lease expired\nredis=recovered:coordination resumed' \
 bash scripts/run_autonomous_paper_soak.sh
 ```
 
 Only use an interruption record after the corresponding controlled action and
 recovery state have been observed. The report stores identifiers from the
-database; it does not accept IDs supplied by the operator.
+database; it does not accept IDs supplied by the operator. The five names are
+fixed: `feed`, `ledger`, `worker`, `beat_lease`, and `redis`. A report with a
+missing, duplicated, or invalid matrix entry is blocked from continued-paper
+readiness.
 
 ## Controlled interruption matrix
 
@@ -84,7 +87,9 @@ promotion jobs through Celery. Do not call cycle lifecycle endpoints. Verify:
    automatic paper decision is recorded;
 2. one source cycle has at most one binding and one scheduled trial;
 3. order/client IDs remain unique and uncertain orders are not retried;
-4. recovery and audit event IDs are present;
+4. each interruption record includes the bounded-soak recovery-event and audit
+   identifier projection; these IDs are captured from the database and cannot
+   be supplied as operator input;
 5. scheduled learning pause/resume affects only scheduled admission/promotion,
    while monitoring, recovery, and manual learning remain available.
 
