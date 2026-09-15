@@ -31,6 +31,7 @@ import { StockMonitoringPanel } from "@/components/stock-monitoring-panel";
 import { StockRecoveryPanel } from "@/components/stock-recovery-panel";
 import { StockLearningCyclePanel } from "@/components/stock-learning-cycle-panel";
 import { OperationalHardeningPanel } from "@/components/operational-hardening-panel";
+import { LiveOperationsPanel } from "@/components/live-operations-panel";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -131,6 +132,8 @@ function Home({ dashboard, role, session, onSignOut }: { dashboard: DashboardSna
         </section>
 
         <ReadinessChecklist />
+
+        <LiveOperationsPanel />
 
         <StockMonitoringPanel />
 

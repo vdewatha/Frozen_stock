@@ -128,6 +128,7 @@ from app.services.portfolio_risk import portfolio_risk_snapshot
 from app.services.probabilistic_model import predict_probabilities
 from app.services.reactivation import reactivation_queue, review_strategy_reactivation
 from app.services.readiness import readiness_snapshot
+from app.services.live_operations import live_operations_evidence, live_operations_snapshot
 from app.services.risk import PortfolioState, StrategyState, approve_trade
 from app.services.risk_settings import get_active_risk_rule, update_risk_settings
 from app.services.safety_controls import disable_kill_switch, enable_kill_switch, pause_all_strategies, resume_candidate_strategies
@@ -211,6 +212,16 @@ def system_readiness(db: Session = Depends(get_db)) -> dict:
 @router.get("/system/live-safety", response_model=LiveSafetyResponse)
 def system_live_safety(db: Session = Depends(get_db)) -> dict:
     return evaluate_live_safety(db)
+
+
+@router.get("/system/live-operations", response_model=dict)
+def system_live_operations(db: Session = Depends(get_db)) -> dict:
+    return live_operations_snapshot(db)
+
+
+@router.get("/system/live-operations/evidence", response_model=dict)
+def system_live_operations_evidence(limit: int = 50, db: Session = Depends(get_db)) -> dict:
+    return live_operations_evidence(db, limit=limit)
 
 
 @router.post("/system/live-safety/transition", response_model=LiveSafetyResponse)

@@ -36,7 +36,7 @@ READ_PATHS = {
     "/assets", "/strategies", "/market-regimes", "/news", "/paper-trades",
     "/audit-logs", "/notifications", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
-    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs",
+    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs",
     "/stock/training/jobs", "/stock/training/binding", "/stock/learning-cycles",
     "/stock-paper/status",
     "/live-broker/status",

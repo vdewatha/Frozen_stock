@@ -75,6 +75,99 @@ export type OperationalHardeningReport = {
   incident_procedure: string;
 };
 
+export type LiveOperationsStatus = "healthy" | "degraded" | "uncertain" | "blocked" | "unknown" | string;
+
+export type LiveOperationsComponent = {
+  status: LiveOperationsStatus;
+  reason: string;
+  observed_at: string | null;
+  details: Record<string, unknown>;
+};
+
+export type LiveOperationsSnapshot = {
+  generated_at: string;
+  status: LiveOperationsStatus;
+  mode: string | null;
+  live_orders_allowed: boolean;
+  components: Record<string, LiveOperationsComponent>;
+  metrics: {
+    status: LiveOperationsStatus;
+    reason: string;
+    observed_at: string | null;
+    orders_last_24h: number;
+    rejected_orders_last_24h: number;
+    uncertain_orders: number;
+    open_orders: number;
+    average_submission_latency_seconds: number | null;
+    max_submission_latency_seconds: number | null;
+    repeated_retry_events_last_24h: number;
+  };
+  account: {
+    broker: string;
+    account_id: string;
+    environment: string;
+    currency: string;
+    cash: string;
+    buying_power: string;
+    equity: string;
+    status: string;
+    reconciliation_required: boolean;
+    unexplained_residual: boolean;
+    accounting_review_required: boolean;
+    last_reconciled_at: string | null;
+  } | null;
+  open_orders: Array<{
+    id: number;
+    client_order_id: string;
+    broker_order_id: string | null;
+    symbol: string;
+    side: string;
+    quantity: string;
+    status: string;
+    model_run_id: string | null;
+    signal_id: number | null;
+    risk_decision_id: string;
+    actor: string;
+    request_id: string | null;
+    uncertain_submission: boolean;
+    created_at: string | null;
+    submitted_at: string | null;
+  }>;
+  positions: Array<{
+    symbol: string;
+    quantity: string;
+    current_price: string | null;
+    market_value: string | null;
+    observed_at: string | null;
+  }>;
+  recent_fills: Array<{
+    broker_activity_id: string;
+    broker_order_id: string | null;
+    symbol: string;
+    side: string;
+    quantity: string;
+    price: string;
+    fee_known: boolean;
+    filled_at: string | null;
+  }>;
+  alerts: Array<{
+    id: number | null;
+    state: LiveOperationsStatus;
+    severity: string;
+    title: string;
+    reason: string;
+    observed_at: string;
+    acknowledged: boolean;
+    source: string;
+  }>;
+  safety: {
+    status: string;
+    last_reason: string;
+    updated_at: string | null;
+    gates: Record<string, { status: string; reason?: string }>;
+  };
+};
+
 export type StockPaperStatusValue = "uninitialized" | "reconciled" | "halted" | "drift" | "uncertain" | "unavailable";
 
 export type StockPaperAccount = {
@@ -1856,6 +1949,16 @@ export async function getReadiness(): Promise<ReadinessSnapshot> {
 export async function getDeploymentMonitor(): Promise<DeploymentMonitorSnapshot> {
   const response = await authenticatedFetch(`${API_BASE_URL}/system/deployment-monitor`, { cache: "no-store" });
   return handleResponse<DeploymentMonitorSnapshot>(response);
+}
+
+export async function getLiveOperations(): Promise<LiveOperationsSnapshot> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/system/live-operations`, { cache: "no-store" });
+  return handleResponse<LiveOperationsSnapshot>(response);
+}
+
+export async function getLiveOperationsEvidence(limit = 50): Promise<Record<string, unknown>> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/system/live-operations/evidence?limit=${limit}`, { cache: "no-store" });
+  return handleResponse<Record<string, unknown>>(response);
 }
 
 export async function getStockMonitoring(): Promise<StockMonitoringSnapshot> {
