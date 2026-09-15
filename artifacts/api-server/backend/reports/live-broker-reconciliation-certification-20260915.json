@@ -1,0 +1,75 @@
+{
+  "certification_status": "pass_with_prerequisites",
+  "checks": [
+    {
+      "id": "isolated_live_endpoint_and_credentials",
+      "status": "pass"
+    },
+    {
+      "id": "read_only_account_permission_validation",
+      "status": "pass"
+    },
+    {
+      "id": "read_only_market_data_entitlement",
+      "status": "pass"
+    },
+    {
+      "id": "complete_order_pagination",
+      "status": "pass"
+    },
+    {
+      "id": "complete_activity_pagination",
+      "status": "pass"
+    },
+    {
+      "id": "ambiguous_cursor_fail_closed",
+      "status": "pass"
+    },
+    {
+      "id": "durable_intent_and_idempotency",
+      "status": "pass"
+    },
+    {
+      "id": "partial_terminal_and_unknown_lifecycle_states",
+      "status": "pass"
+    },
+    {
+      "id": "timeout_after_submit_blocks_retry",
+      "status": "pass"
+    },
+    {
+      "id": "fee_enrichment_and_unsupported_activity_handling",
+      "status": "pass"
+    },
+    {
+      "id": "external_order_and_activity_isolation",
+      "status": "pass"
+    }
+  ],
+  "generated_at": "2026-09-15T20:35:41.452995+00:00",
+  "provider_prerequisites": [
+    "Explicit authorization is still required before a real live-account read-only probe.",
+    "A real live-account probe must verify the configured account binding and broker permissions.",
+    "No certification scenario submits, cancels, or replaces a live order."
+  ],
+  "report_sha256": "3564e2faae6b1c006eaf3a869a5687ad6889f99262219f1ae1c846b0db68c101",
+  "report_type": "live_broker_reconciliation_certification",
+  "schema_version": 1,
+  "scope": {
+    "credentials_in_report": false,
+    "external_broker_account_contacted": false,
+    "live_orders_submitted": false,
+    "paper_ledger_reused": false,
+    "raw_broker_payloads_in_report": false
+  },
+  "test_result": {
+    "exit_code": 0,
+    "status": "pass",
+    "summary": "18 passed in 1.05s"
+  },
+  "test_sources": [
+    "tests/test_live_broker.py",
+    "tests/test_live_broker_certification.py"
+  ],
+  "unresolved_blockers": []
+}

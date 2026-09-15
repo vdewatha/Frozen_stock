@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -44,6 +44,7 @@ class FakeLiveBroker:
         return {
             "id": "live-account-1", "currency": "USD", "status": "ACTIVE",
             "cash": "10000", "buying_power": "10000", "equity": "10000",
+            "trading_blocked": False, "account_blocked": False, "trade_suspended_by_user": False,
         }
 
     def positions(self):
@@ -54,6 +55,9 @@ class FakeLiveBroker:
 
     def activities(self):
         return self.activity_rows
+
+    def market_data_entitlement(self):
+        return {"status": "authorized", "feed": "sip", "symbols": ["SPY"]}
 
     def submit_order(self, payload):
         self.submit_calls += 1
@@ -88,6 +92,7 @@ class ResidualLiveBroker(FakeLiveBroker):
         return {
             "id": "live-account-1", "currency": "USD", "status": "ACTIVE",
             "cash": "9899.50", "buying_power": "9899.50", "equity": "9999.50",
+            "trading_blocked": False, "account_blocked": False, "trade_suspended_by_user": False,
         }
 
     def positions(self):
@@ -186,6 +191,24 @@ def test_unknown_external_order_halts_live_account(db):
     assert "External nonterminal" in account.halt_reason
 
 
+def test_reconciliation_preserves_partial_terminal_and_unknown_provider_states(db):
+    statuses = ["accepted", "partially_filled", "canceled", "replaced", "delayed"]
+    gateway = FakeLiveBroker()
+    for status in statuses:
+        gateway.order_rows = [{
+            "id": "owned-lifecycle-1", "client_order_id": "lb-owned-lifecycle-1",
+            "symbol": "SPY", "side": "buy", "qty": "1",
+            "type": "limit", "time_in_force": "day", "limit_price": "100",
+            "status": status,
+        }]
+        result = reconcile_live_broker_account(db, gateway=gateway)
+        order = db.query(LiveBrokerOrder).filter_by(broker_order_id="owned-lifecycle-1").one()
+        expected = "unknown" if status == "delayed" else status
+        assert order.status == expected
+        if expected == "unknown":
+            assert result["status"] == "halted"
+
+
 def test_restart_reconciliation_halts_when_submitting_order_is_not_found(db):
     reconcile_live_broker_account(db, gateway=FakeLiveBroker())
     account = db.query(LiveBrokerAccount).one()
@@ -259,7 +282,8 @@ def test_live_residual_stays_halted_until_exact_fee_enrichment_or_review(db):
 def test_duplicate_idempotency_returns_original_and_changed_fields_are_rejected(db):
     _, signal = _seed_order_context(db)
     with patch("app.services.live_broker.live_order_decision", return_value=_allow_live()), \
-         patch("app.services.live_broker.feed_status", return_value={"status": "ready"}):
+         patch("app.services.live_broker.feed_status", return_value={"status": "ready"}), \
+         patch("app.services.live_broker.session_bounds", return_value=(datetime.now(timezone.utc) - timedelta(hours=1), datetime.now(timezone.utc) + timedelta(hours=1))):
         first = reserve_live_order(
             db, symbol="SPY", side="buy", quantity=Decimal("1"),
             reference_price=Decimal("100"), order_type="market", time_in_force="day",
@@ -285,7 +309,8 @@ def test_duplicate_idempotency_returns_original_and_changed_fields_are_rejected(
 def test_timeout_after_submit_marks_unknown_and_halts_without_retry(db):
     _, signal = _seed_order_context(db)
     with patch("app.services.live_broker.live_order_decision", return_value=_allow_live()), \
-         patch("app.services.live_broker.feed_status", return_value={"status": "ready"}):
+         patch("app.services.live_broker.feed_status", return_value={"status": "ready"}), \
+         patch("app.services.live_broker.session_bounds", return_value=(datetime.now(timezone.utc) - timedelta(hours=1), datetime.now(timezone.utc) + timedelta(hours=1))):
         order = reserve_live_order(
             db, symbol="SPY", side="buy", quantity=Decimal("1"),
             reference_price=Decimal("100"), order_type="market", time_in_force="day",
@@ -294,7 +319,8 @@ def test_timeout_after_submit_marks_unknown_and_halts_without_retry(db):
         )
     gateway = FakeLiveBroker(submit_error=TimeoutError("timeout after provider accepted request"))
     with patch("app.services.live_broker.live_order_decision", return_value=_allow_live()), \
-         patch("app.services.live_broker.feed_status", return_value={"status": "ready"}):
+         patch("app.services.live_broker.feed_status", return_value={"status": "ready"}), \
+         patch("app.services.live_broker.session_bounds", return_value=(datetime.now(timezone.utc) - timedelta(hours=1), datetime.now(timezone.utc) + timedelta(hours=1))):
         result = dispatch_live_order(db, order.id, gateway=gateway)
     account = db.query(LiveBrokerAccount).one()
     assert gateway.submit_calls == 1

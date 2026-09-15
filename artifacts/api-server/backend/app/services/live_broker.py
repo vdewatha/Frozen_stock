@@ -46,7 +46,7 @@ MAX_REFERENCE_PRICE_DEVIATION = Decimal("0.02")
 MAX_ACCOUNT_AGE = timedelta(minutes=5)
 MAX_QUOTE_AGE = timedelta(minutes=5)
 NONTERMINAL = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
-TERMINAL = frozenset({"filled", "canceled", "cancelled", "expired", "rejected", "done_for_day"})
+TERMINAL = frozenset({"filled", "canceled", "cancelled", "expired", "rejected", "done_for_day", "replaced"})
 ALLOWED_ORDER_TYPES = frozenset({"market", "limit"})
 ALLOWED_TIFS = frozenset({"day"})
 ALLOWED_ACTIVITIES = frozenset({
@@ -69,6 +69,7 @@ class LiveBrokerGateway(Protocol):
     def positions(self) -> list[dict]: ...
     def orders(self) -> list[dict]: ...
     def activities(self) -> list[dict]: ...
+    def market_data_entitlement(self) -> dict: ...
     def submit_order(self, payload: dict) -> dict: ...
     def cancel_order(self, broker_order_id: str) -> None: ...
     def order_by_client_id(self, client_order_id: str) -> dict | None: ...
@@ -170,6 +171,42 @@ class AlpacaLiveClient:
             token = str(next_token)
         raise LiveBrokerUnavailable("Live Alpaca activity pagination exceeded safe page limit")
 
+    def market_data_entitlement(self) -> dict:
+        """Probe read-only market-data access without submitting an order."""
+        key, secret = settings.live_broker_credentials()
+        if not key or not secret:
+            raise LiveBrokerUnavailable("Explicit live broker credentials are not configured")
+        try:
+            with httpx.Client(
+                base_url=settings.alpaca_data_url,
+                timeout=20.0,
+                headers={
+                    "APCA-API-KEY-ID": key,
+                    "APCA-API-SECRET-KEY": secret,
+                    "Accept": "application/json",
+                },
+            ) as client:
+                response = client.get(
+                    "/v2/stocks/snapshots",
+                    params={"symbols": "SPY", "feed": settings.alpaca_feed},
+                )
+            if response.status_code >= 400:
+                raise LiveBrokerUnavailable(
+                    f"Live market-data entitlement probe failed with HTTP {response.status_code}"
+                )
+            result = response.json()
+            if not isinstance(result, dict) or not result:
+                raise LiveBrokerUnavailable("Live market-data entitlement response is empty or invalid")
+            return {
+                "status": "authorized",
+                "feed": settings.alpaca_feed,
+                "symbols": sorted(str(symbol) for symbol in result),
+            }
+        except LiveBrokerUnavailable:
+            raise
+        except (httpx.HTTPError, ValueError) as exc:
+            raise LiveBrokerUnavailable("Live market-data entitlement probe was unavailable") from exc
+
     def submit_order(self, payload: dict) -> dict:
         result = self._request("POST", "/v2/orders", payload=payload)
         if not isinstance(result, dict):
@@ -270,6 +307,11 @@ def _accounting_digest(db: Session, account: LiveBrokerAccount) -> str:
 def _account_values(raw: dict, observed: datetime) -> dict:
     if str(raw.get("currency", "")).upper() != "USD" or str(raw.get("status", "")).upper() != "ACTIVE":
         raise LiveBrokerError("Live Alpaca account must be ACTIVE and report USD")
+    permission_fields = ("trading_blocked", "account_blocked", "trade_suspended_by_user")
+    if any(field not in raw for field in permission_fields):
+        raise LiveBrokerError("Live Alpaca account permissions are incomplete")
+    if any(bool(raw.get(field)) for field in permission_fields):
+        raise LiveBrokerError("Live Alpaca account permissions do not allow trading")
     account_id = str(raw.get("id") or "").strip()
     if not account_id:
         raise LiveBrokerError("Live Alpaca account identifier is missing")
@@ -448,6 +490,16 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
     prior_reconciled = account.last_reconciled_at if account else None
     try:
         raw_account, positions, orders, activities = gateway.account(), gateway.positions(), gateway.orders(), gateway.activities()
+        entitlement_probe = getattr(gateway, "market_data_entitlement", None)
+        if not callable(entitlement_probe):
+            raise LiveBrokerUnavailable("Live market-data entitlement verification is unavailable")
+        market_data_entitlement = entitlement_probe()
+        if (
+            not isinstance(market_data_entitlement, dict)
+            or market_data_entitlement.get("status") != "authorized"
+            or not market_data_entitlement.get("feed")
+        ):
+            raise LiveBrokerUnavailable("Live market-data entitlement is not authorized")
         unresolved: list[str] = []
         known_client_ids = {str(row.get("client_order_id") or "") for row in orders}
         inflight = db.query(LiveBrokerOrder).filter(
@@ -473,7 +525,7 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
             db.add(account)
             db.flush()
         elif settings.live_broker_account_id.strip() and values["broker_account_id"] != settings.live_broker_account_id.strip():
-            _halt_account(db, account, "Live broker account does not match the configured production binding", now)
+            _halt(account, "Live broker account does not match the configured production binding")
             raise LiveBrokerError("Live broker account does not match the configured production binding")
         elif values["broker_account_id"] != account.broker_account_id:
             raise LiveBrokerError("Live broker account identifier changed")
@@ -601,7 +653,13 @@ def reconcile_live_broker_account(db: Session, gateway: LiveBrokerGateway | None
         account.halt_reason = "; ".join(issues) if issues else None
         _event(db, account, "reconcile", "halted" if account.status == "halted" else "reconciled",
                account.halt_reason or "Live broker truth reconciled", {
-            "orders": len(orders), "activities": len(activities), "prior_reconciled_at": prior_reconciled.isoformat() if prior_reconciled else None,
+            "orders": len(orders),
+            "activities": len(activities),
+            "market_data_entitlement": {
+                "status": market_data_entitlement.get("status"),
+                "feed": market_data_entitlement.get("feed"),
+            },
+            "prior_reconciled_at": prior_reconciled.isoformat() if prior_reconciled else None,
             **residual_payload,
         })
         db.commit()
