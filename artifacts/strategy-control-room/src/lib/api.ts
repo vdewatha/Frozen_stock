@@ -2504,8 +2504,90 @@ export type ForwardTrialMetricHistoryItem = {
     account_drawdown?: string | null;
     benchmark_buy_hold?: string | null;
     costs_known?: boolean;
+    accuracy?: StockPointInTimeAccuracyEvidence;
+    accuracy_report_id?: number | null;
+    accuracy_report_hash?: string | null;
     [key: string]: unknown;
   };
+};
+
+export type StockPointInTimeAccuracyEvidence = {
+  version?: number;
+  as_of?: string;
+  classification: "sufficient" | "insufficient" | "degraded" | "blocked" | "unknown" | string;
+  reason?: string | null;
+  contract?: {
+    version?: string;
+    population?: string;
+    feature_cutoff?: string;
+    data_vintage?: string;
+    labels?: string;
+    window_limit?: number;
+    holdout_reuse?: string;
+  };
+  window?: {
+    sample_count?: number;
+    prediction_count?: number;
+    unknown_count?: number;
+    bounded?: boolean;
+  };
+  accuracy?: {
+    value?: number | null;
+    confidence_interval?: { lower: number; upper: number; level: number } | null;
+  };
+  calibration?: {
+    brier_score?: number | null;
+    log_loss?: number | null;
+    expected_calibration_error?: number | null;
+  };
+  baseline?: {
+    kind?: string;
+    prevalence?: number | null;
+    brier_score?: number | null;
+    log_loss?: number | null;
+  };
+  coverage?: {
+    value?: number | null;
+    resolved?: number;
+    predictions?: number;
+    confidence_interval?: { lower: number; upper: number; level: number } | null;
+  };
+  cost_aware?: {
+    sample_count?: number;
+    total_return?: number | null;
+    mean_return?: number | null;
+    max_drawdown?: number | null;
+    costs_known?: boolean;
+  };
+  data_health?: {
+    status?: string;
+    unknown_labels?: number;
+    restated_labels?: number;
+    blocked_labels?: number;
+    reasons?: string[];
+  };
+  drift?: {
+    status?: string;
+    score?: number | null;
+    probability_shift?: number | null;
+    threshold?: number | null;
+    sample_count?: number;
+    reason?: string | null;
+  };
+  limitations?: string[];
+  [key: string]: unknown;
+};
+
+export type StockPointInTimeAccuracyReport = {
+  id: number;
+  trial_id: string;
+  as_of: string;
+  classification: string;
+  report_hash: string;
+  lineage: Record<string, unknown>;
+  evidence: StockPointInTimeAccuracyEvidence;
+  paper_only: boolean;
+  live_authorized: false;
 };
 
 export type ForwardTrialMetricHistory = {
@@ -2967,6 +3049,14 @@ export async function getForwardTrialMetrics(
     offset: data.offset ?? options.offset ?? 0,
     has_more: data.has_more ?? false,
   };
+}
+
+export async function getForwardTrialAccuracy(id: string): Promise<StockPointInTimeAccuracyReport | null> {
+  const response = await authenticatedFetch(
+    `${API_BASE_URL}/stock/forward-trials/${encodeURIComponent(id)}/accuracy`,
+    { cache: "no-store" },
+  );
+  return handleResponse<StockPointInTimeAccuracyReport | null>(response);
 }
 
 export async function getForwardTrialPreflight(id: string): Promise<ForwardTrialPreflight> {

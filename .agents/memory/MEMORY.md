@@ -24,3 +24,4 @@
 - [Bounded soak report scope](soak-report-scope.md) — preserve cycle lineage while scoping high-volume ancillary evidence to the soak window.
 - [Controlled interruption evidence](controlled-interruption-evidence.md) — require all five isolated interruptions before continued-paper readiness can be considered.
 - [Production identity boundary](production-identity-boundary.md) — production callers use signed identities mapped to server-side roles; local role keys remain paper-only compatibility.
+- [Accuracy vintage revalidation](accuracy-vintage-revalidation.md) — immutable outcomes must be rechecked against current feature vintages before receiving later accuracy credit.

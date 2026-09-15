@@ -71,7 +71,7 @@ function reasonItems(reasons: string[]): string {
 }
 
 function classificationClasses(classification: string): string {
-  if (classification === "passing") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (classification === "passing" || classification === "sufficient" || classification === "stable") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (classification === "failing") return "border-red-200 bg-red-50 text-red-700";
   if (classification === "insufficient" || classification === "unknown") return "border-amber-200 bg-amber-50 text-amber-700";
   return "border-slate-200 bg-slate-50 text-slate-700";
@@ -347,6 +347,7 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
   };
 
   const payload = latestMetric?.payload || {};
+  const accuracy = payload.accuracy;
   
   // Extract fields from policy/lineage if they exist
   const lineage = trial.lineage || {};
@@ -580,6 +581,33 @@ function TrialDetailView({ trial, onActionComplete }: { trial: ForwardTrial; onA
                   >
                     {loadingMoreDecisions ? "Loading…" : "Load more decisions"}
                   </button>
+                )}
+              </div>
+              <div className="mt-3 rounded border border-line bg-panel p-3" data-testid={`forward-accuracy-evidence-${trial.id}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-semibold text-slate-800">Point-in-time accuracy</div>
+                  <span className={`rounded border px-1.5 py-0.5 text-[11px] ${classificationClasses(accuracy?.classification ?? "unknown")}`}>
+                    {accuracy?.classification ?? "unknown"}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs xl:grid-cols-4">
+                  <div><div className="text-slate-500">Accuracy</div><div className="font-medium">{accuracy?.accuracy?.value == null ? "Unknown" : percent.format(accuracy.accuracy.value)}</div></div>
+                  <div><div className="text-slate-500">Brier / ECE</div><div className="font-medium">{accuracy?.calibration?.brier_score == null ? "Unknown" : decimal.format(accuracy.calibration.brier_score)} / {accuracy?.calibration?.expected_calibration_error == null ? "Unknown" : decimal.format(accuracy.calibration.expected_calibration_error)}</div></div>
+                  <div><div className="text-slate-500">Resolved coverage</div><div className="font-medium">{accuracy?.coverage?.value == null ? "Unknown" : percent.format(accuracy.coverage.value)} ({accuracy?.window?.sample_count ?? 0}/{accuracy?.window?.prediction_count ?? 0})</div></div>
+                  <div><div className="text-slate-500">Drift</div><div className="font-medium">{accuracy?.drift?.status ?? "Unknown"}{accuracy?.drift?.score == null ? "" : ` · ${decimal.format(accuracy.drift.score)}`}</div></div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+                  <span>95% accuracy CI: {accuracy?.accuracy?.confidence_interval ? `${percent.format(accuracy.accuracy.confidence_interval.lower)}–${percent.format(accuracy.accuracy.confidence_interval.upper)}` : "Unknown"}</span>
+                  <span>Baseline Brier: {accuracy?.baseline?.brier_score == null ? "Unknown" : decimal.format(accuracy.baseline.brier_score)}</span>
+                  <span>Cost-aware return: {accuracy?.cost_aware?.total_return == null ? "Unknown" : percent.format(accuracy.cost_aware.total_return)}</span>
+                  <span>Label drawdown: {accuracy?.cost_aware?.max_drawdown == null ? "Unknown" : percent.format(accuracy.cost_aware.max_drawdown)}</span>
+                </div>
+                {(accuracy?.reason || accuracy?.data_health?.reasons?.length || accuracy?.limitations?.length) && (
+                  <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                    {accuracy.reason ? <div>{accuracy.reason.replaceAll("_", " ")}</div> : null}
+                    {accuracy.data_health?.reasons?.length ? <div>Data health: {accuracy.data_health.reasons.join(", ")}</div> : null}
+                    {accuracy.limitations?.map((limitation) => <div key={limitation}>{limitation}</div>)}
+                  </div>
                 )}
               </div>
             </>

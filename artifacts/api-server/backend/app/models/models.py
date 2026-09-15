@@ -864,6 +864,50 @@ class StockPaperTrialMetric(Base):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
+class StockPaperTrialOutcome(Base):
+    """One immutable, point-in-time label for one forward-paper decision."""
+    __tablename__ = "stock_paper_trial_outcomes"
+    __table_args__ = (
+        UniqueConstraint("decision_id", name="uq_stock_trial_outcome_decision"),
+        CheckConstraint(
+            "label_status IN ('resolved', 'unknown', 'blocked', 'restated')",
+            name="ck_stock_trial_outcome_label_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trial_id: Mapped[str] = mapped_column(ForeignKey("stock_paper_trials.id"), nullable=False, index=True)
+    decision_id: Mapped[int] = mapped_column(ForeignKey("stock_paper_trial_decisions.id"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    label_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text)
+    label_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    realized_return: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8))
+    cost_adjusted_return: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8))
+    realized_up: Mapped[Optional[bool]] = mapped_column(Boolean)
+    costs_known: Mapped[Optional[bool]] = mapped_column(Boolean)
+    label_lineage: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class StockPaperAccuracyReport(Base):
+    """Append-only bounded accuracy, calibration, coverage, and drift evidence."""
+    __tablename__ = "stock_paper_accuracy_reports"
+    __table_args__ = (
+        UniqueConstraint("report_hash", name="uq_stock_accuracy_report_hash"),
+        Index("ix_stock_accuracy_report_trial_asof", "trial_id", "as_of"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trial_id: Mapped[str] = mapped_column(ForeignKey("stock_paper_trials.id"), nullable=False, index=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    classification: Mapped[str] = mapped_column(String(24), nullable=False)
+    report_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    lineage: Mapped[dict] = mapped_column(JSON, nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class StockPaperPromotionReadinessReport(Base):
     """Append-only, paper-only readiness evidence; never grants promotion."""
     __tablename__ = "stock_paper_promotion_readiness_reports"

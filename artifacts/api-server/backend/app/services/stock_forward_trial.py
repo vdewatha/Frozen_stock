@@ -24,7 +24,8 @@ from app.models import (
     Strategy, StrategySignal,
 )
 from app.models.stock_paper import StockPaperOrder, StockPaperPosition, StockPaperStrategyEvidence, StockPaperAccount, StockPaperTrialLot, StockPaperFill
-from app.services.feature_pipeline import generate_features
+from app.services.feature_pipeline import feature_config_id, generate_features
+from app.services.stock_accuracy import market_price_vintage, persist_accuracy_evidence
 from app.services.stock_training import FEATURES, _calibrated_probability
 from app.services.stock_training_jobs import StockTrainingError, _dataset_from_record, validate_registered_stock_model
 from app.services.stock_paper_ledger import reserve_stock_paper_order, dispatch_reserved_order, StockPaperError
@@ -1145,9 +1146,16 @@ def observe_trial(db: Session, trial_id: str) -> dict:
             MarketPrice.price_date <= now.astimezone(timezone.utc).date()
         ).order_by(MarketPrice.price_date.asc())).all()
         reason, probability, features, feature_timestamp = None, None, None, None
+        feature_data_version, feature_provider = None, None
         if not daily:
             reason = "missing_verified_daily_observation"
         else:
+            providers = {str(row.source) for row in daily}
+            if len(providers) != 1:
+                reason = "mixed_feature_provider_provenance"
+            else:
+                feature_provider = next(iter(providers))
+                feature_data_version = market_price_vintage(daily)
             try:
                 frame = pd.DataFrame([{"date": r.price_date, "open": float(r.open), "close": float(r.adjusted_close or r.close),
                                        "volume": int(r.volume)} for r in daily])
@@ -1157,7 +1165,9 @@ def observe_trial(db: Session, trial_id: str) -> dict:
                 featured = generate_features(frame, version="1").dropna(subset=FEATURES)
             except (KeyError, ValueError):
                 featured = pd.DataFrame()
-            if featured.empty:
+            if reason == "mixed_feature_provider_provenance":
+                featured = pd.DataFrame()
+            elif featured.empty:
                 reason = "insufficient_daily_feature_history"
             else:
                 latest = featured.iloc[-1]
@@ -1182,12 +1192,19 @@ def observe_trial(db: Session, trial_id: str) -> dict:
             "insufficient_daily_feature_history",
             "daily_feature_session_mismatch",
             "feature_timestamp_not_before_decision",
+            "mixed_feature_provider_provenance",
         }:
             continue
         lineage = {**_json_safe(trial.lineage), "bar_provider": bar.provider,
                    "bar_exchange_timestamp": bar.exchange_timestamp.isoformat() if bar.exchange_timestamp else None,
                    "execution_reference_timestamp": opened.isoformat(),
-                   "observation_timestamp": now.isoformat(), "feature_timestamp": feature_timestamp.isoformat() if feature_timestamp else None,
+                   "observation_timestamp": now.isoformat(),
+                   "decision_cutoff_timestamp": now.isoformat(),
+                   "feature_timestamp": feature_timestamp.isoformat() if feature_timestamp else None,
+                   "feature_data_version": feature_data_version,
+                   "feature_provider": feature_provider,
+                   "feature_config_id": feature_config_id(),
+                   "feature_row_count": len(daily),
                    "feed_status": feed_checks.get(symbol, {}).get("status"),
                    "feed_checked_at": now.isoformat(),
                    "feature_hash": _hash(features) if features else None, "probability": probability,
@@ -1435,6 +1452,7 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
     win_rate = (Decimal(wins) / Decimal(closed)) if closed and costs_known else None
     expectancy = (net / Decimal(closed)) if closed and costs_known and closed_costs_known else None
     as_of = _now()
+    accuracy_report, accuracy_evidence = persist_accuracy_evidence(db, trial, as_of=as_of)
     session_evidence = build_trial_session_evidence(db, trial, as_of=as_of)
     aggregates = session_evidence["aggregates"]
     universe = trial.lineage.get("universe", [])
@@ -1496,7 +1514,10 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
                "max_drawdown": str(trial_drawdown) if trial_drawdown is not None else None,
                "account_drawdown": str(account_drawdown) if account_drawdown is not None else None,
                "benchmark_buy_hold": str(benchmark) if benchmark is not None else None,
-               "costs_known": costs_known}
+               "costs_known": costs_known,
+               "accuracy": accuracy_evidence,
+               "accuracy_report_id": accuracy_report.id,
+               "accuracy_report_hash": accuracy_report.report_hash}
     sufficient = sessions >= int(trial.policy["regular_sessions"])
     if not sufficient:
         classification = "insufficient" if trial.status in {"stopped", "completed"} else "accumulating"

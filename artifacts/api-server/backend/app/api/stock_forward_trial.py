@@ -8,7 +8,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.core.security import authorization_evidence
-from app.models import StockPaperTrial, StockPaperModelBinding, StockModelRegistry, StockDatasetSnapshot, StockPaperTrialDecision, StockPaperTrialMetric
+from app.models import (
+    StockPaperTrial, StockPaperModelBinding, StockModelRegistry, StockDatasetSnapshot,
+    StockPaperTrialDecision, StockPaperTrialMetric, StockPaperAccuracyReport,
+)
+from app.services.stock_accuracy import accuracy_report_out, compare_accuracy_reports
 from app.services.stock_promotion_readiness import (
     evaluate_promotion_readiness,
     promotion_readiness_report,
@@ -47,6 +51,21 @@ def _call(fn, *args, **kwargs):
 @router.get("")
 def list_trials(db: Session = Depends(get_db)):
     return {"items": [_out(x) for x in db.scalars(select(StockPaperTrial).order_by(StockPaperTrial.created_at.desc())).all()]}
+
+@router.get("/accuracy/compare")
+def compare_accuracy(
+    trial_id: list[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+):
+    if not trial_id:
+        return {"status": "unknown", "reason": "at least one trial_id is required", "items": []}
+    reports = db.scalars(select(StockPaperAccuracyReport).where(
+        StockPaperAccuracyReport.trial_id.in_(trial_id),
+    ).order_by(StockPaperAccuracyReport.as_of.desc(), StockPaperAccuracyReport.id.desc())).all()
+    latest = {}
+    for report in reports:
+        latest.setdefault(report.trial_id, report)
+    return compare_accuracy_reports(list(latest.values()))
 
 @router.get("/bindings/eligible")
 def eligible_bindings(db: Session = Depends(get_db)):
@@ -112,6 +131,40 @@ def metrics(
     return {
         "items": [{"as_of": x.as_of, "classification": x.classification, "payload": x.payload}
                   for x in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(rows) < total,
+    }
+
+@router.get("/{trial_id}/accuracy")
+def accuracy(trial_id: str, db: Session = Depends(get_db)):
+    if not db.get(StockPaperTrial, trial_id):
+        raise HTTPException(404, "Trial not found")
+    report = db.scalar(select(StockPaperAccuracyReport).where(
+        StockPaperAccuracyReport.trial_id == trial_id,
+    ).order_by(StockPaperAccuracyReport.as_of.desc(), StockPaperAccuracyReport.id.desc()))
+    return accuracy_report_out(report) if report else None
+
+@router.get("/{trial_id}/accuracy/history")
+def accuracy_history(
+    trial_id: str,
+    limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    if not db.get(StockPaperTrial, trial_id):
+        raise HTTPException(404, "Trial not found")
+    base = select(StockPaperAccuracyReport).where(
+        StockPaperAccuracyReport.trial_id == trial_id,
+    )
+    rows = db.scalars(base.order_by(
+        StockPaperAccuracyReport.as_of.desc(),
+        StockPaperAccuracyReport.id.desc(),
+    ).offset(offset).limit(limit)).all()
+    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    return {
+        "items": [accuracy_report_out(row) for row in rows],
         "total": total,
         "limit": limit,
         "offset": offset,
