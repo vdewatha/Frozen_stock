@@ -85,6 +85,7 @@ function unavailableLedger(reason: string): StockPaperStatus {
     status: "unavailable",
     reason,
     mode: "paper",
+    broker: "unknown",
     legacy_nonqualifying: true,
     costs_known: false,
     account: null,
@@ -107,6 +108,13 @@ function statusClasses(status: StockPaperStatusValue | "loading"): string {
     return "border-red-200 bg-red-50 text-coral";
   }
   return "border-amber-200 bg-amber-50 text-amber-700";
+}
+
+function brokerLabel(value: string | null | undefined): string {
+  if (value === "tradier_sandbox") return "Tradier sandbox";
+  if (value === "alpaca_paper") return "Alpaca paper";
+  if (!value) return "Paper broker";
+  return value.replaceAll("_", " ");
 }
 
 function profitClasses(value: string | null): string {
@@ -212,7 +220,7 @@ export function StockPaperLedgerPanel() {
   const [ledger, setLedger] = useState<StockPaperStatus | null>(null);
   const [legacyTrades, setLegacyTrades] = useState<PaperTrade[]>([]);
   const [legacyError, setLegacyError] = useState("");
-  const [statusMessage, setStatusMessage] = useState("Loading broker-reported Alpaca paper ledger");
+  const [statusMessage, setStatusMessage] = useState("Loading broker-reported paper ledger");
   const [isBusy, setIsBusy] = useState(false);
   const [pendingOrder, setPendingOrder] = useState<StockPaperOrder | null>(null);
   const [lastOrderAction, setLastOrderAction] = useState<StockPaperOrderActionResponse | null>(null);
@@ -280,7 +288,7 @@ export function StockPaperLedgerPanel() {
     const trimmedReason = reason.trim();
     const completed = await runAction(
       () => haltStockPaperAccount(trimmedReason),
-      "Halting new Alpaca paper exposure",
+      "Halting new paper exposure",
     );
     if (completed) {
       haltForm.reset();
@@ -321,7 +329,7 @@ export function StockPaperLedgerPanel() {
       });
       setLastOrderAction(response);
       setPendingOrder(response.order);
-      setStatusMessage(`Order ${response.order.id} is reserved. Dispatch it once to Alpaca paper.`);
+      setStatusMessage(`Order ${response.order.id} is reserved. Dispatch it once to the paper broker.`);
       orderForm.reset();
       setManualOrderKey(newIdempotencyKey("reserve"));
       await refreshStatusOnly();
@@ -377,15 +385,15 @@ export function StockPaperLedgerPanel() {
   async function dispatchPendingOrder() {
     const order = pendingOrder;
     if (!order || order.uncertain_submission || order.status === "unknown") {
-      setStatusMessage("Dispatch is unavailable. Reconcile the Alpaca paper account before taking another action.");
+      setStatusMessage("Dispatch is unavailable. Reconcile the paper account before taking another action.");
       return;
     }
     if (status !== "reconciled") {
-      setStatusMessage("Dispatch is blocked until the Alpaca paper account is reconciled.");
+      setStatusMessage("Dispatch is blocked until the paper account is reconciled.");
       return;
     }
     setIsBusy(true);
-    setStatusMessage(`Dispatching reserved order ${order.id} once to Alpaca paper`);
+    setStatusMessage(`Dispatching reserved order ${order.id} once to the paper broker`);
     try {
       const response = await dispatchStockPaperOrder(order.id);
       setLastOrderAction(response);
@@ -398,7 +406,7 @@ export function StockPaperLedgerPanel() {
       setStatusMessage(
         response.action === "halted_uncertain" || response.order.uncertain_submission || response.order.status === "unknown"
           ? "Dispatch outcome is uncertain. Reconcile before any further action; retry is intentionally unavailable."
-          : `Order ${response.order.id} was submitted to Alpaca paper.`,
+          : `Order ${response.order.id} was submitted to the paper broker.`,
       );
       await refreshStatusOnly();
     } catch (error) {
@@ -436,6 +444,7 @@ export function StockPaperLedgerPanel() {
 
   const status = ledger?.status ?? "loading";
   const account = ledger?.account ?? null;
+  const paperBroker = brokerLabel(ledger?.broker ?? account?.broker);
   const positions = ledger?.positions ?? [];
   const orders = ledger?.orders ?? [];
   const fills = ledger?.fills ?? [];
@@ -454,7 +463,7 @@ export function StockPaperLedgerPanel() {
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <Landmark size={19} className="text-mint" />
-            <h2 className="text-base font-semibold">Alpaca Paper Ledger</h2>
+            <h2 className="text-base font-semibold">{paperBroker} Ledger</h2>
             <span className={`inline-flex items-center rounded border px-2 py-1 text-xs font-semibold capitalize ${statusClasses(status)}`} data-testid="status-stock-paper-ledger">
               {statusLabel(status)}
             </span>
@@ -463,7 +472,7 @@ export function StockPaperLedgerPanel() {
             </span>
           </div>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            Broker-reported Alpaca sandbox activity. This ledger imports and reconciles the existing account; it never resets,
+            Broker-reported {paperBroker} activity. This ledger imports and reconciles the existing account; it never resets,
             funds, or submits unreserved/arbitrary orders.
           </p>
           <p className="mt-1 text-xs text-slate-500" data-testid="text-stock-paper-ledger-status">
@@ -487,7 +496,7 @@ export function StockPaperLedgerPanel() {
                 className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white disabled:opacity-60"
                 data-testid="button-initialize-stock-paper-account"
                 disabled={isBusy}
-                onClick={() => void runAction(initializeStockPaperAccount, "Importing existing Alpaca paper account; no reset will occur")}
+                onClick={() => void runAction(initializeStockPaperAccount, "Importing existing paper account; no reset will occur")}
                 type="button"
               >
                 <Play size={15} />
@@ -501,7 +510,7 @@ export function StockPaperLedgerPanel() {
                 className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium disabled:opacity-60"
                 data-testid="button-reconcile-stock-paper-account"
                 disabled={isBusy}
-                onClick={() => void runAction(reconcileStockPaperAccount, "Reconciling Alpaca account, positions, orders, and fills")}
+                onClick={() => void runAction(reconcileStockPaperAccount, "Reconciling paper account, positions, orders, and fills")}
                 type="button"
               >
                 <RefreshCw size={15} />
@@ -540,6 +549,16 @@ export function StockPaperLedgerPanel() {
               ) : null}
             </div>
           </div>
+          {ledger.broker_evidence?.complete === false ? (
+            <div className="rounded-md border border-red-300 bg-red-50 p-3 text-xs leading-5 text-red-950" data-testid="card-stock-paper-broker-evidence">
+              <div className="font-semibold">{paperBroker} cannot provide complete broker-accounting evidence</div>
+              <div className="mt-1">
+                Balances, positions, and current-session orders may be readable, but transaction history is unavailable in
+                the sandbox, costs remain unknown, and restart or missed-session recovery cannot be proven. The ledger
+                remains fail-closed; this is not a launch-ready paper venue.
+              </div>
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="inline-flex items-center gap-1 rounded border border-slate-200 bg-slate-100 px-2 py-1 font-semibold text-slate-600">
               <ShieldAlert size={13} />
@@ -566,7 +585,7 @@ export function StockPaperLedgerPanel() {
         <div className="rounded-md border border-line bg-panel p-3" data-testid="metric-stock-paper-buying-power">
           <div className="text-xs font-semibold uppercase text-slate-500">Buying power</div>
           <div className="mt-2 text-xl font-semibold">{formatMoney(account?.buying_power)}</div>
-          <div className="mt-1 text-xs text-slate-500">Observed from Alpaca paper account</div>
+          <div className="mt-1 text-xs text-slate-500">Observed from {paperBroker}</div>
         </div>
         <div className="rounded-md border border-line bg-panel p-3" data-testid="metric-stock-paper-last-equity">
           <div className="text-xs font-semibold uppercase text-slate-500">Last equity</div>
@@ -579,7 +598,7 @@ export function StockPaperLedgerPanel() {
         <div className="rounded-md border border-line p-3 text-sm">
           <div className="flex items-center gap-2 font-semibold"><Activity size={15} className="text-mint" /> Account identity</div>
           <div className="mt-2 grid gap-1 text-xs text-slate-600">
-            <span>Venue: <strong className="text-slate-800">Alpaca paper</strong></span>
+            <span>Venue: <strong className="text-slate-800">{paperBroker}</strong></span>
             <span>Account: <strong className="break-all text-slate-800">{account?.account_id ?? "Unavailable"}</strong></span>
             <span>Currency: <strong className="text-slate-800">{account?.currency ?? "USD"}</strong></span>
           </div>

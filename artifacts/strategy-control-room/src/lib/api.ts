@@ -280,6 +280,16 @@ export type StockPaperStatus = {
   status: StockPaperStatusValue;
   reason: string;
   mode: "paper";
+  broker?: string;
+  broker_evidence?: {
+    provider: string;
+    complete: boolean | null;
+    status: string;
+    orders_scope?: string;
+    transaction_history_scope?: string;
+    costs_scope?: string;
+    restart_recovery?: string;
+  };
   legacy_nonqualifying: true;
   costs_known: boolean;
   account: StockPaperAccount | null;

@@ -1,0 +1,225 @@
+{
+  "report_type": "tradier_paper_launch_evidence",
+  "schema_version": 1,
+  "generated_at": "2026-09-16T20:14:32Z",
+  "redaction": {
+    "credentials_included": false,
+    "broker_account_identifiers_included": false,
+    "balances_or_positions_included": false,
+    "order_submission_attempted": false,
+    "order_cancellation_attempted": false,
+    "account_reset_attempted": false
+  },
+  "scope": {
+    "active_market_data_provider": "tradier",
+    "active_paper_broker": "tradier_sandbox",
+    "environment": "local",
+    "paper_credentials_and_account_binding_configured": true,
+    "urls": {
+      "market_data": "https://api.tradier.com/v1",
+      "paper": "https://sandbox.tradier.com/v1"
+    }
+  },
+  "go_no_go": "no_go",
+  "launch_disposition": "blocked",
+  "recommendation": "Do not initialize, enable, or dispatch the autonomous Tradier paper-learning loop. Tradier sandbox account evidence is incomplete, and independent readiness, risk, recovery, audit, notification, and feed gates are also blocked.",
+  "evidence_contract": [
+    {
+      "requirement": "Balances",
+      "result": "partial",
+      "observation": "Read-only sandbox balances endpoint returned a structurally valid account response with USD equity and buying-power fields; cash and broker update timestamp were not present in the normalized response."
+    },
+    {
+      "requirement": "Positions",
+      "result": "partial",
+      "observation": "Read-only positions endpoint returned a valid collection; the fresh account contained zero positions."
+    },
+    {
+      "requirement": "Orders",
+      "result": "incomplete",
+      "observation": "Read-only orders endpoint returned a valid empty collection, but the application adapter and provider documentation scope this list to the current market session."
+    },
+    {
+      "requirement": "Fills",
+      "result": "incomplete",
+      "observation": "The adapter can inspect explicit execution rows from returned order details, but only for the incomplete current-session order view; no complete historical fill cursor is available."
+    },
+    {
+      "requirement": "Activities and transaction history",
+      "result": "fail",
+      "observation": "Tradier documentation states account history is only available for live accounts and is unavailable for sandbox accounts. The fresh sandbox transaction-history, balance-history, and gain/loss probes each returned JSON null rather than a collection."
+    },
+    {
+      "requirement": "Costs",
+      "result": "fail",
+      "observation": "Without complete historical activities, commissions, fees, transfers, and other cash-affecting events cannot be proven complete. The ledger keeps costs unknown and never treats missing costs as zero."
+    },
+    {
+      "requirement": "Stable timestamps and identity",
+      "result": "incomplete",
+      "observation": "Some current-session order fields have timestamps and broker IDs, but the missing historical activity stream cannot provide a complete immutable timeline across fills, fees, and account changes."
+    },
+    {
+      "requirement": "Missed-session and restart recovery",
+      "result": "fail",
+      "observation": "A current-session list plus local captures cannot prove that activity missed during downtime or across session boundaries is absent. The Tradier adapter therefore keeps evidence_complete false and rejects snapshots before ledger reconciliation."
+    }
+  ],
+  "official_documentation": [
+    {
+      "url": "https://docs.tradier.com/reference/brokerage-api-accounts-get-account-history",
+      "verified_points": [
+        "History is updated nightly.",
+        "History does not include specific hours and minutes for position or order creation or closure.",
+        "History does not include order numbers.",
+        "History is only available for live accounts; sandbox history is not available."
+      ]
+    },
+    {
+      "url": "https://docs.tradier.com/docs/account-details",
+      "verified_points": [
+        "Sandbox base URL is https://sandbox.tradier.com/v1.",
+        "Balances and positions are exposed as account endpoints.",
+        "Account history is explicitly noted as not presently available for sandbox/paper trading accounts.",
+        "Gain/loss is updated nightly through batch reconciliation, so it cannot replace a complete intraday activity ledger."
+      ]
+    }
+  ],
+  "fresh_read_only_probes": {
+    "account": {
+      "http_success": true,
+      "account_identity_present": true,
+      "currency": "USD",
+      "equity_present": true,
+      "buying_power_present": true,
+      "cash_present": false,
+      "broker_updated_at_present": false
+    },
+    "positions": {
+      "http_success": true,
+      "count": 0
+    },
+    "orders": {
+      "http_success": true,
+      "count": 0,
+      "current_session_scope": true
+    },
+    "history": {
+      "transaction_history_response": "json_null",
+      "balance_history_response": "json_null",
+      "gainloss_response": "json_null"
+    },
+    "adapter_policy": {
+      "evidence_complete": false,
+      "snapshot_reconciliation": "rejected_fail_closed"
+    }
+  },
+  "current_launch_checklist": [
+    {
+      "check": "Provider selection and credential boundary",
+      "status": "ready",
+      "evidence": "Tradier production market-data and sandbox paper settings are selected and configured separately; no values are included."
+    },
+    {
+      "check": "Complete broker evidence",
+      "status": "blocked",
+      "evidence": "Sandbox history is unavailable/null; current-session orders cannot prove activity completeness."
+    },
+    {
+      "check": "Paper account initialization",
+      "status": "blocked",
+      "evidence": "Active Tradier ledger is uninitialized; initialization calls the fail-closed snapshot path and cannot import incomplete evidence."
+    },
+    {
+      "check": "Accounting verification and costs",
+      "status": "blocked",
+      "evidence": "No ledger account exists, accounting is unverified, costs are unknown, and reconciliation is required."
+    },
+    {
+      "check": "Intraday feed entitlement and completeness",
+      "status": "blocked",
+      "evidence": "Four active symbols have configured Tradier production credentials but entitlement is unverified; two completed intervals were unresolved for each symbol at the observation time."
+    },
+    {
+      "check": "Risk state",
+      "status": "blocked",
+      "evidence": "The global kill switch is enabled."
+    },
+    {
+      "check": "Critical notifications",
+      "status": "blocked",
+      "evidence": "Four unresolved critical notifications remain, covering recovery, audit-chain integrity, monitoring, and deployment readiness."
+    },
+    {
+      "check": "Audit integrity",
+      "status": "blocked",
+      "evidence": "The retained audit digest chain reports a historical fork; original rows remain preserved and were not rewritten."
+    },
+    {
+      "check": "Recovery state",
+      "status": "blocked",
+      "evidence": "Recovery is in cooldown with an independent-watchdog stale-heartbeat pause reason and requires fresh broker reconciliation before resume."
+    },
+    {
+      "check": "Model freshness",
+      "status": "warning",
+      "evidence": "Latest trusted stored prediction was approximately 139.56 hours old."
+    },
+    {
+      "check": "Strategy availability",
+      "status": "ready",
+      "evidence": "One strategy is active for paper trading; two candidates are present."
+    },
+    {
+      "check": "Worker and scheduler health",
+      "status": "ready",
+      "evidence": "Two workers and exactly one beat lease/heartbeat were evidenced; no recent unresolved scheduled-job failures were reported."
+    },
+    {
+      "check": "Live safety",
+      "status": "ready",
+      "evidence": "Live order placement remains disabled and paper-only routing is enforced."
+    }
+  ],
+  "readiness_snapshot": {
+    "overall_status": "blocked",
+    "paper_trading_allowed": false,
+    "summary": {
+      "blocked": 3,
+      "ready": 4,
+      "warning": 1
+    },
+    "generic_broker_safety_note": "The generic readiness Broker safety check reports paper-only routing through the legacy internal paper-stub contract. The stock paper ledger has a separate active Tradier sandbox gate and remains the qualifying accounting authority."
+  },
+  "autonomous_sequence": {
+    "launch_prerequisites": [
+      "Verified complete intraday feed for the decision session",
+      "Healthy workers and exactly one scheduler",
+      "Complete reconciled paper ledger with verified accounting",
+      "Dataset provenance and readiness-history gates",
+      "Risk, notifications, audit, and recovery gates clear"
+    ],
+    "after_authorized_start": [
+      "Scheduled training creates governed dataset and model evidence.",
+      "A paper handoff binds an approved model to a forward trial.",
+      "Scheduled observation and reconciliation collect outcomes and preserve lineage.",
+      "Challenger comparison runs against versioned evidence and holdout protections.",
+      "Only the existing paper-only promotion path may update the paper champion; it does not grant live authority."
+    ],
+    "authorization_boundary": "No start, account initialization, order dispatch, broker switch, account reset, historical deletion, cost waiver, or live enablement was authorized or performed."
+  },
+  "alternatives_requiring_approval": [
+    {
+      "option": "Use a broker paper venue with complete paginated order, fill, activity, cost, and stable-timestamp evidence",
+      "condition": "User approval is required before switching the active paper broker; the new provider must pass the same contract and tests."
+    },
+    {
+      "option": "Run the existing local research simulator",
+      "condition": "It must remain separately labeled as nonqualifying research evidence and cannot authorize broker-paper promotion or live trading."
+    },
+    {
+      "option": "Continue Tradier market-data verification only",
+      "condition": "This may improve feed evidence, but it does not solve the sandbox accounting-history gap and cannot enable the paper loop."
+    }
+  ]
+}

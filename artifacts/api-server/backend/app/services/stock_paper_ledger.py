@@ -39,6 +39,14 @@ NONTERMINAL_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "parti
 ALLOWED_ORDER_SOURCES = frozenset({"manual_control_room", "manual_close", "manual_reduce", "recovery_flatten", "broker_import"})
 MAX_REFERENCE_PRICE_DEVIATION = Decimal("0.02")
 MAX_BROKER_SNAPSHOT_AGE = timedelta(minutes=5)
+TRADIER_PAPER_EVIDENCE = {
+    "complete": False,
+    "status": "incomplete",
+    "orders_scope": "current_session",
+    "transaction_history_scope": "unavailable_in_sandbox",
+    "costs_scope": "unknown_without_complete_activity_history",
+    "restart_recovery": "not_provable_from_sandbox_history",
+}
 
 
 class StockPaperError(RuntimeError):
@@ -1466,8 +1474,23 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
 
 
 def stock_paper_status(db: Session) -> dict:
+    broker = active_paper_broker_name()
     account = active_paper_account(db)
-    base = {"mode": "paper", "legacy_nonqualifying": True, "costs_known": False, "positions": [], "orders": [], "fills": [], "equity_snapshots": []}
+    base = {
+        "mode": "paper",
+        "broker": broker,
+        "broker_evidence": (
+            {"provider": broker, **TRADIER_PAPER_EVIDENCE}
+            if broker == "tradier_sandbox"
+            else {"provider": broker, "complete": None, "status": "provider_specific"}
+        ),
+        "legacy_nonqualifying": True,
+        "costs_known": False,
+        "positions": [],
+        "orders": [],
+        "fills": [],
+        "equity_snapshots": [],
+    }
     if not account:
         return base | {"status": "uninitialized", "reason": "Explicit admin initialization has not imported the broker paper account", "account": None}
     money = lambda value: str(value) if value is not None else None
