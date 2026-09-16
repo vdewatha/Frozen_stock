@@ -238,6 +238,70 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(status["status"], "stale")
         self.assertIn("Future", status["unavailable_reason"])
 
+    def test_successful_four_symbol_sip_preflight_is_complete_redacted_and_byte_stable(self):
+        now = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
+        symbols = ("AAPL", "MSFT", "QQQ", "SPY")
+        session_open = datetime(2026, 9, 11, 13, 30, tzinfo=UTC)
+        completed_bars = [
+            bar(session_open + timedelta(minutes=offset))
+            for offset in range(89)
+        ]
+        for symbol in symbols:
+            result = intraday_data.upsert_intraday_bars(
+                self.db,
+                symbol,
+                completed_bars,
+                ingested_at=now,
+            )
+            self.assertEqual(result["rows_imported"], len(completed_bars))
+        self.assertEqual(self.db.query(IntradayBar).count(), len(symbols) * len(completed_bars))
+
+        imported = {
+            "status": "complete",
+            "results": [
+                {"symbol": symbol, "status": "complete", "rows_imported": len(completed_bars)}
+                for symbol in symbols
+            ],
+        }
+        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)("sip-test-key"),
+        ), patch("app.services.intraday_data.ingest_intraday", return_value=imported):
+            first = intraday_data.preflight_intraday(self.db, list(symbols), now=now)
+            second = intraday_data.preflight_intraday(self.db, list(symbols), now=now)
+
+        self.assertTrue(first["ready"])
+        self.assertEqual(first["status"], "ready")
+        self.assertEqual(first["symbols"], list(symbols))
+        for item in first["results"]:
+            with self.subTest(symbol=item["symbol"]):
+                self.assertEqual(item["status"], "ready")
+                self.assertEqual(item["entitlement_state"], "verified")
+                self.assertEqual(item["latency_seconds"], 60.0)
+                self.assertEqual(item["missing_intervals"], [])
+
+        audits = (
+            self.db.query(AuditLog)
+            .filter_by(action="sip_preflight")
+            .order_by(AuditLog.id)
+            .all()
+        )
+        self.assertEqual(len(audits), 2)
+        first_audit_bytes = json.dumps(
+            audits[0].payload, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        second_audit_bytes = json.dumps(
+            audits[1].payload, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        self.assertEqual(first_audit_bytes, second_audit_bytes)
+        audit_text = first_audit_bytes.decode("utf-8").lower()
+        self.assertNotIn("sip-test-key", audit_text)
+        self.assertNotIn("api_key", audit_text)
+        self.assertNotIn("secret", audit_text)
+        self.assertNotIn("raw_payload", audit_text)
+        self.assertNotIn("account", audit_text)
+
     def test_four_symbol_preflight_is_bounded_to_active_regular_session(self):
         now = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
         statuses = {

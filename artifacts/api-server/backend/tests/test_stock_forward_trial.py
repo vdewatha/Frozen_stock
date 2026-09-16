@@ -2,7 +2,7 @@ import json
 import unittest
 import json
 import hashlib
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -879,6 +879,80 @@ class ForwardTrialTests(unittest.TestCase):
                         result = trial_feed_preflight(db, row, now=observed_at)
                         self.assertFalse(result["regular_session"])
                         self.assertEqual(result["next_regular_session_open"], expected_open)
+
+    def test_ready_four_symbol_sip_feed_still_requires_paper_accounting_gate(self):
+        now = datetime(2026, 9, 11, 15, 0, tzinfo=timezone.utc)
+        symbols = ("AAPL", "MSFT", "QQQ", "SPY")
+        session_open = datetime(2026, 9, 11, 13, 30, tzinfo=timezone.utc)
+        imported = {
+            "status": "complete",
+            "results": [
+                {"symbol": symbol, "status": "complete", "rows_imported": 0}
+                for symbol in symbols
+            ],
+        }
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused", universe=symbols)
+            self.account(db)
+            account = db.query(StockPaperAccount).one()
+            account.accounting_verified = False
+            for symbol in symbols:
+                for offset in range(89):
+                    opened = session_open + timedelta(minutes=offset)
+                    db.add(
+                        IntradayBar(
+                            symbol=symbol,
+                            timeframe="1m",
+                            opened_at=opened,
+                            open=Decimal("100"),
+                            high=Decimal("101"),
+                            low=Decimal("99"),
+                            close=Decimal("100"),
+                            volume=1000,
+                            provider="tradier",
+                            feed_class="sip",
+                            exchange_timestamp=opened,
+                            ingested_at=now,
+                        )
+                    )
+            db.flush()
+
+            with patch.object(
+                settings,
+                "tradier_market_data_api_key",
+                type(settings.tradier_market_data_api_key)("sip-test-key"),
+            ):
+                feed_evidence = trial_feed_preflight(db, row, now=now)
+                self.assertFalse(feed_evidence["ready"])
+                self.assertTrue(all(item["status"] == "ready" for item in feed_evidence["symbols"]))
+                self.assertEqual(feed_evidence["paper_ledger"]["status"], "blocked")
+                self.assertEqual(
+                    feed_evidence["paper_ledger"]["reason"],
+                    "Active paper broker ledger is not reconciled",
+                )
+
+                with patch(
+                    "app.services.intraday_data.ingest_intraday",
+                    return_value=imported,
+                ), patch(
+                    "app.services.stock_forward_trial.validate_trial_artifact",
+                    return_value={},
+                ), patch(
+                    "app.services.stock_forward_trial._now",
+                    return_value=now,
+                ):
+                    result = start_trial(db, row.id, actor="operator")
+
+            self.assertEqual(result.status, "blocked")
+            self.assertEqual(
+                result.blocked_reason,
+                "fresh_complete_feed_required:Active paper broker ledger is not reconciled",
+            )
+            sip_audit = db.query(AuditLog).filter_by(action="sip_preflight").one()
+            self.assertEqual(sip_audit.status, "ready")
+            self.assertEqual(sip_audit.payload["symbols"], list(symbols))
+            self.assertNotIn("sip-test-key", json.dumps(sip_audit.payload))
+            self.assertNotIn("raw_payload", json.dumps(sip_audit.payload))
 
     def test_successful_resume_audits_operator_and_preflight_without_rebinding(self):
         with Session(self.engine) as db:
