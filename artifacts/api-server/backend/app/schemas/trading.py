@@ -121,6 +121,7 @@ class IntradayBarRead(BaseModel):
 class FeedStatusResponse(BaseModel):
     symbol: str
     status: str
+    failure_class: Optional[str] = None
     provider: Optional[str] = None
     feed_class: Optional[str] = None
     data_mode: Optional[str] = None

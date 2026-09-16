@@ -623,6 +623,7 @@ def trial_feed_preflight(
                 {
                     "symbol": symbol,
                     "status": status.get("status"),
+                    "failure_class": status.get("failure_class"),
                     "entitlement_state": status.get("entitlement_state"),
                     "exchange_timestamp": (
                         status["exchange_timestamp"].isoformat()
@@ -648,6 +649,7 @@ def trial_feed_preflight(
                 {
                     "symbol": symbol,
                     "status": "unavailable",
+                    "failure_class": "availability",
                     "entitlement_state": "unverified",
                     "exchange_timestamp": None,
                     "ingestion_timestamp": None,

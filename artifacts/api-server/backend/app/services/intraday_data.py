@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import Asset, CorporateAction, IntradayBar
+from app.services.audit import write_audit_log
 
 NY = ZoneInfo("America/New_York")
 UTC = timezone.utc
@@ -23,6 +24,14 @@ ENTITLEMENT_VERIFICATION_MAX_AGE = timedelta(minutes=5)
 BAR_CADENCE = timedelta(minutes=1)
 LATE_TRADE_ALLOWANCE = timedelta(seconds=60)
 INTRADAY_BACKFILL_WINDOW = timedelta(minutes=60)
+
+
+class AlpacaProviderError(RuntimeError):
+    """A provider failure with a safe operator-visible classification."""
+
+    def __init__(self, message: str, failure_class: str):
+        super().__init__(message)
+        self.failure_class = failure_class
 
 
 def _easter(year: int) -> date:
@@ -211,8 +220,16 @@ def _request(path: str, params: dict, attempts: int = 3) -> dict:
             with urlopen(request, timeout=20) as response:
                 return json.load(response)
         except HTTPError as exc:
-            if exc.code in (401, 403):
-                raise RuntimeError("Alpaca SIP authentication or entitlement denied") from exc
+            if exc.code == 401:
+                raise AlpacaProviderError(
+                    "Alpaca SIP authentication denied",
+                    "authentication",
+                ) from exc
+            if exc.code == 403:
+                raise AlpacaProviderError(
+                    "Alpaca SIP entitlement denied",
+                    "entitlement",
+                ) from exc
             last_error = exc
             if exc.code != 429 and exc.code < 500:
                 break
@@ -567,6 +584,7 @@ def ingest_intraday(
                     "oldest_unresolved_interval": oldest_unresolved_interval,
                     "duplicate_bars": provider_duplicates + saved["duplicate_bars"],
                     "out_of_order": provider_out_of_order or saved["out_of_order"],
+                    "failure_class": "incomplete_data" if missing else None,
                     "unavailable_reason": "Missing completed regular-session intervals" if missing else None,
                 }
             )
@@ -596,14 +614,81 @@ def ingest_intraday(
 
 def _provider_failure(exc: Exception) -> tuple[str, str]:
     """Classify provider failures without returning provider or credential details."""
+    classified = getattr(exc, "failure_class", None)
+    if classified == "authentication":
+        return "authentication", "Alpaca SIP authentication denied"
+    if classified == "entitlement":
+        return "entitlement", "Alpaca SIP entitlement denied"
     message = str(exc).lower()
     if "credentials" in message or "not configured" in message:
         return "configuration", "Alpaca credentials are not configured in workspace secrets"
-    if "authentication" in message or "entitlement" in message or "sip feed" in message:
-        return "authentication_or_entitlement", "Authenticated Alpaca SIP entitlement is unavailable"
+    if "authentication" in message:
+        return "authentication", "Alpaca SIP authentication denied"
+    if "entitlement" in message:
+        return "entitlement", "Authenticated Alpaca SIP entitlement is unavailable"
+    if "sip feed" in message:
+        return "configuration", "Alpaca SIP feed is not configured"
     if "invalid alpaca" in message or "incomplete" in message or "pagination" in message:
         return "data_quality", "Alpaca returned invalid or incomplete bar data"
     return "availability", "Alpaca data service is unavailable"
+
+
+def _record_preflight_audit(db: Session, result: dict) -> dict:
+    """Persist only redacted feed evidence; broker credentials never enter the payload."""
+    safe_results = []
+    for item in result.get("results", []):
+        safe_results.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "symbol",
+                    "status",
+                    "failure_class",
+                    "entitlement_state",
+                    "exchange_timestamp",
+                    "ingestion_timestamp",
+                    "checked_at",
+                    "latency_seconds",
+                    "missing_intervals",
+                    "deferred_window",
+                    "oldest_unresolved_interval",
+                    "rows_imported",
+                    "unavailable_reason",
+                )
+                if key in item
+            }
+        )
+    payload = {
+        key: result.get(key)
+        for key in (
+            "provider",
+            "feed_class",
+            "data_mode",
+            "cadence",
+            "session",
+            "adjustment_policy",
+            "checked_at",
+            "symbols",
+            "status",
+            "ready",
+            "failure_class",
+            "reason",
+            "next_regular_session_open",
+            "next_regular_session_gap",
+        )
+        if key in result
+    }
+    payload["results"] = safe_results
+    write_audit_log(
+        db,
+        event_type="market_data",
+        action="sip_preflight",
+        status=result.get("status", "blocked"),
+        message=result.get("reason") or "Authenticated Alpaca SIP preflight completed",
+        entity_type="intraday_feed",
+        payload=payload,
+    )
+    return result
 
 
 def preflight_intraday(
@@ -638,7 +723,7 @@ def preflight_intraday(
         ),
     }
     if settings.alpaca_feed.strip().lower() != "sip":
-        return {
+        return _record_preflight_audit(db, {
             **base,
             "status": "blocked",
             "ready": False,
@@ -656,10 +741,10 @@ def preflight_intraday(
                 }
                 for symbol in selected
             ],
-        }
+        })
     paper_key, paper_secret = settings.paper_broker_credentials()
     if not (paper_key and paper_secret):
-        return {
+        return _record_preflight_audit(db, {
             **base,
             "status": "blocked",
             "ready": False,
@@ -677,10 +762,10 @@ def preflight_intraday(
                 }
                 for symbol in selected
             ],
-        }
+        })
     if not regular_session_open:
         reason = "Regular-session authenticated preflight is required"
-        return {
+        return _record_preflight_audit(db, {
             **base,
             "status": "blocked",
             "ready": False,
@@ -698,7 +783,7 @@ def preflight_intraday(
                 }
                 for symbol in selected
             ],
-        }
+        })
 
     ingestion = ingest_intraday(db, selected, now=observed_at)
     ingestion_by_symbol = {item["symbol"]: item for item in ingestion["results"]}
@@ -728,19 +813,20 @@ def preflight_intraday(
             }
             if imported.get("status") in {"unavailable", "incomplete"}:
                 result["status"] = imported["status"]
-                result["failure_class"] = imported.get(
-                    "failure_class",
-                    "data_quality" if imported["status"] == "incomplete" else "availability",
-                )
+                result["failure_class"] = imported.get("failure_class") or {
+                    "incomplete": "incomplete_data",
+                    "stale": "stale_data",
+                }.get(imported["status"], "availability")
                 result["unavailable_reason"] = imported.get(
                     "unavailable_reason"
                 ) or "Authenticated Alpaca SIP ingestion did not complete"
             if result["status"] != "ready":
                 result.setdefault(
                     "failure_class",
-                    "data_quality"
-                    if result["status"] in {"incomplete", "stale"}
-                    else "availability",
+                    {
+                        "incomplete": "incomplete_data",
+                        "stale": "stale_data",
+                    }.get(result["status"], "availability"),
                 )
         except Exception as exc:
             failure_class, reason = _provider_failure(exc)
@@ -757,7 +843,7 @@ def preflight_intraday(
         results.append(result)
 
     failed = [item for item in results if item.get("status") != "ready"]
-    return {
+    return _record_preflight_audit(db, {
         **base,
         "status": "ready" if not failed else "blocked",
         "ready": not failed,
@@ -767,7 +853,7 @@ def preflight_intraday(
             f"{failed[0].get('unavailable_reason') or failed[0].get('status')}"
         ),
         "results": results,
-    }
+    })
 
 
 def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dict:
@@ -855,30 +941,35 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         return {
             **base,
             "status": "unavailable",
+            "failure_class": "configuration",
             "unavailable_reason": "Alpaca credentials are not configured in workspace secrets",
         }
     if not entitlement_verified:
         return {
             **base,
             "status": "unavailable",
+            "failure_class": "entitlement",
             "unavailable_reason": "Alpaca SIP entitlement has not been verified by a recent authenticated ingestion",
         }
     if market_open and _aware_utc(latest.opened_at) >= expected_end:
         return {
             **base,
             "status": "stale",
+            "failure_class": "stale_data",
             "unavailable_reason": "Future regular-session observation cannot satisfy the current bar boundary",
         }
     if missing:
         return {
             **base,
             "status": "incomplete",
+            "failure_class": "incomplete_data",
             "unavailable_reason": "Missing completed regular-session intervals",
         }
     if not latest:
         return {
             **base,
             "status": "unavailable",
+            "failure_class": "availability",
             "unavailable_reason": "No completed Alpaca SIP bars are persisted",
         }
     if not market_open:
@@ -889,6 +980,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         return {
             **base,
             "status": "stale",
+            "failure_class": "stale_data",
             "unavailable_reason": "Latest completed bar exceeds the selected 60-second delay limit",
         }
     return {**base, "status": "ready", "unavailable_reason": None}

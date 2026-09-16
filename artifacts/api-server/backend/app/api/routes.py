@@ -466,7 +466,9 @@ def price_history(symbol: str, limit: int = 260, db: Session = Depends(get_db)) 
 
 @router.post("/market-data/intraday/preflight")
 def intraday_preflight(db: Session = Depends(get_db)):
-    return preflight_intraday(db)
+    result = preflight_intraday(db)
+    db.commit()
+    return result
 
 @router.get("/market-data/intraday/{symbol}", response_model=list[IntradayBarRead])
 def intraday_history(symbol: str, limit: int = 390, db: Session = Depends(get_db)):

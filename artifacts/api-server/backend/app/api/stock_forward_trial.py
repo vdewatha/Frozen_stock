@@ -187,7 +187,9 @@ def accuracy_history(
 def preflight(trial_id: str, db: Session = Depends(get_db)):
     row = db.get(StockPaperTrial, trial_id)
     if not row: raise HTTPException(404, "Trial not found")
-    return trial_feed_preflight(db, row)
+    result = trial_feed_preflight(db, row, authenticated_probe=True)
+    db.commit()
+    return result
 
 @router.get("/{trial_id}/promotion-readiness")
 def promotion_readiness(

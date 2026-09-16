@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 from app.db.base import Base
-from app.models import CorporateAction, IntradayBar
+from app.models import AuditLog, CorporateAction, IntradayBar
 from app.services import intraday_data
 from app.services.trusted_data import UntrustedMarketData, validate_intraday_readiness
 
@@ -187,6 +187,24 @@ class IntradayDataTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "entitlement denied"):
                 intraday_data._request("/v2/stocks/bars", {})
 
+    def test_authentication_and_entitlement_failures_are_distinct(self):
+        for code, message, expected_class in (
+            (401, "authentication denied", "authentication"),
+            (403, "entitlement denied", "entitlement"),
+        ):
+            denied = HTTPError("https://example", code, "denied", {}, None)
+            with self.subTest(code=code), patch.object(
+                settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")
+            ), patch.object(
+                settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+            ), patch("app.services.intraday_data.urlopen", side_effect=denied):
+                with self.assertRaisesRegex(RuntimeError, message) as raised:
+                    intraday_data._request("/v2/stocks/bars", {})
+                self.assertEqual(
+                    intraday_data._provider_failure(raised.exception)[0],
+                    expected_class,
+                )
+
     def test_future_bar_is_not_current_session_ready(self):
         now = datetime(2026, 9, 11, 14, 0, tzinfo=UTC)
         future = IntradayBar(
@@ -245,6 +263,11 @@ class IntradayDataTests(unittest.TestCase):
         self.assertIsNone(result["next_regular_session_gap"])
         self.assertEqual(result["symbols"], ["AAPL", "MSFT", "QQQ", "SPY"])
         self.assertEqual({row["symbol"] for row in result["results"]}, set(statuses))
+        audit = self.db.query(AuditLog).filter_by(action="sip_preflight").one()
+        self.assertEqual(audit.payload["status"], "ready")
+        self.assertEqual(audit.payload["symbols"], ["AAPL", "MSFT", "QQQ", "SPY"])
+        self.assertNotIn("api_key", json.dumps(audit.payload).lower())
+        self.assertNotIn("account", json.dumps(audit.payload).lower())
 
     def test_preflight_exposes_next_open_and_gap_when_session_is_closed(self):
         observed_at = datetime(2026, 9, 11, 21, 0, tzinfo=UTC)

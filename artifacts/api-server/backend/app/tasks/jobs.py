@@ -18,7 +18,7 @@ from app.services.deployment_monitor import run_deployment_monitor
 from app.services.experiments import run_strategy_experiments
 from app.services.governance import evaluate_strategy_governance
 from app.services.market_data import import_market_prices
-from app.services.intraday_data import ingest_corporate_actions, ingest_intraday
+from app.services.intraday_data import ingest_corporate_actions, preflight_intraday
 from app.services.market_regime import detect_and_store_market_regime
 from app.services.memory_replay import run_memory_replay_gate_monitor
 from app.services.model_tracking import run_and_persist_model_predictions, score_realized_predictions
@@ -196,7 +196,12 @@ def daily_market_data_import() -> dict:
     time_limit=INTRADAY_TASK_TIME_LIMIT_SECONDS,
 )
 def intraday_market_data_import() -> dict:
-    return _run_job("intraday_market_data_import", lambda db: ingest_intraday(db))
+    def work(db):
+        result = preflight_intraday(db)
+        db.commit()
+        return {"job": "intraday_market_data_import", **result}
+
+    return _run_job("intraday_market_data_import", work)
 
 
 @celery_app.task

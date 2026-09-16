@@ -382,6 +382,7 @@ export type IntradayPreflightResponse = {
   results: Array<{
     symbol: string;
     status: string;
+    failure_class?: string | null;
     entitlement_state?: string;
     exchange_timestamp?: string | null;
     ingestion_timestamp?: string | null;
@@ -390,7 +391,6 @@ export type IntradayPreflightResponse = {
     deferred_window?: { start: string; end: string } | null;
     oldest_unresolved_interval?: string | null;
     rows_imported?: number;
-    failure_class?: string;
     unavailable_reason?: string | null;
   }>;
 };
@@ -2630,6 +2630,7 @@ export type ForwardTrialPreflight = {
   symbols: Array<{
     symbol: string;
     status: string;
+    failure_class?: string | null;
     entitlement_state?: string;
     exchange_timestamp: string | null;
     ingestion_timestamp: string | null;
