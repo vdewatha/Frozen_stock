@@ -1,0 +1,68 @@
+{
+  "artifact_configuration": {
+    "api_health_path": "/api/health",
+    "api_production_environment": "production",
+    "api_production_run": "configured",
+    "live_trading_enabled": false,
+    "web_static_rewrite": "configured"
+  },
+  "build_verification": {
+    "api_server": "passed",
+    "strategy_control_room": "passed with existing sourcemap-location and chunk-size warnings"
+  },
+  "deployment_boundary": {
+    "background_processes_claimed_operational_in_production": false,
+    "database_migrated": false,
+    "live_credentials_added": false,
+    "republish_attempted": false,
+    "successful_build_not_treated_as_paper_readiness": true
+  },
+  "deployment_disposition": "blocked_for_republish",
+  "existing_deployment": {
+    "deployment_type": "autoscale",
+    "has_successful_build": true,
+    "health": {
+      "live_trading": false,
+      "paper_only": true,
+      "status": "ok"
+    },
+    "published": true,
+    "url": "https://frozenstock.replit.app",
+    "visibility": "public"
+  },
+  "generated_at": "2026-09-16T14:17:16.265203+00:00",
+  "paper_handoff": {
+    "go_no_go": "no_go",
+    "live_trading_enabled": false,
+    "paper_only": true,
+    "readiness": {
+      "checks": {
+        "Broker safety": "ready",
+        "Critical notifications": "blocked",
+        "Intraday feed": "blocked",
+        "Market data": "ready",
+        "Model freshness": "warning",
+        "Risk state": "blocked",
+        "Scheduler health": "ready",
+        "Strategy availability": "ready"
+      },
+      "overall_status": "blocked",
+      "paper_trading_allowed": false,
+      "summary": {
+        "blocked": 3,
+        "ready": 4,
+        "warning": 1
+      }
+    },
+    "unresolved_blockers": [
+      "The paper account still has an unexplained residual and requires qualifying later broker commission enrichment; stable account values are insufficient.",
+      "Authenticated Alpaca SIP entitlement is not verified by a recent successful ingestion for the active symbols.",
+      "The retained audit digest chain does not verify; historical events were not rewritten.",
+      "Critical broker, monitoring, and operational-hardening notifications remain open."
+    ]
+  },
+  "reason": "The existing deployment is healthy, but paper trading is not ready for trusted operation; republishing cannot override the fail-closed paper readiness gate.",
+  "report_sha256": "89316e6cdab7fa7f438bf2d780023eadfd9901fc42da0c6e0266d6702b836129",
+  "report_type": "paper_trading_deployment_handoff",
+  "schema_version": 1
+}
