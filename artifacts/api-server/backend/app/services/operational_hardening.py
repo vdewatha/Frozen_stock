@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import AuditLog, Notification, StockTrainingJob
+from app.services.audit import write_audit_log
 from app.services.notifications import create_notification
 
 UTC = timezone.utc
@@ -124,6 +125,7 @@ def _worker_lease_check(db: Session) -> dict:
 def _audit_chain_check(db: Session) -> dict:
     rows = db.scalars(select(AuditLog).order_by(AuditLog.id)).all()
     previous = None
+    previous_row_id = None
     for row in rows:
         expected = sha256(_canonical({
             "event_type": row.event_type,
@@ -136,9 +138,154 @@ def _audit_chain_check(db: Session) -> dict:
             "previous_event_sha256": previous,
         })).hexdigest()
         if row.previous_event_sha256 != previous or row.event_sha256 != expected:
-            return _check("audit_chain", "breach", "Audit event digest chain does not verify.", row_id=row.id)
+            previous_mismatch = row.previous_event_sha256 != previous
+            return _check(
+                "audit_chain",
+                "breach",
+                "Audit event digest chain does not verify.",
+                incident_scope="historical_audit_integrity",
+                classification="historical_fork" if previous_mismatch else "event_digest_mismatch",
+                first_broken_row_id=row.id,
+                preceding_row_id=previous_row_id,
+                expected_previous_event_sha256=previous,
+                observed_previous_event_sha256=row.previous_event_sha256,
+                expected_event_sha256=expected,
+                observed_event_sha256=row.event_sha256,
+                event_type=row.event_type,
+                action=row.action,
+                event_status=row.status,
+                created_at=row.created_at.isoformat() if row.created_at else None,
+                original_rows_preserved=True,
+                runtime_health_scope="current runtime probes remain separately evaluated",
+            )
         previous = row.event_sha256
-    return _check("audit_chain", "clear", "Audit event digest chain verifies.", event_count=len(rows))
+        previous_row_id = row.id
+    return _check(
+        "audit_chain",
+        "clear",
+        "Audit event digest chain verifies.",
+        event_count=len(rows),
+        incident_scope="historical_audit_integrity",
+        original_rows_preserved=True,
+    )
+
+
+def _audit_chain_incident_fingerprint(check: dict) -> str:
+    details = check.get("details") or {}
+    return sha256(_canonical({
+        "classification": details.get("classification"),
+        "first_broken_row_id": details.get("first_broken_row_id"),
+        "preceding_row_id": details.get("preceding_row_id"),
+        "expected_previous_event_sha256": details.get("expected_previous_event_sha256"),
+        "observed_previous_event_sha256": details.get("observed_previous_event_sha256"),
+        "expected_event_sha256": details.get("expected_event_sha256"),
+        "observed_event_sha256": details.get("observed_event_sha256"),
+    })).hexdigest()
+
+
+def _quarantine_audit_chain_incident(db: Session, check: dict, *, source: str) -> dict:
+    """Record an immutable decision without rewriting the breached history."""
+    details = dict(check.get("details") or {})
+    fingerprint = _audit_chain_incident_fingerprint(check)
+    details["incident_fingerprint"] = fingerprint
+    existing = db.scalars(
+        select(AuditLog)
+        .where(
+            AuditLog.event_type == "operational_hardening",
+            AuditLog.action == "quarantine_audit_chain",
+        )
+        .order_by(AuditLog.id.desc())
+    ).all()
+    for row in existing:
+        if (row.payload or {}).get("incident_fingerprint") == fingerprint:
+            return details | {"decision": "already_quarantined", "decision_audit_id": row.id}
+    row = write_audit_log(
+        db,
+        event_type="operational_hardening",
+        action="quarantine_audit_chain",
+        status="blocked",
+        message="Historical audit-chain integrity incident quarantined; original audit rows are preserved.",
+        entity_type="audit_chain",
+        entity_id=details.get("first_broken_row_id"),
+        payload={
+            "incident_fingerprint": fingerprint,
+            "classification": details.get("classification"),
+            "first_broken_row_id": details.get("first_broken_row_id"),
+            "preceding_row_id": details.get("preceding_row_id"),
+            "expected_previous_event_sha256": details.get("expected_previous_event_sha256"),
+            "observed_previous_event_sha256": details.get("observed_previous_event_sha256"),
+            "expected_event_sha256": details.get("expected_event_sha256"),
+            "observed_event_sha256": details.get("observed_event_sha256"),
+            "source": source,
+            "original_rows_preserved": True,
+            "resume_gate": "blocked_until_operator_review_and_fresh_evidence",
+        },
+    )
+    db.flush()
+    return details | {"decision": "quarantined", "decision_audit_id": row.id}
+
+
+def _upsert_audit_chain_notification(
+    db: Session,
+    *,
+    check: dict,
+    incident: dict,
+    configuration_sha256: str,
+) -> Notification:
+    payload = {
+        "incident_scope": "historical_audit_integrity",
+        "classification": incident.get("classification"),
+        "incident_fingerprint": incident.get("incident_fingerprint"),
+        "first_broken_row_id": incident.get("first_broken_row_id"),
+        "preceding_row_id": incident.get("preceding_row_id"),
+        "original_rows_preserved": True,
+        "runtime_health_scope": "reported by separate operational checks",
+        "checks": [check],
+        "configuration_sha256": configuration_sha256,
+        "incident_procedure": INCIDENT_PROCEDURE,
+    }
+    candidates = db.scalars(
+        select(Notification)
+        .where(
+            Notification.category == "operational_hardening",
+            Notification.source == "operational_hardening",
+            Notification.status.in_(["open", "acknowledged"]),
+        )
+        .order_by(Notification.id.desc())
+    ).all()
+    notification = next(
+        (
+            row for row in candidates
+            if row.title == "Operational hardening breach"
+            or (row.payload or {}).get("incident_scope") == "historical_audit_integrity"
+        ),
+        None,
+    )
+    message = (
+        "Historical audit-chain integrity incident quarantined at retained row "
+        f"{incident.get('first_broken_row_id')}; original audit rows are preserved. "
+        "Current runtime health remains reported by separate checks."
+    )
+    if notification is None:
+        notification = create_notification(
+            db,
+            category="operational_hardening",
+            severity="critical",
+            source="operational_hardening",
+            title="Historical audit-chain integrity incident quarantined",
+            message=message,
+            entity_type="audit_chain",
+            entity_id=incident.get("first_broken_row_id"),
+            payload=payload,
+        )
+    else:
+        notification.title = "Historical audit-chain integrity incident quarantined"
+        notification.message = message
+        notification.entity_type = "audit_chain"
+        notification.entity_id = incident.get("first_broken_row_id")
+        notification.payload = payload
+        notification.updated_at = _now()
+    return notification
 
 
 def _backup_check() -> dict:
@@ -154,11 +301,12 @@ def _backup_check() -> dict:
 
 
 def run_operational_hardening(db: Session, *, source: str = "operator", notify: bool = True) -> dict:
+    audit_check = _audit_chain_check(db)
     checks = [
         _database_check(db),
         _scheduler_check(),
         _worker_lease_check(db),
-        _audit_chain_check(db),
+        audit_check,
         _backup_check(),
         _check(
             "live_trading_guard",
@@ -170,19 +318,44 @@ def run_operational_hardening(db: Session, *, source: str = "operator", notify: 
     statuses = [item["status"] for item in checks]
     overall = "breach" if "breach" in statuses else "unknown" if "unknown" in statuses else "clear"
     breaches = [item for item in checks if item["status"] == "breach"]
+    audit_incident = None
+    if audit_check["status"] == "breach" and notify:
+        audit_incident = _quarantine_audit_chain_incident(db, audit_check, source=source)
     if breaches and notify:
-        create_notification(
-            db,
-            category="operational_hardening",
-            severity="critical",
-            source="operational_hardening",
-            title="Operational hardening breach",
-            message="; ".join(item["message"] for item in breaches),
-            entity_type="deployment",
-            payload={"checks": breaches, "configuration_sha256": digest["sha256"], "incident_procedure": INCIDENT_PROCEDURE},
-        )
+        if audit_check["status"] == "breach":
+            _upsert_audit_chain_notification(
+                db,
+                check=audit_check,
+                incident=audit_incident or {},
+                configuration_sha256=digest["sha256"],
+            )
+        else:
+            create_notification(
+                db,
+                category="operational_hardening",
+                severity="critical",
+                source="operational_hardening",
+                title="Operational hardening breach",
+                message="; ".join(item["message"] for item in breaches),
+                entity_type="deployment",
+                payload={
+                    "checks": breaches,
+                    "configuration_sha256": digest["sha256"],
+                    "incident_procedure": INCIDENT_PROCEDURE,
+                    "incident_scope": "current_runtime_health",
+                },
+            )
     if notify:
         db.commit()
+    runtime_checks = [item for item in checks if item["key"] != "audit_chain"]
+    runtime_statuses = [item["status"] for item in runtime_checks]
+    runtime_status = (
+        "breach"
+        if "breach" in runtime_statuses
+        else "unknown"
+        if "unknown" in runtime_statuses
+        else "clear"
+    )
     return {
         "status": overall,
         "generated_at": _now(),
@@ -190,6 +363,11 @@ def run_operational_hardening(db: Session, *, source: str = "operator", notify: 
         "checks": checks,
         "configuration_digest": digest,
         "incident_procedure": INCIDENT_PROCEDURE,
+        "audit_chain_incident": audit_incident,
+        "runtime_health": {
+            "status": runtime_status,
+            "checks": runtime_checks,
+        },
     }
 
 

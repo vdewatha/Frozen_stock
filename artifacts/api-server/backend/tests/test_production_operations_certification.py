@@ -18,9 +18,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.models import AuditLog, Notification
+from app.services.audit import write_audit_log
 from app.services import deployment_monitor
 from app.services.live_operations import live_operations_evidence, live_operations_snapshot
-from app.services.operational_hardening import run_operational_hardening
+from app.services.operational_hardening import _audit_chain_check, _canonical, run_operational_hardening
 
 
 ROOT = Path(__file__).parents[1]
@@ -34,6 +35,49 @@ def _db() -> Session:
     )
     Base.metadata.create_all(engine)
     return Session(engine)
+
+
+def _seed_historical_audit_fork(db: Session) -> tuple[AuditLog, AuditLog, AuditLog]:
+    first = write_audit_log(
+        db,
+        event_type="operations_probe",
+        action="first",
+        status="complete",
+        message="First retained event",
+        payload={"sequence": 1},
+    )
+    db.commit()
+    second = write_audit_log(
+        db,
+        event_type="operations_probe",
+        action="second",
+        status="complete",
+        message="Second retained event",
+        payload={"sequence": 2},
+    )
+    db.commit()
+    fork_payload = {
+        "event_type": "operations_probe",
+        "entity_type": None,
+        "entity_id": None,
+        "action": "forked",
+        "status": "complete",
+        "message": "Forked retained event",
+        "payload": {"sequence": 3},
+        "previous_event_sha256": first.event_sha256,
+    }
+    fork = AuditLog(
+        event_type="operations_probe",
+        action="forked",
+        status="complete",
+        message="Forked retained event",
+        payload={"sequence": 3},
+        previous_event_sha256=first.event_sha256,
+        event_sha256=__import__("hashlib").sha256(_canonical(fork_payload)).hexdigest(),
+    )
+    db.add(fork)
+    db.commit()
+    return first, second, fork
 
 
 def test_live_operations_health_contract_distinguishes_unknown_and_blocked_trading():
@@ -130,6 +174,67 @@ def test_operational_hardening_is_unknown_on_disposable_sqlite_and_preserves_inc
         assert statuses["backup_restore_tools"] == "unknown"
         assert "disposable target" in result["incident_procedure"]
         assert "redis unavailable" not in str(result)
+    finally:
+        db.close()
+
+
+def test_audit_chain_check_diagnoses_historical_fork_without_mutating_rows():
+    db = _db()
+    try:
+        first, second, fork = _seed_historical_audit_fork(db)
+        before = {
+            row.id: (row.previous_event_sha256, row.event_sha256)
+            for row in db.scalars(select(AuditLog).order_by(AuditLog.id)).all()
+        }
+
+        result = _audit_chain_check(db)
+
+        assert result["status"] == "breach"
+        details = result["details"]
+        assert details["classification"] == "historical_fork"
+        assert details["first_broken_row_id"] == fork.id
+        assert details["preceding_row_id"] == second.id
+        assert details["expected_previous_event_sha256"] == second.event_sha256
+        assert details["observed_previous_event_sha256"] == first.event_sha256
+        assert details["original_rows_preserved"] is True
+        after = {
+            row.id: (row.previous_event_sha256, row.event_sha256)
+            for row in db.scalars(select(AuditLog).order_by(AuditLog.id)).all()
+        }
+        assert after == before
+    finally:
+        db.close()
+
+
+def test_historical_audit_fork_is_quarantined_once_and_separated_from_runtime_health():
+    db = _db()
+    try:
+        _, _, fork = _seed_historical_audit_fork(db)
+
+        first_result = run_operational_hardening(db, source="acceptance_drill", notify=True)
+        second_result = run_operational_hardening(db, source="acceptance_drill", notify=True)
+
+        decisions = db.scalars(
+            select(AuditLog).where(
+                AuditLog.event_type == "operational_hardening",
+                AuditLog.action == "quarantine_audit_chain",
+            )
+        ).all()
+        notifications = db.scalars(
+            select(Notification).where(Notification.category == "operational_hardening")
+        ).all()
+        assert first_result["status"] == "breach"
+        assert first_result["audit_chain_incident"]["decision"] == "quarantined"
+        assert second_result["audit_chain_incident"]["decision"] == "already_quarantined"
+        assert second_result["runtime_health"]["status"] == "unknown"
+        assert len(decisions) == 1
+        assert decisions[0].entity_id == fork.id
+        assert decisions[0].payload["original_rows_preserved"] is True
+        assert len(notifications) == 1
+        assert notifications[0].title == "Historical audit-chain integrity incident quarantined"
+        assert notifications[0].payload["incident_scope"] == "historical_audit_integrity"
+        assert notifications[0].payload["runtime_health_scope"] == "reported by separate operational checks"
+        assert all(check["key"] != "audit_chain" for check in second_result["runtime_health"]["checks"])
     finally:
         db.close()
 
