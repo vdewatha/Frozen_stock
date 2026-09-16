@@ -166,6 +166,7 @@ class CeleryWorkerCrashIntegrationTests(unittest.TestCase):
                         description="replacement intraday import to complete",
                     ),
                     {
+                        "job": "intraday_market_data_import",
                         "status": "complete",
                         "repair": "bounded",
                         "worker_phase": "replacement",
@@ -287,6 +288,7 @@ class CeleryWorkerCrashIntegrationTests(unittest.TestCase):
                 self.assertEqual(
                     scheduled_result,
                     {
+                        "job": "intraday_market_data_import",
                         "status": "complete",
                         "repair": "bounded",
                         "worker_phase": "replacement",

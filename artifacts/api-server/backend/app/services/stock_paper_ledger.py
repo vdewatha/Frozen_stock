@@ -671,7 +671,7 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
                 str(raw.get("side") or "").lower(), _decimal(raw.get("qty"), "fill quantity"),
                 _decimal(raw.get("price"), "fill price"),
                 _decimal(raw["commission"], "commission") if raw.get("commission") is not None else None,
-                _timestamp(raw.get("transaction_time"), fallback=observed),
+                _activity_timestamp(raw, fallback=observed),
             )
             existing_payload = dict(existing_fill.raw_payload or {})
             candidate_payload = dict(raw)
@@ -709,7 +709,7 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
         db.add(StockPaperFill(account_id=account.id, order_id=order.id if order else None, broker_activity_id=activity_id,
             broker_order_id=order_id, symbol=str(raw.get("symbol") or "").upper(), side=side,
             quantity=_decimal(raw.get("qty"), "fill quantity"), price=_decimal(raw.get("price"), "fill price"),
-            fee=fee, cost_known=fee is not None, filled_at=_timestamp(raw.get("transaction_time"), fallback=observed), raw_payload=raw))
+            fee=fee, cost_known=fee is not None, filled_at=_activity_timestamp(raw, fallback=observed), raw_payload=raw))
     return enriched_activity_ids
 
 

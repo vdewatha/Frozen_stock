@@ -11,7 +11,7 @@ from app.tasks import jobs
 from app.tasks.celery_app import celery_app
 
 
-def _test_ingest_intraday(db) -> dict:
+def _test_intraday_preflight(db, *args, **kwargs) -> dict:
     client = redis.Redis.from_url(os.environ["REDIS_URL"])
     phase_key = os.environ["INTRADAY_TEST_PHASE_KEY"]
 
@@ -32,7 +32,7 @@ def _test_ingest_intraday(db) -> dict:
 
 def main() -> None:
     jobs.INTRADAY_JOB_LOCK_TTL_SECONDS = int(os.environ["INTRADAY_TEST_LOCK_TTL"])
-    jobs.ingest_intraday = _test_ingest_intraday
+    jobs.preflight_intraday = _test_intraday_preflight
     celery_app.worker_main(
         [
             "worker",

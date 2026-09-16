@@ -1337,6 +1337,34 @@ class StockPaperRecoveryTests(unittest.TestCase):
             self.assertEqual(result["status"], "halted")
             self.assertIn("watermark", result["reason"].lower())
 
+    def test_repeated_created_at_fill_keeps_immutable_timestamp(self):
+        fill_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+        fill = {
+            "id": "repeated-created-at-fill",
+            "activity_type": "FILL",
+            "symbol": "SPY",
+            "side": "buy",
+            "qty": "1",
+            "price": "100",
+            "commission": "0",
+            "created_at": fill_time,
+        }
+        gateway = FakeAlpaca(
+            positions=[{"symbol": "SPY", "qty": "1", "market_value": "100"}],
+            activities=[fill],
+            account=StockPaperLedgerTests.account_payload(cash="900"),
+        )
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            first = reconcile_stock_paper_account(db, gateway)
+            second = reconcile_stock_paper_account(db, gateway)
+            persisted = db.query(StockPaperFill).one()
+
+        self.assertEqual(first["status"], "reconciled")
+        self.assertEqual(second["status"], "reconciled")
+        persisted_at = persisted.filled_at.replace(tzinfo=timezone.utc)
+        self.assertEqual(persisted_at, datetime.fromisoformat(fill_time))
+
     def test_automatic_review_stays_blocked_for_unknown_fee_and_notifies_operator(self):
         from app.models import Notification, StockPaperRecoveryEvent
 
