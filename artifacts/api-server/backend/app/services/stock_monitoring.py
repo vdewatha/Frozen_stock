@@ -1,4 +1,4 @@
-"""Continuous, fail-closed monitoring for the Alpaca paper stock path."""
+"""Continuous, fail-closed monitoring for the active paper stock path."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -30,10 +30,15 @@ from app.models.stock_paper import (
     StockPaperPosition,
 )
 from app.services.audit import write_audit_log
-from app.services.intraday_data import feed_status
+from app.services.intraday_data import (
+    feed_status,
+    MARKET_DATA_PROVIDER,
+    MARKET_DATA_FEED_CLASS,
+)
 from app.services.notifications import create_notification
 from app.services.risk import DEFAULT_RISK_RULES
 from app.services.stock_recovery import enter_stock_recovery, record_stock_monitor_heartbeat
+from app.services.stock_paper_ledger import active_paper_account
 from app.services.stock_training_jobs import StockTrainingError, transition_stock_model_lifecycle
 from app.services.trusted_data import TRUSTED_SOURCES, UntrustedMarketData, trusted_history
 
@@ -222,10 +227,10 @@ def _freshness_and_provenance(db: Session) -> dict:
     status = "breach" if failures else "clear"
     return _check(
         "data.freshness_provenance", "data", "data_freshness_and_provenance", status,
-        "Fresh trusted Alpaca SIP data is not available for every active stock."
+         "Fresh trusted Tradier production data is not available for every active stock."
         if failures else "Freshness and provider provenance are valid for the active stock universe.",
         value={"failed_symbols": sorted(failures), "ready_symbols": sorted(set(results) - set(failures))},
-        threshold={"provider": "alpaca", "feed_class": "sip", "timeframe": "1m", "session": "regular"},
+         threshold={"provider": MARKET_DATA_PROVIDER, "feed_class": MARKET_DATA_FEED_CLASS, "timeframe": "1m", "session": "regular"},
         details={"symbols": results, "failures": failures},
         action_scope="safety",
     )
@@ -258,7 +263,7 @@ def _execution_divergence(db: Session, now: datetime) -> dict:
 
 
 def _stock_risk_metrics(db: Session, now: datetime) -> list[dict]:
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     if not account:
         return [_check("risk.exposure", "risk", "exposure_concentration_turnover_volatility_daily_loss", "unknown", "Stock-paper risk metrics are unavailable because the broker account is not initialized.", action_scope="safety")]
     equity = float(account.equity or 0)
@@ -311,14 +316,14 @@ def _stock_risk_metrics(db: Session, now: datetime) -> list[dict]:
 
 
 def _broker_reconciliation_health(db: Session, now: datetime) -> list[dict]:
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     if not account:
         return [_check("health.reconciliation", "health", "broker_reconciliation", "unknown", "Broker reconciliation health is unavailable because the paper account is not initialized.", action_scope="safety")]
     last = _aware(account.last_reconciled_at)
     stale = not last or now - last > timedelta(minutes=10)
     status = "breach" if account.status != "reconciled" or account.reconciliation_required or stale else "clear"
     return [
-        _check("health.broker", "health", "broker_account_health", "clear" if account.status == "reconciled" else "breach", "Alpaca paper account is reconciled." if account.status == "reconciled" else "Alpaca paper account is halted or unavailable.", value={"account_status": account.status}, threshold={"required_status": "reconciled"}, details={"halt_reason": account.halt_reason}, action_scope="safety"),
+        _check("health.broker", "health", "broker_account_health", "clear" if account.status == "reconciled" else "breach", "Active paper account is reconciled." if account.status == "reconciled" else "Active paper account is halted or unavailable.", value={"account_status": account.status}, threshold={"required_status": "reconciled"}, details={"halt_reason": account.halt_reason}, action_scope="safety"),
         _check("health.reconciliation", "health", "broker_reconciliation", status, "Broker reconciliation is stale, required, or halted." if status != "clear" else "Broker reconciliation is recent and verified.", value={"last_reconciled_at": last.isoformat() if last else None, "reconciliation_required": account.reconciliation_required}, threshold={"max_age_minutes": 10, "required": False}, details={"account_status": account.status, "unexplained_residual": account.unexplained_residual}, action_scope="safety"),
     ]
 

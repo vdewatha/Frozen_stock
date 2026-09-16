@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import httpx
 
+from app.core.config import settings
 from app.services import deployment_monitor
 
 spec = importlib.util.spec_from_file_location("monitor_cli", Path(__file__).parents[1] / "scripts" / "check_deployment_monitor.py")
@@ -13,6 +14,17 @@ spec.loader.exec_module(monitor)
 
 
 class MonitorSecurityTests(unittest.TestCase):
+    def setUp(self):
+        self.active_broker_patch = patch.object(
+            settings,
+            "active_paper_broker",
+            "alpaca_paper",
+        )
+        self.active_broker_patch.start()
+
+    def tearDown(self):
+        self.active_broker_patch.stop()
+
     def test_schedule_definition_returns_explicit_result(self):
         result = deployment_monitor._check_celery_schedule()
         self.assertIn("configured_jobs", result["details"])

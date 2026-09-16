@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import app.models
+from app.core.config import settings
 from app.db.base import Base
 from app.models import CorporateAction, StockPaperRecoveryState
 from app.models.stock_paper import (
@@ -27,6 +28,11 @@ from app.services.stock_recovery import enter_stock_recovery
 
 UTC = timezone.utc
 OBSERVED = datetime(2026, 9, 15, 15, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def legacy_paper_broker(monkeypatch):
+    monkeypatch.setattr(settings, "active_paper_broker", "alpaca_paper")
 
 
 class ActivityGateway:

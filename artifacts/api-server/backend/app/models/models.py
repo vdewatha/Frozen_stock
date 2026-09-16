@@ -41,7 +41,12 @@ class MarketPrice(Base):
 
 class IntradayBar(Base):
     __tablename__ = "intraday_bars"
-    __table_args__ = (UniqueConstraint("symbol", "timeframe", "opened_at", name="uq_intraday_bar"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "timeframe", "opened_at", "provider",
+            name="uq_intraday_bar_provider",
+        ),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), index=True)
     timeframe: Mapped[str] = mapped_column(String(8), default="1m")
@@ -51,7 +56,7 @@ class IntradayBar(Base):
     low: Mapped[Decimal] = mapped_column(Numeric(18, 6))
     close: Mapped[Decimal] = mapped_column(Numeric(18, 6))
     volume: Mapped[int] = mapped_column(BigInteger)
-    provider: Mapped[str] = mapped_column(String(32), default="alpaca")
+    provider: Mapped[str] = mapped_column(String(32), default="tradier")
     feed_class: Mapped[str] = mapped_column(String(32), default="sip")
     exchange_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 from app.models import Asset, MarketPrice, ModelPrediction, Notification, RiskRule, Strategy
 from app.core.config import settings
 from app.services.broker import broker_status
-from app.services.intraday_data import feed_status, ALLOWED_SYMBOLS
+from app.services.intraday_data import (
+    feed_status,
+    ALLOWED_SYMBOLS,
+    MARKET_DATA_PROVIDER,
+    MARKET_DATA_FEED_CLASS,
+)
 from app.services.portfolio_risk import portfolio_risk_snapshot
 from app.tasks.celery_app import celery_app
 from app.services.trusted_data import trusted_history, validate_intraday_readiness, UntrustedMarketData, TRUSTED_SOURCES
@@ -140,11 +145,11 @@ def readiness_snapshot(db: Session) -> dict:
     checks.append(_check(
         "Intraday feed",
         "blocked" if intraday_failures else "ready",
-        "Completed Alpaca SIP bars are fresh." if not intraday_failures else "Fresh complete intraday data is required for paper decisions.",
+         "Completed Tradier production bars are fresh." if not intraday_failures else "Fresh complete intraday data is required for paper decisions.",
         {
             "data_mode": "real-time",
-            "provider": "alpaca",
-            "feed_class": "sip",
+             "provider": MARKET_DATA_PROVIDER,
+             "feed_class": MARKET_DATA_FEED_CLASS,
             "cadence": "1m",
             "exchange_timestamp": representative.get("exchange_timestamp"),
             "ingestion_time": representative.get("ingestion_timestamp"),

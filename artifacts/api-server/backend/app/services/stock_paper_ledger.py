@@ -1,4 +1,4 @@
-"""Alpaca paper-account import, reconciliation, and safe order lifecycle.
+"""Paper-account import, reconciliation, and safe order lifecycle.
 
 Dispatch is explicitly operator-triggered after a durable reservation; it commits
 before one POST and turns an ambiguous outcome into a halt rather than a retry.
@@ -22,13 +22,15 @@ from app.models.stock_paper import (
     StockPaperAccount, StockPaperBrokerActivity, StockPaperEquitySnapshot,
     StockPaperFill, StockPaperLedgerEvent, StockPaperOrder, StockPaperPosition, StockPaperStrategyEvidence,
 )
-from app.services.intraday_data import feed_status, session_bounds
+from app.services.intraday_data import MARKET_DATA_PROVIDER, feed_status, session_bounds
 from app.services.risk import DEFAULT_RISK_RULES, PortfolioState, StrategyState, approve_trade
 from app.services.strategies.registry import get_strategy
 from app.services.trusted_data import UntrustedMarketData, trusted_history, trusted_intraday_observation
 
 ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
-BROKER = "alpaca_paper"
+TRADIER_SANDBOX_URL = "https://sandbox.tradier.com/v1"
+LEGACY_BROKER = "alpaca_paper"
+BROKER = LEGACY_BROKER
 UTC = timezone.utc
 UNKNOWN_COSTS_REASON = "Broker-reported commissions/spread/slippage are incomplete; costs are unknown."
 ACCOUNTING_RESIDUAL_REVIEW_REASON = "Prior unexplained cash or position residual requires manual accounting review"
@@ -186,6 +188,266 @@ class AlpacaPaperClient:
             return None
 
 
+class TradierPaperClient:
+    """Read/write adapter for the Tradier *sandbox* paper account.
+
+    Tradier's sandbox order endpoint is deliberately the only trading endpoint
+    this client can address.  The sandbox order list is current-session-only and
+    Tradier does not expose a complete historical activity cursor, so the
+    adapter marks every snapshot as incomplete.  The ledger consequently halts
+    rather than treating a partial broker view as accounting truth.
+    """
+
+    evidence_complete = False
+
+    def __init__(self) -> None:
+        configured = str(getattr(settings, "tradier_sandbox_url", "") or TRADIER_SANDBOX_URL).rstrip("/")
+        if configured != TRADIER_SANDBOX_URL:
+            raise StockPaperUnavailable("Tradier paper broker URL must be the immutable sandbox endpoint")
+        self.base_url = TRADIER_SANDBOX_URL
+        self.account_id = str(getattr(settings, "tradier_account_id", "") or "").strip()
+        if not self.account_id:
+            raise StockPaperUnavailable("Tradier sandbox account ID is not configured")
+
+    def _token(self) -> str:
+        value = getattr(settings, "tradier_api_key", "")
+        return value.get_secret_value() if hasattr(value, "get_secret_value") else str(value or "")
+
+    def _headers(self) -> dict[str, str]:
+        token = self._token()
+        if not token:
+            raise StockPaperUnavailable("Tradier sandbox credentials are not configured")
+        return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    def _request_response(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        form: dict | None = None,
+    ) -> tuple[Any, dict[str, str]]:
+        try:
+            with httpx.Client(base_url=self.base_url, timeout=20.0, headers=self._headers()) as client:
+                response = client.request(method, path, params=params, data=form)
+            if response.status_code >= 400:
+                raise StockPaperUnavailable(
+                    f"Tradier sandbox request failed with HTTP {response.status_code}"
+                )
+            return response.json(), dict(response.headers)
+        except StockPaperUnavailable:
+            raise
+        except (httpx.HTTPError, ValueError) as exc:
+            raise StockPaperUnavailable(
+                "Tradier sandbox broker is unavailable or returned invalid data"
+            ) from exc
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict | None = None,
+        form: dict | None = None,
+    ) -> Any:
+        return self._request_response(method, path, params=params, form=form)[0]
+
+    @staticmethod
+    def _one_or_many(value: Any) -> list[dict]:
+        if value is None:
+            return []
+        if isinstance(value, dict):
+            return [value]
+        if isinstance(value, list) and all(isinstance(row, dict) for row in value):
+            return value
+        raise StockPaperUnavailable("Tradier sandbox returned an invalid collection")
+
+    def account(self) -> dict:
+        response = self._request("GET", f"/accounts/{self.account_id}/balances")
+        balances = response.get("balances") if isinstance(response, dict) else None
+        if not isinstance(balances, dict):
+            raise StockPaperUnavailable("Tradier sandbox balances response is invalid")
+        reported_id = str(balances.get("account_number") or self.account_id).strip()
+        if reported_id != self.account_id:
+            raise StockPaperUnavailable("Tradier sandbox account identifier changed")
+        cash = balances.get("cash") if isinstance(balances.get("cash"), dict) else {}
+        margin = balances.get("margin") if isinstance(balances.get("margin"), dict) else {}
+        equity = balances.get("total_equity")
+        if equity is None:
+            equity = balances.get("equity")
+        buying_power = margin.get("stock_buying_power")
+        if buying_power is None:
+            buying_power = balances.get("buying_power")
+        return {
+            "id": reported_id,
+            "currency": "USD",
+            "status": "ACTIVE",
+            "cash": cash.get("cash_available", balances.get("cash_available")),
+            "buying_power": buying_power,
+            "equity": equity,
+            "last_equity": equity,
+            "updated_at": balances.get("updated_at"),
+            "tradier_raw": response,
+        }
+
+    def positions(self) -> list[dict]:
+        response = self._request("GET", f"/accounts/{self.account_id}/positions")
+        container = response.get("positions") if isinstance(response, dict) else None
+        rows = self._one_or_many(container.get("position") if isinstance(container, dict) else None)
+        normalized = []
+        for row in rows:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            quantity = row.get("quantity")
+            if not symbol or quantity is None:
+                raise StockPaperUnavailable("Tradier sandbox position is missing immutable fields")
+            qty = Decimal(str(quantity))
+            cost_basis = row.get("cost_basis")
+            average = None
+            if cost_basis is not None and qty:
+                average = str(Decimal(str(cost_basis)) / qty)
+            normalized.append({
+                "symbol": symbol,
+                "qty": str(quantity),
+                "avg_entry_price": average,
+                "cost_basis": cost_basis,
+                "updated_at": row.get("date_acquired"),
+                "tradier_raw": row,
+            })
+        return normalized
+
+    @staticmethod
+    def _normalize_order(row: dict) -> dict:
+        broker_id = str(row.get("id") or "").strip()
+        if not broker_id:
+            raise StockPaperUnavailable("Tradier sandbox order is missing an identifier")
+        order = {
+            "id": broker_id,
+            "client_order_id": str(row.get("tag") or row.get("client_order_id") or f"broker-{broker_id}")[:64],
+            "symbol": str(row.get("symbol") or "").strip().upper(),
+            "side": str(row.get("side") or "").lower(),
+            "qty": row.get("quantity") if row.get("quantity") is not None else row.get("qty"),
+            "filled_qty": row.get("exec_quantity"),
+            "type": str(row.get("type") or "").lower(),
+            "time_in_force": str(row.get("duration") or row.get("time_in_force") or "").lower(),
+            "limit_price": row.get("price") if row.get("price") is not None else row.get("limit_price"),
+            "status": str(row.get("status") or "").lower(),
+            "created_at": row.get("create_date") or row.get("created_at"),
+            "updated_at": row.get("transaction_date") or row.get("updated_at"),
+            "tradier_raw": row,
+        }
+        if order["status"] == "ok":
+            order["status"] = "accepted"
+        return order
+
+    def orders(self, after: datetime | None = None) -> list[dict]:
+        response = self._request("GET", f"/accounts/{self.account_id}/orders")
+        container = response.get("orders") if isinstance(response, dict) else None
+        rows = self._one_or_many(container.get("order") if isinstance(container, dict) else None)
+        # The normalized current-session rows are useful for read-only lookup,
+        # but are never sufficient for ledger reconciliation.
+        return [self._normalize_order(row) for row in rows]
+
+    def order_details(self, broker_order_id: str) -> dict:
+        response = self._request("GET", f"/accounts/{self.account_id}/orders/{broker_order_id}")
+        raw = response.get("order") if isinstance(response, dict) else None
+        if not isinstance(raw, dict):
+            raise StockPaperUnavailable("Tradier sandbox order detail response is invalid")
+        normalized = self._normalize_order(raw)
+        executions = raw.get("exec") or raw.get("executions") or []
+        normalized["executions"] = self._one_or_many(executions)
+        return normalized
+
+    def fills(self, after: datetime | None = None) -> list[dict]:
+        # Tradier has no complete historical account-activity pagination.  We
+        # import only explicit execution rows, never exec_quantity/avg_fill_price
+        # summaries, and the incomplete-evidence marker still halts snapshots.
+        fills = []
+        for order in self.orders(after):
+            if order.get("status") not in {"filled", "partially_filled"}:
+                continue
+            detailed = self.order_details(order["id"])
+            for index, execution in enumerate(detailed.get("executions", [])):
+                if not isinstance(execution, dict):
+                    raise StockPaperUnavailable("Tradier sandbox execution row is invalid")
+                quantity = execution.get("quantity")
+                price = execution.get("price")
+                if quantity is None or price is None:
+                    raise StockPaperUnavailable("Tradier sandbox execution lacks quantity or price")
+                execution_id = str(
+                    execution.get("id")
+                    or f"{order['id']}:{execution.get('execution_date') or execution.get('date') or index}"
+                )
+                fills.append({
+                    "id": execution_id,
+                    "activity_type": "FILL",
+                    "order_id": order["id"],
+                    "symbol": order["symbol"],
+                    "side": order["side"],
+                    "qty": quantity,
+                    "price": price,
+                    "commission": execution.get("commission"),
+                    "transaction_time": execution.get("execution_date") or execution.get("date"),
+                    "tradier_raw": execution,
+                })
+        return fills
+
+    def submit_order(self, payload: dict) -> dict:
+        allowed = {"symbol", "side", "type", "quantity", "duration", "price", "stop", "tag"}
+        form = {}
+        for key, value in payload.items():
+            if key == "qty":
+                key = "quantity"
+            if key == "time_in_force":
+                key = "duration"
+            if key == "limit_price":
+                key = "price"
+            if key == "client_order_id":
+                key = "tag"
+            if key in allowed and value is not None:
+                form[key] = str(value)
+        response = self._request("POST", f"/accounts/{self.account_id}/orders", form=form)
+        raw = response.get("order") if isinstance(response, dict) else None
+        if not isinstance(raw, dict):
+            raise StockPaperUnavailable("Tradier sandbox order submission response is invalid")
+        order_id = str(raw.get("id") or "").strip()
+        if not order_id:
+            raise StockPaperUnavailable("Tradier sandbox accepted an order without an identifier")
+        return {
+            "id": order_id,
+            "status": "accepted" if str(raw.get("status") or "ok").lower() == "ok" else str(raw.get("status")).lower(),
+            "client_order_id": form.get("tag"),
+            "tradier_raw": response,
+        }
+
+    def cancel_order(self, broker_order_id: str) -> None:
+        response = self._request("DELETE", f"/accounts/{self.account_id}/orders/{broker_order_id}")
+        raw = response.get("order") if isinstance(response, dict) else None
+        if isinstance(raw, dict) and str(raw.get("status") or "").lower() not in {"ok", "pending_cancel"}:
+            raise StockPaperUnavailable("Tradier sandbox did not acknowledge order cancellation")
+
+    def order_by_client_id(self, client_order_id: str) -> dict | None:
+        for row in self.orders():
+            if row.get("client_order_id") == client_order_id:
+                return row
+        return None
+
+
+def active_paper_broker_name() -> str:
+    name = str(getattr(settings, "active_paper_broker", "") or LEGACY_BROKER).strip()
+    if name not in {LEGACY_BROKER, "tradier_sandbox"}:
+        raise StockPaperError(f"Unsupported active paper broker: {name}")
+    return name
+
+
+def active_paper_account(db: Session, *, for_update: bool = False) -> StockPaperAccount | None:
+    query = db.query(StockPaperAccount).filter_by(broker=active_paper_broker_name())
+    return query.with_for_update().one_or_none() if for_update else query.one_or_none()
+
+
+def active_paper_gateway() -> AlpacaPaperGateway:
+    return TradierPaperClient() if active_paper_broker_name() == "tradier_sandbox" else AlpacaPaperClient()
+
+
 def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
@@ -275,12 +537,12 @@ def _mark_accounting_review_required(db: Session) -> None:
 
 def _account_values(raw: dict, observed: datetime) -> dict:
     if not isinstance(raw, dict) or str(raw.get("currency", "")).upper() != "USD":
-        raise StockPaperError("Alpaca paper account must report USD")
+        raise StockPaperError("Paper broker account must report USD")
     if str(raw.get("status", "")).upper() != "ACTIVE":
-        raise StockPaperError("Alpaca paper account is not ACTIVE")
+        raise StockPaperError("Paper broker account is not ACTIVE")
     account_id = str(raw.get("id") or "").strip()
     if not account_id:
-        raise StockPaperError("Alpaca paper account identifier is missing")
+        raise StockPaperError("Paper broker account identifier is missing")
     return {
         "broker_account_id": account_id,
         "currency": "USD",
@@ -318,6 +580,11 @@ def _snapshot(gateway: AlpacaPaperGateway, after: datetime | None = None) -> tup
     # a terminal-state watermark. A prior order can fill or cancel days later,
     # so reconciliation imports the bounded, fail-closed complete order history.
     account, positions, orders, fills = gateway.account(), gateway.positions(), gateway.orders(None), gateway.fills(None)
+    if getattr(gateway, "evidence_complete", True) is not True:
+        raise StockPaperUnavailable(
+            "Tradier sandbox order/activity evidence is current-session-only; "
+            "complete historical reconciliation is unavailable"
+        )
     if not all(isinstance(value, list) for value in (positions, orders, fills)):
         raise StockPaperError("Broker returned an invalid collection")
     return account, positions, orders, fills, observed
@@ -473,10 +740,10 @@ def _sync_positions(db: Session, account: StockPaperAccount, broker_rows: list[d
 
 
 def _record_snapshot(db: Session, account: StockPaperAccount, observed: datetime) -> None:
-    # Each reconciliation is a distinct observation even if Alpaca's account
+    # Each reconciliation is a distinct observation even if the broker account
     # payload has not changed; never use account-created/updated timestamps here.
     db.add(StockPaperEquitySnapshot(account_id=account.id, cash=account.cash, equity=account.equity, last_equity=account.last_equity,
-           buying_power=account.buying_power, observed_at=observed, source=BROKER, raw_payload=account.raw_payload))
+           buying_power=account.buying_power, observed_at=observed, source=account.broker, raw_payload=account.raw_payload))
 
 
 def _equation_failure(raw_activities: list[dict], previous_cash: Decimal, current_cash: Decimal,
@@ -521,7 +788,7 @@ def _equation_failure(raw_activities: list[dict], previous_cash: Decimal, curren
             return f"Broker position quantity does not reconcile for {symbol}"
     if costs_unknown:
         # This residual is deliberately not labeled as a fee or treated as
-        # zero: Alpaca did not provide the cost evidence needed to do either.
+        # zero: the broker did not provide the cost evidence needed to do either.
         if previous_cash + cash_delta != current_cash:
             return "Broker cash has an unverified residual because fill commissions are incomplete"
         return None
@@ -609,7 +876,16 @@ def _strategy_owned_position_counts(db: Session, account: StockPaperAccount,
 
 
 def _validate_reference_price(db: Session, symbol: str, price: Decimal) -> None:
-    latest = db.query(IntradayBar).filter_by(symbol=symbol, timeframe="1m").order_by(IntradayBar.opened_at.desc()).first()
+    latest = (
+        db.query(IntradayBar)
+        .filter_by(
+            symbol=symbol,
+            timeframe="1m",
+            provider=MARKET_DATA_PROVIDER,
+        )
+        .order_by(IntradayBar.opened_at.desc())
+        .first()
+    )
     if latest is None or latest.close <= 0:
         raise StockPaperError("Stock paper order has no persisted reference bar")
     deviation = abs(price - latest.close) / latest.close
@@ -619,12 +895,13 @@ def _validate_reference_price(db: Session, symbol: str, price: Decimal) -> None:
 
 def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None) -> dict:
     """Explicitly import the observed sandbox account once; never reset it."""
-    if db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none():
+    broker_name = active_paper_broker_name()
+    if db.query(StockPaperAccount).filter_by(broker=broker_name).one_or_none():
         raise StockPaperError("Stock paper account is already initialized; use reconciliation and never reset it")
-    gateway = gateway or AlpacaPaperClient()
+    gateway = gateway or active_paper_gateway()
     raw_account, raw_positions, raw_orders, raw_fills, observed = _snapshot(gateway)
     values = _account_values(raw_account, observed)
-    account = StockPaperAccount(broker=BROKER, status="reconciled", costs_known=False, accounting_verified=False, reconciliation_required=False,
+    account = StockPaperAccount(broker=broker_name, status="reconciled", costs_known=False, accounting_verified=False, reconciliation_required=False,
                                 last_reconciled_at=observed, **values)
     db.add(account)
     db.flush()
@@ -683,10 +960,10 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
     and optional ``reason`` fields as callers of
     ``attempt_automatic_stock_recovery``.
     """
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    account = active_paper_account(db, for_update=True)
     if account is None:
         raise StockPaperError("Stock paper account is not initialized")
-    gateway = gateway or AlpacaPaperClient()
+    gateway = gateway or active_paper_gateway()
     automatic_recovery = None
     try:
         prior_cash = account.cash
@@ -719,8 +996,14 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             elif not resolved and (not order.broker_order_id or order.broker_order_id not in known_broker_ids):
                 unresolved_nonterminal.append(order.client_order_id)
         values = _account_values(raw_account, observed)
-        if settings.paper_broker_account_id.strip() and values["broker_account_id"] != settings.paper_broker_account_id.strip():
-            raise StockPaperError("Paper broker account does not match the configured production binding")
+        configured_id = (
+            getattr(settings, "tradier_account_id", "")
+            if active_paper_broker_name() == "tradier_sandbox"
+            else getattr(settings, "paper_broker_account_id", "")
+        )
+        configured_id = str(configured_id or "").strip()
+        if configured_id and values["broker_account_id"] != configured_id:
+            raise StockPaperError("Paper broker account does not match the configured account binding")
         if values["broker_account_id"] != account.broker_account_id:
             raise StockPaperError("Broker account identifier changed; refusing to merge accounts")
         for key, value in values.items():
@@ -883,7 +1166,9 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             )
     except (StockPaperError, StockPaperUnavailable) as exc:
         db.rollback()
-        account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one()
+        account = active_paper_account(db, for_update=True)
+        if account is None:
+            raise StockPaperError("Stock paper account is not initialized")
         _halt(account, str(exc))
         _event(db, account, "reconcile", "unavailable", str(exc))
         db.commit()
@@ -896,7 +1181,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
 
 
 def halt_stock_paper_account(db: Session, reason: str) -> dict:
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    account = active_paper_account(db, for_update=True)
     if account is None:
         raise StockPaperError("Stock paper account is not initialized")
     reason = reason.strip()
@@ -994,7 +1279,7 @@ def create_stock_paper_signal(db: Session, symbol: str, strategy_slug: str) -> d
 def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: Decimal, reference_price: Decimal,
                               idempotency_key: str, source: str, signal_id: int | None = None) -> StockPaperOrder:
     """Commit a serialized reservation before any broker POST."""
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    account = active_paper_account(db, for_update=True)
     side, symbol = side.lower(), symbol.strip().upper()
     client_order_id = "sp-" + hashlib.sha256(idempotency_key.encode()).hexdigest()[:45]
     existing = db.query(StockPaperOrder).filter_by(client_order_id=client_order_id).one_or_none()
@@ -1081,7 +1366,7 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
 
 
 def reserve_full_close(db: Session, symbol: str, idempotency_key: str) -> StockPaperOrder:
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    account = active_paper_account(db)
     position = db.query(StockPaperPosition).filter_by(account_id=account.id if account else None, symbol=symbol.strip().upper()).one_or_none()
     if not position or position.quantity <= 0 or not position.current_price or position.current_price <= 0:
         raise StockPaperError("No reconciled long position with a current broker price is available to close")
@@ -1092,7 +1377,7 @@ def reserve_full_close(db: Session, symbol: str, idempotency_key: str) -> StockP
 def reserve_position_reduction(db: Session, symbol: str, reduce_pct: Decimal, idempotency_key: str) -> StockPaperOrder:
     if reduce_pct <= 0 or reduce_pct > 1:
         raise StockPaperError("Reduction percent must be greater than zero and at most one")
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    account = active_paper_account(db)
     position = db.query(StockPaperPosition).filter_by(account_id=account.id if account else None, symbol=symbol.strip().upper()).one_or_none()
     if not position or position.quantity <= 0 or not position.current_price or position.current_price <= 0:
         raise StockPaperError("No reconciled long position with a current broker price is available to reduce")
@@ -1159,7 +1444,7 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     order.status, order.submission_attempted_at = "submitting", datetime.now(UTC)
     db.commit()
     try:
-        raw = (gateway or AlpacaPaperClient()).submit_order({"symbol": order.symbol, "qty": str(order.quantity), "side": order.side,
+        raw = (gateway or active_paper_gateway()).submit_order({"symbol": order.symbol, "qty": str(order.quantity), "side": order.side,
             "type": order.order_type, "time_in_force": order.time_in_force, "limit_price": str(order.limit_price),
             "client_order_id": order.client_order_id})
         broker_id = str(raw.get("id") or "").strip()
@@ -1181,7 +1466,7 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
 
 
 def stock_paper_status(db: Session) -> dict:
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    account = active_paper_account(db)
     base = {"mode": "paper", "legacy_nonqualifying": True, "costs_known": False, "positions": [], "orders": [], "fills": [], "equity_snapshots": []}
     if not account:
         return base | {"status": "uninitialized", "reason": "Explicit admin initialization has not imported the broker paper account", "account": None}

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 import app.models
 from app.api.stock_forward_trial import decisions as decisions_endpoint, metrics as metrics_endpoint, router
-from app.core.config import Settings
+from app.core.config import Settings, settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
 from app.db.session import get_db
@@ -61,6 +61,12 @@ class ForwardTrialTests(unittest.TestCase):
         return order
 
     def setUp(self):
+        self.active_broker_patch = patch.object(
+            settings,
+            "active_paper_broker",
+            "alpaca_paper",
+        )
+        self.active_broker_patch.start()
         self.tmp = TemporaryDirectory()
         self.engine = create_engine("sqlite:///" + str(Path(self.tmp.name) / "trial.sqlite"))
         Base.metadata.create_all(self.engine)
@@ -68,6 +74,7 @@ class ForwardTrialTests(unittest.TestCase):
     def tearDown(self):
         self.engine.dispose()
         self.tmp.cleanup()
+        self.active_broker_patch.stop()
 
     def lineage(self, universe=("SPY",)):
         return {
@@ -982,7 +989,7 @@ class ForwardTrialTests(unittest.TestCase):
         opened = datetime(2025, 1, 2, 20, 59, tzinfo=timezone.utc)
         db.add(IntradayBar(symbol="SPY", timeframe="1m", opened_at=opened,
             open=Decimal("100"), high=Decimal("101"), low=Decimal("99"),
-            close=Decimal("100"), volume=100, provider="alpaca",
+            close=Decimal("100"), volume=100, provider="tradier",
             feed_class="sip", exchange_timestamp=opened))
         db.add(MarketPrice(symbol="SPY", price_date=date(2025, 1, 2),
             open=Decimal("100"), close=Decimal("100"), adjusted_close=Decimal("100"),
@@ -1088,7 +1095,7 @@ class ForwardTrialTests(unittest.TestCase):
             next_open = datetime(2025, 1, 3, 14, 59, tzinfo=timezone.utc)
             db.add(IntradayBar(symbol="SPY", timeframe="1m", opened_at=next_open,
                 open=Decimal("100"), high=Decimal("100"), low=Decimal("100"),
-                close=Decimal("100"), volume=1, provider="alpaca",
+                close=Decimal("100"), volume=1, provider="tradier",
                 feed_class="sip", exchange_timestamp=next_open))
             db.flush()
             next_now = datetime(2025, 1, 3, 15, 0, tzinfo=timezone.utc)
@@ -1178,7 +1185,10 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertTrue(allowed)
             self.assertIsNone(reason)
             evidence = db.query(__import__("app.models", fromlist=["StockPaperStrategyEvidence"]).StockPaperStrategyEvidence).one()
-            self.assertEqual(evidence.provenance["source"], "alpaca_account_and_trial_owned_lots")
+            self.assertEqual(
+                evidence.provenance["source"],
+                "active_broker_account_and_trial_owned_lots",
+            )
             self.assertGreater(evidence.expires_at.replace(tzinfo=timezone.utc),
                                datetime(2025, 1, 2, tzinfo=timezone.utc))
 
@@ -1214,7 +1224,7 @@ class ForwardTrialTests(unittest.TestCase):
             ])
             db.add(IntradayBar(symbol="SPY", timeframe="1m", opened_at=opened,
                 open=Decimal("150"), high=Decimal("150"), low=Decimal("150"),
-                close=Decimal("150"), volume=1, provider="alpaca",
+                close=Decimal("150"), volume=1, provider="tradier",
                 feed_class="sip", exchange_timestamp=opened))
             db.flush()
             with patch("app.services.stock_forward_trial._now",
@@ -1288,7 +1298,7 @@ class ForwardTrialTests(unittest.TestCase):
                 db.add(IntradayBar(symbol="SPY", timeframe="1m",
                     opened_at=opened + pd.Timedelta(days=offset), open=Decimal("100"),
                     high=Decimal("100"), low=Decimal("100"), close=Decimal("100"), volume=1,
-                    provider="alpaca", feed_class="sip", exchange_timestamp=opened))
+                    provider="tradier", feed_class="sip", exchange_timestamp=opened))
             db.flush()
             patches[0] = patch("app.services.stock_forward_trial._now",
                 return_value=datetime(2025, 1, 9, 21, 1, tzinfo=timezone.utc))
@@ -1374,7 +1384,7 @@ class ForwardTrialTests(unittest.TestCase):
             next_bar = datetime(2025, 1, 3, 14, 59, tzinfo=timezone.utc)
             db.add(IntradayBar(symbol="SPY", timeframe="1m", opened_at=next_bar,
                 open=Decimal("97"), high=Decimal("97"), low=Decimal("97"),
-                close=Decimal("97"), volume=1, provider="alpaca",
+                close=Decimal("97"), volume=1, provider="tradier",
                 feed_class="sip", exchange_timestamp=next_bar))
             db.flush()
             with self.enter_contexts(patches), \
@@ -1435,7 +1445,7 @@ class ForwardTrialTests(unittest.TestCase):
                 when = datetime(2025, 1, 1 + offset, 15)
                 db.add(IntradayBar(symbol="SPY", timeframe="1m", opened_at=when,
                     open=Decimal("100"), high=Decimal("100"), low=Decimal("100"),
-                    close=Decimal("100"), volume=1, provider="alpaca",
+                    close=Decimal("100"), volume=1, provider="tradier",
                     feed_class="sip", exchange_timestamp=when))
                 if offset < 19:
                     db.add(StockPaperTrialDecision(trial_id=row.id, symbol="SPY",
@@ -1621,7 +1631,7 @@ class ForwardTrialTests(unittest.TestCase):
             reference = datetime(2025, 1, 3, 14, 59, tzinfo=timezone.utc)
             db.add(IntradayBar(symbol="SPY", timeframe="1m", opened_at=reference,
                 open=Decimal("100"), high=Decimal("100"), low=Decimal("100"),
-                close=Decimal("100"), volume=1, provider="alpaca",
+                close=Decimal("100"), volume=1, provider="tradier",
                 feed_class="sip", exchange_timestamp=reference))
             db.flush()
             with self.enter_contexts(patches), \
@@ -1732,7 +1742,7 @@ class ForwardTrialTests(unittest.TestCase):
                 opened = datetime(2025, 1, day, 20, 59)
                 db.add(IntradayBar(symbol="SPY", timeframe="1m", opened_at=opened,
                     open=close, high=close, low=close, close=close, volume=1,
-                    provider="alpaca", feed_class="sip", exchange_timestamp=opened))
+                    provider="tradier", feed_class="sip", exchange_timestamp=opened))
             db.flush()
             with patch("app.services.stock_forward_trial.session_bounds",
                        side_effect=lambda d: (datetime(d.year, d.month, d.day, 14, 30, tzinfo=timezone.utc),
@@ -1885,7 +1895,7 @@ class ForwardTrialTests(unittest.TestCase):
                 symbol="SPY", side="buy", quantity=Decimal("2"), price=Decimal("100"),
                 fee=Decimal("0"), cost_known=True, filled_at=datetime(2025, 1, 2, 15), raw_payload={}))
             db.add(IntradayBar(symbol="SPY", timeframe="1m", opened_at=datetime(2025, 1, 3, 20, 59),
-                open=100, high=100, low=100, close=100, volume=1, provider="alpaca",
+                open=100, high=100, low=100, close=100, volume=1, provider="tradier",
                 feed_class="sip", exchange_timestamp=datetime(2025, 1, 3, 20, 59)))
             db.flush()
             lot.exit_status = "filled"

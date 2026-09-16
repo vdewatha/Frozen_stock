@@ -37,6 +37,7 @@ from app.services.audit import write_audit_log
 from app.services.intraday_data import NY, feed_status, session_bounds
 from app.services.readiness import _scheduler_health
 from app.services.stock_forward_trial import trial_feed_preflight
+from app.services.stock_paper_ledger import active_paper_account
 from app.services.stock_promotion_readiness import evaluate_promotion_readiness
 from app.services.live_safety import evaluate_live_safety
 from app.services.stock_training_jobs import (
@@ -258,7 +259,7 @@ def evaluate_cycle_prerequisites(
         scheduler_gate = _gate("unknown", reason=f"scheduler health unavailable: {exc.__class__.__name__}")
 
     from app.models.stock_paper import StockPaperAccount
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     ledger_ready = bool(
         account and account.status == "reconciled"
         and not account.reconciliation_required and account.accounting_verified
@@ -1421,7 +1422,7 @@ def automate_paper_promotion(
     trial, report = _automatic_trial_and_report(db, cycle, active_binding)
     validation = _automatic_validation_gate(db, cycle)
     monitor, monitor_snapshot_id = _automatic_monitor_gate(db, trial)
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     recovery = db.get(StockPaperRecoveryState, 1)
     target_model = db.get(StockModelRegistry, cycle.model_run_id) if cycle.model_run_id else None
     target_state = _current_lifecycle(db, target_model, for_update=False) if target_model else None

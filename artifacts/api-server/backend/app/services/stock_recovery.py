@@ -32,11 +32,12 @@ from app.services.audit import write_audit_log
 from app.services.intraday_data import feed_status
 from app.services.notifications import create_notification
 from app.services.stock_paper_ledger import (
-    BROKER,
     NONTERMINAL_ORDER_STATUSES,
     AlpacaPaperGateway,
     StockPaperError,
     StockPaperUnavailable,
+    active_paper_account,
+    active_paper_gateway,
     _event as ledger_event,
     _halt,
     _utc,
@@ -153,7 +154,7 @@ def enter_stock_recovery(
     state.updated_by = actor
     state.updated_at = now
     _set_kill_switch(db, True)
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    account = active_paper_account(db, for_update=True)
     if account:
         _halt(account, reason)
         ledger_event(db, account, "recovery_pause", "halted", reason, {"flatten_policy": flatten_policy})
@@ -227,7 +228,7 @@ def cancel_open_stock_orders(
         flatten_policy=flatten_policy,
         cooldown=RECOVERY_COOLDOWN,
     )
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    account = active_paper_account(db, for_update=True)
     if not account:
         raise StockPaperError("Stock paper account is not initialized")
     orders = db.query(StockPaperOrder).filter(
@@ -250,7 +251,7 @@ def cancel_open_stock_orders(
 
     cancelled = []
     failures = []
-    gateway = gateway or __import__("app.services.stock_paper_ledger", fromlist=["AlpacaPaperClient"]).AlpacaPaperClient()
+    gateway = gateway or active_paper_gateway()
     for order in broker_orders:
         try:
             gateway.cancel_order(order.broker_order_id)
@@ -316,7 +317,7 @@ def cancel_open_stock_orders(
 
 def reconcile_inflight_stock_orders_on_restart(db: Session) -> dict:
     """Reconcile every durable in-flight order before any resume decision."""
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    account = active_paper_account(db)
     if not account:
         return {"status": "uninitialized", "in_flight_order_ids": []}
     in_flight = db.query(StockPaperOrder).filter(
@@ -346,7 +347,7 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
     if not snapshot:
         return False, "No monitoring evidence exists after the recovery pause"
     generated = _utc(snapshot.generated_at)
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    account = active_paper_account(db)
     pause_event = db.query(StockPaperRecoveryEvent).filter(
         StockPaperRecoveryEvent.action == "pause",
     ).order_by(
@@ -438,7 +439,7 @@ def resume_stock_paper_after_revalidation(
         raise StockPaperError(f"Recovery state {state.status} is not waiting for revalidation")
     if state.cooldown_until and _utc(state.cooldown_until) > now:
         raise StockPaperError(f"Recovery cooldown remains active until {_utc(state.cooldown_until).isoformat()}")
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    account = active_paper_account(db, for_update=True)
     if not account or account.status != "reconciled" or account.reconciliation_required:
         raise StockPaperError("A successful broker reconciliation after recovery is required")
     if state.accounting_review_required:
@@ -525,7 +526,7 @@ def attempt_automatic_stock_recovery(
     """
     evidence = evidence or {}
     state = _state(db)
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    account = active_paper_account(db, for_update=True)
     if account is None:
         return {"status": "uninitialized"}
 
@@ -606,7 +607,9 @@ def attempt_automatic_stock_recovery(
             actor=AUTOMATIC_RECOVERY_ACTOR,
         )
         state = _state(db)
-        account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one()
+        account = active_paper_account(db, for_update=True)
+        if account is None:
+            raise StockPaperError("Stock paper account is not initialized")
 
     now = _now()
     digest = _accounting_review_digest(account, db)
@@ -652,7 +655,9 @@ def attempt_automatic_stock_recovery(
         )
         db.commit()
 
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one()
+    account = active_paper_account(db, for_update=True)
+    if account is None:
+        raise StockPaperError("Stock paper account is not initialized")
     if account.status == "halted":
         if account.reconciliation_required:
             reason = account.halt_reason or "A fresh broker reconciliation is required before automatic resume"
@@ -730,7 +735,7 @@ def acknowledge_stock_paper_accounting_review(
     if not confirm_residual_review:
         raise StockPaperError("Explicit confirmation is required to acknowledge the accounting residual")
     state = _state(db)
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).with_for_update().one_or_none()
+    account = active_paper_account(db, for_update=True)
     if account is None:
         raise StockPaperError("Stock paper account is not initialized")
     if not state.accounting_review_required or not account.unexplained_residual:
@@ -805,7 +810,7 @@ def rollback_to_last_known_good(db: Session, *, actor: str, reason: str) -> dict
 
 def recovery_status(db: Session) -> dict:
     state = _state(db, for_update=False)
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    account = active_paper_account(db)
     events = db.query(StockPaperRecoveryEvent).order_by(StockPaperRecoveryEvent.created_at.desc()).limit(25).all()
     monitoring_event = db.query(StockPaperRecoveryEvent).filter(
         StockPaperRecoveryEvent.action == "monitoring_preflight",
@@ -897,7 +902,7 @@ def recovery_evidence(db: Session) -> dict:
     and timestamps, never credentials, prices, balances, fees, or P/L.
     """
     state = _state(db, for_update=False)
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    account = active_paper_account(db)
     if account is None:
         return {
             "status": state.status,
@@ -1035,7 +1040,7 @@ def recovery_evidence(db: Session) -> dict:
 def run_stock_watchdog(db: Session) -> dict:
     now = _now()
     state = _state(db)
-    account = db.query(StockPaperAccount).filter_by(broker=BROKER).one_or_none()
+    account = active_paper_account(db)
     reasons = []
     if account and account.last_reconciled_at and now - _utc(account.last_reconciled_at) > HEARTBEAT_TIMEOUT:
         reasons.append("broker reconciliation heartbeat is stale")

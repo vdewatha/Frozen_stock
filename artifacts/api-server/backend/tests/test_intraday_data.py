@@ -126,8 +126,10 @@ class IntradayDataTests(unittest.TestCase):
         intraday_data.upsert_intraday_bars(
             self.db, "SPY", [bar(session_open)], ingested_at=observed
         )
-        with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")), patch.object(
-            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        with patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)("key"),
         ):
             status = intraday_data.feed_status(self.db, "SPY", now=observed)
             self.assertEqual(status["status"], "incomplete")
@@ -140,8 +142,10 @@ class IntradayDataTests(unittest.TestCase):
         bars = [bar(friday_open + timedelta(minutes=index)) for index in range(390)]
         saturday = datetime(2026, 9, 12, 16, 0, tzinfo=UTC)
         intraday_data.upsert_intraday_bars(self.db, "SPY", bars, ingested_at=saturday)
-        with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")), patch.object(
-            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        with patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)("key"),
         ):
             status = intraday_data.feed_status(self.db, "SPY", now=saturday)
         self.assertEqual(status["status"], "market_closed")
@@ -161,11 +165,13 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(result["rows_imported"], 1)
 
     def test_unconfigured_and_entitlement_errors(self):
-        with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("")), patch.object(
-            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("")
+        with patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)(""),
         ):
             with self.assertRaisesRegex(RuntimeError, "workspace secrets"):
-                intraday_data._request("/v2/stocks/bars", {})
+                intraday_data._request("/markets/timesales", {})
             status = intraday_data.feed_status(
                 self.db, "SPY", now=datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
             )
@@ -181,11 +187,13 @@ class IntradayDataTests(unittest.TestCase):
             self.assertEqual(cached_status["status"], "unavailable")
             self.assertEqual(cached_status["entitlement_state"], "not_configured")
         denied = HTTPError("https://example", 403, "denied", {}, None)
-        with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")), patch.object(
-            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        with patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)("key"),
         ), patch("app.services.intraday_data.urlopen", side_effect=denied):
             with self.assertRaisesRegex(RuntimeError, "entitlement denied"):
-                intraday_data._request("/v2/stocks/bars", {})
+                intraday_data._request("/markets/timesales", {})
 
     def test_authentication_and_entitlement_failures_are_distinct(self):
         for code, message, expected_class in (
@@ -195,11 +203,9 @@ class IntradayDataTests(unittest.TestCase):
             denied = HTTPError("https://example", code, "denied", {}, None)
             with self.subTest(code=code), patch.object(
                 settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")
-            ), patch.object(
-                settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
             ), patch("app.services.intraday_data.urlopen", side_effect=denied):
                 with self.assertRaisesRegex(RuntimeError, message) as raised:
-                    intraday_data._request("/v2/stocks/bars", {})
+                    intraday_data._request("/markets/timesales", {})
                 self.assertEqual(
                     intraday_data._provider_failure(raised.exception)[0],
                     expected_class,
@@ -216,15 +222,17 @@ class IntradayDataTests(unittest.TestCase):
             low=99,
             close=100,
             volume=100,
-            provider="alpaca",
+            provider=intraday_data.MARKET_DATA_PROVIDER,
             feed_class="sip",
             exchange_timestamp=now,
             ingested_at=now,
         )
         self.db.add(future)
         self.db.commit()
-        with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")), patch.object(
-            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        with patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)("key"),
         ):
             status = intraday_data.feed_status(self.db, "SPY", now=now)
         self.assertEqual(status["status"], "stale")
@@ -251,8 +259,10 @@ class IntradayDataTests(unittest.TestCase):
                 for symbol in statuses
             ],
         }
-        with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")), patch.object(
-            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        with patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)("key"),
         ), patch("app.services.intraday_data.ingest_intraday", return_value=imported), patch(
             "app.services.intraday_data.feed_status", side_effect=lambda db, symbol, now: statuses[symbol]
         ):
@@ -271,10 +281,10 @@ class IntradayDataTests(unittest.TestCase):
 
     def test_preflight_exposes_next_open_and_gap_when_session_is_closed(self):
         observed_at = datetime(2026, 9, 11, 21, 0, tzinfo=UTC)
-        with patch.object(settings, "alpaca_feed", "sip"), patch.object(
-            settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")
-        ), patch.object(
-            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)("key"),
         ):
             result = intraday_data.preflight_intraday(self.db, now=observed_at)
 
@@ -373,13 +383,15 @@ class IntradayDataTests(unittest.TestCase):
 
     def test_rate_limit_retries_are_bounded(self):
         limited = HTTPError("https://example", 429, "limited", {}, None)
-        with patch.object(settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")), patch.object(
-            settings, "alpaca_api_secret", type(settings.alpaca_api_secret)("secret")
+        with patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)("key"),
         ), patch("app.services.intraday_data.urlopen", side_effect=limited) as request, patch(
             "app.services.intraday_data.time.sleep"
         ):
             with self.assertRaisesRegex(RuntimeError, "after 3 attempts"):
-                intraday_data._request("/v2/stocks/bars", {})
+                intraday_data._request("/markets/timesales", {})
         self.assertEqual(request.call_count, 3)
 
     def test_corporate_actions_are_idempotent_and_intraday_stays_raw(self):

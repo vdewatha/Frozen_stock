@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     alpaca_api_secret: SecretStr = SecretStr("")
     alpaca_data_url: str = "https://data.alpaca.markets"
     alpaca_feed: str = "sip"
+    tradier_market_data_api_key: SecretStr = SecretStr("")
+    tradier_api_key: SecretStr = SecretStr("")
+    tradier_account_id: str = ""
+    tradier_market_data_url: str = "https://api.tradier.com/v1"
+    tradier_sandbox_url: str = "https://sandbox.tradier.com/v1"
+    active_market_data_provider: str = "tradier"
+    active_paper_broker: str = "tradier_sandbox"
     intraday_enabled: bool = True
     stock_training_artifact_root: str = "./stock_training_artifacts"
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
@@ -77,6 +84,10 @@ class Settings(BaseSettings):
     def validate_auth_mode(self) -> "Settings":
         if self.auth_mode not in {"local_role_keys", "production_identity"}:
             raise ValueError("auth_mode must be local_role_keys or production_identity")
+        if self.active_market_data_provider not in {"tradier"}:
+            raise ValueError("active_market_data_provider must be tradier")
+        if self.active_paper_broker not in {"tradier_sandbox", "alpaca_paper"}:
+            raise ValueError("active_paper_broker must be tradier_sandbox or alpaca_paper")
         return self
 
     def validate_production_configuration(self) -> list[str]:
@@ -153,6 +164,11 @@ class Settings(BaseSettings):
 
     @property
     def paper_credentials_configured(self) -> bool:
+        if self.active_paper_broker == "tradier_sandbox":
+            return bool(
+                self.tradier_api_key.get_secret_value()
+                and self.tradier_account_id.strip()
+            )
         if self.environment == "local":
             return bool(
                 (self.paper_alpaca_api_key.get_secret_value() or self.alpaca_api_key.get_secret_value())

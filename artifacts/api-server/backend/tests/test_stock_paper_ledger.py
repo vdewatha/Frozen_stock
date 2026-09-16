@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 import app.models  # register all tables
 from app.api.stock_paper import router
-from app.core.config import Settings
+from app.core.config import Settings, settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
 from app.db.session import get_db
@@ -99,6 +99,12 @@ class FakeAlpaca:
 
 class StockPaperLedgerTests(unittest.TestCase):
     def setUp(self):
+        self.active_broker_patch = patch.object(
+            settings,
+            "active_paper_broker",
+            "alpaca_paper",
+        )
+        self.active_broker_patch.start()
         self.tmp = tempfile.TemporaryDirectory()
         self.engine = create_engine("sqlite:///" + str(Path(self.tmp.name) / "ledger.sqlite"))
         Base.metadata.create_all(self.engine)
@@ -106,6 +112,7 @@ class StockPaperLedgerTests(unittest.TestCase):
     def tearDown(self):
         self.engine.dispose()
         self.tmp.cleanup()
+        self.active_broker_patch.stop()
 
     @staticmethod
     def account_payload(*, cash="1000", equity="1000", last_equity="999"):
@@ -730,6 +737,12 @@ class StockPaperLedgerTests(unittest.TestCase):
 
 class StockPaperRecoveryTests(unittest.TestCase):
     def setUp(self):
+        self.active_broker_patch = patch.object(
+            settings,
+            "active_paper_broker",
+            "alpaca_paper",
+        )
+        self.active_broker_patch.start()
         self.tmp = tempfile.TemporaryDirectory()
         self.engine = create_engine("sqlite:///" + str(Path(self.tmp.name) / "recovery.sqlite"))
         Base.metadata.create_all(self.engine)
@@ -737,6 +750,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
     def tearDown(self):
         self.engine.dispose()
         self.tmp.cleanup()
+        self.active_broker_patch.stop()
 
     def test_recovery_evidence_export_is_identifier_only_and_digest_bound(self):
         observed = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)

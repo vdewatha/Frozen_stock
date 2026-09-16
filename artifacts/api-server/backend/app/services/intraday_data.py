@@ -1,4 +1,4 @@
-"""Fail-closed Alpaca SIP completed one-minute bar ingestion."""
+"""Fail-closed Tradier production completed one-minute bar ingestion."""
 from __future__ import annotations
 
 import json
@@ -26,7 +26,12 @@ LATE_TRADE_ALLOWANCE = timedelta(seconds=60)
 INTRADAY_BACKFILL_WINDOW = timedelta(minutes=60)
 
 
-class AlpacaProviderError(RuntimeError):
+MARKET_DATA_PROVIDER = "tradier"
+MARKET_DATA_FEED_CLASS = "sip"
+TRADIER_PRODUCTION_MARKET_DATA_URL = "https://api.tradier.com/v1"
+
+
+class TradierProviderError(RuntimeError):
     """A provider failure with a safe operator-visible classification."""
 
     def __init__(self, message: str, failure_class: str):
@@ -175,59 +180,78 @@ def _symbol(symbol: str) -> str:
 
 
 def _parse_bar(raw: dict) -> tuple[datetime, dict]:
-    required = ("t", "o", "h", "l", "c", "v")
+    if all(key in raw for key in ("t", "o", "h", "l", "c", "v")):
+        raw = {
+            "time": raw["t"],
+            "open": raw["o"],
+            "high": raw["h"],
+            "low": raw["l"],
+            "close": raw["c"],
+            "volume": raw["v"],
+        }
+    required = ("open", "high", "low", "close", "volume")
     if any(key not in raw or isinstance(raw[key], bool) for key in required):
-        raise ValueError("Incomplete Alpaca bar")
+        raise ValueError("Incomplete Tradier timesales bar")
     try:
-        opened_at = datetime.fromisoformat(str(raw["t"]).replace("Z", "+00:00"))
-        numbers = [float(raw[key]) for key in ("o", "h", "l", "c", "v")]
+        timestamp = raw.get("time") or raw.get("timestamp")
+        if timestamp is None:
+            raise ValueError("missing timestamp")
+        if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool):
+            opened_at = datetime.fromtimestamp(
+                float(timestamp) / (1000 if float(timestamp) > 10_000_000_000 else 1),
+                tz=UTC,
+            )
+        else:
+            opened_at = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        numbers = [float(raw[key]) for key in required]
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError("Invalid Alpaca bar values") from exc
+        raise ValueError("Invalid Tradier bar values") from exc
     if opened_at.tzinfo is None:
-        raise ValueError("Provider timestamp must be timezone aware")
+        opened_at = opened_at.replace(tzinfo=NY)
     if not all(math.isfinite(value) for value in numbers):
-        raise ValueError("Non-finite Alpaca bar")
+        raise ValueError("Non-finite Tradier bar")
     open_price, high, low, close, volume = numbers
     if min(open_price, high, low, close) <= 0 or volume < 0 or not volume.is_integer():
         raise ValueError("Invalid OHLCV")
     if high < max(open_price, close, low) or low > min(open_price, close, high):
         raise ValueError("Invalid OHLC bounds")
     return opened_at.astimezone(UTC), {
-        "open": Decimal(str(raw["o"])),
-        "high": Decimal(str(raw["h"])),
-        "low": Decimal(str(raw["l"])),
-        "close": Decimal(str(raw["c"])),
+        "open": Decimal(str(raw["open"])),
+        "high": Decimal(str(raw["high"])),
+        "low": Decimal(str(raw["low"])),
+        "close": Decimal(str(raw["close"])),
         "volume": int(volume),
     }
 
 
 def _request(path: str, params: dict, attempts: int = 3) -> dict:
-    api_key, api_secret = settings.paper_broker_credentials()
-    if not api_key or not api_secret:
-        raise RuntimeError("Alpaca credentials are not configured in workspace secrets")
-    headers = {
-        "APCA-API-KEY-ID": api_key,
-        "APCA-API-SECRET-KEY": api_secret,
-        "Accept": "application/json",
-    }
+    configured_url = settings.tradier_market_data_url.rstrip("/")
+    if configured_url != TRADIER_PRODUCTION_MARKET_DATA_URL:
+        raise RuntimeError(
+            "Tradier trusted market data must use the immutable production endpoint"
+        )
+    api_key = settings.tradier_market_data_api_key.get_secret_value()
+    if not api_key:
+        raise RuntimeError("Tradier production market-data credentials are not configured in workspace secrets")
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
             request = Request(
-                f"{settings.alpaca_data_url.rstrip('/')}{path}?{urlencode(params)}",
+                f"{TRADIER_PRODUCTION_MARKET_DATA_URL}{path}?{urlencode(params)}",
                 headers=headers,
             )
             with urlopen(request, timeout=20) as response:
                 return json.load(response)
         except HTTPError as exc:
             if exc.code == 401:
-                raise AlpacaProviderError(
-                    "Alpaca SIP authentication denied",
+                raise TradierProviderError(
+                    "Tradier market-data authentication denied",
                     "authentication",
                 ) from exc
             if exc.code == 403:
-                raise AlpacaProviderError(
-                    "Alpaca SIP entitlement denied",
+                raise TradierProviderError(
+                    "Tradier market-data entitlement denied",
                     "entitlement",
                 ) from exc
             last_error = exc
@@ -237,7 +261,7 @@ def _request(path: str, params: dict, attempts: int = 3) -> dict:
             last_error = exc
         if attempt < attempts - 1:
             time.sleep(min(2**attempt, 4))
-    raise RuntimeError(f"Alpaca request unavailable after {attempts} attempts: {last_error}") from last_error
+    raise RuntimeError(f"Tradier market-data request unavailable after {attempts} attempts: {last_error}") from last_error
 
 
 def upsert_intraday_bars(
@@ -255,7 +279,7 @@ def upsert_intraday_bars(
         bounds = session_bounds(opened_at.astimezone(NY).date())
         if bounds is None or not (bounds[0] <= opened_at < bounds[1]):
             continue
-        # Alpaca may update a bar after the half-minute mark. Persist only after the
+        # Tradier may update a bar after the half-minute mark. Persist only after the
         # complete minute plus the selected 60-second late-trade allowance.
         if opened_at + BAR_CADENCE + LATE_TRADE_ALLOWANCE > observed_at:
             continue
@@ -270,6 +294,7 @@ def upsert_intraday_bars(
         .filter(
             IntradayBar.symbol == symbol,
             IntradayBar.timeframe == "1m",
+            IntradayBar.provider == MARKET_DATA_PROVIDER,
             IntradayBar.opened_at.in_(list(deduplicated)),
         )
         .all()
@@ -282,8 +307,8 @@ def upsert_intraday_bars(
     for opened_at, values in sorted(deduplicated.items()):
         provenance = {
             **values,
-            "provider": "alpaca",
-            "feed_class": "sip",
+            "provider": MARKET_DATA_PROVIDER,
+            "feed_class": MARKET_DATA_FEED_CLASS,
             "exchange_timestamp": opened_at,
             "ingested_at": observed_at,
         }
@@ -318,6 +343,7 @@ def _session_missing(
         .filter(
             IntradayBar.symbol == symbol,
             IntradayBar.timeframe == "1m",
+            IntradayBar.provider == MARKET_DATA_PROVIDER,
             IntradayBar.opened_at >= start,
             IntradayBar.opened_at < end,
         )
@@ -403,7 +429,7 @@ def upsert_corporate_actions(db: Session, symbol: str, actions: list[dict]) -> i
                     action_type=action_type,
                     ex_date=ex_date,
                     value=value,
-                    provider="alpaca",
+                    provider=MARKET_DATA_PROVIDER,
                     raw_payload=raw,
                 )
             )
@@ -414,36 +440,20 @@ def upsert_corporate_actions(db: Session, symbol: str, actions: list[dict]) -> i
 
 def ingest_corporate_actions(db: Session, symbols: list[str] | None = None) -> dict:
     selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
-    end = datetime.now(UTC).date()
-    start = end - timedelta(days=370)
-    results = []
-    for symbol in selected:
-        try:
-            actions: list[dict] = []
-            page_token = None
-            while True:
-                params = {
-                    "symbols": symbol,
-                    "start": start.isoformat(),
-                    "end": end.isoformat(),
-                    "region": "us",
-                    "data_quality": "complete",
-                    "limit": 1000,
-                    "sort": "asc",
-                }
-                if page_token:
-                    params["page_token"] = page_token
-                payload = _request("/v1/corporate-actions", params)
-                actions.extend(payload.get("corporate_actions", []))
-                page_token = payload.get("next_page_token")
-                if not page_token:
-                    break
-            saved = upsert_corporate_actions(db, symbol, actions)
-            results.append({"symbol": symbol, "status": "complete", "rows_imported": saved})
-        except Exception as exc:
-            results.append({"symbol": symbol, "status": "unavailable", "unavailable_reason": str(exc)})
+    results = [
+        {
+            "symbol": symbol,
+            "status": "unavailable",
+            "failure_class": "configuration",
+            "unavailable_reason": (
+                "Tradier market-data integration does not provide a corporate-actions "
+                "endpoint; adjustment-dependent readiness remains blocked"
+            ),
+        }
+        for symbol in selected
+    ]
     return {
-        "provider": "alpaca",
+        "provider": MARKET_DATA_PROVIDER,
         "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
         "results": results,
     }
@@ -452,38 +462,26 @@ def ingest_corporate_actions(db: Session, symbols: list[str] | None = None) -> d
 def _fetch_bars(
     symbol: str, start: datetime, end: datetime, *, max_pages: int = 4
 ) -> tuple[list[dict], int, bool]:
-    if settings.alpaca_feed.strip().lower() != "sip":
-        raise RuntimeError("Alpaca SIP feed is not configured")
-    rows: list[dict] = []
-    duplicate_count = 0
-    out_of_order = False
-    page_token = None
-    seen_tokens: set[str] = set()
-    for _page_number in range(max_pages):
-        params = {
-            "symbols": symbol,
-            "timeframe": "1Min",
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "feed": "sip",
-            "limit": 10000,
-            "sort": "asc",
-        }
-        if page_token:
-            params["page_token"] = page_token
-        payload = _request("/v2/stocks/bars", params)
-        page = payload.get("bars", {}).get(symbol, [])
-        timestamps = [item.get("t") for item in page]
-        out_of_order = out_of_order or timestamps != sorted(timestamps)
-        duplicate_count += len(timestamps) - len(set(timestamps))
-        rows.extend(page)
-        page_token = payload.get("next_page_token")
-        if not page_token:
-            return rows, duplicate_count, out_of_order
-        if page_token in seen_tokens:
-            raise RuntimeError("Alpaca pagination token repeated")
-        seen_tokens.add(page_token)
-    raise RuntimeError(f"Alpaca pagination exceeded the bounded {max_pages}-page limit")
+    if settings.active_market_data_provider.strip().lower() != MARKET_DATA_PROVIDER:
+        raise RuntimeError("Tradier market-data provider is not configured")
+    if end <= start or end - start > INTRADAY_BACKFILL_WINDOW:
+        raise ValueError("Tradier timesales request exceeds the bounded one-hour window")
+    params = {
+        "symbol": symbol,
+        "interval": "1min",
+        "start": start.astimezone(NY).strftime("%Y-%m-%d %H:%M"),
+        "end": end.astimezone(NY).strftime("%Y-%m-%d %H:%M"),
+        "session_filter": "open",
+    }
+    payload = _request("/markets/timesales", params)
+    series = payload.get("series") or {}
+    page = series.get("data") or []
+    if isinstance(page, dict):
+        page = [page]
+    if not isinstance(page, list):
+        raise ValueError("Tradier timesales response is invalid")
+    timestamps = [item.get("time") or item.get("timestamp") for item in page]
+    return page, len(timestamps) - len(set(timestamps)), timestamps != sorted(timestamps)
 
 
 def ingest_intraday(
@@ -563,7 +561,11 @@ def ingest_intraday(
             )
             latest = (
                 db.query(IntradayBar)
-                .filter_by(symbol=symbol, timeframe="1m")
+                .filter_by(
+                    symbol=symbol,
+                    timeframe="1m",
+                    provider=MARKET_DATA_PROVIDER,
+                )
                 .order_by(IntradayBar.opened_at.desc())
                 .first()
             )
@@ -573,8 +575,8 @@ def ingest_intraday(
                     "symbol": symbol,
                     "status": "incomplete" if missing else "complete",
                     "rows_imported": saved["rows_imported"],
-                    "provider": "alpaca",
-                    "feed_class": "sip",
+                    "provider": MARKET_DATA_PROVIDER,
+                    "feed_class": MARKET_DATA_FEED_CLASS,
                     "data_mode": "real-time",
                     "exchange_timestamp": _aware_utc(latest.exchange_timestamp).isoformat() if latest else None,
                     "ingestion_timestamp": observed_at.isoformat(),
@@ -602,8 +604,8 @@ def ingest_intraday(
                 }
             )
     return {
-        "provider": "alpaca",
-        "feed_class": "sip",
+        "provider": MARKET_DATA_PROVIDER,
+        "feed_class": MARKET_DATA_FEED_CLASS,
         "data_mode": "real-time",
         "cadence": "1m",
         "session": "regular",
@@ -616,21 +618,21 @@ def _provider_failure(exc: Exception) -> tuple[str, str]:
     """Classify provider failures without returning provider or credential details."""
     classified = getattr(exc, "failure_class", None)
     if classified == "authentication":
-        return "authentication", "Alpaca SIP authentication denied"
+        return "authentication", "Tradier market-data authentication denied"
     if classified == "entitlement":
-        return "entitlement", "Alpaca SIP entitlement denied"
+        return "entitlement", "Tradier market-data entitlement denied"
     message = str(exc).lower()
     if "credentials" in message or "not configured" in message:
-        return "configuration", "Alpaca credentials are not configured in workspace secrets"
+        return "configuration", "Tradier production market-data credentials are not configured in workspace secrets"
     if "authentication" in message:
-        return "authentication", "Alpaca SIP authentication denied"
+        return "authentication", "Tradier market-data authentication denied"
     if "entitlement" in message:
-        return "entitlement", "Authenticated Alpaca SIP entitlement is unavailable"
-    if "sip feed" in message:
-        return "configuration", "Alpaca SIP feed is not configured"
-    if "invalid alpaca" in message or "incomplete" in message or "pagination" in message:
-        return "data_quality", "Alpaca returned invalid or incomplete bar data"
-    return "availability", "Alpaca data service is unavailable"
+        return "entitlement", "Authenticated Tradier production market-data entitlement is unavailable"
+    if "tradier market-data provider" in message:
+        return "configuration", "Tradier market-data provider is not configured"
+    if "invalid tradier" in message or "incomplete" in message or "pagination" in message:
+        return "data_quality", "Tradier returned invalid or incomplete bar data"
+    return "availability", "Tradier market-data service is unavailable"
 
 
 def _record_preflight_audit(db: Session, result: dict) -> dict:
@@ -684,7 +686,7 @@ def _record_preflight_audit(db: Session, result: dict) -> dict:
         event_type="market_data",
         action="sip_preflight",
         status=result.get("status", "blocked"),
-        message=result.get("reason") or "Authenticated Alpaca SIP preflight completed",
+        message=result.get("reason") or "Authenticated Tradier production market-data preflight completed",
         entity_type="intraday_feed",
         payload=payload,
     )
@@ -709,8 +711,8 @@ def preflight_intraday(
     regular_session_open = bounds is not None and bounds[0] <= observed_at < bounds[1]
     next_open = None if regular_session_open else next_regular_session_open(observed_at)
     base = {
-        "provider": "alpaca",
-        "feed_class": "sip",
+        "provider": MARKET_DATA_PROVIDER,
+        "feed_class": MARKET_DATA_FEED_CLASS,
         "data_mode": "real-time",
         "cadence": "1m",
         "session": "regular",
@@ -722,19 +724,19 @@ def preflight_intraday(
             next_regular_session_gap(observed_at, next_open) if next_open else None
         ),
     }
-    if settings.alpaca_feed.strip().lower() != "sip":
+    if settings.active_market_data_provider.strip().lower() != MARKET_DATA_PROVIDER:
         return _record_preflight_audit(db, {
             **base,
             "status": "blocked",
             "ready": False,
             "failure_class": "configuration",
-            "reason": "Alpaca SIP feed is not configured",
+            "reason": "Tradier market-data provider is not configured",
             "results": [
                 {
                     "symbol": symbol,
                     "status": "unavailable",
                     "failure_class": "configuration",
-                    "unavailable_reason": "Alpaca SIP feed is not configured",
+                    "unavailable_reason": "Tradier market-data provider is not configured",
                     "missing_intervals": [],
                     "deferred_window": None,
                     "oldest_unresolved_interval": None,
@@ -742,20 +744,20 @@ def preflight_intraday(
                 for symbol in selected
             ],
         })
-    paper_key, paper_secret = settings.paper_broker_credentials()
-    if not (paper_key and paper_secret):
+    market_data_key = settings.tradier_market_data_api_key.get_secret_value()
+    if not market_data_key:
         return _record_preflight_audit(db, {
             **base,
             "status": "blocked",
             "ready": False,
             "failure_class": "configuration",
-            "reason": "Alpaca credentials are not configured in workspace secrets",
+            "reason": "Tradier production market-data credentials are not configured in workspace secrets",
             "results": [
                 {
                     "symbol": symbol,
                     "status": "unavailable",
                     "failure_class": "configuration",
-                    "unavailable_reason": "Alpaca credentials are not configured in workspace secrets",
+                    "unavailable_reason": "Tradier production market-data credentials are not configured in workspace secrets",
                     "missing_intervals": [],
                     "deferred_window": None,
                     "oldest_unresolved_interval": None,
@@ -819,7 +821,19 @@ def preflight_intraday(
                 }.get(imported["status"], "availability")
                 result["unavailable_reason"] = imported.get(
                     "unavailable_reason"
-                ) or "Authenticated Alpaca SIP ingestion did not complete"
+                ) or "Authenticated Tradier production market-data ingestion did not complete"
+                result["missing_intervals"] = imported.get(
+                    "missing_intervals",
+                    result.get("missing_intervals", []),
+                )
+                result["deferred_window"] = imported.get(
+                    "deferred_window",
+                    result.get("deferred_window"),
+                )
+                result["oldest_unresolved_interval"] = imported.get(
+                    "oldest_unresolved_interval",
+                    result.get("oldest_unresolved_interval"),
+                )
             if result["status"] != "ready":
                 result.setdefault(
                     "failure_class",
@@ -880,8 +894,8 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         .filter(
             IntradayBar.symbol == symbol,
             IntradayBar.timeframe == "1m",
-            IntradayBar.provider == "alpaca",
-            IntradayBar.feed_class == "sip",
+            IntradayBar.provider == MARKET_DATA_PROVIDER,
+            IntradayBar.feed_class == MARKET_DATA_FEED_CLASS,
             IntradayBar.opened_at >= target_bounds[0],
             IntradayBar.opened_at < target_bounds[1],
         )
@@ -893,8 +907,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         if expected_end > target_bounds[0]
         else []
     )
-    paper_key, paper_secret = settings.paper_broker_credentials()
-    configured = bool(paper_key and paper_secret)
+    configured = bool(settings.tradier_market_data_api_key.get_secret_value())
     verification_age = (
         observed_at - _aware_utc(latest.ingested_at)
         if latest is not None and latest.ingested_at is not None
@@ -907,8 +920,8 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
     )
     base = {
         "symbol": symbol,
-        "provider": "alpaca",
-        "feed_class": "sip",
+        "provider": MARKET_DATA_PROVIDER,
+        "feed_class": MARKET_DATA_FEED_CLASS,
         "data_mode": "real-time",
         "timeframe": "1m",
         "session": "regular",
@@ -942,14 +955,14 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             **base,
             "status": "unavailable",
             "failure_class": "configuration",
-            "unavailable_reason": "Alpaca credentials are not configured in workspace secrets",
+            "unavailable_reason": "Tradier production market-data credentials are not configured in workspace secrets",
         }
     if not entitlement_verified:
         return {
             **base,
             "status": "unavailable",
             "failure_class": "entitlement",
-            "unavailable_reason": "Alpaca SIP entitlement has not been verified by a recent authenticated ingestion",
+            "unavailable_reason": "Tradier production market-data entitlement has not been verified by a recent authenticated ingestion",
         }
     if market_open and _aware_utc(latest.opened_at) >= expected_end:
         return {
@@ -970,7 +983,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             **base,
             "status": "unavailable",
             "failure_class": "availability",
-            "unavailable_reason": "No completed Alpaca SIP bars are persisted",
+            "unavailable_reason": "No completed Tradier production bars are persisted",
         }
     if not market_open:
         return {**base, "status": "market_closed", "unavailable_reason": None}

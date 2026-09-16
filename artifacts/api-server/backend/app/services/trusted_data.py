@@ -6,7 +6,11 @@ import pandas as pd
 
 from app.models import Asset, IntradayBar
 from app.services.market_data import get_price_history
-from app.services.intraday_data import feed_status
+from app.services.intraday_data import (
+    feed_status,
+    MARKET_DATA_PROVIDER,
+    MARKET_DATA_FEED_CLASS,
+)
 
 TRUSTED_SOURCES = frozenset({"yfinance", "yahoo_chart"})
 
@@ -28,11 +32,16 @@ def validate_intraday_readiness(db, symbol: str, *, now: datetime | None = None,
 
 
 def trusted_intraday_observation(db, symbol: str, *, now: datetime | None = None) -> dict:
-    """Return the exact completed SIP bar eligible for a paper decision."""
+    """Return the exact completed Tradier production bar eligible for a paper decision."""
     status = validate_intraday_readiness(db, symbol, now=now)
     row = (
         db.query(IntradayBar)
-        .filter(IntradayBar.symbol == symbol.strip().upper(), IntradayBar.timeframe == "1m")
+        .filter(
+            IntradayBar.symbol == symbol.strip().upper(),
+            IntradayBar.timeframe == "1m",
+            IntradayBar.provider == MARKET_DATA_PROVIDER,
+            IntradayBar.feed_class == MARKET_DATA_FEED_CLASS,
+        )
         .order_by(IntradayBar.opened_at.desc())
         .first()
     )

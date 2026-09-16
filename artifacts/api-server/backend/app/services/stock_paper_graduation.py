@@ -27,6 +27,7 @@ from app.models import (
 from app.models.stock_paper import StockPaperAccount, StockPaperOrder
 from app.services.audit import write_audit_log
 from app.services.stock_accuracy import accuracy_report_out
+from app.services.stock_paper_ledger import active_paper_account
 
 
 REQUIRED_SESSIONS = 20
@@ -246,10 +247,10 @@ def build_graduation_evidence(
         if (accuracy_evidence.get("cost_aware") or {}).get("costs_known") is not True:
             _block(blockers, "accounting", "accuracy_costs", "Cost-aware outcome evidence is incomplete", accuracy.id)
 
-    account = db.scalar(select(StockPaperAccount).where(StockPaperAccount.broker == "alpaca_paper"))
+    account = active_paper_account(db)
     account_evidence = None
     if account is None:
-        _block(blockers, "accounting", "paper_account", "Alpaca paper account evidence is unavailable")
+        _block(blockers, "accounting", "paper_account", "Active paper broker account evidence is unavailable")
     else:
         account_evidence = _safe({
             "status": account.status,

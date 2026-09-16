@@ -17,6 +17,7 @@ from app.models import (
 )
 from app.models.stock_paper import StockPaperAccount, StockPaperFill, StockPaperOrder, StockPaperTrialLot
 from app.services.stock_forward_trial import _hash, _trial_allocated_notional
+from app.services.stock_paper_ledger import active_paper_account
 from app.services.live_safety import evaluate_live_safety
 
 DEFAULT_HISTORY_LIMIT = 10
@@ -363,7 +364,7 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
     metric = db.scalar(select(StockPaperTrialMetric).where(
         StockPaperTrialMetric.trial_id == trial_id
     ).order_by(StockPaperTrialMetric.as_of.desc(), StockPaperTrialMetric.id.desc()))
-    account = db.scalar(select(StockPaperAccount).where(StockPaperAccount.broker == "alpaca_paper"))
+    account = active_paper_account(db)
     sessions = _number(_metric_value(metric, "observed_sessions"))
     coverage = _number(_metric_value(metric, "verified_decision_coverage"))
     closed = _number(_metric_value(metric, "closed_trades"))

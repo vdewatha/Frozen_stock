@@ -28,10 +28,14 @@ from app.services.feature_pipeline import feature_config_id, generate_features
 from app.services.stock_accuracy import market_price_vintage, persist_accuracy_evidence
 from app.services.stock_training import FEATURES, _calibrated_probability
 from app.services.stock_training_jobs import StockTrainingError, _dataset_from_record, validate_registered_stock_model
-from app.services.stock_paper_ledger import reserve_stock_paper_order, dispatch_reserved_order, StockPaperError
+from app.services.stock_paper_ledger import (
+    reserve_stock_paper_order, dispatch_reserved_order, StockPaperError,
+    active_paper_account,
+)
 from app.services.audit import write_audit_log
 from app.services.intraday_data import (
     ALLOWED_SYMBOLS,
+    MARKET_DATA_PROVIDER,
     NY,
     feed_status,
     next_regular_session_open,
@@ -87,7 +91,7 @@ def _trial_equity_curve_max_drawdown(db: Session, trial: StockPaperTrial, as_of:
         for symbol in symbols:
             bar = db.scalar(select(IntradayBar).where(
                 IntradayBar.symbol == symbol, IntradayBar.timeframe == "1m",
-                IntradayBar.provider == "alpaca", IntradayBar.exchange_timestamp.is_not(None),
+                IntradayBar.provider == MARKET_DATA_PROVIDER, IntradayBar.exchange_timestamp.is_not(None),
                 IntradayBar.opened_at >= bounds[0], IntradayBar.opened_at < bounds[1],
                 IntradayBar.opened_at <= as_of).order_by(IntradayBar.opened_at.desc()))
             if not bar:
@@ -110,7 +114,7 @@ def _trial_equity_curve_max_drawdown(db: Session, trial: StockPaperTrial, as_of:
 
 def _evidence_allows_trade(db: Session, trial: StockPaperTrial, manifest: dict, now: datetime) -> tuple[bool, str | None]:
     """Persist factual forward evidence; manifest holdout is lineage only."""
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     if not account:
         return False, "missing_account_baseline"
     lots = db.scalars(select(StockPaperTrialLot).where(StockPaperTrialLot.trial_id == trial.id)).all()
@@ -141,7 +145,7 @@ def _evidence_allows_trade(db: Session, trial: StockPaperTrial, manifest: dict, 
                         "phase": "forward_pretrade", "evidence_count": len(
                             db.scalars(select(StockPaperTrialDecision).where(
                                 StockPaperTrialDecision.trial_id == trial.id)).all()),
-                        "source": "alpaca_account_and_trial_owned_lots"},
+                        "source": "active_broker_account_and_trial_owned_lots"},
         ))
         db.flush()
     else:
@@ -152,7 +156,7 @@ def _evidence_allows_trade(db: Session, trial: StockPaperTrial, manifest: dict, 
         evidence.provenance = {**(evidence.provenance or {}), "phase": "forward_pretrade",
                                "evidence_count": len(db.scalars(select(StockPaperTrialDecision).where(
                                    StockPaperTrialDecision.trial_id == trial.id)).all()),
-                               "source": "alpaca_account_and_trial_owned_lots"}
+                               "source": "active_broker_account_and_trial_owned_lots"}
     return True, None
 
 def _lot_outcomes(db: Session, lots: list[StockPaperTrialLot]) -> list[dict]:
@@ -227,8 +231,7 @@ def _trial_allocated_notional(db: Session, trial: StockPaperTrial) -> Decimal:
     # A reservation without a lot is still allocated, but only its unfilled
     # remainder; filled quantity is represented above once a lot exists.
     orders = db.scalars(select(StockPaperOrder).where(
-        StockPaperOrder.account_id == db.scalar(select(StockPaperAccount.id).where(
-            StockPaperAccount.broker == "alpaca_paper")),
+            StockPaperOrder.account_id == (active_paper_account(db).id if active_paper_account(db) else -1),
         StockPaperOrder.strategy_id == trial.strategy_id,
         StockPaperOrder.side == "buy",
         StockPaperOrder.status.not_in(("cancelled", "rejected", "failed")),
@@ -655,10 +658,10 @@ def trial_feed_preflight(
                     "ingestion_timestamp": None,
                     "latency_seconds": None,
                     "missing_intervals": [],
-                    "unavailable_reason": "Authenticated Alpaca SIP feed status unavailable",
+                    "unavailable_reason": "Authenticated Tradier production feed status unavailable",
                 }
             )
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     ledger_ready = bool(
         account
         and account.status == "reconciled"
@@ -670,7 +673,9 @@ def trial_feed_preflight(
     # resumed from an active regular-session preflight. Older synthetic
     # one-symbol fixtures remain usable for non-operational unit coverage.
     legacy_fixture_outside_session = not frozen_universe and not in_session
-    feed_configuration_valid = settings.alpaca_feed.strip().lower() == "sip"
+    feed_configuration_valid = (
+        settings.active_market_data_provider.strip().lower() == MARKET_DATA_PROVIDER
+    )
     feed_ready = (
         (
             feed_configuration_valid
@@ -694,13 +699,13 @@ def trial_feed_preflight(
         if item["status"] != "ready"
     ]
     if not feed_configuration_valid:
-        reason = "Alpaca SIP feed is not configured"
+        reason = "Tradier production market-data feed is not configured"
     elif frozen_universe and not in_session:
         reason = "Regular-session authenticated preflight is required"
     elif failures and not legacy_fixture_outside_session:
         reason = failures[0]
     elif not ledger_ready:
-        reason = "Alpaca paper ledger is not reconciled"
+        reason = "Active paper broker ledger is not reconciled"
     else:
         reason = None
     return {
@@ -712,7 +717,7 @@ def trial_feed_preflight(
         "symbols": statuses,
         "paper_ledger": {
             "status": "reconciled" if ledger_ready else "blocked",
-            "reason": None if ledger_ready else "Alpaca paper ledger is not reconciled",
+            "reason": None if ledger_ready else "Active paper broker ledger is not reconciled",
         },
         "reason": reason,
         "paper_only": True,
@@ -771,7 +776,7 @@ def start_trial(
     immutable_block = bool(
         row.blocked_reason
         and not (
-            row.blocked_reason.startswith("Alpaca paper ledger")
+            row.blocked_reason.startswith("Active paper broker ledger")
             or row.blocked_reason.startswith("fresh_complete_feed_required")
             or row.blocked_reason.startswith("Regular-session")
         )
@@ -798,14 +803,14 @@ def start_trial(
         return row
     # Starting is intentionally conservative: observe/reconcile task must establish these facts.
     from app.models.stock_paper import StockPaperAccount
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     if (
         not account
         or account.status != "reconciled"
         or account.reconciliation_required
         or account.unexplained_residual
     ):
-        row.status, row.blocked_reason = "blocked", "Alpaca paper ledger is not reconciled"
+        row.status, row.blocked_reason = "blocked", "Active paper broker ledger is not reconciled"
         write_audit_log(
             db,
             event_type="stock_forward_trial",
@@ -909,7 +914,7 @@ def _halt_trial_for_accounting(
             event_type="stock_forward_trial",
             action="accounting_halt",
             status="blocked",
-            message="Forward trial halted because Alpaca paper accounting requires review",
+            message="Forward trial halted because active paper accounting requires review",
             entity_type="stock_paper_trial",
             payload={
                 "trial_id": trial.id,
@@ -1004,7 +1009,7 @@ def observe_trial(db: Session, trial_id: str) -> dict:
         _ensure_exit_intents(db, trial, "operator_stop", now)
         return {"status": "stopped", "trial_id": trial_id, "decisions": 0,
                 "reason": trial.pause_reason, "paper_only": True}
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     if account and _halt_trial_for_accounting(db, trial, account):
         return {
             "status": trial.status,
@@ -1032,7 +1037,7 @@ def observe_trial(db: Session, trial_id: str) -> dict:
             return {"status": "paused", "trial_id": trial_id, "reason": trial.pause_reason}
         feed_checks[symbol] = status
     # Daily inference is deliberately gated until the regular session has
-    # closed.  The 1m Alpaca bar is execution lineage only; features are built
+    # closed. The one-minute provider bar is execution lineage only; features are built
     # from the latest completed, verified Yahoo daily observation.
     if not bounds or now < bounds[1]:
         return {"status": "observed", "trial_id": trial_id, "decisions": 0,
@@ -1076,7 +1081,7 @@ def observe_trial(db: Session, trial_id: str) -> dict:
             continue
         candidates = db.scalars(select(IntradayBar).where(
             IntradayBar.symbol == lot.symbol, IntradayBar.timeframe == "1m",
-            IntradayBar.provider == "alpaca", IntradayBar.exchange_timestamp.is_not(None)
+            IntradayBar.provider == MARKET_DATA_PROVIDER, IntradayBar.exchange_timestamp.is_not(None)
         ).order_by(IntradayBar.opened_at.desc())).all()
         final_bar = next((bar for bar in candidates
             if (lambda opened: (session_bounds(opened.date()) and
@@ -1103,7 +1108,7 @@ def observe_trial(db: Session, trial_id: str) -> dict:
         if entry_decision:
             candidates = db.scalars(select(IntradayBar.opened_at).where(
                 IntradayBar.symbol == lot.symbol, IntradayBar.timeframe == "1m",
-                IntradayBar.provider == "alpaca", IntradayBar.exchange_timestamp.is_not(None),
+                IntradayBar.provider == MARKET_DATA_PROVIDER, IntradayBar.exchange_timestamp.is_not(None),
                 IntradayBar.opened_at > entry_decision.bar_timestamp,
                 IntradayBar.opened_at <= now,
             ).order_by(IntradayBar.opened_at.asc())).all()
@@ -1130,7 +1135,7 @@ def observe_trial(db: Session, trial_id: str) -> dict:
                 if (bar.opened_at.replace(tzinfo=timezone.utc) if bar.opened_at.tzinfo is None else bar.opened_at)
                 < bounds[1] and
                 (bar.opened_at.replace(tzinfo=timezone.utc) if bar.opened_at.tzinfo is None else bar.opened_at) < now
-                and str(bar.provider).lower() == "alpaca" and bar.exchange_timestamp is not None]
+                and str(bar.provider).lower() == MARKET_DATA_PROVIDER and bar.exchange_timestamp is not None]
         if not bars:
             continue
         bar = bars[0]
@@ -1243,7 +1248,7 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
         return {"status": trial.status, "trial_id": trial_id, "executed": 0}
     _sync_trial_lot_state(db, trial)
     now = _now()
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     if account and _halt_trial_for_accounting(db, trial, account):
         return {
             "status": trial.status,
@@ -1303,7 +1308,7 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
             continue
         reference = db.scalar(select(IntradayBar).where(
             IntradayBar.symbol == lot.symbol, IntradayBar.timeframe == "1m",
-            IntradayBar.provider == "alpaca", IntradayBar.exchange_timestamp.is_not(None),
+            IntradayBar.provider == MARKET_DATA_PROVIDER, IntradayBar.exchange_timestamp.is_not(None),
             IntradayBar.opened_at >= bounds[0], IntradayBar.opened_at < now
         ).order_by(IntradayBar.opened_at.desc()))
         if not reference:
@@ -1349,7 +1354,7 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
                 break
             reference = db.scalar(select(IntradayBar).where(
                 IntradayBar.symbol == symbol, IntradayBar.timeframe == "1m",
-                IntradayBar.provider == "alpaca",
+                IntradayBar.provider == MARKET_DATA_PROVIDER,
                 IntradayBar.opened_at >= bounds[0], IntradayBar.opened_at < now,
                 IntradayBar.exchange_timestamp.is_not(None),
             ).order_by(IntradayBar.opened_at.desc()))
@@ -1480,13 +1485,13 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
         for symbol in universe:
             first = db.scalar(select(IntradayBar.close).where(
                 IntradayBar.symbol == symbol, IntradayBar.timeframe == "1m",
-                IntradayBar.provider == "alpaca",
+                IntradayBar.provider == MARKET_DATA_PROVIDER,
                 IntradayBar.opened_at >= datetime.combine(dates[0], datetime.min.time(), tzinfo=timezone.utc),
                 IntradayBar.opened_at < datetime.combine(dates[0] + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc),
             ).order_by(IntradayBar.opened_at.asc()))
             last = db.scalar(select(IntradayBar.close).where(
                 IntradayBar.symbol == symbol, IntradayBar.timeframe == "1m",
-                IntradayBar.provider == "alpaca",
+                IntradayBar.provider == MARKET_DATA_PROVIDER,
                 IntradayBar.opened_at >= datetime.combine(dates[-1], datetime.min.time(), tzinfo=timezone.utc),
                 IntradayBar.opened_at < datetime.combine(dates[-1] + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc),
             ).order_by(IntradayBar.opened_at.desc()))
@@ -1494,7 +1499,7 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
                 benchmark_returns.append((last - first) / first)
     benchmark = (sum(benchmark_returns, Decimal("0")) / Decimal(len(benchmark_returns))
                  if len(benchmark_returns) == len(universe) else None)
-    account = db.query(StockPaperAccount).filter_by(broker="alpaca_paper").one_or_none()
+    account = active_paper_account(db)
     account_drawdown = ((trial.peak_equity - account.equity) / trial.peak_equity
                         if account and trial.peak_equity and trial.peak_equity > 0 else None)
     trial_drawdown = _trial_equity_curve_max_drawdown(db, trial, as_of)
