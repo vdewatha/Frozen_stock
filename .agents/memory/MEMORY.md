@@ -30,3 +30,4 @@
 - [Live operations projection](live-operations-projection.md) — operational views are bounded, redacted, and fail-closed; missing evidence is never healthy.
 - [Controlled live pilot](live-pilot-controls.md) — live exposure requires a separate two-person, bounded, expiring pilot authorization over paper evidence.
 - [Paper graduation boundary](paper-graduation-boundary.md) — graduation is an immutable human disposition over redacted evidence; approval never grants live authority.
+- [Stale artifact notifications](stale-artifact-notifications.md) — hash-verify restored artifacts and rerun the governed job before clearing an old missing-artifact alert.

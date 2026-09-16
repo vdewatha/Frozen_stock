@@ -1,0 +1,117 @@
+{
+  "actions_taken": [
+    "Re-ran the governed stock forward-trial observer; it completed and kept the trial paused.",
+    "Re-ran forward-trial reconciliation; it remained halted with no in-flight orders.",
+    "Re-ran stock monitoring; it preserved the automatic paper-path pause.",
+    "Re-ran deployment monitoring; deployment remained blocked.",
+    "Resolved only the stale dataset-missing notification after the immutable artifact and hash were verified."
+  ],
+  "critical_notifications_open": [
+    {
+      "category": "stock_recovery",
+      "id": 7,
+      "message": "Automatic review requires a later broker commission enrichment that exactly explains the residual; stable account values are insufficient.",
+      "severity": "critical",
+      "status": "open",
+      "title": "Automatic paper-account recovery is blocked"
+    },
+    {
+      "category": "operational_hardening",
+      "id": 6,
+      "message": "Audit event digest chain does not verify.",
+      "severity": "critical",
+      "status": "open",
+      "title": "Operational hardening breach"
+    },
+    {
+      "category": "stock_monitoring",
+      "id": 5,
+      "message": "Automatic stock-paper pause after persistent monitoring breach: data.freshness_provenance, health.broker, health.reconciliation",
+      "severity": "critical",
+      "status": "open",
+      "title": "Stock paper trading paused"
+    },
+    {
+      "category": "deployment_monitor",
+      "id": 4,
+      "message": "Deployment monitor blocked: none. Readiness blockers: Intraday feed, Risk state, Critical notifications.",
+      "severity": "critical",
+      "status": "open",
+      "title": "Deployment monitor blocked"
+    }
+  ],
+  "dataset_artifact": {
+    "binding_eligible": true,
+    "data_present": true,
+    "data_sha256": "f0a4b2454170fa86f523e4f02d889ad248281af25a243ac33e779e72baeee720",
+    "hash_matches": true,
+    "manifest_data_sha256": "f0a4b2454170fa86f523e4f02d889ad248281af25a243ac33e779e72baeee720",
+    "manifest_present": true,
+    "path": "stock_training_artifacts/snapshots/8b2b1d9dbb856acfcfff190fd649bc4dc8751c275c97e4c927306136f8b3d00f/dataset.csv",
+    "point_in_time_verified": false
+  },
+  "evidence_boundary": {
+    "balances_or_positions_in_report": false,
+    "broker_account_identifiers_in_report": false,
+    "credentials_in_report": false,
+    "live_order_submitted": false,
+    "manual_residual_acknowledgement_used": false
+  },
+  "first_paper_order": {
+    "reason": "Paper execution remains halted until qualifying broker residual evidence, current feed health, and readiness blockers are clear.",
+    "status": "not_dispatched"
+  },
+  "generated_at": "2026-09-16T14:11:17.294694+00:00",
+  "go_no_go": "no_go",
+  "launch_disposition": "blocked",
+  "live_trading_enabled": false,
+  "paper_account": {
+    "accounting_verified": false,
+    "costs_known": false,
+    "reason": "Prior unexplained cash or position residual requires manual accounting review",
+    "reconciliation_required": true,
+    "status": "halted",
+    "unexplained_residual": true
+  },
+  "paper_only": true,
+  "readiness": {
+    "checks": {
+      "Broker safety": "ready",
+      "Critical notifications": "blocked",
+      "Intraday feed": "blocked",
+      "Market data": "ready",
+      "Model freshness": "warning",
+      "Risk state": "blocked",
+      "Scheduler health": "ready",
+      "Strategy availability": "ready"
+    },
+    "overall_status": "blocked",
+    "paper_trading_allowed": false,
+    "summary": {
+      "blocked": 3,
+      "ready": 4,
+      "warning": 1
+    }
+  },
+  "recovery": {
+    "accounting_review_required": true,
+    "last_revalidation_at": null,
+    "pause_reason": "Automatic stock-paper pause after persistent monitoring breach: data.freshness_provenance, health.broker, health.reconciliation",
+    "status": "cooldown"
+  },
+  "report_sha256": "a731de39a0fb51e73f8b8d80a89eee087c27f78167b09e8f5eb727c48f94e73c",
+  "report_type": "safe_paper_trading_revalidation",
+  "runtime": {
+    "api_and_workers": "running",
+    "deployable": false,
+    "deployment_status": "blocked",
+    "scheduler_and_watchdog": "evidenced"
+  },
+  "schema_version": 1,
+  "unresolved_blockers": [
+    "The paper account still has an unexplained residual and requires qualifying later broker commission enrichment; stable account values are insufficient.",
+    "Authenticated Alpaca SIP entitlement is not verified by a recent successful ingestion for the active symbols.",
+    "The retained audit digest chain does not verify; historical events were not rewritten.",
+    "Critical broker, monitoring, and operational-hardening notifications remain open."
+  ]
+}
