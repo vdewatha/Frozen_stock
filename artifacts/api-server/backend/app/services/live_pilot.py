@@ -34,6 +34,7 @@ from app.models import (
     StockMonitoringSnapshot,
 )
 from app.services.audit import write_audit_log
+from app.services.compliance_readiness import evaluate_compliance_readiness
 from app.services.intraday_data import ALLOWED_SYMBOLS, session_bounds
 
 UTC = timezone.utc
@@ -318,6 +319,23 @@ def _checklist_gate(checklist: dict) -> dict:
     })
 
 
+def _compliance_gate(checklist: dict) -> dict:
+    result = evaluate_compliance_readiness(
+        checklist.get("compliance_readiness") if isinstance(checklist, dict) else None
+    )
+    return _gate(
+        result["status"],
+        None if result["status"] == "pass" else result["reason"],
+        {
+            "unresolved_count": len(result["unresolved_items"]),
+            "reviewed_rule_count": result["reviewed_rule_count"],
+            "signed_external_review_count": result["signed_external_review_count"],
+            "documented_owner_count": result["documented_owner_count"],
+            "scope_exclusions_confirmed": result["scope_exclusions_confirmed"],
+        },
+    )
+
+
 def evaluate_live_pilot_launch(
     db: Session,
     *,
@@ -333,6 +351,7 @@ def evaluate_live_pilot_launch(
         "monitoring_and_data": _monitoring_gate(db),
         "risk_and_recovery": _recovery_gate(db),
         "operational_drills": _checklist_gate(checklist),
+        "compliance_readiness": _compliance_gate(checklist),
     }
     statuses = {gate["status"] for gate in gates.values()}
     return {

@@ -1,0 +1,131 @@
+{
+  "accounting_contract": {
+    "authoritative_records": "broker statements and tax documents, as confirmed by qualified reviewers",
+    "supporting_records": "append-only application audit and safety evidence"
+  },
+  "certification_status": "blocked",
+  "default_record_evaluation": {
+    "documented_owner_count": 0,
+    "fail_closed": true,
+    "launch_disposition": "blocked",
+    "reason": "Live pilot is blocked until every compliance item is documented and externally signed off.",
+    "required_external_review_count": 4,
+    "required_owner_count": 6,
+    "required_rule_count": 6,
+    "required_scope_exclusions": 5,
+    "reviewed_rule_count": 0,
+    "scope_exclusions_confirmed": 0,
+    "signed_external_review_count": 0,
+    "status": "blocked",
+    "unresolved_items": [
+      "account_owner",
+      "jurisdictions",
+      "broker_account_type",
+      "broker_permissions",
+      "retention_policy",
+      "user_disclosures",
+      "operator_disclosures",
+      "tax_accounting_records.authoritative_broker_statements",
+      "tax_accounting_records.supporting_app_audit_evidence",
+      "rule_reviews.broker_agreement",
+      "rule_reviews.account_permissions",
+      "rule_reviews.pattern_day_trading",
+      "rule_reviews.margin_restrictions",
+      "rule_reviews.market_data_terms",
+      "rule_reviews.record_retention",
+      "responsibility_owners.approval",
+      "responsibility_owners.monitoring",
+      "responsibility_owners.incident",
+      "responsibility_owners.shutdown",
+      "responsibility_owners.investigation",
+      "responsibility_owners.periodic_review",
+      "external_reviews.legal",
+      "external_reviews.tax",
+      "external_reviews.compliance",
+      "external_reviews.broker",
+      "initial_live_scope.unsupported_instruments",
+      "initial_live_scope.leverage",
+      "initial_live_scope.shorts",
+      "initial_live_scope.options",
+      "initial_live_scope.unrestricted_automation"
+    ]
+  },
+  "generated_at": "2026-09-16T13:48:53.969559+00:00",
+  "intended_scope": {
+    "account_owner": "unresolved; must be supplied by the account owner",
+    "broker_account_type": "unresolved; broker confirmation required",
+    "jurisdictions": "unresolved; qualified compliance review required",
+    "permissions": "unresolved; broker account-permission confirmation required",
+    "prohibited_activities": [
+      "unsupported instruments",
+      "leverage",
+      "shorts",
+      "options",
+      "unrestricted automation"
+    ]
+  },
+  "launch_disposition": "blocked",
+  "report_sha256": "852c7ed5faa735adf53628ed5f28aebea5f66795df2846cefc2e9716e84caa8c",
+  "report_type": "live_compliance_readiness",
+  "required_external_signoffs": [
+    "legal",
+    "tax",
+    "compliance",
+    "broker"
+  ],
+  "required_review_domains": [
+    "broker agreements and account permissions",
+    "pattern-day-trading and margin restrictions",
+    "market-data terms",
+    "record retention",
+    "tax and accounting treatment",
+    "jurisdictional and disclosure review"
+  ],
+  "required_rule_reviews": [
+    "broker_agreement",
+    "account_permissions",
+    "pattern_day_trading",
+    "margin_restrictions",
+    "market_data_terms",
+    "record_retention"
+  ],
+  "required_scope_exclusions": [
+    "unsupported_instruments",
+    "leverage",
+    "shorts",
+    "options",
+    "unrestricted_automation"
+  ],
+  "responsibility_contract": {
+    "approval": "named organizational owner required",
+    "incident": "named organizational owner required",
+    "investigation": "named organizational owner required",
+    "monitoring": "named organizational owner required",
+    "periodic_review": "named organizational owner required",
+    "shutdown": "named organizational owner required"
+  },
+  "schema_version": 1,
+  "scope": {
+    "account_identifiers_in_report": false,
+    "credentials_in_report": false,
+    "legal_advice_provided": false,
+    "live_orders_enabled": false,
+    "regulatory_approval_claimed": false,
+    "tax_advice_provided": false
+  },
+  "test_result": {
+    "exit_code": 0,
+    "status": "pass",
+    "summary": "6 passed in 0.90s"
+  },
+  "test_sources": [
+    "tests/test_compliance_readiness.py",
+    "tests/test_live_pilot.py"
+  ],
+  "unresolved_launch_blockers": [
+    "Account owner, jurisdictions, broker account type, and permissions are not externally confirmed.",
+    "Broker, legal/compliance, and tax reviews are not signed off.",
+    "Named owners for approval, monitoring, incidents, shutdown, investigation, and periodic review are not recorded.",
+    "Automation, model uncertainty, loss, emergency-control, and jurisdiction-specific disclosures require qualified review."
+  ]
+}

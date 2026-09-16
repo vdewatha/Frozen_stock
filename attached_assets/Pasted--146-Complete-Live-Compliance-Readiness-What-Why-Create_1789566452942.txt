@@ -1,0 +1,38 @@
+#146 - Complete Live Compliance Readiness
+What & Why
+Create and complete the non-code launch checklist required before the system handles real capital. Broker agreements, account permissions, jurisdictional rules, disclosures, tax records, retention, and operational responsibilities must be explicit rather than assumed from technical readiness.
+
+Done looks like
+The intended account owner, jurisdictions, broker account type, permissions, and prohibited trading activities are documented.
+Applicable broker rules, pattern-day-trading constraints, margin restrictions, market-data terms, and record-retention obligations are reviewed.
+Initial live scope explicitly excludes unsupported instruments, leverage, shorts, options, and unrestricted automation.
+Tax and accounting records identify the authoritative broker statements and the app's supporting audit evidence.
+User-facing and operator-facing disclosures accurately describe automation, model uncertainty, losses, and emergency controls.
+Incident, approval, review, and shutdown responsibilities have named organizational owners.
+Items requiring qualified legal, tax, compliance, or broker review are clearly identified and signed off externally before pilot activation.
+Any unresolved item blocks the live pilot.
+Out of scope
+Providing legal, tax, or investment advice.
+Claiming regulatory approval based on software tests.
+Enabling live execution before external obligations are resolved.
+Steps
+Inventory obligations and ownership — Document the account, jurisdictions, intended trading scope, stakeholders, and external reviewers.
+Review broker and market rules — Confirm permissions, agreements, data terms, trading restrictions, and record requirements.
+Define disclosures and records — Establish accurate automation disclosures and authoritative accounting, tax, and audit records.
+Assign operational responsibility — Name owners for approvals, monitoring, incidents, shutdown, investigation, and periodic review.
+Record launch disposition — Obtain required external signoffs or retain a blocked result with specific unresolved items.
+Architectural constraint: this task creates a readiness record and blocking gate; it does not substitute software output for professional review.
+
+Relevant files
+artifacts/api-server/backend/app/core/config.py
+artifacts/api-server/backend/app/core/security.py
+artifacts/api-server/backend/app/services/audit.py
+artifacts/api-server/backend/app/services/readiness.py
+artifacts/strategy-control-room/src/components/safety-control-bar.tsx
+Dependencies
+
+Define Live Safety Contract
+Open task
+
+Certify the production identity boundary
+Open task
