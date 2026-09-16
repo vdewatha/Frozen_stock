@@ -24,6 +24,52 @@ def broker_status() -> dict:
     }
 
 
+def stock_paper_broker_status(db: Session) -> dict:
+    """Read-only, redacted projection; venue safety is not accounting readiness."""
+    from app.services.stock_paper_ledger import (
+        TRADIER_PAPER_EVIDENCE, active_paper_account, active_paper_broker_name,
+    )
+
+    venue = active_paper_broker_name()
+    account = active_paper_account(db)
+    provider_complete = TRADIER_PAPER_EVIDENCE["complete"] if venue == "tradier_sandbox" else None
+    accounting_ready = bool(
+        account and account.status == "reconciled"
+        and account.accounting_verified and account.costs_known
+        and not account.reconciliation_required and not account.unexplained_residual
+        and provider_complete is not False
+    )
+    return {
+        "paper_broker": venue,
+        "scope": "stock_paper",
+        "paper_trading_enabled": True,
+        "live_trading_enabled": False,
+        "live_trading_blocked": True,
+        "message": (
+            f"Stock-paper execution uses {venue}; this paper route cannot place live orders. "
+            "Complete accounting is a separate required gate."
+        ),
+        "accounting": {
+            "paper_broker": venue,
+            "ready": accounting_ready,
+            "status": account.status if account else "uninitialized",
+            "accounting_verified": bool(account and account.accounting_verified),
+            "costs_known": bool(account and account.costs_known),
+            "reconciliation_required": bool(not account or account.reconciliation_required),
+            "unexplained_residual": bool(account and account.unexplained_residual),
+            "provider_evidence_complete": provider_complete,
+            "reason": (
+                "Complete broker accounting is verified."
+                if accounting_ready else
+                "Tradier sandbox history cannot establish complete broker accounting."
+                if provider_complete is False else
+                "Complete broker accounting requires a reconciled account, verified accounting, "
+                "known costs, and no unexplained residual."
+            ),
+        },
+    }
+
+
 def submit_paper_order(
     db: Session,
     *,

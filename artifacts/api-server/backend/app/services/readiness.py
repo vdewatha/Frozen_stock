@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Asset, MarketPrice, ModelPrediction, Notification, RiskRule, Strategy
 from app.core.config import settings
-from app.services.broker import broker_status
+from app.services.broker import stock_paper_broker_status
 from app.services.intraday_data import (
     feed_status,
     ALLOWED_SYMBOLS,
@@ -187,13 +187,22 @@ def readiness_snapshot(db: Session) -> dict:
         )
     )
 
-    broker = broker_status()
+    broker = stock_paper_broker_status(db)
     checks.append(
         _check(
             "Broker safety",
             "ready" if broker["paper_trading_enabled"] and broker["live_trading_blocked"] else "blocked",
             broker["message"],
-            broker,
+            {key: value for key, value in broker.items() if key != "accounting"},
+        )
+    )
+    accounting = broker["accounting"]
+    checks.append(
+        _check(
+            "Complete accounting",
+            "ready" if accounting["ready"] else "blocked",
+            accounting["reason"],
+            accounting,
         )
     )
 

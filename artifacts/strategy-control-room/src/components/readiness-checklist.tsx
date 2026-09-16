@@ -23,7 +23,7 @@ function iconFor(status: string) {
   return <TriangleAlert size={17} />;
 }
 
-function detailText(details: Record<string, unknown>): string {
+function detailText(details: Record<string, unknown>, name: string): string {
   function readable(value: unknown): string {
     if (Array.isArray(value)) {
       return value.length ? value.map(readable).join(", ") : "none";
@@ -37,7 +37,12 @@ function detailText(details: Record<string, unknown>): string {
     return String(value);
   }
 
-  const entries = Object.entries(details)
+  const visibleDetails = name === "Broker safety"
+    ? { venue: details.paper_broker ?? "unknown", scope: details.scope ?? "unknown", live_orders_blocked: details.live_trading_blocked ?? "unknown" }
+    : name === "Complete accounting"
+      ? { venue: details.paper_broker ?? "unknown", accounting_verified: details.accounting_verified ?? "unknown", costs_known: details.costs_known ?? "unknown" }
+      : details;
+  const entries = Object.entries(visibleDetails)
     .filter(([, value]) => value !== null && typeof value !== "undefined")
     .slice(0, 3)
     .map(([key, value]) => `${key.replaceAll("_", " ")}: ${readable(value)}`);
@@ -184,7 +189,7 @@ export function ReadinessChecklist() {
                   {check.status}
                 </span>
               </div>
-               <div className="mt-2 text-xs text-slate-500">{detailText(check.details)}</div>
+               <div className="mt-2 text-xs text-slate-500">{detailText(check.details, check.name)}</div>
                {check.name.toLowerCase().includes("market") ? <MarketFeedDetails details={check.details} /> : null}
             </div>
           )) ?? <div className="text-sm text-slate-600">Loading checks</div>}
