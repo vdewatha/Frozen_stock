@@ -65,15 +65,16 @@ order history and one non-fill activity, with no fills from which commissions,
 timestamps, or order linkage could be verified. The existing focused contract
 assessment correctly reports costs and precise activity times as unknown.
 
-**Implementation readiness:** the activity adapter needs a safe page-token
-correction: after a full page, derive the next token from the last activity
-ID, reject missing/repeated/non-advancing cursors, and preserve a durable
-incomplete-evidence halt. That correction is related to the already queued
-incomplete-pagination work and is not duplicated here. Separate fee activity
-mapping would still not solve the paper simulation's documented omission of
-real-world costs. A provider-specific contract change would be required to
-accept modeled or omitted costs, and that is outside this task and the current
-accounting contract.
+**Implementation readiness:** the activity adapter now uses the documented
+last-activity-ID cursor after a full page, de-duplicates repeated boundary
+rows, rejects missing/repeated/non-advancing cursors, and stops at a bounded
+page limit. Order pagination remains on its separate documented `until`
+timestamp cursor. Offline contract tests pass; this is implementation
+readiness only, not venue qualification. Separate fee activity mapping would
+still not solve the paper simulation's documented omission of real-world
+costs. A provider-specific contract change would be required to accept modeled
+or omitted costs, and that is outside this task and the current accounting
+contract.
 
 **Launch authorization:** none. Even a corrected adapter and positive
 field-level fixture would provide implementation readiness only, not venue
@@ -104,12 +105,12 @@ authorized by this assessment.
 1. **Keep the current no-go.** Continue using Tradier production only as a
    separately governed market-data source; do not treat it as a solution to
    the sandbox accounting-history gap.
-2. **If Alpaca is reconsidered,** first complete the pagination correction and
-   independent recovery tests, then obtain explicit approval for a
-   credentialed read-only evidence operation. The operation must produce
-   non-empty fills and cash-affecting activities with explicit costs and
-   precise broker times, and must demonstrate delayed-activity and restart
-   recovery. No test orders are authorized by this report.
+2. **If Alpaca is reconsidered,** obtain explicit approval for a credentialed
+read-only evidence operation using the corrected activity adapter, followed by
+independent recovery tests. The operation must produce non-empty fills and
+cash-affecting activities with explicit costs and precise broker times, and
+must demonstrate delayed-activity and restart recovery. No test orders are
+authorized by this report.
 3. **If IBKR is selected as an alternative,** obtain separate approval for a
    new paper-provider integration and define how the seven-day trade-history
    limit is supplemented by durable activity capture. Do not claim that the

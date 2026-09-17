@@ -1,6 +1,6 @@
 {
   "report_type": "paper_execution_evidence_qualification",
-  "schema_version": 1,
+  "schema_version": 2,
   "generated_at": "2026-09-17T00:00:00Z",
   "scope": {
     "environment": "local",
@@ -15,7 +15,8 @@
     "qualification": "no_available_paper_venue_qualified",
     "launch_authorized": false,
     "paper_trading_allowed": false,
-    "reason": "Neither Tradier sandbox nor Alpaca paper satisfies the unchanged complete-accounting contract; Interactive Brokers is only an unimplemented candidate."
+    "reason": "Neither Tradier sandbox nor Alpaca paper satisfies the unchanged complete-accounting contract; Interactive Brokers is only an unimplemented candidate.",
+    "qualification_basis": "documentation_and_existing_evidence_review_plus_offline_adapter_contract_tests"
   },
   "contract": [
     "Explicit commissions and cash-affecting fees",
@@ -46,15 +47,24 @@
       "venue": "alpaca_paper",
       "documented_capability": "Historical account activities with stable IDs and ID-based page_token pagination; FILL transaction_time and order_id; non-fill date fields.",
       "observed_qualification": "not_established",
-      "implementation_readiness": "partial",
+      "implementation_readiness": "activity_pagination_contract_ready_but_venue_not_qualified",
       "launch_authorized": false,
       "blockers": [
         "Observed account had no fills, so commission and fill linkage were not proven",
         "Documented paper simulation omits regulatory fees, dividends, and borrow fees",
         "Non-fill date fields do not satisfy precise activity time",
-        "Current activity adapter needs safe last-ID page-token handling",
         "Restart and delayed-activity recovery remain untested"
       ],
+      "adapter_verification": {
+        "status": "passed_offline_contract_tests",
+        "activity_cursor": "last_activity_id_sent_as_page_token_after_full_page",
+        "deduplication": true,
+        "rejects_missing_cursor": true,
+        "rejects_repeated_or_non_advancing_cursor": true,
+        "bounded_page_limit": 100,
+        "order_cursor_is_separate": true,
+        "real_broker_qualification": false
+      },
       "sources": [
         "https://docs.alpaca.markets/us/docs/account-activities.md",
         "https://docs.alpaca.markets/us/docs/paper-trading.md"
@@ -80,7 +90,7 @@
   ],
   "required_next_decisions": [
     "Keep the launch blocked and preserve Tradier production market-data isolation.",
-    "If Alpaca is reconsidered, correct and test ID-based activity pagination before any separately approved read-only evidence operation.",
+    "If Alpaca is reconsidered, obtain separate permission for a credentialed read-only evidence operation using the corrected adapter; no test orders are authorized.",
     "If Interactive Brokers is selected, approve a new paper-provider boundary and a durable activity-capture design before implementation.",
     "Do not relax unknown-cost handling or treat modeled costs as broker evidence without a separately approved contract."
   ],
