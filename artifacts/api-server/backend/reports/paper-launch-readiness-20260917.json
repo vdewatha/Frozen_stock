@@ -1,7 +1,7 @@
 {
   "report_type": "paper_launch_readiness",
   "schema_version": 1,
-  "generated_at": "2026-09-17T04:15:41Z",
+  "generated_at": "2026-09-17T04:52:30Z",
   "scope": {
     "environment": "local",
     "production_certification": false,
@@ -14,8 +14,8 @@
   "go_no_go": "no_go",
   "overall_status": "blocked",
   "summary": {
-    "blocked": 5,
-    "ready": 3,
+    "blocked": 4,
+    "ready": 4,
     "warning": 1
   },
   "workflow_repair": {
@@ -27,12 +27,19 @@
   "checks": [
     {
       "name": "daily_market_data",
-      "status": "blocked",
+      "status": "ready",
       "evidence": {
         "active_assets": 4,
-        "latest_daily_date": "2026-09-10",
+        "latest_daily_date": "2026-09-16",
         "sources": ["yahoo_chart"],
-        "history_validator": "stale_or_future_dated_for_all_active_assets"
+        "history_validator": "clear_for_all_active_assets",
+        "refresh": {
+          "primary_provider": "yfinance",
+          "primary_result": "provider_response_parsing_error",
+          "fallback": "yahoo_chart",
+          "rows_per_symbol": 501,
+          "synthetic_rows": false
+        }
       }
     },
     {
@@ -101,7 +108,7 @@
       "name": "critical_notifications",
       "status": "blocked",
       "evidence": {
-        "unresolved_critical_total": 4,
+        "unresolved_critical_total": 3,
         "unresolved_critical_excluding_deployment_monitor": 3
       }
     },
@@ -143,12 +150,18 @@
     "dataset_hash_matches": true,
     "dataset_manifest_present": true,
     "dataset_provider": "yahoo_chart",
-    "dataset_cutoff_date": "2026-09-11",
+        "dataset_cutoff_date": "2026-09-11",
+        "dataset_artifact_verified": true,
+        "dataset_temporal_semantics": "captured_at_extraction_not_point_in_time",
+        "daily_refresh_did_not_rewrite_immutable_snapshot": true,
     "dataset_point_in_time_adjustments": false,
     "paper_binding_count": 1,
     "active_binding_paper_only": true,
     "active_binding_live_authorized": false,
-    "model_registry_lifecycle": "challenger",
+        "model_registry_lifecycle": "challenger",
+        "model_artifact_verified": true,
+        "model_selected_family": "logistic_regression",
+        "final_holdout_evaluation_count": 1,
     "model_mutable_lifecycle": "paper_canary",
     "model_eligible_for_trading": false,
     "training_job_count": 1,
@@ -183,7 +196,15 @@
       "bounded paper-launch authorization",
       "later model promotion authorization"
     ],
-    "activated": false
+    "activated": false,
+    "data_refresh": {
+      "performed": true,
+      "symbols": ["AAPL", "MSFT", "QQQ", "SPY"],
+      "source": "yahoo_chart",
+      "latest_date": "2026-09-16",
+      "outside_regular_session_entitlement_probe_deferred": true,
+      "no_broker_or_order_mutation": true
+    }
   },
   "redaction": {
     "credentials_included": false,

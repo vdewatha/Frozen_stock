@@ -11,7 +11,7 @@ account was initialized or reset, no order was placed or cancelled, and no
 notification, kill switch, audit row, recovery state, schedule, or model
 binding was changed to make this report green.
 
-Observation time: **2026-09-17 04:15:41 UTC**. Scope: local development
+Observation time: **2026-09-17 04:52:30 UTC**. Scope: local development
 environment only, with redacted summaries. This is not a production
 certification.
 
@@ -34,22 +34,22 @@ not launch authorization.
 
 ## Current readiness checklist
 
-The fresh readiness snapshot is **blocked**, with **5 blocked**, **3 ready**, and
-**1 warning** checks.
+The fresh post-refresh readiness snapshot is **blocked**, with **4 blocked**,
+**4 ready**, and **1 warning** check.
 
 | Check | Status | Current evidence |
 | --- | --- | --- |
-| Daily market data | **Blocked** | All four active assets have trusted Yahoo-derived daily prices only through 2026-09-10; the history validator reports stale or future-dated prices for each asset relative to the current date. |
+| Daily market data | **Ready** | The supported daily importer refreshed all four active assets through 2026-09-16 using the trusted `yahoo_chart` fallback after the primary yfinance request failed. No stale, missing, untrusted, or synthetic daily rows remain. |
 | Intraday feed | **Blocked** | Tradier production entitlement is configured but unverified. The latest persisted bar ended at 19:57 UTC on 2026-09-16, with unresolved 19:58–20:00 UTC window evidence for all four symbols. |
 | Model freshness | **Warning** | No recent stored model predictions; the readiness calculation reports approximately 147.57 hours of age. |
 | Broker safety | Ready | Routing is paper-only and live orders are blocked. This does not certify accounting completeness. |
 | Complete accounting | **Blocked** | Tradier sandbox history cannot establish complete broker accounting; the account remains uninitialized, reconciliation is required, and accounting is unverified. |
 | Risk state | **Blocked** | Kill switch is enabled and paper-only mode remains enforced. |
 | Strategy availability | Ready | One strategy is active for paper trading and two candidates exist. |
-| Critical notifications | **Blocked** | Four unresolved critical notifications exist in total; three are non-deployment-monitor notifications. |
+| Critical notifications | **Blocked** | Three unresolved critical notifications exist outside deployment-monitor notifications. |
 | Scheduler health | Ready | Two workers and exactly one beat heartbeat/lease are evidenced; no recent unresolved scheduled-job failures are reported. |
 | Audit integrity | **Blocked** | The append-only audit chain still reports a historical fork at retained row 472. Original rows remain preserved. |
-| Recovery | **Blocked** | Cooldown has elapsed, but recovery remains in `cooldown` with accounting review required and automatic review blocked. The pause reason is a stale continuous-monitor heartbeat. |
+| Recovery | **Blocked** | Cooldown has elapsed, but recovery remains in `cooldown` with an uninitialized account, accounting review required, and automatic review blocked. The pause reason is a stale continuous-monitor heartbeat. |
 
 ## Broker qualification
 
@@ -78,16 +78,32 @@ No broker switch is authorized by this task.
 ## Data, model, and binding evidence
 
 - One verified daily dataset snapshot exists with a present artifact and
-  matching dataset hash and manifest. It is a current-cutoff, Yahoo-derived
-  artifact captured on 2026-09-11, not point-in-time adjusted historical
-  evidence.
+  matching dataset hash and manifest. Its immutable cutoff is 2026-09-11 and
+  its extraction-time metadata explicitly says it is not point-in-time
+  historical evidence. The later daily refresh repaired current database
+  prices but did not rewrite this immutable snapshot.
 - One active paper-only model binding exists and live authorization is false.
-- The bound model is a paper canary in mutable lifecycle state, but its
-  immutable registry row is not eligible for trading. The model/data lineage
-  therefore cannot clear the current readiness gates.
+- The full registered-model verifier passes for the bound artifact
+  (`logistic_regression`, one final holdout evaluation). Its immutable registry
+  lifecycle remains `challenger`; the mutable binding is a `paper_canary`, and
+  live authorization is false. Integrity success is not trading eligibility.
 - One succeeded training job is present, but successful training alone is not
   evidence of a current decision-session feed, a reconciled broker ledger, or
   permission to dispatch orders.
+
+## Post-refresh actions and limits
+
+The supported daily market-data importer was run for AAPL, MSFT, QQQ, and SPY.
+The primary yfinance requests failed with provider response parsing errors; the
+existing Yahoo chart fallback returned 501 rows per symbol through
+2026-09-16. This was a data refresh only. No broker request, order, account
+mutation, provider switch, model promotion, schedule change, kill-switch
+bypass, audit rewrite, or notification resolution was performed.
+
+The observation occurred at 00:52 America/New_York, outside the regular session.
+Therefore no authenticated Tradier production entitlement probe was treated as
+valid evidence. The intraday repair remains fail-closed with the same deferred
+window and unresolved intervals for all four symbols.
 
 ## Existing repair work
 
