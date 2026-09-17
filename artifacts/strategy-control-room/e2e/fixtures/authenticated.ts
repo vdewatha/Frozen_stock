@@ -1,9 +1,10 @@
 import { expect, test as base, type Page } from "@playwright/test";
 
-export type TrialRole = "viewer" | "operator" | "admin";
+export type TrialRole = "viewer" | "researcher" | "operator" | "admin";
 
 const secretNames: Record<TrialRole, string> = {
   viewer: "AUTH_VIEWER_KEY",
+  researcher: "AUTH_RESEARCHER_KEY",
   operator: "AUTH_OPERATOR_KEY",
   admin: "AUTH_ADMIN_KEY",
 };
