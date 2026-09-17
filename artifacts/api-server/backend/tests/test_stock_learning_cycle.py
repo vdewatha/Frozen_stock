@@ -33,7 +33,9 @@ from app.models import (
 from app.services.stock_forward_trial import POLICY
 from app.services.stock_learning_cycle import (
     create_learning_cycle,
+    create_paper_run_approval,
     cycle_projection,
+    paper_run_runtime_bounds,
     review_learning_cycle,
     run_scheduled_paper_trial_handoff_job,
     run_automatic_paper_promotion_job,
@@ -42,6 +44,16 @@ from app.services.stock_learning_cycle import (
     start_scheduled_learning_trial,
     sync_cycle_from_training_job,
 )
+
+
+def _approve_paper_cycle(db: Session, cycle: StockLearningCycle) -> None:
+    create_paper_run_approval(
+        db,
+        cycle.cycle_id,
+        actor="operator",
+        approving_actors=[],
+        **paper_run_runtime_bounds(cycle),
+    )
 
 
 def _db() -> Session:
@@ -125,7 +137,7 @@ def test_concurrent_scheduled_handoffs_share_one_binding_and_trial():
                 snapshot_id=snapshot_id, result_run_id=model_id,
             ))
             db.flush()
-            db.add(StockLearningCycle(
+            cycle = StockLearningCycle(
                 cycle_id=cycle_id, request_sha256="1" * 64,
                 trigger="scheduled", status="awaiting_admission",
                 stage="admission", requested_by="scheduler",
@@ -134,7 +146,10 @@ def test_concurrent_scheduled_handoffs_share_one_binding_and_trial():
                 snapshot_id=snapshot_id, training_job_id=job_id,
                 model_run_id=model_id, gates={}, evidence={},
                 last_reason="awaiting admission",
-            ))
+            )
+            db.add(cycle)
+            db.flush()
+            _approve_paper_cycle(db, cycle)
             db.commit()
 
         admission_barrier = Barrier(2)
@@ -313,7 +328,7 @@ def test_concurrent_scheduled_handoff_workers_defer_cross_cycle_paper_binding():
                     snapshot_id=snapshot_id, result_run_id=model_id,
                 ))
                 db.flush()
-                db.add(StockLearningCycle(
+                cycle = StockLearningCycle(
                     cycle_id=cycle_id, request_sha256=request_hashes[index],
                     trigger="scheduled", status="awaiting_admission",
                     stage="admission", requested_by="scheduler",
@@ -322,7 +337,10 @@ def test_concurrent_scheduled_handoff_workers_defer_cross_cycle_paper_binding():
                     snapshot_id=snapshot_id, training_job_id=job_id,
                     model_run_id=model_id, gates={}, evidence={},
                     last_reason="awaiting admission",
-                ))
+                )
+                db.add(cycle)
+                db.flush()
+                _approve_paper_cycle(db, cycle)
             db.commit()
 
         handoff_barrier = Barrier(2)
@@ -559,7 +577,7 @@ def test_deferred_scheduled_cycle_retries_after_active_trial_completes():
             request_payload={"symbols": ["SPY"], "horizon_bars": 5},
             snapshot_id=snapshot_id, result_run_id=model_id,
         ))
-        db.add(StockLearningCycle(
+        cycle = StockLearningCycle(
             cycle_id=cycle_id, request_sha256=f"{index + 11}" * 64,
             trigger="scheduled", status="awaiting_admission",
             stage="admission", requested_by="scheduler", symbols=["SPY"],
@@ -567,7 +585,10 @@ def test_deferred_scheduled_cycle_retries_after_active_trial_completes():
             seed=42, snapshot_id=snapshot_id, training_job_id=job_id,
             model_run_id=model_id, gates={}, evidence={},
             last_reason="Training completed; awaiting automatic paper-canary admission",
-        ))
+        )
+        db.add(cycle)
+        db.flush()
+        _approve_paper_cycle(db, cycle)
     db.commit()
 
     def _start(db, trial_id, actor):
@@ -947,6 +968,8 @@ def test_scheduled_handoff_retries_transient_preflight_without_blocking_trial():
         gates={}, evidence={}, last_reason="awaiting preflight",
     )
     db.add(cycle)
+    db.flush()
+    _approve_paper_cycle(db, cycle)
     db.commit()
 
     blocked_preflight = {

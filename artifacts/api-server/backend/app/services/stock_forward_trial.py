@@ -773,6 +773,38 @@ def start_trial(
     row = db.get(StockPaperTrial, trial_id)
     if not row: raise StockTrainingError("Trial not found")
     if row.status not in {"approved", "paused", "blocked"}: raise StockTrainingError("Trial cannot be started")
+    if row.source_cycle_id:
+        # Cycle-owned trials must use the same approval fence whether they are
+        # started by the scheduled handoff or by an authenticated operator
+        # retry.  Import lazily to keep the coordinator dependency acyclic.
+        from app.models import StockLearningCycle
+        from app.services.stock_learning_cycle import paper_run_approval_projection
+
+        cycle = db.get(StockLearningCycle, row.source_cycle_id)
+        approval = paper_run_approval_projection(db, cycle) if cycle else {
+            "status": "missing",
+            "reason": "Paper run approval cycle is missing",
+        }
+        if approval["status"] != "pass":
+            row.status = "blocked"
+            row.blocked_reason = approval.get("reason") or "Paper run approval is missing or mismatched"
+            write_audit_log(
+                db,
+                event_type="stock_forward_trial",
+                action="resume",
+                status="blocked",
+                message=row.blocked_reason,
+                entity_type="stock_paper_trial",
+                payload={
+                    "trial_id": row.id,
+                    "cycle_id": row.source_cycle_id,
+                    "operator": actor,
+                    "authorization": authorization or {},
+                    "paper_only": True,
+                    "live_authorized": False,
+                },
+            )
+            return row
     immutable_block = bool(
         row.blocked_reason
         and not (

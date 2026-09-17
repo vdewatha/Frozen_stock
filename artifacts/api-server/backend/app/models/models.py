@@ -609,6 +609,37 @@ class StockLearningCycle(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class StockPaperRunApproval(Base):
+    """Immutable, cycle-scoped authorization for one paper run handoff."""
+    __tablename__ = "stock_paper_run_approvals"
+    __table_args__ = (
+        CheckConstraint("environment = 'paper'", name="ck_stock_paper_approval_environment"),
+        CheckConstraint("paper_only = true", name="ck_stock_paper_approval_paper_only"),
+        CheckConstraint("live_authorized = false", name="ck_stock_paper_approval_live_disabled"),
+        UniqueConstraint("approval_sha256", name="uq_stock_paper_run_approval_digest"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cycle_id: Mapped[str] = mapped_column(
+        ForeignKey("stock_learning_cycles.cycle_id"), nullable=False, index=True
+    )
+    environment: Mapped[str] = mapped_column(String(16), nullable=False, default="paper")
+    execution_provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_switch: Mapped[Optional[dict]] = mapped_column(JSON)
+    symbols: Mapped[list] = mapped_column(JSON, nullable=False)
+    exposure_limits: Mapped[dict] = mapped_column(JSON, nullable=False)
+    duration_sessions: Mapped[int] = mapped_column(nullable=False)
+    schedule: Mapped[dict] = mapped_column(JSON, nullable=False)
+    stop_conditions: Mapped[list] = mapped_column(JSON, nullable=False)
+    approving_actors: Mapped[list] = mapped_column(JSON, nullable=False)
+    approval_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    paper_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
 class StockLearningScheduleControl(Base):
     """Singleton control for scheduled paper-learning decisions only."""
     __tablename__ = "stock_learning_schedule_control"

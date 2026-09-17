@@ -30,9 +30,11 @@ from app.models import (
     StockPaperRecoveryEvent,
     StockPaperRecoveryState,
     StockPaperTrial,
+    StockPaperRunApproval,
     StockMonitoringSnapshot,
     StockTrainingJob,
 )
+from app.core.config import settings
 from app.services.audit import write_audit_log
 from app.services.intraday_data import NY, feed_status, session_bounds
 from app.services.readiness import _scheduler_health
@@ -165,6 +167,236 @@ def _safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_safe(item) for item in value]
     return value
+
+
+def paper_run_runtime_bounds(
+    cycle: StockLearningCycle,
+    trial: StockPaperTrial | None = None,
+) -> dict:
+    """Return the non-secret bounds an approval must authorize exactly."""
+    policy = trial.policy if trial else {}
+    return {
+        "environment": "paper",
+        "execution_provider": settings.active_paper_broker,
+        "provider_switch": None,
+        "symbols": sorted({str(symbol).strip().upper() for symbol in cycle.symbols}),
+        "exposure_limits": {
+            "max_allocated_notional": str(
+                policy.get("max_allocated_notional", "10000")
+            ),
+            "max_risk_per_trade": str(
+                policy.get("max_risk_per_trade", "0.0025")
+            ),
+        },
+        "duration_sessions": int(policy.get("regular_sessions", 20)),
+        "schedule": {"trigger": cycle.trigger},
+        "stop_conditions": sorted([
+            "paper_only",
+            "live_authorized:false",
+            f"auto_pause_drawdown:{policy.get('auto_pause_drawdown', '0.02')}",
+        ]),
+    }
+
+
+def _approval_projection(
+    approval: StockPaperRunApproval | None,
+    *,
+    expected: dict,
+    reason: str | None = None,
+) -> dict:
+    if approval is None:
+        return {
+            "status": "missing",
+            "reason": reason or "Paper run approval is missing",
+            "record": None,
+            "expected": expected,
+            "paper_only": True,
+            "live_authorized": False,
+        }
+    return {
+        "status": "pass" if reason is None else "mismatch",
+        "reason": reason,
+        "record": {
+            "id": approval.id,
+            "environment": approval.environment,
+            "execution_provider": approval.execution_provider,
+            "provider_switch": approval.provider_switch,
+            "symbols": approval.symbols,
+            "exposure_limits": approval.exposure_limits,
+            "duration_sessions": approval.duration_sessions,
+            "schedule": approval.schedule,
+            "stop_conditions": approval.stop_conditions,
+            "approving_actors": approval.approving_actors,
+            "approval_sha256": approval.approval_sha256,
+            "created_at": approval.created_at,
+        },
+        "expected": expected,
+        "paper_only": True,
+        "live_authorized": False,
+    }
+
+
+def _approval_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _approval_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_approval_value(item) for item in value]
+    return str(value) if value is not None else None
+
+
+def _approval_mismatch(
+    approval: StockPaperRunApproval | None,
+    expected: dict,
+) -> str | None:
+    if approval is None:
+        return "Paper run approval is missing"
+    if approval.environment != expected["environment"]:
+        return "Paper run approval environment does not match paper execution"
+    if approval.paper_only is not True or approval.live_authorized is not False:
+        return "Paper run approval is not paper-only"
+    actual = {
+        "execution_provider": approval.execution_provider,
+        "provider_switch": approval.provider_switch,
+        "symbols": sorted({str(symbol).strip().upper() for symbol in approval.symbols}),
+        "exposure_limits": _approval_value(approval.exposure_limits),
+        "duration_sessions": approval.duration_sessions,
+        "schedule": _approval_value(approval.schedule),
+        "stop_conditions": sorted(str(item) for item in approval.stop_conditions),
+    }
+    comparable = {
+        "execution_provider": expected["execution_provider"],
+        "provider_switch": expected["provider_switch"],
+        "symbols": expected["symbols"],
+        "exposure_limits": expected["exposure_limits"],
+        "duration_sessions": expected["duration_sessions"],
+        "schedule": expected["schedule"],
+        "stop_conditions": sorted(expected["stop_conditions"]),
+    }
+    for key, value in comparable.items():
+        if actual.get(key) != value:
+            return f"Paper run approval does not match requested {key.replace('_', ' ')}"
+    if not approval.approving_actors:
+        return "Paper run approval has no approving actor"
+    return None
+
+
+def create_paper_run_approval(
+    db: Session,
+    cycle_id: str,
+    *,
+    actor: str,
+    environment: str,
+    execution_provider: str,
+    provider_switch: dict | None,
+    symbols: Iterable[str],
+    exposure_limits: dict,
+    duration_sessions: int,
+    schedule: dict,
+    stop_conditions: Iterable[str],
+    approving_actors: Iterable[str],
+) -> StockPaperRunApproval:
+    cycle = db.get(StockLearningCycle, cycle_id)
+    if not cycle:
+        raise StockTrainingError("Learning cycle not found")
+    trial = db.get(StockPaperTrial, cycle.trial_id) if cycle.trial_id else None
+    expected = paper_run_runtime_bounds(cycle, trial)
+    requested = {
+        "environment": environment,
+        "execution_provider": execution_provider,
+        "provider_switch": provider_switch or None,
+        "symbols": sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}),
+        "exposure_limits": _approval_value(exposure_limits),
+        "duration_sessions": duration_sessions,
+        "schedule": _approval_value(schedule),
+        "stop_conditions": sorted(str(item).strip() for item in stop_conditions if str(item).strip()),
+    }
+    if requested != expected:
+        mismatch = _approval_mismatch(
+            StockPaperRunApproval(
+                environment=requested["environment"],
+                execution_provider=requested["execution_provider"],
+                provider_switch=requested["provider_switch"],
+                symbols=requested["symbols"],
+                exposure_limits=requested["exposure_limits"],
+                duration_sessions=requested["duration_sessions"],
+                schedule=requested["schedule"],
+                stop_conditions=requested["stop_conditions"],
+                approving_actors=["request"],
+                paper_only=True,
+                live_authorized=False,
+            ),
+            expected,
+        )
+        raise StockTrainingError(mismatch or "Paper run approval does not match requested runtime bounds")
+    actors = sorted({
+        str(value).strip() for value in [*approving_actors, actor] if str(value).strip()
+    })
+    if not actors:
+        raise StockTrainingError("Paper run approval requires an approving actor")
+    approval_payload = {
+        "cycle_id": cycle_id,
+        **requested,
+        "approving_actors": actors,
+        "paper_only": True,
+        "live_authorized": False,
+    }
+    approval_hash = _digest(approval_payload)
+    existing = db.scalar(select(StockPaperRunApproval).where(
+        StockPaperRunApproval.cycle_id == cycle_id,
+        StockPaperRunApproval.approval_sha256 == approval_hash,
+    ))
+    if existing:
+        return existing
+    approval = StockPaperRunApproval(
+        cycle_id=cycle_id,
+        environment="paper",
+        execution_provider=requested["execution_provider"],
+        provider_switch=requested["provider_switch"],
+        symbols=requested["symbols"],
+        exposure_limits=requested["exposure_limits"],
+        duration_sessions=requested["duration_sessions"],
+        schedule=requested["schedule"],
+        stop_conditions=requested["stop_conditions"],
+        approving_actors=actors,
+        approval_sha256=approval_hash,
+        paper_only=True,
+        live_authorized=False,
+    )
+    db.add(approval)
+    db.flush()
+    write_audit_log(
+        db,
+        event_type="stock_learning_cycle",
+        action="paper_run_approval",
+        status="approved",
+        message="Paper run approval recorded for the requested runtime bounds",
+        entity_type="stock_learning_cycle",
+        payload={
+            "cycle_id": cycle_id,
+            "approval_id": approval.id,
+            "approval_sha256": approval_hash,
+            "approving_actors": actors,
+            "paper_only": True,
+            "live_authorized": False,
+        },
+    )
+    return approval
+
+
+def paper_run_approval_projection(db: Session, cycle: StockLearningCycle) -> dict:
+    approval = db.scalar(select(StockPaperRunApproval).where(
+        StockPaperRunApproval.cycle_id == cycle.cycle_id
+    ).order_by(
+        StockPaperRunApproval.created_at.desc(),
+        StockPaperRunApproval.id.desc(),
+    ))
+    trial = db.get(StockPaperTrial, cycle.trial_id) if cycle.trial_id else None
+    expected = paper_run_runtime_bounds(cycle, trial)
+    return _approval_projection(
+        approval,
+        expected=expected,
+        reason=_approval_mismatch(approval, expected),
+    )
 
 
 def _gate(status: str, *, reason: str | None = None, evidence: Any = None) -> dict:
@@ -1060,6 +1292,30 @@ def start_scheduled_learning_trial(
         cycle.last_reason = "Forward paper trial completed; awaiting immutable readiness evidence"
         return cycle
 
+    approval = paper_run_approval_projection(db, cycle)
+    cycle.gates = {
+        **(cycle.gates or {}),
+        "paper_run_approval": _gate(
+            "pass" if approval["status"] == "pass" else "fail",
+            reason=approval["reason"],
+            evidence={
+                "approval_id": (approval.get("record") or {}).get("id"),
+                "expected": approval["expected"],
+                "paper_only": True,
+                "live_authorized": False,
+            },
+        ),
+    }
+    if approval["status"] != "pass":
+        return _handoff_failure(
+            db,
+            cycle,
+            stage="preflight",
+            status="blocked",
+            reason=approval["reason"] or "Paper run approval is missing or mismatched",
+            evidence={"approval": approval},
+        )
+
     recovery = db.get(StockPaperRecoveryState, 1)
     if recovery and recovery.status != "armed":
         return _handoff_failure(
@@ -1922,6 +2178,7 @@ def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
     automatic_decision = db.query(StockPaperPromotionDecision).filter_by(
         cycle_id=cycle.cycle_id,
     ).order_by(StockPaperPromotionDecision.id.desc()).first()
+    approval = paper_run_approval_projection(db, cycle)
     return {
         "cycle_id": cycle.cycle_id, "status": cycle.status, "stage": cycle.stage,
         "trigger": cycle.trigger, "requested_by": cycle.requested_by,
@@ -1939,6 +2196,7 @@ def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
             "trial_id": trial.id if trial else None,
             "trial_status": trial.status if trial else None,
             "preflight": (cycle.gates or {}).get("preflight"),
+            "approval": approval,
             "reason": cycle.last_reason,
             "report_id": latest_report.id if latest_report else None,
             "report_decision": latest_report.decision if latest_report else None,

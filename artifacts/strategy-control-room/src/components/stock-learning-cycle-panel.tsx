@@ -5,6 +5,7 @@ import { RoleGate } from "@/components/access-control";
 import { StatusPill } from "@/components/status-pill";
 import {
   actOnStockLearningCycle,
+  createStockLearningCycleApproval,
   getErrorMessage,
   getStockLearningCycles,
   getStockLearningScheduleControl,
@@ -114,6 +115,23 @@ export function StockLearningCyclePanel() {
     }
   }
 
+  async function approvePaperRun(cycle: StockLearningCycle) {
+    const expected = cycle.handoff.approval.expected;
+    setBusy(true);
+    try {
+      await createStockLearningCycleApproval(cycle.cycle_id, {
+        ...expected,
+        approving_actors: [],
+      });
+      setStatus("Paper run approval recorded");
+      await refresh();
+    } catch (error) {
+      setStatus(getErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="rounded-md border border-line bg-white p-4" data-testid="stock-learning-cycle-panel">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -197,6 +215,44 @@ export function StockLearningCyclePanel() {
                   Preflight: {cycle.handoff.preflight?.status ?? "not checked"}
                   {cycle.handoff.report_id ? ` · report ${cycle.handoff.report_id}` : ""}
                   {cycle.handoff.report_decision ? ` · ${cycle.handoff.report_decision}` : ""}
+                </div>
+                <div
+                  className={`mt-2 rounded border p-2 ${
+                    cycle.handoff.approval.status === "pass"
+                      ? "border-emerald-200 bg-emerald-50"
+                      : "border-amber-200 bg-amber-50"
+                  }`}
+                  data-testid={`learning-cycle-paper-approval-${cycle.cycle_id}`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold">Paper run approval</span>
+                    <span className={gateClass(cycle.handoff.approval.status === "pass" ? "pass" : "blocked")}>
+                      {cycle.handoff.approval.status}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-slate-600">
+                    {cycle.handoff.approval.reason ?? "Approval matches the requested paper runtime bounds."}
+                  </div>
+                  {cycle.handoff.approval.record ? (
+                    <div className="mt-1 text-slate-500">
+                      {cycle.handoff.approval.record.approving_actors.join(", ")} ·{" "}
+                      {cycle.handoff.approval.record.execution_provider} ·{" "}
+                      {cycle.handoff.approval.record.duration_sessions} sessions
+                    </div>
+                  ) : null}
+                  {cycle.handoff.approval.status !== "pass" ? (
+                    <button
+                      className="focus-ring mt-2 rounded bg-amber-700 px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                      disabled={busy}
+                      onClick={() => void approvePaperRun(cycle)}
+                      type="button"
+                    >
+                      Record exact paper approval
+                    </button>
+                  ) : null}
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    Paper-only authorization; it cannot grant live authority.
+                  </div>
                 </div>
               </div>
               <div className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs">

@@ -95,6 +95,8 @@ def required_role(method: str, path: str) -> str:
         return "viewer"
     if method == "GET" and re.fullmatch(r"/stock/learning-cycles/[0-9a-f]{64}/automatic-promotion", path):
         return "viewer"
+    if method == "GET" and re.fullmatch(r"/stock/learning-cycles/[0-9a-f]{64}/approval", path):
+        return "viewer"
     if method == "GET" and path == "/stock/learning-cycles/schedule-control":
         return "viewer"
     if method == "POST" and path == "/stock/learning-cycles":
@@ -102,6 +104,8 @@ def required_role(method: str, path: str) -> str:
     if method == "POST" and path == "/stock/learning-cycles/schedule-control":
         return "operator"
     if method == "POST" and re.fullmatch(r"/stock/learning-cycles/[0-9a-f]{64}/(review|action)", path):
+        return "operator"
+    if method == "POST" and re.fullmatch(r"/stock/learning-cycles/[0-9a-f]{64}/approval", path):
         return "operator"
     if method == "POST" and re.fullmatch(r"/stock/training/models/[0-9a-f]{64}/lifecycle", path):
         return "operator"

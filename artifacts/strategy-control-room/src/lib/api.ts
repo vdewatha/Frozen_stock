@@ -3423,6 +3423,61 @@ export async function reviewStockLearningCycle(cycleId: string, reason: string, 
   });
 }
 
+export type PaperRunApprovalRecord = {
+  id: number;
+  environment: "paper";
+  execution_provider: string;
+  provider_switch: Record<string, string> | null;
+  symbols: string[];
+  exposure_limits: Record<string, string | number>;
+  duration_sessions: number;
+  schedule: Record<string, string>;
+  stop_conditions: string[];
+  approving_actors: string[];
+  approval_sha256: string;
+  created_at: string;
+};
+
+export type PaperRunApproval = {
+  status: "missing" | "pass" | "mismatch" | string;
+  reason: string | null;
+  record: PaperRunApprovalRecord | null;
+  expected: {
+    environment: "paper";
+    execution_provider: string;
+    provider_switch: Record<string, string> | null;
+    symbols: string[];
+    exposure_limits: Record<string, string | number>;
+    duration_sessions: number;
+    schedule: Record<string, string>;
+    stop_conditions: string[];
+  };
+  paper_only: true;
+  live_authorized: false;
+};
+
+export type CreatePaperRunApprovalRequest = {
+  environment: "paper";
+  execution_provider: string;
+  provider_switch: Record<string, string> | null;
+  symbols: string[];
+  exposure_limits: Record<string, string | number>;
+  duration_sessions: number;
+  schedule: Record<string, string>;
+  stop_conditions: string[];
+  approving_actors?: string[];
+};
+
+export async function createStockLearningCycleApproval(
+  cycleId: string,
+  body: CreatePaperRunApprovalRequest,
+): Promise<StockLearningCycle> {
+  return postJson<StockLearningCycle>(
+    `/stock/learning-cycles/${encodeURIComponent(cycleId)}/approval`,
+    body,
+  );
+}
+
 export type StockLearningCycleAction = "mark_eligible" | "start_canary" | "promote" | "demote" | "retire";
 
 export async function actOnStockLearningCycle(
@@ -3462,6 +3517,7 @@ export type StockLearningCycle = {
     trial_id: string | null;
     trial_status: string | null;
     preflight: { status: string; reason?: string; evidence?: unknown } | null;
+    approval: PaperRunApproval;
     reason: string | null;
     report_id: number | null;
     report_decision: string | null;

@@ -17,7 +17,9 @@ from app.services.stock_learning_cycle import (
     create_learning_cycle,
     cycle_action,
     cycle_projection,
+    create_paper_run_approval,
     list_learning_cycles,
+    paper_run_approval_projection,
     review_learning_cycle,
     scheduled_learning_control_projection,
     set_scheduled_learning_control,
@@ -77,6 +79,18 @@ class ScheduleControlBody(StrictBody):
         if len(value) < 3:
             raise ValueError("reason must contain at least three non-whitespace characters")
         return value
+
+
+class PaperRunApprovalBody(StrictBody):
+    environment: Literal["paper"]
+    execution_provider: str = Field(min_length=1, max_length=64)
+    provider_switch: dict[str, str] | None = None
+    symbols: list[str] = Field(min_length=1, max_length=25)
+    exposure_limits: dict[str, str | int | float] = Field(min_length=1, max_length=16)
+    duration_sessions: int = Field(ge=1, le=252)
+    schedule: dict[str, str] = Field(min_length=1, max_length=16)
+    stop_conditions: list[str] = Field(min_length=1, max_length=16)
+    approving_actors: list[str] = Field(default_factory=list, max_length=10)
 
 
 def _audit(db: Session, request: Request, action: str, cycle_id: str, payload: dict) -> None:
@@ -149,6 +163,17 @@ def get_cycle(
     return cycle_projection(db, row)
 
 
+@router.get("/{cycle_id}/approval")
+def get_paper_run_approval(
+    cycle_id: str = Path(..., pattern=r"^[0-9a-f]{64}$"),
+    db: Session = Depends(get_db),
+) -> dict:
+    row = db.get(StockLearningCycle, cycle_id)
+    if not row:
+        raise HTTPException(404, "Learning cycle not found")
+    return paper_run_approval_projection(db, row)
+
+
 @router.get("/{cycle_id}/automatic-promotion")
 def get_automatic_promotion(
     cycle_id: str = Path(..., pattern=r"^[0-9a-f]{64}$"),
@@ -184,6 +209,36 @@ def start_cycle(body: CreateCycleBody, request: Request, db: Session = Depends(g
                 enqueue_stock_training_job(db, job)
                 db.commit()
         return cycle_projection(db, cycle) | {"deduplicated": duplicate}
+    except StockTrainingError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.post("/{cycle_id}/approval")
+def approve_paper_run(
+    body: PaperRunApprovalBody,
+    cycle_id: str = Path(..., pattern=r"^[0-9a-f]{64}$"),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        approval = create_paper_run_approval(
+            db,
+            cycle_id,
+            actor=request.state.actor,
+            environment=body.environment,
+            execution_provider=body.execution_provider,
+            provider_switch=body.provider_switch,
+            symbols=body.symbols,
+            exposure_limits=body.exposure_limits,
+            duration_sessions=body.duration_sessions,
+            schedule=body.schedule,
+            stop_conditions=body.stop_conditions,
+            approving_actors=body.approving_actors,
+        )
+        db.commit()
+        cycle = db.get(StockLearningCycle, cycle_id)
+        return cycle_projection(db, cycle) if cycle else {"approval_id": approval.id}
     except StockTrainingError as exc:
         db.rollback()
         raise HTTPException(409, str(exc)) from None
