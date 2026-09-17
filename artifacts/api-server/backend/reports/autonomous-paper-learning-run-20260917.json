@@ -1,7 +1,7 @@
 {
   "report_type": "bounded_autonomous_paper_learning_run",
   "schema_version": 1,
-  "generated_at": "2026-09-17T04:56:17Z",
+  "generated_at": "2026-09-17T13:37:40Z",
   "scope": {
     "environment": "local",
     "production_certification": false,
@@ -50,7 +50,7 @@
     "alpaca_qualification": "not_established_by_task_176"
   },
   "data_and_model": {
-    "market_data_entitlement": "configured_but_unverified",
+    "market_data_entitlement": "verified_by_supported_ingestion",
     "unresolved_intraday_symbol_count": 4,
     "daily_history": "current_trusted_yahoo_chart_through_2026-09-16",
     "daily_history_refresh": {
@@ -60,7 +60,16 @@
       "rows_per_symbol": 501,
       "synthetic_rows": false
     },
-    "regular_session_feed_preflight": "unknown_outside_regular_session",
+    "regular_session_feed_preflight": {
+      "status": "blocked_incomplete",
+      "failure_class": "freshness",
+      "checked_at": "2026-09-17T13:37:40Z",
+      "symbols": ["AAPL", "MSFT", "QQQ", "SPY"],
+      "entitlement_state": "verified",
+      "last_completed_exchange_timestamp": "2026-09-17T13:34:00Z",
+      "missing_intervals": ["2026-09-17T13:35:00+00:00"],
+      "reason": "Missing completed regular-session intervals"
+    },
     "active_binding_paper_only": true,
     "active_binding_live_authorized": false,
     "model_eligible_for_trading": false,
@@ -68,7 +77,7 @@
   },
   "runtime": {
     "api_workflow": "running",
-    "control_room_workflow": "running",
+    "control_room_workflow": "not_started",
     "worker_count": 2,
     "beat_count": 1,
     "recent_unresolved_scheduled_failures": 0,
@@ -79,7 +88,7 @@
     "paper_run_approval_count_observed": 0,
     "paper_account_row_observed": false,
     "existing_trial_status": "paused",
-    "existing_trial_pause_reason_class": "fresh_complete_feed_required",
+    "existing_trial_pause_reason_class": "account_uncertainty",
     "new_cycle_created": false,
     "new_trial_started": false
   },
@@ -92,6 +101,12 @@
     "operational_runtime_probes": "clear",
     "critical_notifications": "unresolved"
   },
+  "unresolved_decisions": [
+    "Close the current four-symbol regular-session gap through supported ingestion and prove complete current feed evidence.",
+    "Qualify the active Tradier sandbox for complete accounting or obtain separate explicit approval for a different paper execution venue.",
+    "Complete authorized audit-chain quarantine resolution and evidence-backed accounting review.",
+    "Record one future dated paper-session approval only after substantive qualification gates pass."
+  ],
   "mutations": {
     "provider_changed": false,
     "schedule_changed": false,
