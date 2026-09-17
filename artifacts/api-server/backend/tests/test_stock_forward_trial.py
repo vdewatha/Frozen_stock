@@ -2338,6 +2338,150 @@ class ForwardTrialTests(unittest.TestCase):
             }])
             self.assertNotIn("raw_payload", projection["managed_lots"][0])
 
+    def test_position_handling_requires_reconciliation_before_claiming_completion(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="stopped")
+            row.pause_reason = "operator_stop"
+            row.policy = {**row.policy, "remaining_position_policy": "flatten"}
+
+            projection = trial_position_handling_projection(db, row)
+            self.assertEqual(projection["handling_status"], "unknown")
+            self.assertEqual(projection["reconciliation"]["status"], "unknown")
+
+            self.account(db, reconciled=False)
+            projection = trial_position_handling_projection(db, row)
+            self.assertEqual(projection["handling_status"], "unknown")
+            self.assertTrue(projection["reconciliation"]["reconciliation_required"])
+
+    def test_position_handling_keeps_pending_and_partial_exits_pending_until_refresh_completes(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="stopped")
+            row.pause_reason = "paper_session_expired"
+            row.policy = {**row.policy, "remaining_position_policy": "flatten"}
+            self.account(db)
+
+            entry = StockPaperOrder(
+                account_id=1,
+                client_order_id="refresh-entry",
+                symbol="SPY",
+                side="buy",
+                quantity=Decimal("2"),
+                status="filled",
+                source="manual_control_room",
+            )
+            exit_order = StockPaperOrder(
+                account_id=1,
+                client_order_id="refresh-exit",
+                symbol="SPY",
+                side="sell",
+                quantity=Decimal("2"),
+                status="accepted",
+                source="manual_control_room",
+            )
+            db.add_all([entry, exit_order])
+            db.flush()
+            decision = StockPaperTrialDecision(
+                trial_id=row.id,
+                symbol="SPY",
+                bar_timestamp=datetime(2025, 1, 2),
+                decision_timestamp=datetime(2025, 1, 2),
+                action="buy",
+                qualifying=True,
+                lineage=row.lineage,
+                order_id=entry.id,
+            )
+            db.add(decision)
+            db.flush()
+            lot = StockPaperTrialLot(
+                trial_id=row.id,
+                symbol="SPY",
+                entry_decision_id=decision.id,
+                entry_order_id=entry.id,
+                quantity=Decimal("2"),
+                entry_session="2025-01-02",
+                planned_horizon_sessions=5,
+                exit_order_id=exit_order.id,
+                exit_status="accepted",
+                exit_reason="paper_session_expired",
+            )
+            db.add(lot)
+            db.flush()
+            exit_order.trial_lot_id = lot.id
+            db.add_all([
+                StockPaperFill(
+                    account_id=1,
+                    order_id=entry.id,
+                    broker_activity_id="refresh-entry-fill",
+                    broker_order_id="refresh-entry-broker",
+                    symbol="SPY",
+                    side="buy",
+                    quantity=Decimal("2"),
+                    price=Decimal("100"),
+                    fee=Decimal("0"),
+                    cost_known=True,
+                    filled_at=datetime(2025, 1, 2, 15),
+                    raw_payload={},
+                ),
+                StockPaperPosition(
+                    account_id=1,
+                    symbol="SPY",
+                    quantity=Decimal("2"),
+                    average_entry_price=Decimal("100"),
+                    current_price=Decimal("101"),
+                    market_value=Decimal("202"),
+                    observed_at=datetime(2025, 1, 3, tzinfo=timezone.utc),
+                    raw_payload={},
+                ),
+            ])
+            db.flush()
+
+            pending = trial_position_handling_projection(db, row)
+            self.assertEqual(pending["handling_status"], "flatten_pending")
+
+            db.add(StockPaperFill(
+                account_id=1,
+                order_id=exit_order.id,
+                broker_activity_id="refresh-partial-exit-fill",
+                broker_order_id="refresh-partial-exit-broker",
+                symbol="SPY",
+                side="sell",
+                quantity=Decimal("1"),
+                price=Decimal("101"),
+                fee=Decimal("0"),
+                cost_known=True,
+                filled_at=datetime(2025, 1, 3, 15),
+                raw_payload={},
+            ))
+            exit_order.status = "partially_filled"
+            db.query(StockPaperPosition).one().quantity = Decimal("1")
+            db.flush()
+
+            partial = trial_position_handling_projection(db, row)
+            self.assertEqual(partial["handling_status"], "flatten_pending")
+            self.assertEqual(partial["managed_lots"][0]["exited_quantity"], "1.00000000")
+
+            db.add(StockPaperFill(
+                account_id=1,
+                order_id=exit_order.id,
+                broker_activity_id="refresh-complete-exit-fill",
+                broker_order_id="refresh-complete-exit-broker",
+                symbol="SPY",
+                side="sell",
+                quantity=Decimal("1"),
+                price=Decimal("101"),
+                fee=Decimal("0"),
+                cost_known=True,
+                filled_at=datetime(2025, 1, 3, 16),
+                raw_payload={},
+            ))
+            exit_order.status = "filled"
+            db.query(StockPaperPosition).one().quantity = Decimal("0")
+            db.flush()
+
+            completed = trial_position_handling_projection(db, row)
+            self.assertEqual(completed["handling_status"], "flattened")
+            self.assertEqual(completed["remaining_positions"], [])
+
     def test_graduation_rejection_archives_truthful_redacted_blockers(self):
         with Session(self.engine) as db:
             row = self.trial(db, status="completed")

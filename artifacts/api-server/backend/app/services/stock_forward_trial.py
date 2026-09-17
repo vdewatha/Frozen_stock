@@ -31,7 +31,7 @@ from app.services.stock_training import FEATURES, _calibrated_probability
 from app.services.stock_training_jobs import StockTrainingError, _dataset_from_record, validate_registered_stock_model
 from app.services.stock_paper_ledger import (
     reserve_stock_paper_order, dispatch_reserved_order, StockPaperError,
-    active_paper_account,
+    active_paper_account, NONTERMINAL_ORDER_STATUSES,
 )
 from app.services.audit import write_audit_log
 from app.services.intraday_data import (
@@ -308,6 +308,8 @@ def trial_position_handling_projection(db: Session, trial: StockPaperTrial) -> d
     projected_lots = []
     managed_remaining = Decimal("0")
     has_exit_intent = False
+    has_pending_exit = False
+    has_completed_exit = False
     stop_reason = trial.pause_reason if trial.pause_reason in {
         "paper_session_expired", "operator_stop"
     } else None
@@ -331,6 +333,12 @@ def trial_position_handling_projection(db: Session, trial: StockPaperTrial) -> d
         remaining_quantity = max(Decimal("0"), entry_quantity - exited_quantity)
         managed_remaining += remaining_quantity
         has_exit_intent = has_exit_intent or bool(lot.exit_reason)
+        has_pending_exit = has_pending_exit or any(
+            order.status in NONTERMINAL_ORDER_STATUSES for order in exit_orders
+        )
+        has_completed_exit = has_completed_exit or bool(exited_quantity) and not any(
+            order.status in NONTERMINAL_ORDER_STATUSES for order in exit_orders
+        )
         latest_exit = max(exit_orders, key=lambda order: order.id) if exit_orders else None
         per_lot_exit_reason = lot.exit_reason or stop_reason
         if lot.exit_reason in {"paper_session_expired", "operator_stop"}:
@@ -386,20 +394,31 @@ def trial_position_handling_projection(db: Session, trial: StockPaperTrial) -> d
     account_has_remaining_position = any(
         Decimal(str(position["quantity"])) > 0 for position in positions
     )
-    completed_exit = any(
-        Decimal(lot["exited_quantity"]) > 0 for lot in projected_lots
+    reconciliation_ready = bool(
+        account
+        and account.status == "reconciled"
+        and not account.reconciliation_required
     )
     if not new_entries_stopped:
         handling_status = "not_stopped"
     elif policy == "hold":
         handling_status = "held"
+    elif not reconciliation_ready:
+        # A missing or invalidated broker snapshot cannot prove that an exit
+        # completed. Keep the disposition unknown instead of treating an
+        # empty/stale position query as a completed reduction or flattening.
+        handling_status = "unknown"
     elif policy == "reduce":
-        handling_status = "reduced" if completed_exit or (
-            managed_remaining <= 0 and not account_has_remaining_position
+        handling_status = "reduced" if has_completed_exit or (
+            managed_remaining <= 0
+            and not account_has_remaining_position
+            and not has_pending_exit
         ) else "reduction_pending"
     elif policy == "flatten":
         handling_status = "flattened" if (
-            managed_remaining <= 0 and not account_has_remaining_position
+            managed_remaining <= 0
+            and not account_has_remaining_position
+            and not has_pending_exit
         ) else "flatten_pending"
     else:
         handling_status = "unknown"

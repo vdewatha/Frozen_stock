@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
+from decimal import Decimal
 import json
 import time
 import uuid
@@ -1139,6 +1140,102 @@ def test_learning_cycle_route_roles_cover_list_review_and_action():
                 expected = 200 if role in {"operator", "admin"} else 403
                 assert review.status_code == expected, (role, review.text)
                 assert action.status_code == expected, (role, action.text)
+
+
+@pytest.mark.parametrize(
+    "policy,stop_reason,expected_status",
+    [
+        ("hold", "paper_session_expired", "held"),
+        ("hold", "operator_stop", "held"),
+        ("reduce", "paper_session_expired", "reduced"),
+        ("reduce", "operator_stop", "reduced"),
+        ("flatten", "paper_session_expired", "flattened"),
+        ("flatten", "operator_stop", "flattened"),
+    ],
+)
+def test_authenticated_cycle_route_projects_stopped_position_policy_after_refresh(
+    policy, stop_reason, expected_status
+):
+    policy_id = {"hold": "1", "reduce": "2", "flatten": "3"}[policy]
+    reason_id = {"paper_session_expired": "1", "operator_stop": "2"}[stop_reason]
+    cycle_id = policy_id + reason_id + ("a" * 62)
+    with _db() as db:
+        trial = StockPaperTrial(
+            id="trial",
+            binding_id=1,
+            actor="operator",
+            status="stopped",
+            pause_reason=stop_reason,
+            policy={**POLICY, "remaining_position_policy": policy},
+            lineage={"universe": ["SPY"]},
+        )
+        cycle = StockLearningCycle(
+            cycle_id=cycle_id,
+            request_sha256=("b" * 63) + "1",
+            trigger="manual",
+            status="complete",
+            stage="promotion",
+            requested_by="operator",
+            symbols=["SPY"],
+            cutoff_date=date(2026, 9, 17),
+            horizon_days=5,
+            provider="yfinance",
+            seed=42,
+            binding_id=1,
+            trial_id=trial.id,
+            gates={},
+            evidence={},
+            last_reason="trial stopped",
+        )
+        db.add_all([
+            trial,
+            cycle,
+            StockPaperAccount(
+                broker=settings.active_paper_broker,
+                broker_account_id="cycle-route-account",
+                currency="USD",
+                cash=Decimal("1000"),
+                buying_power=Decimal("1000"),
+                equity=Decimal("1000"),
+                last_equity=Decimal("1000"),
+                status="reconciled",
+                accounting_verified=True,
+                reconciliation_required=False,
+                unexplained_residual=False,
+                last_reconciled_at=datetime(2026, 9, 17, tzinfo=timezone.utc),
+                raw_payload={},
+            ),
+        ])
+        db.commit()
+
+        app = FastAPI()
+        app.add_middleware(
+            AuthenticationMiddleware,
+            configuration=Settings(_env_file=None, **{
+                f"auth_{role}_key": role * 16
+                for role in ("viewer", "researcher", "operator", "admin")
+            }),
+        )
+        app.include_router(learning_cycle_api.router)
+        app.dependency_overrides[learning_cycle_api.get_db] = lambda: db
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/stock/learning-cycles/{cycle_id}",
+                headers=_headers("viewer"),
+            )
+
+        assert response.status_code == 200, response.text
+        projection = response.json()
+        position_handling = projection["position_handling"]
+        assert position_handling["approved_policy"] == policy
+        assert position_handling["stop_status"] == (
+            "expired" if stop_reason == "paper_session_expired" else "operator_stopped"
+        )
+        assert position_handling["handling_status"] == expected_status
+        assert position_handling["new_entries_stopped"] is True
+        assert projection["monitoring"]["status"] == "unknown"
+        assert position_handling["reconciliation"]["status"] == "reconciled"
 
 
 def test_launch_prerequisites_no_cycle_is_read_only_and_uses_configured_defaults():

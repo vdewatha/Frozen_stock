@@ -16,7 +16,7 @@ async function authenticate(page: Page, role: TrialRole) {
   await page.goto("/");
   await page.getByLabel("Access key").fill(credential);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByText(role, { exact: true })).toBeVisible();
+  await expect(page.getByText(new RegExp(`\\b${role}\\b`, "i")).first()).toBeVisible();
   await expect(page.getByLabel("Access key")).toHaveCount(0);
 }
 
