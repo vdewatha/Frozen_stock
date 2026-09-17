@@ -1,0 +1,194 @@
+{
+  "report_type": "paper_launch_readiness",
+  "schema_version": 1,
+  "generated_at": "2026-09-17T04:15:41Z",
+  "scope": {
+    "environment": "local",
+    "production_certification": false,
+    "active_market_data_provider": "tradier",
+    "active_paper_broker": "tradier_sandbox",
+    "active_symbols": ["AAPL", "MSFT", "QQQ", "SPY"],
+    "live_trading_enabled": false,
+    "paper_account_initialized": false
+  },
+  "go_no_go": "no_go",
+  "overall_status": "blocked",
+  "summary": {
+    "blocked": 5,
+    "ready": 3,
+    "warning": 1
+  },
+  "workflow_repair": {
+    "initial_failure": "stale local processes held the Redis and control-room Vite ports",
+    "action": "restarted managed API and web workflows",
+    "result": "api_and_web_running",
+    "database_or_trading_state_changed": false
+  },
+  "checks": [
+    {
+      "name": "daily_market_data",
+      "status": "blocked",
+      "evidence": {
+        "active_assets": 4,
+        "latest_daily_date": "2026-09-10",
+        "sources": ["yahoo_chart"],
+        "history_validator": "stale_or_future_dated_for_all_active_assets"
+      }
+    },
+    {
+      "name": "intraday_feed",
+      "status": "blocked",
+      "evidence": {
+        "provider": "tradier",
+        "feed_class": "sip",
+        "entitlement": "configured_but_unverified",
+        "latest_exchange_timestamp": "2026-09-16T19:57:00Z",
+        "unresolved_window": {
+          "start": "2026-09-16T19:58:00Z",
+          "end": "2026-09-16T20:00:00Z",
+          "symbol_count": 4
+        }
+      }
+    },
+    {
+      "name": "model_freshness",
+      "status": "warning",
+      "evidence": {
+        "latest_prediction_age_hours": 147.57,
+        "recent_prediction_available": false
+      }
+    },
+    {
+      "name": "broker_safety",
+      "status": "ready",
+      "evidence": {
+        "paper_only": true,
+        "live_orders_allowed": false,
+        "accounting_certified": false
+      }
+    },
+    {
+      "name": "complete_accounting",
+      "status": "blocked",
+      "evidence": {
+        "broker": "tradier_sandbox",
+        "broker_evidence_complete": false,
+        "ledger_status": "uninitialized",
+        "accounting_verified": false,
+        "reconciliation_required": true,
+        "costs_known": false,
+        "history_scope": "unavailable_in_sandbox",
+        "restart_recovery": "not_provable_from_sandbox_history"
+      }
+    },
+    {
+      "name": "risk_state",
+      "status": "blocked",
+      "evidence": {
+        "kill_switch_enabled": true,
+        "paper_only": true
+      }
+    },
+    {
+      "name": "strategy_availability",
+      "status": "ready",
+      "evidence": {
+        "active_strategies": 1,
+        "candidate_strategies": 2
+      }
+    },
+    {
+      "name": "critical_notifications",
+      "status": "blocked",
+      "evidence": {
+        "unresolved_critical_total": 4,
+        "unresolved_critical_excluding_deployment_monitor": 3
+      }
+    },
+    {
+      "name": "scheduler_health",
+      "status": "ready",
+      "evidence": {
+        "workers": 2,
+        "beat_heartbeats": 1,
+        "recent_unresolved_scheduled_failures": 0
+      }
+    },
+    {
+      "name": "audit_integrity",
+      "status": "blocked",
+      "evidence": {
+        "status": "historical_fork",
+        "first_broken_retained_row": 472,
+        "original_rows_preserved": true
+      }
+    },
+    {
+      "name": "recovery",
+      "status": "blocked",
+      "evidence": {
+        "status": "cooldown",
+        "cooldown_elapsed": true,
+        "accounting_review_required": true,
+        "automatic_review_status": "blocked",
+        "pause_reason_class": "stale_continuous_monitor_heartbeat",
+        "monitor_heartbeat": "2026-09-17T04:12:27.532818Z",
+        "watchdog_heartbeat": "2026-09-17T04:15:02.486040Z"
+      }
+    }
+  ],
+  "data_model_binding": {
+    "dataset_snapshot_count": 1,
+    "dataset_artifact_present": true,
+    "dataset_hash_matches": true,
+    "dataset_manifest_present": true,
+    "dataset_provider": "yahoo_chart",
+    "dataset_cutoff_date": "2026-09-11",
+    "dataset_point_in_time_adjustments": false,
+    "paper_binding_count": 1,
+    "active_binding_paper_only": true,
+    "active_binding_live_authorized": false,
+    "model_registry_lifecycle": "challenger",
+    "model_mutable_lifecycle": "paper_canary",
+    "model_eligible_for_trading": false,
+    "training_job_count": 1,
+    "succeeded_training_jobs_observed": 1
+  },
+  "existing_work_reused": [
+    {"task_ref": "#153", "title": "Restore the verified dataset snapshot needed by scheduled paper evidence", "state": "PROPOSED"},
+    {"task_ref": "#167", "title": "Prevent scheduled trial observations from failing on Decimal audit data", "state": "PROPOSED"},
+    {"task_ref": "#168", "title": "Keep paper recovery halted when broker pagination is incomplete", "state": "PROPOSED"},
+    {"task_ref": "#175", "title": "Align deployment-monitor broker safety with scoped live controls", "state": "PROPOSED"},
+    {"task_ref": "#176", "title": "Establish Alpaca paper cost and timestamp compatibility before qualification", "state": "MERGED", "result": "not_established"}
+  ],
+  "bounded_launch_proposal": {
+    "provider": "separately approved and qualified paper broker required",
+    "universe": ["AAPL", "MSFT", "QQQ", "SPY"],
+    "schedule": "regular NYSE sessions only after verified one-minute feed completeness",
+    "exposure_limits": "must be explicitly approved; no values inferred or changed",
+    "stop_conditions": [
+      "incomplete broker evidence",
+      "feed gaps or unverified entitlement",
+      "stale monitoring or watchdog evidence",
+      "broker/account disagreement",
+      "audit integrity breach",
+      "unresolved critical notification",
+      "recovery state",
+      "risk breach",
+      "ambiguous order submission"
+    ],
+    "required_approvals": [
+      "broker/provider switch if applicable",
+      "paper-account initialization",
+      "bounded paper-launch authorization",
+      "later model promotion authorization"
+    ],
+    "activated": false
+  },
+  "redaction": {
+    "credentials_included": false,
+    "account_identifiers_included": false,
+    "raw_broker_payloads_included": false,
+    "financial_balances_included": false
+  }
+}
