@@ -102,36 +102,59 @@ class AlpacaPaperClient:
             raise StockPaperUnavailable("Alpaca paper positions response is invalid")
         return result
 
-    def _pages(self, path: str, params: dict[str, str]) -> list[dict]:
-        """Page defensively with provider page tokens and identifier de-duplication."""
+    def _activity_pages(self, params: dict[str, str]) -> list[dict]:
+        """Backfill activities with Alpaca's last-activity-ID cursor.
+
+        Account activities do not return a continuation token.  When a full
+        page is returned, the ID of its last activity is sent as the next
+        ``page_token``.  This is intentionally separate from order paging:
+        orders are a bare list and use their documented ``until`` timestamp
+        cursor instead.
+        """
         rows, seen, token = [], set(), None
         for _ in range(100):  # explicit bounded failure rather than silently truncating evidence
             page_params = dict(params)
             if token:
                 page_params["page_token"] = token
-            result, headers = self._request_response("GET", path, params=page_params)
+            result, _headers = self._request_response(
+                "GET", "/v2/account/activities", params=page_params
+            )
             if isinstance(result, dict):
-                page = result.get("orders") or result.get("activities") or result.get("data") or []
-                next_token = result.get("next_page_token") or headers.get("x-next-page-token")
+                page = result.get("activities") or result.get("data") or []
             else:
-                page, next_token = result, headers.get("x-next-page-token")
+                page = result
             if not isinstance(page, list):
                 raise StockPaperUnavailable("Alpaca paper paginated response is invalid")
+            page_ids = []
+            new_ids = []
             for row in page:
+                if not isinstance(row, dict):
+                    raise StockPaperUnavailable("Alpaca paper activity page contains an invalid record")
                 ident = str(row.get("id") or "")
                 if not ident:
-                    raise StockPaperUnavailable("Alpaca paper page contains an unidentified record")
+                    raise StockPaperUnavailable("Alpaca paper activity lacks an identifier")
+                page_ids.append(ident)
                 if ident not in seen:
                     rows.append(row)
                     seen.add(ident)
-            if not next_token:
-                declared_size = int(params.get("page_size") or params.get("limit") or 0)
-                if declared_size and len(page) >= declared_size:
-                    raise StockPaperUnavailable("Alpaca page is full without a continuation cursor; refusing incomplete evidence")
+                    new_ids.append(ident)
+            declared_size = int(params.get("page_size") or 0)
+            if len(page) < declared_size:
                 return rows
+            if not page_ids:
+                raise StockPaperUnavailable(
+                    "Alpaca activity page is full but has no continuation cursor"
+                )
+            next_token = page_ids[-1]
             if next_token == token:
-                raise StockPaperUnavailable("Alpaca paper pagination token repeated")
-            token = str(next_token)
+                raise StockPaperUnavailable(
+                    "Alpaca paper activity pagination cursor did not advance"
+                )
+            if not new_ids:
+                raise StockPaperUnavailable(
+                    "Alpaca paper activity page repeated without new evidence"
+                )
+            token = next_token
         raise StockPaperUnavailable("Alpaca paper pagination exceeded safe page limit")
 
     def orders(self, after: datetime | None = None) -> list[dict]:
@@ -175,7 +198,7 @@ class AlpacaPaperClient:
         params: dict[str, str] = {"direction": "desc", "page_size": "100"}
         # Activities are fully backfilled each reconciliation. This prevents a
         # delayed broker activity from being lost behind a short lookback window.
-        return self._pages("/v2/account/activities", params)
+        return self._activity_pages(params)
 
     def submit_order(self, payload: dict) -> dict:
         # Kept out of all routes; callers must use dispatch_reserved_order.

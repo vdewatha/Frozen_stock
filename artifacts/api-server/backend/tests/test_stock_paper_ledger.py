@@ -339,14 +339,48 @@ class StockPaperLedgerTests(unittest.TestCase):
     def test_activities_page_and_late_fill_are_fully_backfilled_not_lookback_filtered(self):
         client = AlpacaPaperClient()
         calls = []
+        first_page = [{"id": f"activity-{index}", "activity_type": "FILL"} for index in range(100)]
         pages = iter([
-            ({"activities": [{"id": "recent", "activity_type": "FILL"}], "next_page_token": "older"}, {}),
-            ({"activities": [{"id": "late", "activity_type": "FILL"}]}, {}),
+            ({"activities": first_page, "next_page_token": "must-not-be-used"}, {}),
+            ({"activities": [{"id": "activity-99", "activity_type": "FILL"},
+                              {"id": "late", "activity_type": "FILL"}]}, {}),
         ])
         with patch.object(client, "_request_response", side_effect=lambda method, path, **kwargs: (calls.append(kwargs["params"]) or next(pages))):
             rows = client.fills(datetime(2026, 1, 1, tzinfo=timezone.utc))
-        self.assertEqual([row["id"] for row in rows], ["recent", "late"])
-        self.assertEqual(calls, [{"direction": "desc", "page_size": "100"}, {"direction": "desc", "page_size": "100", "page_token": "older"}])
+        self.assertEqual(len(rows), 101)
+        self.assertEqual(rows[0]["id"], "activity-0")
+        self.assertEqual(rows[-1]["id"], "late")
+        self.assertEqual(calls, [
+            {"direction": "desc", "page_size": "100"},
+            {"direction": "desc", "page_size": "100", "page_token": "activity-99"},
+        ])
+
+    def test_activity_pagination_rejects_missing_last_activity_cursor(self):
+        client = AlpacaPaperClient()
+        page = [{"id": f"activity-{index}", "activity_type": "FILL"} for index in range(99)]
+        page.append({"activity_type": "FILL"})
+        with patch.object(
+            client,
+            "_request_response",
+            return_value=({"activities": page}, {}),
+        ):
+            with self.assertRaisesRegex(StockPaperUnavailable, "lacks an identifier"):
+                client.fills()
+
+    def test_activity_pagination_rejects_repeated_nonadvancing_cursor(self):
+        client = AlpacaPaperClient()
+        page = [{"id": f"activity-{index}", "activity_type": "FILL"} for index in range(100)]
+        pages = iter([
+            ({"activities": page}, {}),
+            ({"activities": page}, {}),
+        ])
+        with patch.object(
+            client,
+            "_request_response",
+            side_effect=lambda method, path, **kwargs: next(pages),
+        ):
+            with self.assertRaisesRegex(StockPaperUnavailable, "cursor did not advance"):
+                client.fills()
 
     def test_partial_fill_explains_position_delta_without_claiming_unknown_costs(self):
         fill_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
@@ -412,7 +446,7 @@ class StockPaperLedgerTests(unittest.TestCase):
             )
 
 
-    def test_submitting_lookup_and_provider_pagination_are_read_only(self):
+    def test_submitting_lookup_and_activity_pagination_are_read_only(self):
         with Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())
             from app.models.stock_paper import StockPaperAccount, StockPaperOrder
@@ -426,11 +460,14 @@ class StockPaperLedgerTests(unittest.TestCase):
             self.assertEqual(gateway.lookups, 1)
         client = AlpacaPaperClient()
         pages = iter([
-            {"orders": [{"id": "1"}], "next_page_token": "next"},
-            {"orders": [{"id": "2"}]},
+            {"activities": [{"id": "1"}, {"id": "2"}]},
+            {"activities": [{"id": "3"}]},
         ])
         with patch.object(client, "_request_response", side_effect=lambda *_args, **_kwargs: (next(pages), {})):
-            self.assertEqual([row["id"] for row in client._pages("/v2/orders", {"limit": "2"})], ["1", "2"])
+            self.assertEqual(
+                [row["id"] for row in client._activity_pages({"page_size": "2"})],
+                ["1", "2", "3"],
+            )
 
     def test_uncertain_post_halts_and_never_blind_retries(self):
         with Session(self.engine) as db:
