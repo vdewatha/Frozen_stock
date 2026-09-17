@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.api.stock_learning_cycle as learning_cycle_api
 import app.services.stock_learning_cycle as learning_cycle_service
+import app.services.stock_forward_trial as forward_trial_service
 from app.core.config import Settings, settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
@@ -34,6 +35,7 @@ from app.models import (
     StockPaperEquitySnapshot,
     StockPaperFill,
     StockPaperOrder,
+    StockPaperRunApproval,
     StockPaperTrial,
     StockTrainingJob,
 )
@@ -54,13 +56,17 @@ from app.services.stock_learning_cycle import (
 
 
 def _approve_paper_cycle(db: Session, cycle: StockLearningCycle) -> None:
-    create_paper_run_approval(
-        db,
-        cycle.cycle_id,
-        actor="operator",
-        approving_actors=[],
+    # Seed historical approval evidence for handoff tests, not a new operator
+    # approval: several fixtures intentionally begin before admission.
+    db.add(StockPaperRunApproval(
+        cycle_id=cycle.cycle_id,
+        approving_actors=["operator"],
+        approval_sha256=learning_cycle_service._digest({"fixture_cycle": cycle.cycle_id}),
+        paper_only=True,
+        live_authorized=False,
         **paper_run_runtime_bounds(cycle),
-    )
+    ))
+    db.flush()
 
 
 def _db() -> Session:
@@ -71,6 +77,169 @@ def _db() -> Session:
     )
     Base.metadata.create_all(engine)
     return Session(engine)
+
+
+@pytest.mark.parametrize(
+    "stage,status,saved_gates,current_gates,missing_lineage,denial",
+    [
+        ("training", "blocked", {}, {}, False, "training"),
+        ("admission", "deferred", {}, {}, False, "admission"),
+        ("preflight", "running_forward_trial", {}, {}, False, "preflight"),
+        ("preflight", "awaiting_preflight", {}, {}, True, "accepted model"),
+        ("preflight", "blocked", {}, {"verified_feed": {"status": "fail", "reason": "Feed stale"}}, False, "verified_feed: Feed stale"),
+        ("preflight", "deferred", {"forward_trial": {"status": "fail", "reason": "Lineage incomplete"}}, {}, False, "forward_trial: Lineage incomplete"),
+        ("preflight", "awaiting_preflight", {}, {"risk_state": {"status": "unknown"}}, False, "risk_state"),
+        ("preflight", "awaiting_preflight", {}, {}, False, None),
+        ("preflight", "blocked", {"paper_run_approval": {"status": "fail", "reason": "Approval missing"}}, {}, False, None),
+        ("preflight", "deferred", {"risk_state": {"status": "fail", "reason": "Risk halted"}}, {}, False, None),
+        ("preflight", "blocked", {}, {}, False, "Blocker provenance"),
+        ("preflight", "deferred", {}, {}, False, "Blocker provenance"),
+    ],
+)
+def test_paper_approval_api_enforces_current_prerequisite_stage(
+    stage, status, saved_gates, current_gates, missing_lineage, denial,
+    corruption=None,
+):
+    with _db() as db:
+        cycle = StockLearningCycle(
+            cycle_id="a" * 64, request_sha256="b" * 64,
+            stage=stage, status=status, requested_by="operator",
+            symbols=["SPY"], cutoff_date=date(2026, 9, 17),
+            horizon_days=5, provider="yfinance", seed=42,
+            model_run_id=None if missing_lineage else "c" * 64,
+            snapshot_id="d" * 64,
+            binding_id=1, trial_id="trial", gates=saved_gates, evidence={},
+            last_reason=next((g.get("reason") for g in saved_gates.values()), None),
+        )
+        db.add(cycle)
+        db.add(StockDatasetSnapshot(
+            snapshot_id="d" * 64, dataset_sha256="f" * 64,
+            cutoff_date=date(2026, 9, 17), universe=["SPY"],
+            provider="yfinance", feature_config_id="features", horizon_days=5,
+            artifact_path="/immutable/snapshot", artifact_sha256="f" * 64,
+            metadata_json={},
+        ))
+        db.add(StockModelRegistry(
+            run_id="c" * 64, snapshot_id="d" * 64,
+            manifest_sha256="f" * 64, artifact_path="/immutable/model",
+            training_metadata={},
+        ))
+        db.add(StockPaperModelBinding(
+            id=1, model_run_id="c" * 64, snapshot_id="d" * 64,
+            binding_sha256="e" * 64, purpose="scheduled paper trial",
+            paper_only=True, live_authorized=False, bound_by="scheduler",
+            reason="test", source_cycle_id=cycle.cycle_id,
+        ))
+        db.add(StockPaperBindingState(
+            id=1, active_binding_id=1, changed_by="scheduler", reason="test",
+        ))
+        lineage = {
+            "model_run_id": "c" * 64, "snapshot_id": "d" * 64,
+            "binding_hash": "e" * 64, "model_hash": "f" * 64,
+            "dataset_sha256": "f" * 64, "cutoff_date": "2026-09-17",
+            "universe": ["SPY"], "cost_assumptions": {},
+            "policy_sha256": forward_trial_service._hash(POLICY),
+        }
+        lineage["lineage_sha256"] = forward_trial_service._hash(lineage)
+        policy = dict(POLICY)
+        if corruption == "policy":
+            policy["max_sessions"] = 999
+        elif corruption:
+            lineage[corruption] = "0" * 64
+        db.add(StockPaperTrial(
+            id="trial", binding_id=1, actor="scheduler",
+            source_cycle_id=cycle.cycle_id, status="approved", policy=policy,
+            lineage=lineage,
+        ))
+        db.commit()
+        body = {**paper_run_runtime_bounds(cycle), "approving_actors": []}
+        app = FastAPI()
+        app.add_middleware(
+            AuthenticationMiddleware,
+            configuration=Settings(_env_file=None, **{
+                f"auth_{role}_key": role * 16
+                for role in ("viewer", "researcher", "operator", "admin")
+            }),
+        )
+        app.include_router(learning_cycle_api.router)
+        app.dependency_overrides[learning_cycle_api.get_db] = lambda: db
+        with (
+            # Keep filesystem/model loading out of route tests; immutable trial
+            # hashes, policy and digest still use the real canonical validator.
+            patch.object(forward_trial_service, "_dataset_from_record", return_value=MagicMock()),
+            patch.object(forward_trial_service, "validate_registered_stock_model", return_value={}),
+            patch.object(learning_cycle_service, "evaluate_cycle_prerequisites",
+                         return_value={"verified_feed": {"status": "pass"}, **current_gates}),
+            patch.object(learning_cycle_service, "evaluate_launch_admission_prerequisites",
+                         return_value={"risk_state": current_gates.get("risk_state", {"status": "pass"})}),
+            TestClient(app) as client,
+        ):
+            response = client.post(
+                f"/stock/learning-cycles/{cycle.cycle_id}/approval",
+                headers=_headers("operator"), json=body,
+            )
+            if denial:
+                assert response.status_code == 409, response.text
+                assert denial in response.json()["detail"]
+                assert db.query(StockPaperRunApproval).count() == 0
+                assert db.query(AuditLog).count() == 0
+            else:
+                assert response.status_code == 200, response.text
+                approval = db.query(StockPaperRunApproval).one()
+                assert approval.paper_only is True
+                assert approval.live_authorized is False
+                assert approval.environment == "paper"
+                assert approval.approving_actors == ["operator"]
+                repeat = client.post(
+                    f"/stock/learning-cycles/{cycle.cycle_id}/approval",
+                    headers=_headers("operator"), json=body,
+                )
+                assert repeat.status_code == 200, repeat.text
+                assert db.query(StockPaperRunApproval).count() == 1
+                assert db.query(AuditLog).count() == 1
+                # Old passing gate snapshots cannot hide handoff-only blockers.
+                cycle.status = "blocked"
+                cycle.gates = {"paper_binding": {"status": "pass"}, "forward_trial": {"status": "pass"}}
+                cycle.last_reason = "The cycle paper binding is no longer the active paper canary"
+                state = db.get(StockPaperBindingState, 1)
+                state.active_binding_id = 2
+                db.commit()
+                rejected = client.post(
+                    f"/stock/learning-cycles/{cycle.cycle_id}/approval",
+                    headers=_headers("operator"), json=body,
+                )
+                assert rejected.status_code == 409, rejected.text
+                assert "paper_binding" in rejected.json()["detail"]
+                state.active_binding_id = 1
+                trial = db.get(StockPaperTrial, "trial")
+                trial.lineage = {"model_run_id": "f" * 64, "snapshot_id": "d" * 64}
+                cycle.last_reason = "Trial lineage no longer matches"
+                db.commit()
+                rejected = client.post(
+                    f"/stock/learning-cycles/{cycle.cycle_id}/approval",
+                    headers=_headers("operator"), json=body,
+                )
+                assert rejected.status_code == 409, rejected.text
+                assert "forward_trial" in rejected.json()["detail"]
+                trial.lineage = {"model_run_id": "c" * 64, "snapshot_id": "d" * 64}
+                cycle.last_reason = "Artifact integrity validation failed"
+                db.commit()
+                rejected = client.post(
+                    f"/stock/learning-cycles/{cycle.cycle_id}/approval",
+                    headers=_headers("operator"), json=body,
+                )
+                assert rejected.status_code == 409, rejected.text
+                assert "Artifact integrity validation failed" in rejected.json()["detail"]
+                assert db.query(StockPaperRunApproval).count() == 1
+                assert db.query(AuditLog).count() == 1
+
+
+@pytest.mark.parametrize("corruption", ["binding_hash", "model_hash", "policy", "policy_sha256", "lineage_sha256"])
+def test_paper_approval_rejects_corrupted_immutable_trial_artifact(corruption):
+    test_paper_approval_api_enforces_current_prerequisite_stage(
+        "preflight", "awaiting_preflight", {}, {}, False, "trial_artifact",
+        corruption=corruption,
+    )
 
 
 def _postgres_schema_engine():

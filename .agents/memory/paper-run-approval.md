@@ -14,3 +14,9 @@ Approval eligibility must distinguish missing approval from failed launch prereq
 **Why:** Scheduled handoff records missing approval as a blocked preflight state; requiring an unblocked cycle before offering approval creates a circular dependency. Viewing prerequisites must not run authenticated feed probes or broker reconciliation.
 
 **How to apply:** Exclude only the approval requirement itself when evaluating eligibility, retain admission/lineage requirements, and allow current prerequisite checks to supersede their historical results.
+
+Do not infer that a blocked preflight is approval-only from passing saved gates.
+
+**Why:** Handoff failures can record only a reason while leaving prior passing gate evidence intact. A fresh global prerequisite check does not establish that this cycle still owns the active canary or has valid trial lineage.
+
+**How to apply:** Check current cycle-specific binding and trial evidence, and require an identified approval-only blocker or an exact prerequisite repair before accepting a blocked/deferred cycle. Unexplained blockers require a governed handoff retry, not an approval override.

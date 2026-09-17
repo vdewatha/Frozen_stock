@@ -308,7 +308,77 @@ def create_paper_run_approval(
     cycle = db.get(StockLearningCycle, cycle_id)
     if not cycle:
         raise StockTrainingError("Learning cycle not found")
-    trial = db.get(StockPaperTrial, cycle.trial_id) if cycle.trial_id else None
+    eligible, reason = launch_preflight_eligibility(
+        cycle, prerequisites_ready=True,
+    )
+    if not eligible:
+        raise StockTrainingError(f"Paper approval rejected at {cycle.stage}: {reason}")
+    checked_at = _now()
+    current_gates = {
+        **evaluate_cycle_prerequisites(
+            db, symbols=cycle.symbols, provider=cycle.provider, now=checked_at,
+        ),
+        **evaluate_launch_admission_prerequisites(db, now=checked_at),
+    }
+    if not current_gates:
+        raise StockTrainingError("Paper approval rejected at preflight: prerequisite evidence is missing")
+    # Fresh read-only evidence can supersede a repaired historical failure.
+    gates = {**(cycle.gates or {}), **current_gates}
+    for name, gate in gates.items():
+        if name != "paper_run_approval" and gate.get("status") != "pass":
+            raise StockTrainingError(
+                f"Paper approval rejected at preflight prerequisite {name}: "
+                f"{gate.get('reason') or 'Prerequisite has not passed'}"
+            )
+    trial = db.get(StockPaperTrial, cycle.trial_id)
+    binding = db.get(StockPaperModelBinding, cycle.binding_id)
+    binding_state = db.get(StockPaperBindingState, 1)
+    if (
+        not binding or not binding_state
+        or binding_state.active_binding_id != cycle.binding_id
+        or binding.model_run_id != cycle.model_run_id
+        or binding.snapshot_id != cycle.snapshot_id
+        or not binding.paper_only or binding.live_authorized
+    ):
+        raise StockTrainingError(
+            "Paper approval rejected at preflight prerequisite paper_binding: "
+            "The cycle binding must be the active paper-only canary with matching model and snapshot"
+        )
+    if (
+        not trial or trial.binding_id != cycle.binding_id
+        or trial.source_cycle_id != cycle.cycle_id or trial.status != "approved"
+        or trial.lineage.get("model_run_id") != cycle.model_run_id
+        or trial.lineage.get("snapshot_id") != cycle.snapshot_id
+    ):
+        raise StockTrainingError(
+            "Paper approval rejected at preflight prerequisite forward_trial: "
+            "An approved forward trial with matching cycle, binding, model and snapshot is required"
+        )
+    if cycle.status in {"blocked", "deferred"}:
+        # Some handoff failures only set last_reason, leaving old passing gates.
+        # Only a known approval blocker or an exactly identified repaired gate
+        # can explain away a durable blocked state.
+        explained = any(
+            gate.get("status") != "pass"
+            and bool(cycle.last_reason)
+            and gate.get("reason") == cycle.last_reason
+            and (
+                name == "paper_run_approval"
+                or current_gates.get(name, {}).get("status") == "pass"
+            )
+            for name, gate in (cycle.gates or {}).items()
+        )
+        if not explained:
+            raise StockTrainingError(
+                f"Paper approval rejected at preflight: unresolved {cycle.status} prerequisite: "
+                f"{cycle.last_reason or 'Blocker provenance is unavailable'}"
+            )
+    try:
+        validate_trial_artifact(db, trial)
+    except (StockTrainingError, KeyError, TypeError, ValueError) as exc:
+        raise StockTrainingError(
+            f"Paper approval rejected at preflight prerequisite trial_artifact: {exc}"
+        ) from None
     expected = paper_run_runtime_bounds(cycle, trial)
     requested = {
         "environment": environment,
