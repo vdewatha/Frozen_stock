@@ -50,6 +50,7 @@ from app.services.stock_learning_cycle import (
     sync_cycle_from_trial,
     sync_cycle_observability,
 )
+from app.services.agent_research import run_agent_research, refresh_agent_research_evaluations
 
 
 def _json_safe(value):
@@ -180,6 +181,7 @@ def daily_market_data_import() -> dict:
         )
         journal = refresh_decision_journal_outcomes(db, source="daily_market_data_import", notify=True)
         replay_monitor = run_memory_replay_gate_monitor(db, source="daily_market_data_import", limit=60, top_k=3)
+        agent_evaluation_updates = refresh_agent_research_evaluations(db)
         return {
             "status": "complete",
             "job": "daily_market_data_import",
@@ -187,6 +189,7 @@ def daily_market_data_import() -> dict:
             "corporate_actions": corporate_actions,
             "decision_journal": journal,
             "memory_replay_gate_monitor": replay_monitor,
+            "agent_research_evaluation_updates": agent_evaluation_updates,
         }
 
     return _run_job("daily_market_data_import", work)
@@ -472,6 +475,18 @@ def stock_training_job(job_id: str) -> dict:
         return result
     finally:
         db.close()
+
+
+@celery_app.task(
+    soft_time_limit=45,
+    time_limit=55,
+)
+def agent_research_job(run_id: str) -> dict:
+    """Run one bounded research-only agent request with no broker tools."""
+    return _run_job(
+        "agent_research_job",
+        lambda db: run_agent_research(db, run_id),
+    )
 
 @celery_app.task
 def recover_stock_training_jobs_job() -> dict:

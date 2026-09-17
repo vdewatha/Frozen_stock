@@ -461,6 +461,40 @@ class ResearchModelRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class AgentResearchRun(Base):
+    """Bounded, non-trading output from the pinned TradingAgents research lane."""
+
+    __tablename__ = "agent_research_runs"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_agent_research_run_dedupe"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed', 'unavailable')",
+            name="ck_agent_research_run_status",
+        ),
+        CheckConstraint("eligible_for_trading = false", name="ck_agent_research_run_ineligible"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
+    dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    eligible_for_trading: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    framework_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_snapshot: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    result: Mapped[Optional[dict]] = mapped_column(JSON)
+    evaluation: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    usage: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    decision_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class StockDatasetSnapshot(Base):
     __tablename__ = "stock_dataset_snapshots"
 

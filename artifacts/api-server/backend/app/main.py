@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.api.research import router as research_router
+from app.api.agent_research import router as agent_research_router
 from app.api.crypto_research import router as crypto_router
 from app.api.shadow_evidence import router as shadow_evidence_router
 from app.api.stock_paper import router as stock_paper_router
@@ -50,6 +51,7 @@ def on_startup() -> None:
 
 app.include_router(router, prefix="/api")
 app.include_router(research_router, prefix="/api")
+app.include_router(agent_research_router, prefix="/api")
 app.include_router(crypto_router, prefix="/api")
 app.include_router(shadow_evidence_router, prefix="/api")
 app.include_router(stock_paper_router, prefix="/api")

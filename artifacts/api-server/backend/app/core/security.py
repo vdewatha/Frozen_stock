@@ -37,7 +37,7 @@ READ_PATHS = {
     "/assets", "/strategies", "/market-regimes", "/news", "/paper-trades",
     "/audit-logs", "/notifications", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
-    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs",
+    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs", "/research/agent-runs",
     "/stock/training/jobs", "/stock/training/binding", "/stock/learning-cycles",
     "/stock/learning-cycles/launch-prerequisites",
     "/stock-paper/status",
@@ -57,6 +57,7 @@ RESEARCH_POSTS = {
     "/watchlist/import", "/experiments/run",
     "/stock/training/jobs",
     "/stock/learning-cycles",
+    "/research/agent-runs",
 }
 OPERATOR_POSTS = {
     "/crypto/paper/intents", "/crypto/paper/kill-switch/enable",
@@ -136,6 +137,10 @@ def required_role(method: str, path: str) -> str:
     # Other nested research routes retain the default admin requirement.
     if method == "GET" and re.fullmatch(r"/research/runs/[^/]+", path):
         return "viewer"
+    if method == "GET" and re.fullmatch(r"/research/agent-runs/[0-9a-f-]{36}", path):
+        return "viewer"
+    if method == "POST" and path == "/research/agent-runs":
+        return "researcher"
     if method == "GET" and (
         re.fullmatch(r"/market-data/[^/]+", path)
         or re.fullmatch(r"/market-data/intraday/[^/]+(?:/status)?", path)

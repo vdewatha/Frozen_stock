@@ -1721,6 +1721,55 @@ export async function getResearchRuns(): Promise<{ items: ResearchRunSummary[]; 
   return handleResponse<{ items: ResearchRunSummary[]; total: number }>(response);
 }
 
+export type AgentResearchResult = {
+  recommendation: "BUY" | "SELL" | "HOLD";
+  rationale: string;
+  confidence: number;
+  limitations: string[];
+  decision_at?: string;
+};
+
+export type AgentResearchRun = {
+  run_id: string;
+  symbol: "AAPL" | "MSFT" | "QQQ" | "SPY" | string;
+  status: "queued" | "running" | "completed" | "failed" | "unavailable" | string;
+  eligible_for_trading: false;
+  framework_version: string;
+  prompt_version: string;
+  model_name: string;
+  requested_by: string;
+  source_snapshot: Array<Record<string, unknown>>;
+  result: AgentResearchResult | null;
+  evaluation: {
+    status: string;
+    horizon_days?: number;
+    baseline?: string | Record<string, unknown>;
+    pending_reason?: string;
+    qualification?: string;
+    source_cutoff?: string;
+    outcome_date?: string;
+    outcome_return?: number;
+    outcome_up?: boolean;
+    agent?: { recommendation: string; directional_correct: boolean | null; directional_score_status: string };
+    baseline_result?: Record<string, unknown>;
+    comparison?: { status: string; reason?: string | null };
+  };
+  usage: Record<string, unknown>;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export async function getAgentResearchRuns(): Promise<{ items: AgentResearchRun[]; total: number }> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/research/agent-runs?limit=20`, { cache: "no-store" });
+  return handleResponse<{ items: AgentResearchRun[]; total: number }>(response);
+}
+
+export async function startAgentResearch(symbol: string): Promise<AgentResearchRun & { deduplicated: boolean }> {
+  return postJson<AgentResearchRun & { deduplicated: boolean }>("/research/agent-runs", { symbol });
+}
+
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const response = await authenticatedFetch(`${API_BASE_URL}${path}`, {
     method: "POST",
