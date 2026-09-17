@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     active_paper_broker: str = "tradier_sandbox"
     intraday_enabled: bool = True
     stock_training_artifact_root: str = "./stock_training_artifacts"
+    # Read-only launch preflight defaults are deliberately limited to the
+    # supported paper-learning universe.  A cycle request always overrides
+    # these values with its immutable symbols and provider.
+    stock_learning_default_symbols: list[str] = ["SPY"]
+    stock_learning_default_provider: str = "yfinance"
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

@@ -39,6 +39,7 @@ READ_PATHS = {
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
     "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs",
     "/stock/training/jobs", "/stock/training/binding", "/stock/learning-cycles",
+    "/stock/learning-cycles/launch-prerequisites",
     "/stock-paper/status",
     "/live-broker/status",
     "/stock/forward-trials", "/stock/forward-trials/bindings/eligible",

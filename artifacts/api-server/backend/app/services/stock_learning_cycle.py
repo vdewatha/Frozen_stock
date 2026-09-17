@@ -7,7 +7,7 @@ and decisions between those systems without becoming a second model registry.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 from typing import Any, Iterable
@@ -33,13 +33,23 @@ from app.models import (
     StockPaperRunApproval,
     StockMonitoringSnapshot,
     StockTrainingJob,
+    Notification,
+    RiskRule,
 )
 from app.core.config import settings
 from app.services.audit import write_audit_log
 from app.services.intraday_data import NY, feed_status, session_bounds
 from app.services.readiness import _scheduler_health
 from app.services.stock_forward_trial import trial_feed_preflight
-from app.services.stock_paper_ledger import active_paper_account
+from app.services.stock_paper_ledger import (
+    TRADIER_PAPER_EVIDENCE,
+    active_paper_account,
+)
+from app.services.broker import stock_paper_broker_status
+from app.services.operational_hardening import _audit_chain_check
+from app.services.portfolio_risk import portfolio_risk_snapshot
+from app.services.risk import DEFAULT_RISK_RULES
+from app.services.stock_recovery import HEARTBEAT_TIMEOUT
 from app.services.stock_promotion_readiness import evaluate_promotion_readiness
 from app.services.live_safety import evaluate_live_safety
 from app.services.stock_training_jobs import (
@@ -520,8 +530,269 @@ def evaluate_cycle_prerequisites(
     }
 
 
+def evaluate_launch_admission_prerequisites(
+    db: Session,
+    *,
+    now: datetime | None = None,
+) -> dict[str, dict]:
+    """Read current paper-launch evidence without changing execution state.
+
+    Dataset preflight is necessary but not sufficient for a paper handoff.
+    These gates use persisted evidence and configuration only: this projection
+    never creates singleton state, invokes a broker gateway, or changes risk,
+    recovery, notification, or audit records.
+    """
+    gates: dict[str, dict] = {}
+
+    try:
+        broker = stock_paper_broker_status(db)
+        accounting = broker.get("accounting") or {}
+        venue = str(broker.get("paper_broker") or "").strip().lower()
+        provider_complete = accounting.get("provider_evidence_complete")
+        accounting_ready = accounting.get("ready") is True
+        # Alpaca's stock-paper status intentionally reports provider-specific
+        # evidence as None; its affirmative, persisted accounting projection is
+        # the qualification evidence for that supported venue.  Tradier is
+        # non-qualifying unless its provider evidence is explicitly complete.
+        qualified = (
+            venue == "alpaca_paper" and accounting_ready
+        ) or (
+            venue == "tradier_sandbox"
+            and accounting_ready
+            and provider_complete is True
+        )
+        gates["broker_qualification"] = _gate(
+            "pass" if qualified else "fail",
+            reason=None if qualified else (
+                "Affirmative broker accounting and provider qualification evidence is required"
+            ),
+            evidence={
+                "paper_broker": venue or None,
+                "accounting_ready": accounting_ready,
+                "provider_evidence_complete": provider_complete,
+                "provider_evidence": TRADIER_PAPER_EVIDENCE
+                if provider_complete is False else None,
+                "live_trading_blocked": broker.get("live_trading_blocked"),
+            },
+        )
+    except Exception as exc:
+        gates["broker_qualification"] = _gate(
+            "unknown",
+            reason=f"Paper broker qualification evidence unavailable: {exc.__class__.__name__}",
+        )
+
+    try:
+        risk_rule = db.query(RiskRule).filter(
+            RiskRule.is_active.is_(True)
+        ).order_by(RiskRule.id).first()
+        rules = DEFAULT_RISK_RULES | ((risk_rule.value if risk_rule else {}) or {})
+        portfolio = portfolio_risk_snapshot(db)
+        breach_alerts = [
+            alert for alert in portfolio.get("alerts", [])
+            if alert.get("severity") == "breach"
+        ]
+        risk_ready = bool(
+            risk_rule
+            and rules.get("paper_only", True)
+            and not rules.get("kill_switch_enabled", False)
+            and not breach_alerts
+        )
+        gates["risk_state"] = _gate(
+            "pass" if risk_ready else "fail",
+            reason=None if risk_ready else (
+                "Paper risk controls are missing, disabled, or the kill switch is active"
+            ),
+            evidence={
+                "risk_rule_present": bool(risk_rule),
+                "paper_only": bool(rules.get("paper_only", True)),
+                "kill_switch_enabled": bool(rules.get("kill_switch_enabled", False)),
+                "breach_alerts": breach_alerts,
+            },
+        )
+    except Exception as exc:
+        gates["risk_state"] = _gate(
+            "unknown",
+            reason=f"Paper risk state unavailable: {exc.__class__.__name__}",
+        )
+
+    try:
+        recovery = db.get(StockPaperRecoveryState, 1)
+        observed_at = _utc(now or _now())
+        monitor_at = _utc(recovery.last_monitor_heartbeat_at) if recovery else None
+        watchdog_at = _utc(recovery.last_watchdog_heartbeat_at) if recovery else None
+        monitor_fresh = bool(
+            monitor_at
+            and timedelta(0) <= observed_at - monitor_at <= HEARTBEAT_TIMEOUT
+        )
+        watchdog_fresh = bool(
+            watchdog_at
+            and timedelta(0) <= observed_at - watchdog_at <= HEARTBEAT_TIMEOUT
+        )
+        recovery_ready = bool(
+            recovery
+            and recovery.status == "armed"
+            and not recovery.accounting_review_required
+            and monitor_fresh
+            and watchdog_fresh
+        )
+        gates["recovery_state"] = _gate(
+            "pass" if recovery_ready else "fail" if recovery else "unknown",
+            reason=(
+                None if recovery_ready else
+                "Paper recovery is not armed with current monitor and watchdog evidence"
+                if recovery else
+                "Paper recovery readiness has not been initialized"
+            ),
+            evidence={
+                "status": recovery.status if recovery else None,
+                "accounting_review_required": (
+                    recovery.accounting_review_required if recovery else None
+                ),
+                "monitor_heartbeat": (
+                    recovery.last_monitor_heartbeat_at if recovery else None
+                ),
+                "watchdog_heartbeat": (
+                    recovery.last_watchdog_heartbeat_at if recovery else None
+                ),
+                "monitor_fresh": monitor_fresh,
+                "watchdog_fresh": watchdog_fresh,
+                "heartbeat_timeout_seconds": HEARTBEAT_TIMEOUT.total_seconds(),
+            },
+        )
+    except Exception as exc:
+        gates["recovery_state"] = _gate(
+            "unknown",
+            reason=f"Paper recovery readiness unavailable: {exc.__class__.__name__}",
+        )
+
+    try:
+        unresolved_critical = db.query(Notification).filter(
+            Notification.status != "resolved",
+            Notification.severity == "critical",
+            Notification.category != "deployment_monitor",
+        ).count()
+        gates["notifications"] = _gate(
+            "pass" if not unresolved_critical else "fail",
+            reason=None if not unresolved_critical else (
+                "Unresolved critical notifications require operator review"
+            ),
+            evidence={"unresolved_critical": unresolved_critical},
+        )
+    except Exception as exc:
+        gates["notifications"] = _gate(
+            "unknown",
+            reason=f"Notification safety state unavailable: {exc.__class__.__name__}",
+        )
+
+    try:
+        audit = _audit_chain_check(db)
+        audit_status = audit.get("status")
+        gates["audit_chain"] = _gate(
+            "pass" if audit_status == "clear" else "fail" if audit_status == "breach" else "unknown",
+            reason=None if audit_status == "clear" else (
+                audit.get("message") or "Audit-chain integrity is not verified"
+            ),
+            evidence=audit,
+        )
+    except Exception as exc:
+        gates["audit_chain"] = _gate(
+            "unknown",
+            reason=f"Audit-chain integrity unavailable: {exc.__class__.__name__}",
+        )
+    return gates
+
+
 def _all_pass(gates: dict[str, dict]) -> bool:
     return bool(gates) and all(item.get("status") == "pass" for item in gates.values())
+
+
+def classify_launch_prerequisites(gates: dict[str, dict]) -> tuple[str, str]:
+    """Classify a non-mutating launch preflight result for the API contract.
+
+    ``unknown_outside_session`` is intentionally narrower than generic
+    ``unknown``: an unavailable regular-session feed is expected outside the
+    decision session and must not be represented as a hard failure.  Any
+    explicit failed gate remains blocked, even when another gate is unknown.
+    """
+    failed = next(
+        (gate for gate in gates.values() if gate.get("status") == "fail"),
+        None,
+    )
+    if failed is not None:
+        return "blocked", failed.get("reason") or "A launch prerequisite is blocked"
+
+    unknown = [
+        gate for gate in gates.values()
+        if gate.get("status") not in {"pass", "fail"}
+    ]
+    if unknown:
+        feed = gates.get("verified_feed") or {}
+        evidence = feed.get("evidence") or {}
+        outside_session = (
+            feed.get("status") == "unknown"
+            and evidence.get("regular_session") is False
+        )
+        if outside_session:
+            return (
+                "unknown_outside_session",
+                feed.get("reason")
+                or "Regular-session feed preflight is unavailable outside the session",
+            )
+        return "unknown", (
+            unknown[0].get("reason")
+            or "A launch prerequisite is currently unknown"
+        )
+
+    if not gates:
+        return "unknown", "Launch prerequisite evidence is unavailable"
+    return "ready", "All current launch prerequisites passed"
+
+
+def launch_preflight_eligibility(
+    cycle: StockLearningCycle | None,
+    *,
+    prerequisites_ready: bool,
+    cycle_gates: dict[str, dict] | None = None,
+) -> tuple[bool, str]:
+    """Return approval eligibility without requiring or inspecting approval.
+
+    The approval belongs after paper-canary admission.  The durable handoff
+    service represents that point as ``preflight``/``awaiting_preflight``.
+    The handoff records a missing approval as ``blocked`` (or ``deferred`` on
+    retry), so those statuses remain eligible when the admission lineage is
+    intact; the approval gate itself is deliberately excluded.  Earlier
+    training/admission states and later trial states must not claim approval
+    eligibility merely because their prerequisite snapshot is clear.
+    """
+    if not prerequisites_ready:
+        return False, "Current launch prerequisites have not all passed"
+    if cycle is None:
+        return False, "A learning cycle is required before paper approval eligibility can be granted"
+    if cycle.stage != "preflight" or cycle.status not in {
+        "awaiting_preflight", "blocked", "deferred",
+    }:
+        return (
+            False,
+            "Cycle must be at the preflight stage before paper approval eligibility can be granted",
+        )
+    if not cycle.model_run_id or not cycle.binding_id or not cycle.trial_id:
+        return (
+            False,
+            "The preflight cycle must have an accepted model, paper binding, and forward trial",
+        )
+    non_approval_failures = [
+        (name, gate)
+        for name, gate in (cycle_gates or {}).items()
+        if name != "paper_run_approval" and gate.get("status") == "fail"
+    ]
+    if non_approval_failures:
+        name, gate = non_approval_failures[0]
+        return (
+            False,
+            gate.get("reason")
+            or f"Cycle admission gate {name} has not passed",
+        )
+    return True, "All current launch prerequisites passed; cycle is eligible for paper approval"
 
 
 def _number(value: Any) -> float | None:

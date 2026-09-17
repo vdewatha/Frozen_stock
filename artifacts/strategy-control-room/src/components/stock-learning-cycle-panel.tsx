@@ -2,11 +2,14 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, GitBranch, RefreshCw, ShieldAlert } from "lucide-react";
 
 import { RoleGate } from "@/components/access-control";
+import { LaunchPrerequisiteResults } from "@/components/launch-prerequisites";
 import { StatusPill } from "@/components/status-pill";
 import {
   actOnStockLearningCycle,
   createStockLearningCycleApproval,
   getErrorMessage,
+  getLaunchPrerequisites,
+  type LaunchPrerequisites,
   getStockLearningCycles,
   getStockLearningScheduleControl,
   reviewStockLearningCycle,
@@ -54,8 +57,13 @@ export function StockLearningCyclePanel() {
   const [reason, setReason] = useState("");
   const [status, setStatus] = useState("Loading governed learning cycles");
   const [busy, setBusy] = useState(false);
+  const [prerequisites, setPrerequisites] = useState<Record<string, LaunchPrerequisites>>({});
+  const [prerequisiteError, setPrerequisiteError] = useState<string>();
+  const [refreshing, setRefreshing] = useState(true);
 
   async function refresh() {
+    setRefreshing(true);
+    setPrerequisiteError(undefined);
     try {
       const [nextCycles, nextControl] = await Promise.all([
         getStockLearningCycles(12),
@@ -63,9 +71,16 @@ export function StockLearningCyclePanel() {
       ]);
       setCycles(nextCycles);
       setScheduleControl(nextControl);
+      const results = await Promise.all(
+        nextCycles.length ? nextCycles.map((cycle) => getLaunchPrerequisites(cycle.cycle_id)) : [getLaunchPrerequisites()],
+      );
+      setPrerequisites(Object.fromEntries(results.map((result) => [result.cycle_id ?? "none", result])));
       setStatus("Cycle evidence refreshed");
     } catch (error) {
+      setPrerequisiteError(getErrorMessage(error));
       setStatus(getErrorMessage(error));
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -85,6 +100,8 @@ export function StockLearningCyclePanel() {
 
   useEffect(() => {
     void refresh();
+    const timer = window.setInterval(() => void refresh(), 60_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   async function review(cycle: StockLearningCycle) {
@@ -116,9 +133,16 @@ export function StockLearningCyclePanel() {
   }
 
   async function approvePaperRun(cycle: StockLearningCycle) {
+    if (refreshing || prerequisiteError || !prerequisites[cycle.cycle_id]?.eligible_for_approval) return;
     const expected = cycle.handoff.approval.expected;
     setBusy(true);
     try {
+      const latest = await getLaunchPrerequisites(cycle.cycle_id);
+      setPrerequisites((current) => ({ ...current, [cycle.cycle_id]: latest }));
+      if (!latest.eligible_for_approval) {
+        setStatus(latest.reason);
+        return;
+      }
       await createStockLearningCycleApproval(cycle.cycle_id, {
         ...expected,
         approving_actors: [],
@@ -142,7 +166,7 @@ export function StockLearningCyclePanel() {
             <p className="text-xs text-slate-500">Research artifacts remain paper-only until forward evidence and explicit operator action pass.</p>
           </div>
         </div>
-        <button className="focus-ring inline-flex h-8 items-center gap-1 rounded border border-line px-2.5 text-xs font-semibold" onClick={() => void refresh()} type="button">
+        <button disabled={refreshing || busy} className="focus-ring inline-flex h-8 items-center gap-1 rounded border border-line px-2.5 text-xs font-semibold" onClick={() => void refresh()} type="button">
           <RefreshCw size={13} /> Refresh
         </button>
       </div>
@@ -179,6 +203,7 @@ export function StockLearningCyclePanel() {
 
       {cycles.length === 0 ? (
         <div className="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <LaunchPrerequisiteResults result={prerequisites.none} error={prerequisiteError} loading={refreshing} />
           No durable cycle run exists yet. Scheduled work will show blocked or deferred prerequisite evidence here rather than claiming coverage.
         </div>
       ) : (
@@ -224,6 +249,7 @@ export function StockLearningCyclePanel() {
                   }`}
                   data-testid={`learning-cycle-paper-approval-${cycle.cycle_id}`}
                 >
+                  <LaunchPrerequisiteResults result={prerequisites[cycle.cycle_id]} error={prerequisiteError} loading={refreshing} />
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-semibold">Paper run approval</span>
                     <span className={gateClass(cycle.handoff.approval.status === "pass" ? "pass" : "blocked")}>
@@ -241,14 +267,16 @@ export function StockLearningCyclePanel() {
                     </div>
                   ) : null}
                   {cycle.handoff.approval.status !== "pass" ? (
+                    <RoleGate requires="operator">
                     <button
                       className="focus-ring mt-2 rounded bg-amber-700 px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                      disabled={busy}
+                      disabled={busy || refreshing || !!prerequisiteError || !prerequisites[cycle.cycle_id]?.eligible_for_approval}
                       onClick={() => void approvePaperRun(cycle)}
                       type="button"
                     >
                       Record exact paper approval
                     </button>
+                    </RoleGate>
                   ) : null}
                   <div className="mt-1 text-[11px] text-slate-500">
                     Paper-only authorization; it cannot grant live authority.

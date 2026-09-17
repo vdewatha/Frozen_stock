@@ -3493,6 +3493,21 @@ export async function getStockLearningCycle(cycleId: string): Promise<StockLearn
   return handleResponse<StockLearningCycle>(response);
 }
 
+export type LaunchPrerequisites = {
+  cycle_id: string | null;
+  checked_at: string;
+  status: "blocked" | "unknown_outside_session" | "unknown" | "ready";
+  eligible_for_approval: boolean;
+  reason: string;
+  gates: Record<string, { status: string; reason?: string; evidence?: unknown }>;
+};
+
+export async function getLaunchPrerequisites(cycleId?: string): Promise<LaunchPrerequisites> {
+  const query = cycleId ? `?cycle_id=${encodeURIComponent(cycleId)}` : "";
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/learning-cycles/launch-prerequisites${query}`, { cache: "no-store" });
+  return handleResponse<LaunchPrerequisites>(response);
+}
+
 export type StockLearningCycle = {
   cycle_id: string;
   status: string;

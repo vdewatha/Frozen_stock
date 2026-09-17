@@ -1,7 +1,7 @@
 """Authenticated operational views and explicit actions for stock learning cycles."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.core.config import settings
 from app.models import StockLearningCycle, StockPaperPromotionDecision, StockTrainingJob
 from app.services.audit import write_audit_log
 from app.services.stock_learning_cycle import (
@@ -17,7 +18,11 @@ from app.services.stock_learning_cycle import (
     create_learning_cycle,
     cycle_action,
     cycle_projection,
+    classify_launch_prerequisites,
     create_paper_run_approval,
+    evaluate_cycle_prerequisites,
+    evaluate_launch_admission_prerequisites,
+    launch_preflight_eligibility,
     list_learning_cycles,
     paper_run_approval_projection,
     review_learning_cycle,
@@ -115,6 +120,72 @@ def get_cycles(
 @router.get("/schedule-control")
 def get_schedule_control(db: Session = Depends(get_db)) -> dict:
     return scheduled_learning_control_projection(db)
+
+
+@router.get("/launch-prerequisites")
+def get_launch_prerequisites(
+    cycle_id: str | None = Query(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    ),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Read the latest launch prerequisites without changing execution state."""
+    cycle = db.get(StockLearningCycle, cycle_id) if cycle_id else None
+    if cycle_id and cycle is None:
+        raise HTTPException(404, "Learning cycle not found")
+
+    symbols = (
+        [str(symbol).strip().upper() for symbol in cycle.symbols]
+        if cycle is not None
+        else [
+            str(symbol).strip().upper()
+            for symbol in settings.stock_learning_default_symbols
+            if str(symbol).strip()
+        ]
+    )
+    provider = (
+        cycle.provider
+        if cycle is not None
+        else settings.stock_learning_default_provider
+    )
+    checked_at = datetime.now(timezone.utc)
+    gates = evaluate_cycle_prerequisites(
+        db,
+        symbols=symbols,
+        provider=provider,
+        now=checked_at,
+    )
+    gates = {
+        **gates,
+        **evaluate_launch_admission_prerequisites(db, now=checked_at),
+    }
+    status, gate_reason = classify_launch_prerequisites(gates)
+    eligible, eligibility_reason = launch_preflight_eligibility(
+        cycle,
+        prerequisites_ready=status == "ready",
+        # Current read-only evidence supersedes saved cycle snapshots.  Keep
+        # lineage/admission gates that have no current equivalent, but never
+        # let a repaired current gate remain blocked by historical evidence.
+        cycle_gates=(
+            {
+                **(cycle.gates or {}),
+                **gates,
+            }
+            if cycle is not None else None
+        ),
+    )
+    reason = eligibility_reason if status == "ready" and not eligible else gate_reason
+    return {
+        "cycle_id": cycle.cycle_id if cycle is not None else None,
+        "checked_at": checked_at,
+        "status": status,
+        "eligible_for_approval": eligible,
+        "reason": reason,
+        "gates": gates,
+    }
 
 
 @router.post("/schedule-control")

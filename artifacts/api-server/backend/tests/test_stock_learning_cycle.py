@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 import json
 import uuid
 from threading import Barrier
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import app.api.stock_learning_cycle as learning_cycle_api
+import app.services.stock_learning_cycle as learning_cycle_service
 from app.core.config import Settings, settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
@@ -739,6 +741,268 @@ def test_learning_cycle_route_roles_cover_list_review_and_action():
                 expected = 200 if role in {"operator", "admin"} else 403
                 assert review.status_code == expected, (role, review.text)
                 assert action.status_code == expected, (role, action.text)
+
+
+def test_launch_prerequisites_no_cycle_is_read_only_and_uses_configured_defaults():
+    gates = {
+        "verified_feed": {"status": "pass"},
+        "scheduler_health": {"status": "pass"},
+        "paper_ledger": {"status": "pass"},
+        "dataset_provenance": {"status": "pass"},
+        "readiness_history": {"status": "pass"},
+    }
+    db = MagicMock()
+    with (
+        patch.object(learning_cycle_api, "evaluate_cycle_prerequisites", return_value=gates) as evaluate,
+        patch.object(
+            learning_cycle_api,
+            "evaluate_launch_admission_prerequisites",
+            return_value={
+                "broker_qualification": {"status": "pass"},
+                "risk_state": {"status": "pass"},
+                "recovery_state": {"status": "pass"},
+                "notifications": {"status": "pass"},
+                "audit_chain": {"status": "pass"},
+            },
+        ),
+        patch.object(learning_cycle_api.settings, "stock_learning_default_symbols", ["SPY"]),
+        patch.object(learning_cycle_api.settings, "stock_learning_default_provider", "yfinance"),
+    ):
+        app = FastAPI()
+        app.add_middleware(
+            AuthenticationMiddleware,
+            configuration=Settings(_env_file=None, **{
+                f"auth_{role}_key": role * 16
+                for role in ("viewer", "researcher", "operator", "admin")
+            }),
+        )
+        app.include_router(learning_cycle_api.router)
+        app.dependency_overrides[learning_cycle_api.get_db] = lambda: db
+        with TestClient(app) as client:
+            response = client.get(
+                "/stock/learning-cycles/launch-prerequisites",
+                headers=_headers("viewer"),
+            )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["cycle_id"] is None
+    assert payload["status"] == "ready"
+    assert payload["eligible_for_approval"] is False
+    assert "learning cycle is required" in payload["reason"]
+    evaluate.assert_called_once()
+    assert evaluate.call_args.kwargs["symbols"] == ["SPY"]
+    assert evaluate.call_args.kwargs["provider"] == "yfinance"
+    db.add.assert_not_called()
+    db.flush.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_launch_prerequisites_blocked_cycle_is_read_only():
+    cycle = MagicMock(
+        cycle_id="b" * 64,
+        symbols=["MSFT"],
+        provider="yahoo_chart",
+        stage="preflight",
+        status="awaiting_preflight",
+        model_run_id="c" * 64,
+        binding_id=1,
+        trial_id="trial",
+    )
+    gates = {
+        "verified_feed": {"status": "fail", "reason": "feed unavailable"},
+        "scheduler_health": {"status": "pass"},
+    }
+    db = MagicMock()
+    db.get.return_value = cycle
+    with (
+        patch.object(learning_cycle_api, "evaluate_cycle_prerequisites", return_value=gates) as evaluate,
+        patch.object(
+            learning_cycle_api,
+            "evaluate_launch_admission_prerequisites",
+            return_value={
+                "broker_qualification": {"status": "pass"},
+                "risk_state": {"status": "pass"},
+                "recovery_state": {"status": "pass"},
+                "notifications": {"status": "pass"},
+                "audit_chain": {"status": "pass"},
+            },
+        ),
+    ):
+        app = FastAPI()
+        app.add_middleware(
+            AuthenticationMiddleware,
+            configuration=Settings(_env_file=None, **{
+                f"auth_{role}_key": role * 16
+                for role in ("viewer", "researcher", "operator", "admin")
+            }),
+        )
+        app.include_router(learning_cycle_api.router)
+        app.dependency_overrides[learning_cycle_api.get_db] = lambda: db
+        with TestClient(app) as client:
+            response = client.get(
+                f"/stock/learning-cycles/launch-prerequisites?cycle_id={cycle.cycle_id}",
+                headers=_headers("viewer"),
+            )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["cycle_id"] == cycle.cycle_id
+    assert payload["status"] == "blocked"
+    assert payload["eligible_for_approval"] is False
+    assert payload["reason"] == "feed unavailable"
+    assert evaluate.call_args.kwargs["symbols"] == ["MSFT"]
+    assert evaluate.call_args.kwargs["provider"] == "yahoo_chart"
+    db.add.assert_not_called()
+    db.flush.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_launch_prerequisite_classification_and_preflight_eligibility():
+    assert learning_cycle_api.classify_launch_prerequisites({
+        "verified_feed": {
+            "status": "unknown",
+            "reason": "regular session required",
+            "evidence": {"regular_session": False},
+        },
+    }) == ("unknown_outside_session", "regular session required")
+    assert learning_cycle_api.classify_launch_prerequisites({
+        "scheduler_health": {"status": "unknown", "reason": "heartbeat unavailable"},
+    }) == ("unknown", "heartbeat unavailable")
+    assert learning_cycle_api.classify_launch_prerequisites({
+        "paper_ledger": {"status": "fail", "reason": "ledger unavailable"},
+        "scheduler_health": {"status": "unknown"},
+    }) == ("blocked", "ledger unavailable")
+
+    cycle = MagicMock(
+        stage="preflight",
+        status="awaiting_preflight",
+        model_run_id="a" * 64,
+        binding_id=1,
+        trial_id="trial",
+    )
+    eligible, reason = learning_cycle_api.launch_preflight_eligibility(
+        cycle, prerequisites_ready=True,
+    )
+    assert eligible is True
+    assert "eligible for paper approval" in reason
+    cycle.stage = "training"
+    eligible, reason = learning_cycle_api.launch_preflight_eligibility(
+        cycle, prerequisites_ready=True,
+    )
+    assert eligible is False
+    assert "preflight stage" in reason
+
+    cycle.stage = "preflight"
+    cycle.status = "blocked"
+    eligible, reason = learning_cycle_api.launch_preflight_eligibility(
+        cycle,
+        prerequisites_ready=True,
+        cycle_gates={
+            "paper_run_approval": {
+                "status": "fail",
+                "reason": "Paper run approval is missing",
+            },
+        },
+    )
+    assert eligible is True
+    assert "eligible for paper approval" in reason
+    eligible, reason = learning_cycle_api.launch_preflight_eligibility(
+        cycle,
+        prerequisites_ready=True,
+        cycle_gates={
+            "forward_trial": {
+                "status": "fail",
+                "reason": "Forward trial lineage is incomplete",
+            },
+            "paper_run_approval": {"status": "fail"},
+        },
+    )
+    assert eligible is False
+    assert reason == "Forward trial lineage is incomplete"
+
+    # A repaired current gate replaces an older saved failure; unrelated
+    # lineage gates remain visible to the eligibility decision.
+    eligible, reason = learning_cycle_api.launch_preflight_eligibility(
+        cycle,
+        prerequisites_ready=True,
+        cycle_gates={
+            "risk_state": {"status": "pass"},
+            "paper_run_approval": {"status": "fail"},
+        },
+    )
+    assert eligible is True
+
+
+def test_launch_admission_gates_require_affirmative_broker_evidence_and_armed_fresh_recovery():
+    now = datetime(2026, 9, 17, 15, 0, tzinfo=timezone.utc)
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(
+        status="resumable",
+        accounting_review_required=False,
+        last_monitor_heartbeat_at=now,
+        last_watchdog_heartbeat_at=now,
+    )
+    with (
+        patch.object(
+            learning_cycle_service,
+            "stock_paper_broker_status",
+            return_value={
+                "paper_broker": "alpaca_paper",
+                "live_trading_blocked": True,
+                "accounting": {
+                    "ready": False,
+                    "provider_evidence_complete": None,
+                },
+            },
+        ),
+        patch.object(
+            learning_cycle_service,
+            "portfolio_risk_snapshot",
+            return_value={"alerts": []},
+        ),
+        patch.object(
+            learning_cycle_service,
+            "_audit_chain_check",
+            return_value={"status": "clear"},
+        ),
+    ):
+        gates = learning_cycle_service.evaluate_launch_admission_prerequisites(db, now=now)
+
+    assert gates["broker_qualification"]["status"] == "fail"
+    assert gates["recovery_state"]["status"] == "fail"
+    assert db.add.called is False
+    assert db.flush.called is False
+    assert db.commit.called is False
+
+    db.get.return_value.status = "armed"
+    with (
+        patch.object(
+            learning_cycle_service,
+            "stock_paper_broker_status",
+            return_value={
+                "paper_broker": "alpaca_paper",
+                "live_trading_blocked": True,
+                "accounting": {
+                    "ready": True,
+                    "provider_evidence_complete": None,
+                },
+            },
+        ),
+        patch.object(
+            learning_cycle_service,
+            "portfolio_risk_snapshot",
+            return_value={"alerts": []},
+        ),
+        patch.object(
+            learning_cycle_service,
+            "_audit_chain_check",
+            return_value={"status": "clear"},
+        ),
+    ):
+        fresh = learning_cycle_service.evaluate_launch_admission_prerequisites(db, now=now)
+    assert fresh["broker_qualification"]["status"] == "pass"
+    assert fresh["recovery_state"]["status"] == "pass"
 
 
 def test_schedule_control_is_viewer_read_and_operator_write():
