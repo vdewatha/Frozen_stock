@@ -7,8 +7,10 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -23,6 +25,8 @@ from app.models.stock_paper import StockPaperAccount, StockPaperBrokerActivity, 
 from app.services.stock_paper_ledger import (
     AlpacaPaperClient,
     StockPaperError,
+    StockPaperUnavailable,
+    TradierPaperClient,
     dispatch_reserved_order,
     initialize_stock_paper_account,
     reconcile_stock_paper_account,
@@ -146,6 +150,103 @@ class StockPaperLedgerTests(unittest.TestCase):
             self.assertTrue(result["legacy_nonqualifying"])
             with self.assertRaises(StockPaperError):
                 initialize_stock_paper_account(db, FakeAlpaca())
+
+    def null_history_tradier(self, stack):
+        """Exercise HTTP decoding without credentials or external broker access."""
+        stack.enter_context(patch.multiple(
+            settings,
+            active_paper_broker="tradier_sandbox",
+            tradier_api_key=SecretStr("test-only-token"),
+            tradier_account_id="paper-account",
+            tradier_sandbox_url="https://sandbox.tradier.com/v1",
+        ))
+        requests = []
+        payloads = {
+            "balances": {"balances": {
+                "account_number": "paper-account",
+                "total_equity": "1000",
+                "cash": {"cash_available": "1000"},
+                "margin": {"stock_buying_power": "2000"},
+            }},
+            "positions": {"positions": None},
+            "orders": {"orders": None},
+            "history": None,
+            "gainloss": None,
+        }
+
+        def respond(request):
+            self.assertEqual(request.method, "GET")
+            self.assertEqual(request.url.host, "sandbox.tradier.com")
+            endpoint = request.url.path.removeprefix("/v1/accounts/paper-account/")
+            self.assertIn(endpoint, payloads)
+            requests.append(endpoint)
+            return httpx.Response(
+                200, content=json.dumps(payloads[endpoint]),
+                headers={"Content-Type": "application/json"},
+            )
+
+        http_client = httpx.Client
+        transport = httpx.MockTransport(respond)
+        stack.enter_context(patch(
+            "app.services.stock_paper_ledger.httpx.Client",
+            side_effect=lambda **kwargs: http_client(transport=transport, **kwargs),
+        ))
+        return TradierPaperClient(), requests
+
+    def assert_null_tradier_history(self, client):
+        # These diagnostic endpoints are not used as ledger evidence: sandbox
+        # success responses must not promote missing collections to completeness.
+        for endpoint in ("history", "gainloss"):
+            with self.subTest(endpoint=endpoint):
+                raw = client._request("GET", f"/accounts/{client.account_id}/{endpoint}")
+                self.assertIsNone(raw)
+                self.assertEqual(client._one_or_many(raw), [])
+                self.assertIs(client.evidence_complete, False)
+
+    def test_tradier_http_success_null_history_and_gainloss_are_absent(self):
+        with ExitStack() as stack:
+            client, requests = self.null_history_tradier(stack)
+            self.assert_null_tradier_history(client)
+            self.assertEqual(requests, ["history", "gainloss"])
+
+    def test_tradier_null_history_cannot_initialize_paper_account(self):
+        with ExitStack() as stack, Session(self.engine) as db:
+            client, requests = self.null_history_tradier(stack)
+            self.assert_null_tradier_history(client)
+            with self.assertRaisesRegex(StockPaperUnavailable, "complete historical reconciliation"):
+                initialize_stock_paper_account(db, client)
+            for model in (StockPaperAccount, StockPaperPosition, StockPaperOrder,
+                          StockPaperFill, StockPaperBrokerActivity, StockPaperEquitySnapshot):
+                self.assertEqual(db.query(model).count(), 0, model.__name__)
+            self.assertIn("balances", requests)
+            self.assertIn("orders", requests)
+
+    def test_tradier_null_history_halts_existing_account_reconciliation(self):
+        with Session(self.engine) as db:
+            # Represent an already persisted account; Tradier initialization is
+            # deliberately forbidden, so bootstrap the fixture with known data.
+            initialize_stock_paper_account(db, FakeAlpaca())
+            account = db.query(StockPaperAccount).one()
+            account.broker = "tradier_sandbox"
+            db.commit()
+            prior_cash = account.cash
+            prior_reconciled_at = account.last_reconciled_at
+            prior_snapshots = db.query(StockPaperEquitySnapshot).count()
+            with ExitStack() as stack:
+                client, requests = self.null_history_tradier(stack)
+                self.assert_null_tradier_history(client)
+                result = reconcile_stock_paper_account(db, client)
+            self.assertEqual(result["status"], "halted")
+            self.assertIn("complete historical reconciliation", account.halt_reason)
+            self.assertTrue(account.reconciliation_required)
+            self.assertFalse(account.costs_known)
+            self.assertFalse(account.accounting_verified)
+            self.assertEqual(account.cash, prior_cash)
+            self.assertEqual(account.last_reconciled_at, prior_reconciled_at)
+            self.assertEqual(db.query(StockPaperEquitySnapshot).count(), prior_snapshots)
+            self.assertEqual(db.query(StockPaperBrokerActivity).count(), 0)
+            self.assertIn("balances", requests)
+            self.assertIn("orders", requests)
 
     def test_short_and_position_drift_halt_account(self):
         short = FakeAlpaca([{"symbol": "SPY", "qty": "-1"}])
