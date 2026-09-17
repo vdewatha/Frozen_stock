@@ -13,3 +13,14 @@ causing a false halt.
 
 **How to apply:** Treat occurred_at as derived metadata that may be corrected
 when the raw payload matches; never rewrite a differing raw payload silently.
+
+Observation-time fallback is not acceptable provider qualification evidence.
+Date-only non-trade activities must remain unknown for a precise-time contract;
+do not infer midnight, timezone, or time from an activity identifier.
+
+**Why:** Stable replay can conceal missing broker precision, and Alpaca's
+documented non-trade shape may supply only a calendar date.
+
+**How to apply:** Distinguish operational derived metadata from qualifying
+broker evidence. Require explicit timezone-qualified broker time for the latter,
+without treating repeatability as precision.

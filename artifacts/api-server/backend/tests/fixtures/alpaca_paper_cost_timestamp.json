@@ -1,0 +1,26 @@
+{
+  "provenance": "Synthetic contract shapes based on Alpaca account-activities documentation cited in reports/alpaca-paper-candidate-evidence-20260916.md. Not captured account evidence or proof of provider qualification.",
+  "documented_fill": {
+    "id": "synthetic-fill",
+    "activity_type": "FILL",
+    "transaction_time": "2026-09-15T14:31:02.123456Z",
+    "type": "fill",
+    "order_id": "synthetic-order",
+    "symbol": "SPY",
+    "side": "buy",
+    "qty": "1",
+    "price": "500",
+    "cum_qty": "1",
+    "leaves_qty": "0"
+  },
+  "documented_nontrade": {
+    "id": "synthetic-journal",
+    "activity_type": "JNLC",
+    "date": "2026-09-15",
+    "net_amount": "1000",
+    "description": "Synthetic journal credit"
+  },
+  "explicit_zero_commission_extension": {"commission": "0"},
+  "explicit_nonzero_commission_extension": {"commission": "0.03"},
+  "precise_created_at_extension": {"created_at": "2026-09-15T14:30:00Z"}
+}

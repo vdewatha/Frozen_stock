@@ -50,6 +50,11 @@ The script permits only the four evidence GET endpoints, emits redacted summarie
 
 ## Conditions before reconsideration
 
+The focused [cost and timestamp qualification](alpaca-paper-cost-timestamp-qualification-20260917.md)
+concludes **not established** under the unchanged contract and adds offline
+provider-shaped fixtures plus redacted field assessments to the read-only probe.
+It does not supersede the fresh observations above or authorize another probe.
+
 1. Demonstrate complete historical paging, including full pages and boundary failures, without silently dropping records.
 2. Supply existing broker-paper executions and cash-affecting activities sufficient to verify immutable IDs/timestamps, fill-order links, explicit cost evidence, and the accounting equation. No test orders are authorized by this assessment.
 3. Demonstrate restart/missed-session and late-activity recovery using that evidence. Fresh-client replay of empty orders is insufficient.
