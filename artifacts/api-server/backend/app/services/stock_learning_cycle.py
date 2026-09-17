@@ -62,7 +62,12 @@ from app.services.stock_training_jobs import (
     create_stock_training_job,
     transition_stock_model_lifecycle,
 )
-from app.services.stock_forward_trial import create_trial, start_trial, validate_trial_artifact
+from app.services.stock_forward_trial import (
+    create_trial,
+    start_trial,
+    trial_position_handling_projection,
+    validate_trial_artifact,
+)
 
 TERMINAL_STATUSES = {"complete", "promoted", "demoted", "rolled_back", "failed"}
 VALID_TRIGGERS = {"manual", "scheduled"}
@@ -2691,6 +2696,25 @@ def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
             "report_id": latest_report.id if latest_report else None,
             "report_decision": latest_report.decision if latest_report else None,
         },
+        "position_handling": (
+            trial_position_handling_projection(db, trial)
+            if trial else {
+                "approved_policy": None,
+                "stop_status": "not_started",
+                "stop_reason": None,
+                "stopped_at": None,
+                "new_entries_stopped": True,
+                "handling_status": "not_started",
+                "remaining_positions": [],
+                "managed_lots": [],
+                "has_exit_intent": False,
+                "reconciliation": {
+                    "status": "unknown",
+                    "reconciliation_required": True,
+                    "last_reconciled_at": None,
+                },
+            }
+        ),
         "gates": cycle.gates, "evidence": cycle.evidence,
         "last_reason": cycle.last_reason, "paper_only": True, "live_authorized": False,
         "scheduled_learning_paused": bool(_scheduled_learning_pause_reason(db)),

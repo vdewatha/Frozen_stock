@@ -1584,6 +1584,9 @@ def test_cycle_review_remains_blocked_without_registered_validation_and_forward_
     assert reviewed.status == "blocked"
     assert projection["paper_only"] is True
     assert projection["live_authorized"] is False
+    assert projection["position_handling"]["stop_status"] == "not_started"
+    assert projection["position_handling"]["new_entries_stopped"] is True
+    assert projection["position_handling"]["reconciliation"]["status"] == "unknown"
     assert projection["gates"]["validation"]["status"] == "fail"
     assert projection["gates"]["forward_trial"]["status"] == "unknown"
     assert len(projection["events"]) == 2

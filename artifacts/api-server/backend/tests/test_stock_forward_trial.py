@@ -25,7 +25,7 @@ from app.db.session import get_db
 from app.models import (
     IntradayBar, MarketPrice, StockDatasetSnapshot, StockModelRegistry, StockPaperAccount,
     StockPaperModelBinding, StockPaperTrial, StockPaperTrialDecision,
-    StockPaperOrder, StockPaperFill, StockPaperTrialLot, Strategy,
+    StockPaperOrder, StockPaperFill, StockPaperPosition, StockPaperTrialLot, Strategy,
     StockPaperPromotionReadinessReport, StockPaperTrialMetric, AuditLog,
     StockPaperGraduationPackage,
 )
@@ -34,7 +34,7 @@ from app.services.stock_forward_trial import (
     start_trial, validate_trial_artifact,
     execute_pending_decisions, _trial_allocated_notional, stop_trial,
     _trial_equity_curve_max_drawdown, _evidence_allows_trade, trial_feed_preflight,
-    build_trial_session_evidence,
+    build_trial_session_evidence, trial_position_handling_projection,
 )
 from app.services.stock_promotion_readiness import (
     evaluate_promotion_readiness, promotion_readiness_report,
@@ -2002,6 +2002,7 @@ class ForwardTrialTests(unittest.TestCase):
             db.flush()
             stop_trial(db, row.id)
             self.assertEqual(lot.exit_reason, "operator_stop")
+            self.assertEqual(row.pause_reason, "operator_stop")
             with patch("app.services.stock_forward_trial._now",
                        return_value=datetime(2025, 1, 3, 15, tzinfo=timezone.utc)), \
                  patch("app.services.stock_forward_trial.session_bounds",
@@ -2208,6 +2209,35 @@ class ForwardTrialTests(unittest.TestCase):
             stop_trial(db, row.id)
             self.assertEqual(lot.exit_reason, "operator_stop")
             self.assertEqual(row.status, "stopped")
+
+    def test_position_handling_projection_shows_expiry_policy_and_remaining_position(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="stopped")
+            row.pause_reason = "paper_session_expired"
+            row.policy = {**row.policy, "remaining_position_policy": "flatten"}
+            self.account(db)
+            db.add(StockPaperPosition(
+                account_id=1,
+                symbol="SPY",
+                quantity=Decimal("2"),
+                average_entry_price=Decimal("100"),
+                current_price=Decimal("101"),
+                market_value=Decimal("202"),
+                observed_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
+                raw_payload={},
+            ))
+            db.flush()
+
+            projection = trial_position_handling_projection(db, row)
+
+            self.assertEqual(projection["approved_policy"], "flatten")
+            self.assertEqual(projection["stop_status"], "expired")
+            self.assertEqual(projection["stop_reason"], "paper_session_expired")
+            self.assertTrue(projection["new_entries_stopped"])
+            self.assertEqual(projection["handling_status"], "flatten_pending")
+            self.assertEqual(projection["remaining_positions"][0]["symbol"], "SPY")
+            self.assertEqual(projection["remaining_positions"][0]["quantity"], "2.00000000")
+            self.assertEqual(projection["reconciliation"]["status"], "reconciled")
 
     def test_graduation_rejection_archives_truthful_redacted_blockers(self):
         with Session(self.engine) as db:

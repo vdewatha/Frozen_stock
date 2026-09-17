@@ -3549,6 +3549,35 @@ export type StockLearningCycle = {
     report_id: number | null;
     report_decision: string | null;
   };
+  position_handling: {
+    approved_policy: "hold" | "reduce" | "flatten" | string | null;
+    stop_status: "not_started" | "running" | "paused" | "expired" | "operator_stopped" | string;
+    stop_reason: string | null;
+    stopped_at: string | null;
+    new_entries_stopped: boolean;
+    handling_status: "not_started" | "not_stopped" | "held" | "reduction_pending" | "reduced" | "flatten_pending" | "flattened" | "unknown" | string;
+    remaining_positions: Array<{
+      symbol: string;
+      quantity: string;
+      market_value: string | null;
+      observed_at: string | null;
+    }>;
+    managed_lots: Array<{
+      symbol: string;
+      entry_quantity: string;
+      exited_quantity: string;
+      remaining_quantity: string;
+      exit_reason: string | null;
+      exit_status: string | null;
+      exit_decided_at: string | null;
+    }>;
+    has_exit_intent: boolean;
+    reconciliation: {
+      status: string;
+      reconciliation_required: boolean;
+      last_reconciled_at: string | null;
+    };
+  };
   gates: Record<string, { status: string; reason?: string; evidence?: unknown }>;
   evidence: Record<string, unknown>;
   last_reason: string | null;

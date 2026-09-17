@@ -386,6 +386,44 @@ export function StockLearningCyclePanel() {
                   </div>
                 </div>
               </div>
+              <div className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs" data-testid="learning-cycle-position-handling">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-ink">Position handling</span>
+                  <StatusPill status={cycle.position_handling.handling_status} />
+                </div>
+                <div className="mt-1 grid gap-1 text-slate-600 sm:grid-cols-2">
+                  <span>
+                    <span className="font-semibold text-ink">Approved remaining-position policy:</span>{" "}
+                    {cycle.position_handling.approved_policy ?? "not approved"}
+                  </span>
+                  <span>
+                    <span className="font-semibold text-ink">Expiry / operator stop:</span>{" "}
+                    {cycle.position_handling.stop_status.replaceAll("_", " ")}
+                    {cycle.position_handling.stop_reason ? ` · ${cycle.position_handling.stop_reason}` : ""}
+                  </span>
+                  <span>
+                    <span className="font-semibold text-ink">New entries:</span>{" "}
+                    {cycle.position_handling.new_entries_stopped ? "stopped" : "allowed"}
+                  </span>
+                  <span>
+                    <span className="font-semibold text-ink">Monitoring / reconciliation:</span>{" "}
+                    {cycle.monitoring.status} / {cycle.position_handling.reconciliation.status}
+                    {cycle.position_handling.reconciliation.reconciliation_required ? " · review required" : ""}
+                  </span>
+                </div>
+                {cycle.position_handling.remaining_positions.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2 text-slate-500">
+                    <span className="font-semibold text-ink">Remaining paper positions:</span>
+                    {cycle.position_handling.remaining_positions.map((position) => (
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5" key={position.symbol}>
+                        {position.symbol} {position.quantity}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-2 text-slate-500">No remaining paper positions are recorded for this cycle universe.</div>
+                )}
+              </div>
               <div className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold text-ink">Automatic paper promotion</span>

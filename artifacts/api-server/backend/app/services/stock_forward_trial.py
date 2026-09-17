@@ -295,6 +295,133 @@ def _ensure_exit_intents(db: Session, trial: StockPaperTrial, reason: str, now: 
             lot.exit_reason = lot.exit_reason or reason
             lot.exit_decided_at = lot.exit_decided_at or now
 
+def trial_position_handling_projection(db: Session, trial: StockPaperTrial) -> dict:
+    """Return safe, read-only evidence of how a stopped trial handled positions."""
+    approval = _trial_approval(db, trial)
+    policy = (
+        approval.remaining_position_policy
+        if approval else trial.policy.get("remaining_position_policy", "hold")
+    )
+    lots = db.scalars(select(StockPaperTrialLot).where(
+        StockPaperTrialLot.trial_id == trial.id
+    )).all()
+    projected_lots = []
+    managed_remaining = Decimal("0")
+    has_exit_intent = False
+    stop_reason = trial.pause_reason if trial.pause_reason in {
+        "paper_session_expired", "operator_stop"
+    } else None
+
+    for lot in lots:
+        entries = db.scalars(select(StockPaperFill).where(
+            StockPaperFill.order_id == lot.entry_order_id,
+            StockPaperFill.side == "buy",
+        )).all()
+        entry_quantity = sum((fill.quantity for fill in entries), Decimal("0"))
+        exit_orders = db.scalars(select(StockPaperOrder).where(
+            StockPaperOrder.trial_lot_id == lot.id,
+            StockPaperOrder.side == "sell",
+        )).all()
+        exit_ids = [order.id for order in exit_orders]
+        exits = db.scalars(select(StockPaperFill).where(
+            StockPaperFill.order_id.in_(exit_ids),
+            StockPaperFill.side == "sell",
+        )).all() if exit_ids else []
+        exited_quantity = sum((fill.quantity for fill in exits), Decimal("0"))
+        remaining_quantity = max(Decimal("0"), entry_quantity - exited_quantity)
+        managed_remaining += remaining_quantity
+        has_exit_intent = has_exit_intent or bool(lot.exit_reason)
+        latest_exit = max(exit_orders, key=lambda order: order.id) if exit_orders else None
+        if lot.exit_reason in {"paper_session_expired", "operator_stop"}:
+            stop_reason = lot.exit_reason
+        projected_lots.append({
+            "symbol": lot.symbol,
+            "entry_quantity": str(entry_quantity),
+            "exited_quantity": str(exited_quantity),
+            "remaining_quantity": str(remaining_quantity),
+            "exit_reason": lot.exit_reason,
+            "exit_status": latest_exit.status if latest_exit else lot.exit_status,
+            "exit_decided_at": lot.exit_decided_at,
+        })
+
+    if stop_reason is None and trial.status == "stopped":
+        stop_reason = "stopped"
+    stop_status = {
+        "paper_session_expired": "expired",
+        "operator_stop": "operator_stopped",
+        "stopped": "stopped",
+    }.get(
+        stop_reason,
+        "paused" if trial.status in {"paused", "blocked"}
+        else "running" if trial.status == "running"
+        else "not_started" if trial.status == "approved"
+        else "completed",
+    )
+    new_entries_stopped = trial.status in {
+        "paused", "blocked", "stopped", "completed"
+    } or stop_status in {
+        "expired", "operator_stopped"
+    }
+
+    account = active_paper_account(db)
+    symbols = {
+        str(symbol).strip().upper()
+        for symbol in (trial.lineage or {}).get("universe", [])
+        if str(symbol).strip()
+    }
+    positions = []
+    if account:
+        positions = [{
+            "symbol": position.symbol,
+            "quantity": str(position.quantity),
+            "market_value": str(position.market_value) if position.market_value is not None else None,
+            "observed_at": position.observed_at,
+        } for position in db.scalars(select(StockPaperPosition).where(
+            StockPaperPosition.account_id == account.id,
+            StockPaperPosition.quantity > 0,
+        ).order_by(StockPaperPosition.symbol)).all()
+            if not symbols or position.symbol in symbols]
+
+    account_has_remaining_position = any(
+        Decimal(str(position["quantity"])) > 0 for position in positions
+    )
+    completed_exit = any(
+        Decimal(lot["exited_quantity"]) > 0 for lot in projected_lots
+    )
+    if not new_entries_stopped:
+        handling_status = "not_stopped"
+    elif policy == "hold":
+        handling_status = "held"
+    elif policy == "reduce":
+        handling_status = "reduced" if completed_exit or (
+            managed_remaining <= 0 and not account_has_remaining_position
+        ) else "reduction_pending"
+    elif policy == "flatten":
+        handling_status = "flattened" if (
+            managed_remaining <= 0 and not account_has_remaining_position
+        ) else "flatten_pending"
+    else:
+        handling_status = "unknown"
+
+    return {
+        "approved_policy": policy,
+        "stop_status": stop_status,
+        "stop_reason": stop_reason,
+        "stopped_at": trial.stopped_at,
+        "new_entries_stopped": new_entries_stopped,
+        "handling_status": handling_status,
+        "remaining_positions": positions,
+        "managed_lots": projected_lots,
+        "has_exit_intent": has_exit_intent,
+        "reconciliation": {
+            "status": account.status if account else "unknown",
+            "reconciliation_required": (
+                account.reconciliation_required if account else True
+            ),
+            "last_reconciled_at": account.last_reconciled_at if account else None,
+        },
+    }
+
 def _trial_has_managed_exposure(db: Session, trial: StockPaperTrial) -> bool:
     for lot in _sync_trial_lot_state(db, trial):
         entry = sum((f.quantity for f in db.scalars(select(StockPaperFill).where(
@@ -1084,6 +1211,8 @@ def stop_trial(
     open_lots = _trial_has_managed_exposure(db, row)
     if row.status not in {"stopped", "completed"}:
         row.status, row.stopped_at = ("stopped", now) if open_lots else ("completed", now)
+    if row.pause_reason not in {"paper_session_expired", "operator_stop"}:
+        row.pause_reason = "operator_stop"
     write_audit_log(
         db,
         event_type="stock_forward_trial",
@@ -1153,7 +1282,9 @@ def observe_trial(db: Session, trial_id: str) -> dict:
     if approved_bounds and _utc(now) >= approved_bounds[1]:
         _apply_remaining_position_policy(db, trial, "paper_session_expired", now)
         if trial.status == "running":
-            trial.status = "stopped"
+            trial.status, trial.stopped_at = "stopped", trial.stopped_at or now
+        if trial.pause_reason not in {"paper_session_expired", "operator_stop"}:
+            trial.pause_reason = "paper_session_expired"
         return {
             "status": trial.status,
             "trial_id": trial_id,
@@ -1418,6 +1549,10 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
                 "reject", False, "paper_session_expired"
             )
         _apply_remaining_position_policy(db, trial, "paper_session_expired", now)
+        if trial.status == "running":
+            trial.status, trial.stopped_at = "stopped", trial.stopped_at or now
+        if trial.pause_reason not in {"paper_session_expired", "operator_stop"}:
+            trial.pause_reason = "paper_session_expired"
         return {
             "status": trial.status,
             "trial_id": trial_id,
