@@ -1,0 +1,92 @@
+{
+  "report_type": "paper_execution_evidence_qualification",
+  "schema_version": 1,
+  "generated_at": "2026-09-17T00:00:00Z",
+  "scope": {
+    "environment": "local",
+    "documentation_and_existing_evidence_review": true,
+    "credentialed_probe_performed": false,
+    "provider_switch_performed": false,
+    "account_mutation_performed": false,
+    "order_or_cancellation_performed": false
+  },
+  "decision": {
+    "go_no_go": "no_go",
+    "qualification": "no_available_paper_venue_qualified",
+    "launch_authorized": false,
+    "paper_trading_allowed": false,
+    "reason": "Neither Tradier sandbox nor Alpaca paper satisfies the unchanged complete-accounting contract; Interactive Brokers is only an unimplemented candidate."
+  },
+  "contract": [
+    "Explicit commissions and cash-affecting fees",
+    "Precise immutable broker activity timestamps",
+    "Complete order and activity pagination",
+    "Delayed activity and session-boundary recovery",
+    "Restart reconciliation without treating missing history as empty"
+  ],
+  "venues": [
+    {
+      "venue": "tradier_sandbox",
+      "documented_capability": "Balances, positions, current orders, and order details; account history is documented as unavailable for sandbox accounts.",
+      "observed_qualification": "fail",
+      "implementation_readiness": "fail_closed",
+      "launch_authorized": false,
+      "blockers": [
+        "Sandbox transaction history unavailable",
+        "Current-session order list is not complete historical activity",
+        "Complete costs and precise immutable timeline cannot be proven",
+        "Restart and missed-session recovery cannot be demonstrated"
+      ],
+      "sources": [
+        "https://docs.tradier.com/reference/brokerage-api-accounts-get-account-history",
+        "https://docs.tradier.com/docs/account-details"
+      ]
+    },
+    {
+      "venue": "alpaca_paper",
+      "documented_capability": "Historical account activities with stable IDs and ID-based page_token pagination; FILL transaction_time and order_id; non-fill date fields.",
+      "observed_qualification": "not_established",
+      "implementation_readiness": "partial",
+      "launch_authorized": false,
+      "blockers": [
+        "Observed account had no fills, so commission and fill linkage were not proven",
+        "Documented paper simulation omits regulatory fees, dividends, and borrow fees",
+        "Non-fill date fields do not satisfy precise activity time",
+        "Current activity adapter needs safe last-ID page-token handling",
+        "Restart and delayed-activity recovery remain untested"
+      ],
+      "sources": [
+        "https://docs.alpaca.markets/us/docs/account-activities.md",
+        "https://docs.alpaca.markets/us/docs/paper-trading.md"
+      ]
+    },
+    {
+      "venue": "interactive_brokers_paper_candidate",
+      "documented_capability": "Trade history documents UTC trade_time and commission; TWS commission reports document execution commission fields.",
+      "observed_qualification": "not_established",
+      "implementation_readiness": "not_implemented",
+      "launch_authorized": false,
+      "blockers": [
+        "No project adapter or paper-account evidence",
+        "Web API trade history is limited to seven days",
+        "Complete non-trade cash activity and delayed-event coverage are unproven",
+        "Restart reconciliation design and tests do not exist"
+      ],
+      "sources": [
+        "https://www.interactivebrokers.com/docs/web-api/api-reference/trading/trading-orders/get-trade-history.md",
+        "https://www.interactivebrokers.com/docs/tws-api/doc/order-management/commission-and-fees-report"
+      ]
+    }
+  ],
+  "required_next_decisions": [
+    "Keep the launch blocked and preserve Tradier production market-data isolation.",
+    "If Alpaca is reconsidered, correct and test ID-based activity pagination before any separately approved read-only evidence operation.",
+    "If Interactive Brokers is selected, approve a new paper-provider boundary and a durable activity-capture design before implementation.",
+    "Do not relax unknown-cost handling or treat modeled costs as broker evidence without a separately approved contract."
+  ],
+  "existing_evidence": [
+    "reports/tradier-paper-launch-evidence-20260916.md",
+    "reports/alpaca-paper-candidate-evidence-20260916.md",
+    "reports/alpaca-paper-cost-timestamp-qualification-20260917.md"
+  ]
+}
