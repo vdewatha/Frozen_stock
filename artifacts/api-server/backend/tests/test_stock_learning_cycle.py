@@ -1,8 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 import json
+import time
 import uuid
-from threading import Barrier
+from threading import Barrier, Event
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -40,6 +41,7 @@ from app.models import (
     StockTrainingJob,
 )
 from app.services.stock_forward_trial import POLICY
+from app.services.stock_training_jobs import StockTrainingError
 from app.services.stock_learning_cycle import (
     create_learning_cycle,
     create_paper_run_approval,
@@ -260,6 +262,233 @@ def _postgres_schema_engine():
     ).execution_options(schema_translate_map={None: schema})
     Base.metadata.create_all(engine)
     return schema, admin_engine, engine
+
+
+@pytest.fixture
+def approval_race_db():
+    schema, admin_engine, engine = _postgres_schema_engine()
+    try:
+        with Session(engine) as db:
+            snapshot = StockDatasetSnapshot(
+                snapshot_id="d" * 64, dataset_sha256="f" * 64,
+                cutoff_date=date(2026, 9, 17), universe=["SPY"],
+                provider="yfinance", feature_config_id="features", horizon_days=5,
+                artifact_path="/immutable/snapshot", artifact_sha256="f" * 64,
+                metadata_json={},
+            )
+            db.add(snapshot)
+            db.flush()
+            db.add(StockModelRegistry(
+                run_id="c" * 64, snapshot_id=snapshot.snapshot_id,
+                manifest_sha256="f" * 64, artifact_path="/immutable/model",
+                training_metadata={},
+            ))
+            db.flush()
+            cycle = StockLearningCycle(
+                cycle_id="a" * 64, request_sha256="b" * 64,
+                stage="preflight", status="awaiting_preflight",
+                trigger="scheduled", requested_by="scheduler",
+                symbols=["SPY"], cutoff_date=date(2026, 9, 17),
+                horizon_days=5, provider="yfinance", seed=42,
+                model_run_id="c" * 64, snapshot_id=snapshot.snapshot_id,
+                gates={}, evidence={},
+            )
+            db.add(cycle)
+            db.flush()
+            binding = StockPaperModelBinding(
+                model_run_id=cycle.model_run_id, snapshot_id=snapshot.snapshot_id,
+                binding_sha256="e" * 64, purpose="scheduled paper trial",
+                paper_only=True, live_authorized=False, bound_by="scheduler",
+                reason="test", source_cycle_id=cycle.cycle_id,
+            )
+            db.add(binding)
+            db.flush()
+            db.add(StockPaperBindingState(
+                id=1, active_binding_id=binding.id, changed_by="scheduler", reason="test",
+            ))
+            lineage = {
+                "model_run_id": cycle.model_run_id, "snapshot_id": snapshot.snapshot_id,
+                "binding_hash": binding.binding_sha256, "model_hash": "f" * 64,
+                "dataset_sha256": "f" * 64, "cutoff_date": "2026-09-17",
+                "universe": ["SPY"], "cost_assumptions": {},
+                "policy_sha256": forward_trial_service._hash(POLICY),
+            }
+            lineage["lineage_sha256"] = forward_trial_service._hash(lineage)
+            trial = StockPaperTrial(
+                id="trial", binding_id=binding.id, actor="scheduler",
+                source_cycle_id=cycle.cycle_id, status="approved",
+                policy=dict(POLICY), lineage=lineage,
+            )
+            db.add(trial)
+            db.flush()
+            cycle.binding_id, cycle.trial_id = binding.id, trial.id
+            body = {**paper_run_runtime_bounds(cycle, trial), "approving_actors": []}
+            cycle_id = cycle.cycle_id
+            db.commit()
+        # Keep artifact/lineage validation real; only immutable filesystem
+        # loading and read-only external prerequisite collection are substituted.
+        with (
+            patch.object(forward_trial_service, "_dataset_from_record", return_value=MagicMock()),
+            patch.object(forward_trial_service, "validate_registered_stock_model", return_value={}),
+            patch.object(learning_cycle_service, "evaluate_cycle_prerequisites", return_value={
+                "data_snapshot": {"status": "pass"},
+            }),
+            patch.object(learning_cycle_service, "evaluate_launch_admission_prerequisites", return_value={
+                "risk_state": {"status": "pass"},
+            }) as prerequisites,
+        ):
+            yield engine, admin_engine, cycle_id, body, prerequisites
+    finally:
+        engine.dispose()
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin_engine.dispose()
+
+
+def _wait_for_postgres_blocker(admin_engine, waiting_pid, blocking_pid):
+    deadline = time.monotonic() + 10
+    with admin_engine.connect() as connection:
+        while time.monotonic() < deadline:
+            blockers = connection.scalar(
+                text("SELECT pg_blocking_pids(:pid)"), {"pid": waiting_pid},
+            )
+            if blocking_pid in blockers:
+                return
+            time.sleep(0.01)
+    pytest.fail("Expected PostgreSQL row-lock contention was not observed")
+
+
+@pytest.mark.parametrize("scheduler_commits_during_checks", [True, False])
+@pytest.mark.parametrize("transition,denial", [
+    ("advance", "rejected at forward_trial"),
+    ("leave_preflight", "rejected at admission"),
+    ("unexplained_block", "cycle changed during prerequisite checks"),
+    ("failed_gate", "cycle changed during prerequisite checks"),
+    ("fresh_gate_failure", "cycle changed during prerequisite checks"),
+    ("provider_change", "cycle changed during prerequisite checks"),
+])
+def test_paper_approval_rechecks_concurrent_scheduler_transition(
+    approval_race_db, scheduler_commits_during_checks, transition, denial,
+):
+    engine, admin_engine, cycle_id, body, prerequisites = approval_race_db
+    checking, resume = Event(), Event()
+    approval_pid = []
+
+    def collect_prerequisites(*args, **kwargs):
+        checking.set()
+        assert resume.wait(10), "Scheduler never released prerequisite collection"
+        return {"risk_state": {"status": "pass"}}
+
+    prerequisites.side_effect = collect_prerequisites
+
+    def approve():
+        with Session(engine) as db:
+            approval_pid.append(db.scalar(text("SELECT pg_backend_pid()")))
+            # Retain stale ORM state just as a request that already projected
+            # this cycle/trial might. The decision must explicitly refresh it.
+            cycle = db.get(StockLearningCycle, cycle_id)
+            trial = db.get(StockPaperTrial, cycle.trial_id)
+            try:
+                create_paper_run_approval(db, cycle_id, actor="operator", **body)
+                db.commit()
+                return "unexpected approval"
+            except StockTrainingError as exc:
+                db.rollback()
+                return str(exc)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(approve)
+        try:
+            assert checking.wait(10)
+            with Session(engine) as scheduler:
+                scheduler_pid = scheduler.scalar(text("SELECT pg_backend_pid()"))
+                assert scheduler_pid != approval_pid[0]
+                scheduler.execute(text("SET LOCAL lock_timeout = '2s'"))
+                cycle = scheduler.get(StockLearningCycle, cycle_id)
+                if transition == "advance":
+                    trial = scheduler.get(StockPaperTrial, cycle.trial_id)
+                    trial.status = "running"
+                    learning_cycle_service.sync_cycle_from_trial(
+                        scheduler, trial.id, actor="scheduler",
+                    )
+                elif transition == "provider_change":
+                    cycle.provider = "alpaca"
+                else:
+                    if transition in {"failed_gate", "fresh_gate_failure"}:
+                        gate_name = "risk_state" if transition == "fresh_gate_failure" else "admission_validation"
+                        cycle.gates = {gate_name: {
+                            "status": "fail", "reason": "Scheduler revoked admission",
+                        }}
+                    learning_cycle_service._handoff_failure(
+                        scheduler, cycle,
+                        stage="admission" if transition == "leave_preflight" else "preflight",
+                        status="blocked", reason="Scheduler revoked admission",
+                    )
+                # This write must complete while prerequisite collection waits:
+                # the approval must not lock across potential network calls.
+                scheduler.flush()
+                if scheduler_commits_during_checks:
+                    scheduler.commit()
+                resume.set()
+                if not scheduler_commits_during_checks:
+                    _wait_for_postgres_blocker(admin_engine, approval_pid[0], scheduler_pid)
+                    scheduler.commit()
+            assert denial in future.result(timeout=10)
+        finally:
+            resume.set()
+    with Session(engine) as db:
+        assert db.query(StockPaperRunApproval).count() == 0
+        assert db.query(AuditLog).filter(AuditLog.action == "paper_run_approval").count() == 0
+
+
+@pytest.mark.parametrize("commit_approval", [True, False])
+def test_paper_approval_lock_orders_scheduler_write_and_releases_on_rollback(
+    approval_race_db, commit_approval,
+):
+    engine, admin_engine, cycle_id, body, _ = approval_race_db
+    writing = Event()
+    scheduler_pid = []
+
+    def transition():
+        with Session(engine) as db:
+            scheduler_pid.append(db.scalar(text("SELECT pg_backend_pid()")))
+            db.execute(text("SET LOCAL lock_timeout = '10s'"))
+            cycle = db.get(StockLearningCycle, cycle_id)
+            writing.set()
+            learning_cycle_service._handoff_failure(
+                db, cycle, stage="admission", status="blocked",
+                reason="Scheduler revoked admission",
+            )
+            db.commit()
+
+    with Session(engine) as operator, ThreadPoolExecutor(max_workers=1) as pool:
+        operator_pid = operator.scalar(text("SELECT pg_backend_pid()"))
+        approval = create_paper_run_approval(operator, cycle_id, actor="operator", **body)
+        approval_id = approval.id
+        # Identical valid requests return the same paper-only authorization.
+        repeated = create_paper_run_approval(operator, cycle_id, actor="operator", **body)
+        assert repeated.id == approval_id
+        assert repeated.paper_only is True
+        assert repeated.live_authorized is False
+        assert repeated.environment == "paper"
+        future = pool.submit(transition)
+        try:
+            assert writing.wait(10)
+            _wait_for_postgres_blocker(admin_engine, scheduler_pid[0], operator_pid)
+            if commit_approval:
+                operator.commit()
+            else:
+                operator.rollback()
+            future.result(timeout=10)
+        finally:
+            operator.rollback()
+    with Session(engine) as db:
+        cycle = db.get(StockLearningCycle, cycle_id)
+        assert (cycle.stage, cycle.status) == ("admission", "blocked")
+        assert db.query(StockPaperRunApproval).count() == int(commit_approval)
+        assert db.query(AuditLog).filter(AuditLog.action == "paper_run_approval").count() == int(commit_approval)
+        with pytest.raises(StockTrainingError, match="rejected at admission"):
+            create_paper_run_approval(db, cycle_id, actor="operator", **body)
 
 
 def test_concurrent_scheduled_handoffs_share_one_binding_and_trial():

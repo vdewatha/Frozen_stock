@@ -313,6 +313,13 @@ def create_paper_run_approval(
     )
     if not eligible:
         raise StockTrainingError(f"Paper approval rejected at {cycle.stage}: {reason}")
+    # A fresh result may repair a historical failed gate, but must not erase
+    # a new scheduler failure recorded while that result was being collected.
+    decision_fields = (
+        "stage", "status", "symbols", "provider", "trigger", "gates",
+        "last_reason", "model_run_id", "snapshot_id", "binding_id", "trial_id",
+    )
+    checked_decision = _digest({name: getattr(cycle, name) for name in decision_fields})
     checked_at = _now()
     current_gates = {
         **evaluate_cycle_prerequisites(
@@ -320,6 +327,26 @@ def create_paper_run_approval(
         ),
         **evaluate_launch_admission_prerequisites(db, now=checked_at),
     }
+    # Collect read-only prerequisites before taking a row lock: provider checks
+    # must not hold up scheduler writes. Refresh even an identity-mapped cycle
+    # after any concurrent UPDATE commits, then retain the lock through commit.
+    cycle = db.scalar(
+        select(StockLearningCycle)
+        .where(StockLearningCycle.cycle_id == cycle_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if not cycle:
+        raise StockTrainingError("Learning cycle not found")
+    eligible, reason = launch_preflight_eligibility(
+        cycle, prerequisites_ready=True,
+    )
+    if not eligible:
+        raise StockTrainingError(f"Paper approval rejected at {cycle.stage}: {reason}")
+    if checked_decision != _digest({name: getattr(cycle, name) for name in decision_fields}):
+        raise StockTrainingError(
+            "Paper approval rejected at preflight: cycle changed during prerequisite checks; retry approval"
+        )
     if not current_gates:
         raise StockTrainingError("Paper approval rejected at preflight: prerequisite evidence is missing")
     # Fresh read-only evidence can supersede a repaired historical failure.
@@ -330,9 +357,9 @@ def create_paper_run_approval(
                 f"Paper approval rejected at preflight prerequisite {name}: "
                 f"{gate.get('reason') or 'Prerequisite has not passed'}"
             )
-    trial = db.get(StockPaperTrial, cycle.trial_id)
+    trial = db.get(StockPaperTrial, cycle.trial_id, populate_existing=True)
     binding = db.get(StockPaperModelBinding, cycle.binding_id)
-    binding_state = db.get(StockPaperBindingState, 1)
+    binding_state = db.get(StockPaperBindingState, 1, populate_existing=True)
     if (
         not binding or not binding_state
         or binding_state.active_binding_id != cycle.binding_id

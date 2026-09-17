@@ -20,3 +20,9 @@ Do not infer that a blocked preflight is approval-only from passing saved gates.
 **Why:** Handoff failures can record only a reason while leaving prior passing gate evidence intact. A fresh global prerequisite check does not establish that this cycle still owns the active canary or has valid trial lineage.
 
 **How to apply:** Check current cycle-specific binding and trial evidence, and require an identified approval-only blocker or an exact prerequisite repair before accepting a blocked/deferred cycle. Unexplained blockers require a governed handoff retry, not an approval override.
+
+Treat prerequisite collection and the approval write as separate concurrency phases. A changed cycle requires a retry, not reuse of the earlier passing evidence.
+
+**Why:** A scheduler can record a new failure while read-only checks are running. Allowing fresh checks to supersede historical failures is intentional, but applying that same rule to a newly concurrent failure would silently override the scheduler.
+
+**How to apply:** Keep provider calls outside decision locks, refresh decision state after acquiring the cycle lock, and hold serialization through approval commit or rollback. Exercise both transaction orderings with isolated PostgreSQL sessions.
