@@ -3430,9 +3430,13 @@ export type PaperRunApprovalRecord = {
   provider_switch: Record<string, string> | null;
   symbols: string[];
   exposure_limits: Record<string, string | number>;
+  loss_limits: Record<string, string | number>;
   duration_sessions: number;
   schedule: Record<string, string>;
   stop_conditions: string[];
+  stop_authority: string;
+  pending_order_treatment: string;
+  remaining_position_policy: string;
   approving_actors: string[];
   approval_sha256: string;
   created_at: string;
@@ -3448,9 +3452,13 @@ export type PaperRunApproval = {
     provider_switch: Record<string, string> | null;
     symbols: string[];
     exposure_limits: Record<string, string | number>;
+    loss_limits: Record<string, string | number>;
     duration_sessions: number;
     schedule: Record<string, string>;
     stop_conditions: string[];
+    stop_authority: string;
+    pending_order_treatment: string;
+    remaining_position_policy: string;
   };
   paper_only: true;
   live_authorized: false;
@@ -3462,9 +3470,13 @@ export type CreatePaperRunApprovalRequest = {
   provider_switch: Record<string, string> | null;
   symbols: string[];
   exposure_limits: Record<string, string | number>;
+  loss_limits: Record<string, string | number>;
   duration_sessions: number;
   schedule: Record<string, string>;
   stop_conditions: string[];
+  stop_authority: string;
+  pending_order_treatment: string;
+  remaining_position_policy: string;
   approving_actors?: string[];
 };
 

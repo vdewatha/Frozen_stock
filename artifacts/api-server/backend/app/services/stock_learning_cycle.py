@@ -8,6 +8,7 @@ and decisions between those systems without becoming a second model registry.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 from typing import Any, Iterable
@@ -65,6 +66,7 @@ from app.services.stock_forward_trial import create_trial, start_trial, validate
 
 TERMINAL_STATUSES = {"complete", "promoted", "demoted", "rolled_back", "failed"}
 VALID_TRIGGERS = {"manual", "scheduled"}
+ONE_SESSION_SYMBOLS = ["AAPL", "MSFT", "QQQ", "SPY"]
 MIN_COMPARISON_SAMPLES = 30
 
 
@@ -185,26 +187,66 @@ def paper_run_runtime_bounds(
 ) -> dict:
     """Return the non-secret bounds an approval must authorize exactly."""
     policy = trial.policy if trial else {}
+    configured = (cycle.evidence or {}).get("paper_run_bounds")
+    if isinstance(configured, dict):
+        return _safe(configured)
+    session_date = policy.get("paper_session_date") or cycle.cutoff_date.isoformat()
+    try:
+        session_day = date.fromisoformat(str(session_date))
+    except ValueError:
+        session_day = cycle.cutoff_date
+        session_date = session_day.isoformat()
+    bounds = session_bounds(session_day)
+    start_at = bounds[0].isoformat() if bounds else None
+    end_at = bounds[1].isoformat() if bounds else None
+    regular_sessions = int(policy.get("regular_sessions", 20))
+    one_session = regular_sessions == 1
+    exposure_limits = {
+        "max_order_notional": str(policy.get("max_order_notional", "2500")),
+        "max_symbol_notional": str(policy.get("max_symbol_notional", "2500")),
+        "max_aggregate_notional": str(
+            policy.get("max_aggregate_notional", policy.get("max_allocated_notional", "10000"))
+        ),
+        "currency": "USD",
+    }
+    loss_limits = {
+        "max_loss": str(policy.get("max_loss", policy.get("auto_pause_drawdown", "0.02"))),
+        "unit": str(policy.get("loss_unit", "fraction_of_baseline_equity")),
+        "currency": "USD",
+    }
     return {
         "environment": "paper",
         "execution_provider": settings.active_paper_broker,
         "provider_switch": None,
         "symbols": sorted({str(symbol).strip().upper() for symbol in cycle.symbols}),
-        "exposure_limits": {
-            "max_allocated_notional": str(
-                policy.get("max_allocated_notional", "10000")
-            ),
-            "max_risk_per_trade": str(
-                policy.get("max_risk_per_trade", "0.0025")
-            ),
+        "exposure_limits": exposure_limits if one_session else {
+            "max_allocated_notional": str(policy.get("max_allocated_notional", "10000")),
+            "max_risk_per_trade": str(policy.get("max_risk_per_trade", "0.0025")),
         },
-        "duration_sessions": int(policy.get("regular_sessions", 20)),
-        "schedule": {"trigger": cycle.trigger},
+        "loss_limits": loss_limits if one_session else {
+            "max_loss": str(policy.get("auto_pause_drawdown", "0.02")),
+            "unit": "fraction_of_baseline_equity",
+            "currency": "USD",
+        },
+        "duration_sessions": regular_sessions,
+        "schedule": (
+            {
+                "trigger": cycle.trigger,
+                "session_date": str(session_date),
+                "start_at": start_at,
+                "end_at": end_at,
+                "timezone": "America/New_York",
+            }
+            if one_session else {"trigger": cycle.trigger}
+        ),
         "stop_conditions": sorted([
             "paper_only",
             "live_authorized:false",
             f"auto_pause_drawdown:{policy.get('auto_pause_drawdown', '0.02')}",
         ]),
+        "stop_authority": str(policy.get("stop_authority", "operator_and_system")),
+        "pending_order_treatment": str(policy.get("pending_order_treatment", "cancel")),
+        "remaining_position_policy": str(policy.get("remaining_position_policy", "hold")),
     }
 
 
@@ -233,9 +275,13 @@ def _approval_projection(
             "provider_switch": approval.provider_switch,
             "symbols": approval.symbols,
             "exposure_limits": approval.exposure_limits,
+            "loss_limits": approval.loss_limits,
             "duration_sessions": approval.duration_sessions,
             "schedule": approval.schedule,
             "stop_conditions": approval.stop_conditions,
+            "stop_authority": approval.stop_authority,
+            "pending_order_treatment": approval.pending_order_treatment,
+            "remaining_position_policy": approval.remaining_position_policy,
             "approving_actors": approval.approving_actors,
             "approval_sha256": approval.approval_sha256,
             "created_at": approval.created_at,
@@ -269,18 +315,26 @@ def _approval_mismatch(
         "provider_switch": approval.provider_switch,
         "symbols": sorted({str(symbol).strip().upper() for symbol in approval.symbols}),
         "exposure_limits": _approval_value(approval.exposure_limits),
+        "loss_limits": _approval_value(approval.loss_limits),
         "duration_sessions": approval.duration_sessions,
         "schedule": _approval_value(approval.schedule),
         "stop_conditions": sorted(str(item) for item in approval.stop_conditions),
+        "stop_authority": approval.stop_authority,
+        "pending_order_treatment": approval.pending_order_treatment,
+        "remaining_position_policy": approval.remaining_position_policy,
     }
     comparable = {
         "execution_provider": expected["execution_provider"],
         "provider_switch": expected["provider_switch"],
         "symbols": expected["symbols"],
         "exposure_limits": expected["exposure_limits"],
+        "loss_limits": expected["loss_limits"],
         "duration_sessions": expected["duration_sessions"],
         "schedule": expected["schedule"],
         "stop_conditions": sorted(expected["stop_conditions"]),
+        "stop_authority": expected["stop_authority"],
+        "pending_order_treatment": expected["pending_order_treatment"],
+        "remaining_position_policy": expected["remaining_position_policy"],
     }
     for key, value in comparable.items():
         if actual.get(key) != value:
@@ -300,9 +354,13 @@ def create_paper_run_approval(
     provider_switch: dict | None,
     symbols: Iterable[str],
     exposure_limits: dict,
+    loss_limits: dict | None = None,
     duration_sessions: int,
     schedule: dict,
     stop_conditions: Iterable[str],
+    stop_authority: str = "operator_and_system",
+    pending_order_treatment: str = "cancel",
+    remaining_position_policy: str = "hold",
     approving_actors: Iterable[str],
 ) -> StockPaperRunApproval:
     cycle = db.get(StockLearningCycle, cycle_id)
@@ -407,34 +465,83 @@ def create_paper_run_approval(
             f"Paper approval rejected at preflight prerequisite trial_artifact: {exc}"
         ) from None
     expected = paper_run_runtime_bounds(cycle, trial)
+    requested_loss_limits = _approval_value(loss_limits or expected["loss_limits"])
     requested = {
         "environment": environment,
         "execution_provider": execution_provider,
         "provider_switch": provider_switch or None,
         "symbols": sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}),
         "exposure_limits": _approval_value(exposure_limits),
+        "loss_limits": requested_loss_limits,
         "duration_sessions": duration_sessions,
         "schedule": _approval_value(schedule),
         "stop_conditions": sorted(str(item).strip() for item in stop_conditions if str(item).strip()),
+        "stop_authority": str(stop_authority).strip(),
+        "pending_order_treatment": str(pending_order_treatment).strip(),
+        "remaining_position_policy": str(remaining_position_policy).strip(),
     }
-    if requested != expected:
-        mismatch = _approval_mismatch(
-            StockPaperRunApproval(
-                environment=requested["environment"],
-                execution_provider=requested["execution_provider"],
-                provider_switch=requested["provider_switch"],
-                symbols=requested["symbols"],
-                exposure_limits=requested["exposure_limits"],
-                duration_sessions=requested["duration_sessions"],
-                schedule=requested["schedule"],
-                stop_conditions=requested["stop_conditions"],
-                approving_actors=["request"],
-                paper_only=True,
-                live_authorized=False,
-            ),
-            expected,
-        )
-        raise StockTrainingError(mismatch or "Paper run approval does not match requested runtime bounds")
+    one_session_required = expected["duration_sessions"] == 1
+    if requested["environment"] != "paper" or (
+        one_session_required and requested["duration_sessions"] != 1
+    ):
+        raise StockTrainingError("Paper approval must authorize exactly one regular session")
+    if requested["symbols"] != expected["symbols"]:
+        raise StockTrainingError("Paper run approval symbols do not match the cycle universe")
+    if one_session_required and requested["symbols"] != ONE_SESSION_SYMBOLS:
+        raise StockTrainingError("One-session paper approval must cover AAPL, MSFT, QQQ, and SPY")
+    if requested["execution_provider"] != expected["execution_provider"] or requested["provider_switch"] is not None:
+        raise StockTrainingError("Paper run approval broker or provider switch does not match the paper environment")
+    if one_session_required and (
+        not requested["schedule"].get("session_date")
+        or requested["schedule"].get("timezone") != "America/New_York"
+    ):
+        raise StockTrainingError("Paper approval requires a dated America/New_York session")
+    if one_session_required:
+        try:
+            session_day = date.fromisoformat(str(requested["schedule"]["session_date"]))
+            start_at = datetime.fromisoformat(str(requested["schedule"]["start_at"]))
+            end_at = datetime.fromisoformat(str(requested["schedule"]["end_at"]))
+        except (TypeError, ValueError, KeyError):
+            raise StockTrainingError("Paper approval session boundaries must be valid timestamps") from None
+        session_bounds_value = session_bounds(session_day)
+        if (
+            not session_bounds_value
+            or _utc(start_at) != _utc(session_bounds_value[0])
+            or _utc(end_at) != _utc(session_bounds_value[1])
+            or _utc(start_at) >= _utc(end_at)
+        ):
+            raise StockTrainingError("Paper approval must cover one exact regular NYSE session")
+    for name, values in (("exposure", requested["exposure_limits"]), ("loss", requested["loss_limits"])):
+        if not isinstance(values, dict):
+            raise StockTrainingError(f"Paper approval {name} limits must be explicit")
+    if one_session_required:
+        required_exposure = ("max_order_notional", "max_symbol_notional", "max_aggregate_notional")
+        if any(key not in requested["exposure_limits"] for key in required_exposure):
+            raise StockTrainingError("Paper approval requires per-order, per-symbol, and aggregate exposure caps")
+        if "max_loss" not in requested["loss_limits"] or not requested["loss_limits"].get("unit"):
+            raise StockTrainingError("Paper approval requires an explicit loss limit and unit")
+        try:
+            numbers = [Decimal(str(requested["exposure_limits"][key])) for key in required_exposure]
+            numbers.append(Decimal(str(requested["loss_limits"]["max_loss"])))
+        except (InvalidOperation, TypeError, ValueError):
+            raise StockTrainingError("Paper approval limits must be numeric") from None
+        if any(value <= 0 for value in numbers):
+            raise StockTrainingError("Paper approval limits must be greater than zero")
+        if requested["stop_authority"] not in {"operator_and_system"}:
+            raise StockTrainingError("Paper approval stop authority is not supported")
+        if requested["pending_order_treatment"] not in {"cancel"}:
+            raise StockTrainingError("Paper approval pending-order treatment must be cancel")
+        if requested["remaining_position_policy"] not in {"hold", "reduce", "flatten"}:
+            raise StockTrainingError("Paper approval remaining-position policy is invalid")
+    # The configuration is a mutable cycle pointer; each approval remains an
+    # immutable snapshot and a changed pointer makes the prior snapshot fail
+    # the projection check.
+    cycle.evidence = {**(cycle.evidence or {}), "paper_run_bounds": requested}
+    if trial:
+        trial.lineage = {
+            **(trial.lineage or {}),
+            "paper_run_bounds": requested,
+        }
     actors = sorted({
         str(value).strip() for value in [*approving_actors, actor] if str(value).strip()
     })
@@ -461,9 +568,13 @@ def create_paper_run_approval(
         provider_switch=requested["provider_switch"],
         symbols=requested["symbols"],
         exposure_limits=requested["exposure_limits"],
+        loss_limits=requested["loss_limits"],
         duration_sessions=requested["duration_sessions"],
         schedule=requested["schedule"],
         stop_conditions=requested["stop_conditions"],
+        stop_authority=requested["stop_authority"],
+        pending_order_treatment=requested["pending_order_treatment"],
+        remaining_position_policy=requested["remaining_position_policy"],
         approving_actors=actors,
         approval_sha256=approval_hash,
         paper_only=True,
@@ -471,6 +582,11 @@ def create_paper_run_approval(
     )
     db.add(approval)
     db.flush()
+    if trial:
+        trial.lineage = {
+            **(trial.lineage or {}),
+            "paper_run_approval_sha256": approval_hash,
+        }
     write_audit_log(
         db,
         event_type="stock_learning_cycle",
@@ -1233,16 +1349,22 @@ def create_learning_cycle(
     actor: str,
     trigger: str = "manual",
     seed: int = 42,
+    paper_session_date: date | None = None,
 ) -> tuple[StockLearningCycle, bool]:
     normalized = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
     if trigger not in VALID_TRIGGERS:
         raise StockTrainingError("Only manual or scheduled learning cycles are allowed")
     if not normalized:
         raise StockTrainingError("At least one stock symbol is required")
+    if paper_session_date is not None and session_bounds(paper_session_date) is None:
+        raise StockTrainingError("Paper session date must be a regular NYSE session")
+    if paper_session_date is not None and normalized != ONE_SESSION_SYMBOLS:
+        raise StockTrainingError("One-session paper cycles must use AAPL, MSFT, QQQ, and SPY")
     request = {
         "symbols": normalized, "cutoff_date": cutoff_at.isoformat(),
         "horizon_days": horizon_days, "provider": provider,
         "trigger": trigger, "seed": seed,
+        **({"paper_session_date": paper_session_date.isoformat()} if paper_session_date else {}),
     }
     request_sha256 = _digest(request)
     existing = db.scalar(select(StockLearningCycle).where(

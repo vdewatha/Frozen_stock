@@ -33,3 +33,4 @@
 - [Stale artifact notifications](stale-artifact-notifications.md) — hash-verify restored artifacts and rerun the governed job before clearing an old missing-artifact alert.
 - [Tradier provider boundary](tradier-provider-boundary.md) — use separate production market-data and sandbox trading tokens; sandbox history cannot prove complete reconciliation.
 - [Paper-run approval](paper-run-approval.md) — scheduled handoffs require an immutable, exact, paper-only approval over current runtime bounds.
+- [Exact one-session paper bounds](one-session-paper-bounds.md) — cycle-owned runs need explicit NYSE timestamps, caps, policies, and approval rechecks at dispatch.

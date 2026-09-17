@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import (
     StockDatasetSnapshot, StockModelRegistry, StockPaperModelBinding,
-    StockPaperTrial, StockPaperTrialDecision, StockPaperTrialMetric, IntradayBar, MarketPrice,
+    StockPaperTrial, StockPaperTrialDecision, StockPaperTrialMetric, StockLearningCycle,
+    StockPaperRunApproval, IntradayBar, MarketPrice,
     Strategy, StrategySignal,
 )
 from app.models.stock_paper import StockPaperOrder, StockPaperPosition, StockPaperStrategyEvidence, StockPaperAccount, StockPaperTrialLot, StockPaperFill
@@ -48,6 +49,19 @@ POLICY = {
     "regular_sessions": 20, "minimum_closed_trades": 30, "minimum_decision_coverage": "0.90",
     "max_allocated_notional": "10000", "max_risk_per_trade": "0.0025",
     "auto_pause_drawdown": "0.02", "paper_only": True, "live_authorized": False,
+}
+
+ONE_SESSION_POLICY = {
+    **POLICY,
+    "regular_sessions": 1,
+    "max_order_notional": "2500",
+    "max_symbol_notional": "2500",
+    "max_aggregate_notional": "10000",
+    "max_loss": "0.02",
+    "loss_unit": "fraction_of_baseline_equity",
+    "stop_authority": "operator_and_system",
+    "pending_order_treatment": "cancel",
+    "remaining_position_policy": "hold",
 }
 
 def _json_safe(value):
@@ -125,7 +139,7 @@ def _evidence_allows_trade(db: Session, trial: StockPaperTrial, manifest: dict, 
         else: break
     drawdown = ((trial.peak_equity - account.equity) / trial.peak_equity
                 if trial.peak_equity and trial.peak_equity > 0 else None)
-    if drawdown is None or drawdown > Decimal(str(trial.policy["auto_pause_drawdown"])):
+    if drawdown is None or drawdown > _trial_approved_loss_limit(db, trial):
         return False, "forward_drawdown_limit_exceeded"
     evidence = db.scalar(select(StockPaperStrategyEvidence).where(
         StockPaperStrategyEvidence.strategy_id == trial.strategy_id)) if trial.strategy_id else None
@@ -321,6 +335,68 @@ _LINEAGE_KEYS = (
 def _utc(value: datetime) -> datetime:
     """Normalize legacy naive database datetimes without changing their value."""
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _trial_approval(db: Session, trial: StockPaperTrial) -> StockPaperRunApproval | None:
+    if not trial.source_cycle_id:
+        return None
+    cycle = db.get(StockLearningCycle, trial.source_cycle_id)
+    approval = db.scalar(
+        select(StockPaperRunApproval)
+        .where(StockPaperRunApproval.cycle_id == trial.source_cycle_id)
+        .order_by(StockPaperRunApproval.created_at.desc(), StockPaperRunApproval.id.desc())
+    )
+    if not cycle or not approval or not isinstance((cycle.evidence or {}).get("paper_run_bounds"), dict):
+        return None
+    return approval
+
+
+def _trial_approved_bounds(
+    db: Session, trial: StockPaperTrial,
+) -> tuple[datetime, datetime] | None:
+    approval = _trial_approval(db, trial)
+    if not approval:
+        return None
+    try:
+        return (
+            _utc(datetime.fromisoformat(str(approval.schedule["start_at"]))),
+            _utc(datetime.fromisoformat(str(approval.schedule["end_at"]))),
+        )
+    except (KeyError, TypeError, ValueError):
+        raise StockTrainingError("Paper approval has invalid durable session boundaries")
+
+
+def _trial_approved_limits(db: Session, trial: StockPaperTrial) -> dict:
+    approval = _trial_approval(db, trial)
+    if approval:
+        return dict(approval.exposure_limits or {})
+    return {
+        "max_order_notional": trial.policy.get("max_order_notional", "2500"),
+        "max_symbol_notional": trial.policy.get("max_symbol_notional", "2500"),
+        "max_aggregate_notional": trial.policy.get("max_aggregate_notional", "10000"),
+    }
+
+
+def _trial_approved_loss_limit(db: Session, trial: StockPaperTrial) -> Decimal:
+    approval = _trial_approval(db, trial)
+    if approval and approval.loss_limits:
+        return Decimal(str(approval.loss_limits.get(
+            "max_loss", trial.policy.get("auto_pause_drawdown", "0.02")
+        )))
+    return Decimal(str(trial.policy.get("auto_pause_drawdown", "0.02")))
+
+
+def _apply_remaining_position_policy(
+    db: Session, trial: StockPaperTrial, reason: str, now: datetime,
+) -> None:
+    """Keep positions, or hand them to the existing lot-exit path, explicitly."""
+    approval = _trial_approval(db, trial)
+    policy = (
+        approval.remaining_position_policy
+        if approval else trial.policy.get("remaining_position_policy", "reduce")
+    )
+    if policy in {"reduce", "flatten"}:
+        _ensure_exit_intents(db, trial, reason, now)
 
 
 def _frozen_window_sessions(
@@ -751,14 +827,36 @@ def create_trial(
                "cutoff_date": snapshot.cutoff_date.isoformat(), "universe": snapshot.universe,
                "cost_assumptions": manifest.get("cost_assumptions"),
                "binding_hash": binding.binding_sha256}
-    lineage["policy_sha256"] = _hash(POLICY)
+    trial_policy = dict(POLICY)
+    if source_cycle_id:
+        from app.models import StockLearningCycle
+        cycle = db.get(StockLearningCycle, source_cycle_id)
+        requested_date = (
+            ((cycle.evidence or {}).get("request") or {}).get("paper_session_date")
+            if cycle else None
+        )
+        if requested_date:
+            try:
+                requested_day = datetime.fromisoformat(str(requested_date)).date()
+            except ValueError:
+                requested_day = datetime.strptime(str(requested_date), "%Y-%m-%d").date()
+            bounds = session_bounds(requested_day)
+            if bounds is None:
+                raise StockTrainingError("Cycle paper session must be a regular NYSE session")
+            trial_policy = {
+                **ONE_SESSION_POLICY,
+                "paper_session_date": requested_day.isoformat(),
+                "session_start_at": bounds[0].isoformat(),
+                "session_end_at": bounds[1].isoformat(),
+            }
+    lineage["policy_sha256"] = _hash(trial_policy)
     blocked = None
     if not snapshot.metadata_json.get("binding_eligible", False):
         blocked = snapshot.metadata_json.get("binding_eligibility_reason", "Snapshot is not binding eligible")
     lineage["lineage_sha256"] = _hash(lineage)
     row = StockPaperTrial(id=str(uuid4()), binding_id=binding.id, actor=actor,
                           source_cycle_id=source_cycle_id,
-                          status="blocked" if blocked else "approved", policy=dict(POLICY),
+                          status="blocked" if blocked else "approved", policy=trial_policy,
                           lineage=lineage, blocked_reason=blocked)
     db.add(row)
     return row
@@ -805,6 +903,12 @@ def start_trial(
                 },
             )
             return row
+    approved_bounds = _trial_approved_bounds(db, row)
+    if approved_bounds and _utc(_now()) >= approved_bounds[1]:
+        row.status = "stopped"
+        row.stopped_at = row.stopped_at or _now()
+        row.blocked_reason = "Paper run session has expired"
+        return row
     immutable_block = bool(
         row.blocked_reason
         and not (
@@ -976,7 +1080,7 @@ def stop_trial(
     row = db.get(StockPaperTrial, trial_id)
     if not row: raise StockTrainingError("Trial not found")
     now = _now()
-    _ensure_exit_intents(db, row, "operator_stop", now)
+    _apply_remaining_position_policy(db, row, "operator_stop", now)
     open_lots = _trial_has_managed_exposure(db, row)
     if row.status not in {"stopped", "completed"}:
         row.status, row.stopped_at = ("stopped", now) if open_lots else ("completed", now)
@@ -998,6 +1102,9 @@ def record_decision(db: Session, trial_id: str, *, symbol: str, bar_timestamp: d
     if not row: raise StockTrainingError("Trial not found")
     if row.status != "running": raise StockTrainingError("Trial is not running")
     decision_at = _now()
+    bounds = _trial_approved_bounds(db, row)
+    if bounds and not (bounds[0] <= _utc(decision_at) < bounds[1]):
+        raise StockTrainingError("Paper trial decision is outside its approved session")
     reason = None
     if feature_timestamp is None or feature_timestamp >= decision_at: reason = "feature_timestamp_not_before_decision"
     elif not qualifying: reason = "model_signal_not_qualifying"
@@ -1022,7 +1129,7 @@ def record_decision(db: Session, trial_id: str, *, symbol: str, bar_timestamp: d
         try:
             order = reserve_stock_paper_order(db, symbol=symbol, side="buy", quantity=Decimal("1"),
                 reference_price=reference_price or Decimal("0"), idempotency_key=f"trial:{trial_id}:{symbol}:{bar_timestamp.isoformat()}",
-                source="manual_control_room")
+                source="manual_control_room", trial_id=row.id)
             decision.order_id = order.id
             dispatch_reserved_order(db, order.id)
         except StockPaperError as exc:
@@ -1038,10 +1145,22 @@ def observe_trial(db: Session, trial_id: str) -> dict:
     _sync_trial_lot_state(db, trial)
     now = _now()
     if trial.status == "stopped":
-        _ensure_exit_intents(db, trial, "operator_stop", now)
+        _apply_remaining_position_policy(db, trial, "operator_stop", now)
         return {"status": "stopped", "trial_id": trial_id, "decisions": 0,
                 "reason": trial.pause_reason, "paper_only": True}
     account = active_paper_account(db)
+    approved_bounds = _trial_approved_bounds(db, trial)
+    if approved_bounds and _utc(now) >= approved_bounds[1]:
+        _apply_remaining_position_policy(db, trial, "paper_session_expired", now)
+        if trial.status == "running":
+            trial.status = "stopped"
+        return {
+            "status": trial.status,
+            "trial_id": trial_id,
+            "decisions": 0,
+            "reason": "paper_session_expired",
+            "paper_only": True,
+        }
     if account and _halt_trial_for_accounting(db, trial, account):
         return {
             "status": trial.status,
@@ -1093,14 +1212,20 @@ def observe_trial(db: Session, trial_id: str) -> dict:
         trial.peak_equity = account.equity
     elif account.equity > trial.peak_equity:
         trial.peak_equity = account.equity
-    if trial.peak_equity > 0 and account.equity <= trial.peak_equity * Decimal("0.98"):
-        trial.status, trial.pause_reason = "paused", "drawdown_limit_2_percent"
-        _ensure_exit_intents(db, trial, "drawdown_limit_2_percent", now)
+    loss_limit = _trial_approved_loss_limit(db, trial)
+    if trial.peak_equity > 0 and account.equity <= trial.peak_equity * (Decimal("1") - loss_limit):
+        loss_reason = "approved_loss_limit_exceeded" if _trial_approval(db, trial) else "drawdown_limit_2_percent"
+        trial.status, trial.pause_reason = "paused", loss_reason
+        _apply_remaining_position_policy(db, trial, loss_reason, now)
         return {"status": "paused", "trial_id": trial_id, "reason": trial.pause_reason}
     trial_dd = _trial_equity_curve_max_drawdown(db, trial, now)
-    if trial_dd is not None and trial_dd >= Decimal("0.02"):
-        trial.status, trial.pause_reason = "paused", "trial_drawdown_limit_2_percent"
-        _ensure_exit_intents(db, trial, "trial_drawdown_limit_2_percent", now)
+    if trial_dd is not None and trial_dd >= loss_limit:
+        curve_reason = (
+            "approved_trial_loss_limit_exceeded"
+            if _trial_approval(db, trial) else "trial_drawdown_limit_2_percent"
+        )
+        trial.status, trial.pause_reason = "paused", curve_reason
+        _apply_remaining_position_policy(db, trial, curve_reason, now)
         return {"status": "paused", "trial_id": trial_id, "executed": 0}
     # Risk-reducing exits are evaluated before any new entry.  A trial position
     # is attributable through its order.strategy_id and is never sold short.
@@ -1280,6 +1405,25 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
         return {"status": trial.status, "trial_id": trial_id, "executed": 0}
     _sync_trial_lot_state(db, trial)
     now = _now()
+    approved_bounds = _trial_approved_bounds(db, trial)
+    if approved_bounds and _utc(now) >= approved_bounds[1]:
+        # No new entry may be created after a worker missed the deadline.
+        # Reconciliation and risk-reducing exit intents remain available.
+        for decision in db.scalars(select(StockPaperTrialDecision).where(
+            StockPaperTrialDecision.trial_id == trial.id,
+            StockPaperTrialDecision.order_id.is_(None),
+            StockPaperTrialDecision.action == "buy",
+        )).all():
+            decision.action, decision.qualifying, decision.rejection_reason = (
+                "reject", False, "paper_session_expired"
+            )
+        _apply_remaining_position_policy(db, trial, "paper_session_expired", now)
+        return {
+            "status": trial.status,
+            "trial_id": trial_id,
+            "executed": 0,
+            "reason": "paper_session_expired",
+        }
     account = active_paper_account(db)
     if account and _halt_trial_for_accounting(db, trial, account):
         return {
@@ -1318,7 +1462,7 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
         if trial.status != "stopped":
             trial.status = "paused"
         trial.pause_reason = "drawdown_limit_2_percent"
-        _ensure_exit_intents(db, trial, "drawdown_limit_2_percent", now)
+        _apply_remaining_position_policy(db, trial, "drawdown_limit_2_percent", now)
     # Dispatch durable post-close exit intents first.  Only completed current
     # session references are accepted by the shared ledger.
     for lot in db.scalars(select(StockPaperTrialLot).where(
@@ -1398,12 +1542,16 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
             total_exposure = sum((p.market_value or Decimal("0") for p in positions), Decimal("0"))
             symbol_exposure = sum((p.market_value or Decimal("0") for p in positions if p.symbol == symbol), Decimal("0"))
             trial_exposure = _trial_allocated_notional(db, trial)
-            remaining = max(Decimal("0"), Decimal("10000") - trial_exposure)
-            symbol_cap = max(Decimal("0"), account.equity * Decimal("0.10") - symbol_exposure)
+            limits = _trial_approved_limits(db, trial)
+            aggregate_cap = Decimal(str(limits.get("max_aggregate_notional", "10000")))
+            symbol_cap_limit = Decimal(str(limits.get("max_symbol_notional", "2500")))
+            order_cap = Decimal(str(limits.get("max_order_notional", "2500")))
+            remaining = max(Decimal("0"), aggregate_cap - trial_exposure)
+            symbol_cap = max(Decimal("0"), symbol_cap_limit - symbol_exposure)
             trial_stop_risk_cap = account.equity * Decimal("0.0025") / Decimal("0.02")
             ledger_risk_cap = account.equity * Decimal(str(DEFAULT_RISK_RULES["max_risk_per_trade"]))
             risk_cap = min(trial_stop_risk_cap, ledger_risk_cap)
-            notional = min(remaining, symbol_cap, risk_cap,
+            notional = min(remaining, symbol_cap, order_cap, risk_cap,
                            max(Decimal("0"), account.equity * Decimal("0.10") - total_exposure))
             quantity = (notional / reference.close).quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
             if quantity <= 0:
@@ -1422,7 +1570,7 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
             order = reserve_stock_paper_order(db, symbol=symbol, side="buy", quantity=quantity,
                 reference_price=reference.close,
                 idempotency_key=f"trial:{trial.id}:entry:{decision.id}",
-                source="manual_control_room", signal_id=signal.id)
+                source="manual_control_room", signal_id=signal.id, trial_id=trial.id)
             order.strategy_id = trial.strategy_id
             decision.order_id = order.id
             db.add(StockPaperTrialLot(

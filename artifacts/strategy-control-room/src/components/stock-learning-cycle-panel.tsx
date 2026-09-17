@@ -17,6 +17,7 @@ import {
   type StockLearningScheduleControl,
   type StockLearningCycle,
   type StockLearningCycleAction,
+  type CreatePaperRunApprovalRequest,
 } from "@/lib/api";
 
 function gateClass(status: string): string {
@@ -60,6 +61,7 @@ export function StockLearningCyclePanel() {
   const [prerequisites, setPrerequisites] = useState<Record<string, LaunchPrerequisites>>({});
   const [prerequisiteError, setPrerequisiteError] = useState<string>();
   const [refreshing, setRefreshing] = useState(true);
+  const [approvalDrafts, setApprovalDrafts] = useState<Record<string, CreatePaperRunApprovalRequest>>({});
 
   async function refresh() {
     setRefreshing(true);
@@ -71,6 +73,24 @@ export function StockLearningCyclePanel() {
       ]);
       setCycles(nextCycles);
       setScheduleControl(nextControl);
+      setApprovalDrafts((current) => {
+        const next = { ...current };
+        for (const cycle of nextCycles) {
+          if (!next[cycle.cycle_id]) {
+            const expected = cycle.handoff.approval.expected;
+            next[cycle.cycle_id] = {
+              ...expected,
+              duration_sessions: 1,
+              loss_limits: expected.loss_limits ?? { max_loss: "0.02", unit: "fraction_of_baseline_equity", currency: "USD" },
+              stop_authority: expected.stop_authority ?? "operator_and_system",
+              pending_order_treatment: expected.pending_order_treatment ?? "cancel",
+              remaining_position_policy: expected.remaining_position_policy ?? "hold",
+              approving_actors: [],
+            };
+          }
+        }
+        return next;
+      });
       const results = await Promise.all(
         nextCycles.length ? nextCycles.map((cycle) => getLaunchPrerequisites(cycle.cycle_id)) : [getLaunchPrerequisites()],
       );
@@ -134,7 +154,11 @@ export function StockLearningCyclePanel() {
 
   async function approvePaperRun(cycle: StockLearningCycle) {
     if (refreshing || prerequisiteError || !prerequisites[cycle.cycle_id]?.eligible_for_approval) return;
-    const expected = cycle.handoff.approval.expected;
+    const expected = approvalDrafts[cycle.cycle_id] ?? {
+      ...cycle.handoff.approval.expected,
+      duration_sessions: 1,
+      approving_actors: [],
+    };
     setBusy(true);
     try {
       const latest = await getLaunchPrerequisites(cycle.cycle_id);
@@ -143,10 +167,7 @@ export function StockLearningCyclePanel() {
         setStatus(latest.reason);
         return;
       }
-      await createStockLearningCycleApproval(cycle.cycle_id, {
-        ...expected,
-        approving_actors: [],
-      });
+      await createStockLearningCycleApproval(cycle.cycle_id, expected);
       setStatus("Paper run approval recorded");
       await refresh();
     } catch (error) {
@@ -265,6 +286,88 @@ export function StockLearningCyclePanel() {
                       {cycle.handoff.approval.record.execution_provider} ·{" "}
                       {cycle.handoff.approval.record.duration_sessions} sessions
                     </div>
+                  ) : null}
+                  {cycle.handoff.approval.status !== "pass" ? (
+                    <RoleGate requires="operator" className="mt-2">
+                      {(() => {
+                        const draft = approvalDrafts[cycle.cycle_id];
+                        if (!draft) return null;
+                        const setDraft = (patch: Partial<CreatePaperRunApprovalRequest>) =>
+                          setApprovalDrafts((current) => ({
+                            ...current,
+                            [cycle.cycle_id]: { ...draft, ...patch },
+                          }));
+                        return (
+                          <div className="grid gap-2 rounded border border-amber-300 bg-white p-2">
+                            <div className="font-semibold text-ink">Exact one-session bounds</div>
+                            <div className="grid gap-2 sm:grid-cols-3">
+                              {([
+                                ["max_order_notional", "Per-order cap"],
+                                ["max_symbol_notional", "Per-symbol cap"],
+                                ["max_aggregate_notional", "Aggregate cap"],
+                              ] as const).map(([key, label]) => (
+                                <label className="grid gap-1 text-[11px] text-slate-600" key={key}>
+                                  {label} (USD)
+                                  <input
+                                    className="focus-ring rounded border border-line px-2 py-1.5 text-xs text-ink"
+                                    inputMode="decimal"
+                                    value={String(draft.exposure_limits[key] ?? "")}
+                                    onChange={(event) => setDraft({
+                                      exposure_limits: { ...draft.exposure_limits, [key]: event.target.value },
+                                    })}
+                                  />
+                                </label>
+                              ))}
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-3">
+                              <label className="grid gap-1 text-[11px] text-slate-600">
+                                Max loss
+                                <input
+                                  className="focus-ring rounded border border-line px-2 py-1.5 text-xs text-ink"
+                                  inputMode="decimal"
+                                  value={String(draft.loss_limits.max_loss ?? "")}
+                                  onChange={(event) => setDraft({
+                                    loss_limits: { ...draft.loss_limits, max_loss: event.target.value },
+                                  })}
+                                />
+                              </label>
+                              <label className="grid gap-1 text-[11px] text-slate-600">
+                                Loss unit
+                                <input
+                                  className="focus-ring rounded border border-line px-2 py-1.5 text-xs text-ink"
+                                  value={String(draft.loss_limits.unit ?? "")}
+                                  onChange={(event) => setDraft({
+                                    loss_limits: { ...draft.loss_limits, unit: event.target.value },
+                                  })}
+                                />
+                              </label>
+                              <label className="grid gap-1 text-[11px] text-slate-600">
+                                Remaining position
+                                <select
+                                  className="focus-ring rounded border border-line px-2 py-1.5 text-xs text-ink"
+                                  value={draft.remaining_position_policy}
+                                  onChange={(event) => setDraft({ remaining_position_policy: event.target.value })}
+                                >
+                                  <option value="hold">Hold</option>
+                                  <option value="reduce">Reduce</option>
+                                  <option value="flatten">Flatten</option>
+                                </select>
+                              </label>
+                            </div>
+                            <div className="grid gap-1 text-[11px] text-slate-500">
+                              <span>
+                                Session: {draft.schedule.session_date ?? "not configured"} ·{" "}
+                                {draft.schedule.timezone ?? "America/New_York"}
+                              </span>
+                              <span>
+                                {draft.schedule.start_at ?? "start unavailable"} → {draft.schedule.end_at ?? "end unavailable"}
+                              </span>
+                              <span>Pending orders: cancel at expiry · stop authority: operator and system</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </RoleGate>
                   ) : null}
                   {cycle.handoff.approval.status !== "pass" ? (
                     <RoleGate requires="operator">

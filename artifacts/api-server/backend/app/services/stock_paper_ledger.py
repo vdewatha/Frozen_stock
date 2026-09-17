@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 import hashlib
+import json
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -17,10 +18,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import CorporateAction, IntradayBar, RiskRule, Strategy, StrategySignal, StockPaperRecoveryState
+from app.models import (
+    CorporateAction, IntradayBar, RiskRule, Strategy, StrategySignal,
+    StockLearningCycle, StockPaperRunApproval, StockPaperTrial,
+    StockPaperRecoveryState,
+)
 from app.models.stock_paper import (
     StockPaperAccount, StockPaperBrokerActivity, StockPaperEquitySnapshot,
     StockPaperFill, StockPaperLedgerEvent, StockPaperOrder, StockPaperPosition, StockPaperStrategyEvidence,
+    StockPaperTrialLot,
 )
 from app.services.intraday_data import MARKET_DATA_PROVIDER, feed_status, session_bounds
 from app.services.risk import DEFAULT_RISK_RULES, PortfolioState, StrategyState, approve_trade
@@ -491,6 +497,71 @@ def _timestamp(value: Any, *, fallback: datetime) -> datetime:
         return _utc(parsed)
     except (TypeError, ValueError) as exc:
         raise StockPaperError("Broker supplied an invalid timestamp") from exc
+
+
+def _approved_trial_context(
+    db: Session, order: StockPaperOrder, *, trial_id: str | None = None,
+) -> tuple[StockPaperTrial, StockPaperRunApproval] | None:
+    """Resolve the immutable approval fence for a cycle-owned paper order."""
+    resolved_trial_id = trial_id or order.trial_id
+    if not resolved_trial_id and order.trial_lot_id:
+        lot = db.get(StockPaperTrialLot, order.trial_lot_id)
+        resolved_trial_id = lot.trial_id if lot else None
+    if not resolved_trial_id:
+        return None
+    trial = db.get(StockPaperTrial, resolved_trial_id)
+    if not trial or not trial.source_cycle_id:
+        raise StockPaperError("Cycle-owned paper order has no governed trial")
+    cycle = db.get(StockLearningCycle, trial.source_cycle_id)
+    approval = db.scalar(
+        select(StockPaperRunApproval)
+        .where(StockPaperRunApproval.cycle_id == trial.source_cycle_id)
+        .order_by(StockPaperRunApproval.created_at.desc(), StockPaperRunApproval.id.desc())
+    )
+    if not cycle or not approval:
+        if trial.policy.get("regular_sessions") != 1:
+            return None
+        raise StockPaperError("Paper order requires a current immutable run approval")
+    expected = (cycle.evidence or {}).get("paper_run_bounds")
+    if not isinstance(expected, dict):
+        raise StockPaperError("Paper run bounds are not configured")
+    if (
+        approval.approval_sha256 != _approval_digest({
+            "cycle_id": cycle.cycle_id,
+            **expected,
+            "approving_actors": sorted(str(actor) for actor in approval.approving_actors),
+            "paper_only": True,
+            "live_authorized": False,
+        })
+        or approval.duration_sessions != 1
+        or approval.environment != "paper"
+        or approval.paper_only is not True
+        or approval.live_authorized is not False
+    ):
+        raise StockPaperError("Paper order approval no longer matches current run bounds")
+    return trial, approval
+
+
+def _approval_digest(value: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+
+
+def _approved_entry_window(
+    approval: StockPaperRunApproval, now: datetime,
+) -> tuple[bool, str | None]:
+    schedule = approval.schedule or {}
+    try:
+        start = _utc(datetime.fromisoformat(str(schedule["start_at"])))
+        end = _utc(datetime.fromisoformat(str(schedule["end_at"])))
+    except (KeyError, TypeError, ValueError):
+        return False, "Paper approval has invalid durable session boundaries"
+    if now < start:
+        return False, "Paper run session has not started"
+    if now >= end:
+        return False, "Paper run session has expired"
+    return True, None
 
 
 def _decimal(value: Any, field: str, *, nonnegative: bool = True) -> Decimal:
@@ -1308,7 +1379,8 @@ def create_stock_paper_signal(db: Session, symbol: str, strategy_slug: str) -> d
 
 
 def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: Decimal, reference_price: Decimal,
-                              idempotency_key: str, source: str, signal_id: int | None = None) -> StockPaperOrder:
+                              idempotency_key: str, source: str, signal_id: int | None = None,
+                              trial_id: str | None = None) -> StockPaperOrder:
     """Commit a serialized reservation before any broker POST."""
     account = active_paper_account(db, for_update=True)
     side, symbol = side.lower(), symbol.strip().upper()
@@ -1328,6 +1400,25 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
         raise StockPaperError("Only positive long buy/sell paper orders are permitted")
     now = datetime.now(UTC)
+    approved_context = None
+    if trial_id:
+        # Resolve the approval before any reservation is committed.  The
+        # account row lock serializes competing reservations for this account.
+        provisional = StockPaperOrder(
+            account_id=account.id if account else -1,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            limit_price=reference_price,
+            trial_id=trial_id,
+        )
+        approved_context = _approved_trial_context(db, provisional, trial_id=trial_id)
+        if approved_context is None:
+            raise StockPaperError("Cycle-owned paper order requires an immutable approval")
+        _trial, approval = approved_context
+        in_window, window_reason = _approved_entry_window(approval, now)
+        if side == "buy" and not in_window:
+            raise StockPaperError(window_reason or "Paper run session is not active")
     if not account.source_timestamp or _utc(account.source_timestamp) < now - MAX_BROKER_SNAPSHOT_AGE:
         raise StockPaperError("Stock paper account snapshot is stale; reconcile before reserving")
     bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
@@ -1372,8 +1463,30 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             StockPaperOrder.side == "buy", StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES)
         ))
         max_symbol_exposure = Decimal(str(rules.get("max_symbol_exposure", "0.10")))
-        if existing_notional + Decimal(str(pending_symbol_notional)) + reserved_cash > account.equity * max_symbol_exposure:
+        trial_symbol_cap = (
+            Decimal(str(approval.exposure_limits["max_symbol_notional"]))
+            if approved_context and "max_symbol_notional" in approval.exposure_limits
+            else None
+        )
+        if (
+            existing_notional + Decimal(str(pending_symbol_notional)) + reserved_cash
+            > (trial_symbol_cap if trial_symbol_cap is not None else account.equity * max_symbol_exposure)
+        ):
             raise StockPaperError("Order exceeds the configured symbol risk limit")
+        if approved_context:
+            limits = approved_context[1].exposure_limits
+            order_cap = Decimal(str(limits["max_order_notional"]))
+            aggregate_cap = Decimal(str(limits["max_aggregate_notional"]))
+            if reserved_cash > order_cap:
+                raise StockPaperError("Order exceeds the approved per-order exposure cap")
+            aggregate_pending = db.scalar(select(func.coalesce(func.sum(StockPaperOrder.reserved_cash), 0)).where(
+                StockPaperOrder.account_id == account.id,
+                StockPaperOrder.side == "buy",
+                StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+                StockPaperOrder.trial_id == trial_id,
+            ))
+            if Decimal(str(aggregate_pending)) + reserved_cash > aggregate_cap:
+                raise StockPaperError("Order exceeds the approved aggregate exposure cap")
         open_count = db.query(StockPaperPosition).filter(
             StockPaperPosition.account_id == account.id, StockPaperPosition.quantity > 0
         ).count()
@@ -1381,6 +1494,7 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             raise StockPaperError("Order exceeds the configured open-position risk limit")
     order = StockPaperOrder(account_id=account.id, client_order_id=client_order_id, symbol=symbol, side=side, quantity=quantity,
         strategy_id=signal.strategy_id if signal else None, signal_id=signal.id if signal else None,
+        trial_id=trial_id,
         evidence_id=evidence.evidence_id if evidence else None, order_type="limit", time_in_force="day",
         limit_price=reference_price, reserved_cash=reserved_cash, status="reserved", source=source)
     db.add(order)
@@ -1436,6 +1550,23 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     if not recovery_flatten and bool((rule.value if rule else {}).get("kill_switch_enabled", False)):
         raise StockPaperError("Reserved order blocked by kill switch")
     now = datetime.now(UTC)
+    approved_context = _approved_trial_context(db, order)
+    if approved_context:
+        trial, approval = approved_context
+        in_window, window_reason = _approved_entry_window(approval, now)
+        if order.side == "buy" and not in_window:
+            if approval.pending_order_treatment == "cancel":
+                order.status = "cancelled"
+                order.reserved_cash = Decimal("0")
+                db.commit()
+                raise StockPaperError(window_reason or "Expired paper entry was cancelled")
+            raise StockPaperError(window_reason or "Paper entry is outside the approved session")
+        if (
+            order.side == "sell"
+            and not in_window
+            and approval.remaining_position_policy not in {"reduce", "flatten"}
+        ):
+            raise StockPaperError("Remaining-position policy does not authorize this sell")
     if not account.source_timestamp or _utc(account.source_timestamp) < now - MAX_BROKER_SNAPSHOT_AGE:
         raise StockPaperError("Reserved order blocked by stale broker account snapshot")
     bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
@@ -1469,6 +1600,28 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
             raise StockPaperError("Reserved buy exceeds current symbol exposure limit")
         _validate_signal_buy(db, account, order.symbol, order.signal_id, order.quantity, order.limit_price,
                              DEFAULT_RISK_RULES | (rule.value if rule else {}), now)
+        if approved_context:
+            limits = approved_context[1].exposure_limits
+            order_cap = Decimal(str(limits["max_order_notional"]))
+            symbol_cap = Decimal(str(limits["max_symbol_notional"]))
+            aggregate_cap = Decimal(str(limits["max_aggregate_notional"]))
+            trial_pending = sum(
+                (row.reserved_cash for row in pending
+                 if row.side == "buy" and row.trial_id == order.trial_id),
+                Decimal("0"),
+            )
+            position_symbol = position.market_value if position and position.market_value else Decimal("0")
+            if notional > order_cap:
+                raise StockPaperError("Reserved buy exceeds the approved per-order exposure cap")
+            if position_symbol + trial_pending + notional > symbol_cap:
+                raise StockPaperError("Reserved buy exceeds the approved symbol exposure cap")
+            position_total = sum(
+                (row.market_value or Decimal("0")
+                 for row in db.query(StockPaperPosition).filter_by(account_id=account.id).all()),
+                Decimal("0"),
+            )
+            if position_total + trial_pending + notional > aggregate_cap:
+                raise StockPaperError("Reserved buy exceeds the approved aggregate exposure cap")
     elif not recovery_flatten and order.source not in ALLOWED_ORDER_SOURCES:
         raise StockPaperError("Reserved order source is not approved")
     account_id = account.id

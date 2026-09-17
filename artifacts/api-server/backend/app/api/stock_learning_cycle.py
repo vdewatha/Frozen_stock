@@ -45,6 +45,7 @@ class CreateCycleBody(StrictBody):
     provider: Literal["yfinance", "yahoo_chart"] = "yfinance"
     trigger: Literal["manual", "scheduled"] = "manual"
     seed: int = Field(default=42, ge=0, le=2_147_483_647)
+    paper_session_date: date | None = None
 
 
 class ReviewCycleBody(StrictBody):
@@ -92,9 +93,13 @@ class PaperRunApprovalBody(StrictBody):
     provider_switch: dict[str, str] | None = None
     symbols: list[str] = Field(min_length=1, max_length=25)
     exposure_limits: dict[str, str | int | float] = Field(min_length=1, max_length=16)
+    loss_limits: dict[str, str | int | float] = Field(min_length=1, max_length=8)
     duration_sessions: int = Field(ge=1, le=252)
     schedule: dict[str, str] = Field(min_length=1, max_length=16)
     stop_conditions: list[str] = Field(min_length=1, max_length=16)
+    stop_authority: str = Field(min_length=1, max_length=64)
+    pending_order_treatment: str = Field(min_length=1, max_length=32)
+    remaining_position_policy: str = Field(min_length=1, max_length=32)
     approving_actors: list[str] = Field(default_factory=list, max_length=10)
 
 
@@ -271,6 +276,7 @@ def start_cycle(body: CreateCycleBody, request: Request, db: Session = Depends(g
             db, symbols=body.symbols, cutoff_at=body.cutoff_at,
             horizon_days=body.horizon_days, provider=body.provider,
             actor=request.state.actor, trigger=body.trigger, seed=body.seed,
+            paper_session_date=body.paper_session_date,
         )
         _audit(db, request, "start_cycle", cycle.cycle_id, {"deduplicated": duplicate})
         db.commit()
@@ -302,9 +308,13 @@ def approve_paper_run(
             provider_switch=body.provider_switch,
             symbols=body.symbols,
             exposure_limits=body.exposure_limits,
+            loss_limits=body.loss_limits,
             duration_sessions=body.duration_sessions,
             schedule=body.schedule,
             stop_conditions=body.stop_conditions,
+            stop_authority=body.stop_authority,
+            pending_order_treatment=body.pending_order_treatment,
+            remaining_position_policy=body.remaining_position_policy,
             approving_actors=body.approving_actors,
         )
         db.commit()

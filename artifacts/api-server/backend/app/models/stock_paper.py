@@ -74,6 +74,7 @@ class StockPaperOrder(Base):
     strategy_id: Mapped[Optional[int]] = mapped_column(ForeignKey("strategies.id"), index=True)
     signal_id: Mapped[Optional[int]] = mapped_column(ForeignKey("strategy_signals.id"), unique=True, index=True)
     trial_lot_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_trial_lots.id"), index=True)
+    trial_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)
     evidence_id: Mapped[Optional[str]] = mapped_column(String(96))
     client_order_id: Mapped[str] = mapped_column(String(64), nullable=False)
     broker_order_id: Mapped[Optional[str]] = mapped_column(String(96))
