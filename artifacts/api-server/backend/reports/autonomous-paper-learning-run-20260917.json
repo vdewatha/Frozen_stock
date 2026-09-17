@@ -1,7 +1,7 @@
 {
   "report_type": "bounded_autonomous_paper_learning_run",
   "schema_version": 1,
-  "generated_at": "2026-09-17T04:20:45Z",
+  "generated_at": "2026-09-17T04:56:17Z",
   "scope": {
     "environment": "local",
     "production_certification": false,
@@ -26,12 +26,11 @@
     "overall_status": "blocked",
     "paper_trading_allowed": false,
     "summary": {
-      "blocked": 5,
-      "ready": 3,
+      "blocked": 4,
+      "ready": 4,
       "warning": 1
     },
     "blocked_gates": [
-      "market_data",
       "intraday_feed",
       "complete_accounting",
       "risk_state",
@@ -53,7 +52,15 @@
   "data_and_model": {
     "market_data_entitlement": "configured_but_unverified",
     "unresolved_intraday_symbol_count": 4,
-    "daily_history": "stale_or_future_dated_for_all_active_assets",
+    "daily_history": "current_trusted_yahoo_chart_through_2026-09-16",
+    "daily_history_refresh": {
+      "primary_provider": "yfinance",
+      "primary_result": "provider_response_parsing_error",
+      "fallback": "yahoo_chart",
+      "rows_per_symbol": 501,
+      "synthetic_rows": false
+    },
+    "regular_session_feed_preflight": "unknown_outside_regular_session",
     "active_binding_paper_only": true,
     "active_binding_live_authorized": false,
     "model_eligible_for_trading": false,
@@ -69,6 +76,8 @@
     "schedule_control_paper_only": true,
     "schedule_control_live_authorized": false,
     "learning_cycle_count_observed": 0,
+    "paper_run_approval_count_observed": 0,
+    "paper_account_row_observed": false,
     "existing_trial_status": "paused",
     "existing_trial_pause_reason_class": "fresh_complete_feed_required",
     "new_cycle_created": false,
@@ -80,6 +89,7 @@
     "accounting_review_required": true,
     "automatic_recovery_review": "blocked",
     "audit_integrity": "historical_fork_retained_and_quarantined",
+    "operational_runtime_probes": "clear",
     "critical_notifications": "unresolved"
   },
   "mutations": {
