@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime, timezone
+import json
 import uuid
 from threading import Barrier
 from unittest.mock import MagicMock, patch
@@ -26,6 +27,10 @@ from app.models import (
     StockPaperBindingState,
     StockPaperModelBinding,
     StockPaperPromotionDecision,
+    StockPaperAccount,
+    StockPaperBrokerActivity,
+    StockPaperEquitySnapshot,
+    StockPaperFill,
     StockPaperOrder,
     StockPaperTrial,
     StockTrainingJob,
@@ -998,4 +1003,148 @@ def test_scheduled_handoff_retries_transient_preflight_without_blocking_trial():
 
     assert cycle.gates["preflight"]["status"] == "pass"
     assert cycle.evidence["preflight"]["ready"] is True
+    db.close()
+
+
+def test_scheduled_handoff_defers_unqualified_broker_without_starting_paper_activity():
+    db = _db()
+    snapshot_id = "f" * 64
+    model_id = "1" * 64
+    cycle_id = "2" * 64
+    job_id = "00000000-0000-0000-0000-000000000181"
+    symbols = ["AAPL", "MSFT", "QQQ", "SPY"]
+    observed_at = datetime(2026, 9, 17, 15, 0, tzinfo=timezone.utc)
+
+    db.add(StockDatasetSnapshot(
+        snapshot_id=snapshot_id,
+        dataset_sha256="3" * 64,
+        cutoff_date=date(2026, 9, 12),
+        universe=symbols,
+        provider="yfinance",
+        feature_config_id="features",
+        horizon_days=5,
+        artifact_path="/immutable/snapshot",
+        artifact_sha256="4" * 64,
+        metadata_json={"binding_eligible": True},
+    ))
+    db.add(StockModelRegistry(
+        run_id=model_id,
+        snapshot_id=snapshot_id,
+        manifest_sha256="5" * 64,
+        artifact_path="/immutable/model",
+        training_metadata={
+            "purged_expanding_walkforward": True,
+            "final_holdout_evaluation_count": 1,
+            "final_holdout_consumption": {"count": 1, "job_id": job_id},
+            "embargo_days": 0,
+        },
+    ))
+    db.add(StockModelLifecycleState(
+        model_run_id=model_id,
+        lifecycle_state="challenger",
+        updated_by="scheduler",
+        reason="scheduled unqualified broker regression",
+    ))
+    db.add(StockTrainingJob(
+        id=job_id,
+        dedupe_key="6" * 64,
+        trigger="scheduled",
+        status="succeeded",
+        requested_by="scheduler",
+        request_payload={"symbols": symbols, "horizon_bars": 5},
+        snapshot_id=snapshot_id,
+        result_run_id=model_id,
+    ))
+    cycle = StockLearningCycle(
+        cycle_id=cycle_id,
+        request_sha256="7" * 64,
+        trigger="scheduled",
+        status="awaiting_admission",
+        stage="admission",
+        requested_by="scheduler",
+        symbols=symbols,
+        cutoff_date=date(2026, 9, 12),
+        horizon_days=5,
+        provider="yfinance",
+        seed=42,
+        snapshot_id=snapshot_id,
+        training_job_id=job_id,
+        model_run_id=model_id,
+        gates={},
+        evidence={},
+        last_reason="Training completed; awaiting automatic paper-canary admission",
+    )
+    db.add(cycle)
+    db.flush()
+    _approve_paper_cycle(db, cycle)
+    db.commit()
+
+    missing_feed = {
+        "results": [
+            {
+                "symbol": symbol,
+                "status": "unavailable",
+                "failure_class": "availability",
+                "entitlement_state": "unverified",
+                "unavailable_reason": "Authenticated Tradier production feed status unavailable",
+            }
+            for symbol in symbols
+        ],
+    }
+    with (
+        patch("app.services.stock_training_jobs.validate_registered_stock_model",
+              side_effect=lambda model, dataset: model.training_metadata),
+        patch("app.services.stock_training_jobs._dataset_from_record", return_value=object()),
+        patch("app.services.stock_training_jobs._validate_holdout_consumption"),
+        patch("app.services.stock_forward_trial.validate_registered_stock_model",
+              side_effect=lambda model, dataset: model.training_metadata),
+        patch("app.services.stock_forward_trial._dataset_from_record", return_value=object()),
+        patch("app.services.stock_forward_trial._now", return_value=observed_at),
+        patch("app.services.stock_forward_trial.preflight_intraday", return_value=missing_feed),
+    ):
+        handoff = run_scheduled_paper_trial_handoff_job(db)
+
+    assert handoff["status"] == "complete"
+    assert handoff["paper_only"] is True
+    assert handoff["live_authorized"] is False
+    assert len(handoff["results"]) == 1
+    result = handoff["results"][0]
+    assert result["cycle_id"] == cycle_id
+    assert result["status"] == "deferred"
+    assert result["stage"] == "preflight"
+    assert "Authenticated Tradier production feed status unavailable" in result["reason"]
+    assert result["paper_only"] is True
+    assert result["live_authorized"] is False
+    assert "raw_payload" not in json.dumps(result)
+
+    db.refresh(cycle)
+    trial = db.get(StockPaperTrial, cycle.trial_id)
+    assert cycle.status == "deferred"
+    assert cycle.stage == "preflight"
+    assert cycle.binding_id is not None
+    assert cycle.trial_id is not None
+    assert trial.status == "approved"
+    assert trial.status != "running"
+    assert cycle.evidence["preflight"]["paper_ledger"] == {
+        "status": "blocked",
+        "reason": "Active paper broker ledger is not reconciled",
+    }
+    assert all(
+        symbol["status"] == "unavailable"
+        for symbol in cycle.evidence["preflight"]["symbols"]
+    )
+    assert any(
+        event.decision == "deferred"
+        and "Authenticated Tradier production feed status unavailable" in event.reason
+        for event in db.scalars(
+            select(StockLearningCycleEvent)
+            .where(StockLearningCycleEvent.cycle_id == cycle_id)
+        ).all()
+    )
+
+    assert db.query(StockPaperAccount).count() == 0
+    assert db.query(StockPaperOrder).count() == 0
+    assert db.query(StockPaperFill).count() == 0
+    assert db.query(StockPaperBrokerActivity).count() == 0
+    assert db.query(StockPaperEquitySnapshot).count() == 0
     db.close()
