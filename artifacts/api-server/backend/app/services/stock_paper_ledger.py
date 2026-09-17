@@ -599,6 +599,33 @@ def _event_once(
     _event(db, account, event_type, status, reason, payload)
 
 
+def _block_reserved_order(
+    db: Session,
+    account: StockPaperAccount,
+    order: StockPaperOrder,
+    reason: str,
+    *,
+    bound_name: str | None = None,
+    approved_bound: Decimal | None = None,
+    observed_exposure: Decimal | None = None,
+) -> None:
+    """Persist a safe pre-submit denial before returning the dispatch error."""
+    payload = {
+        "order_id": order.id,
+        "client_order_id": order.client_order_id,
+        "trial_id": order.trial_id,
+    }
+    if bound_name is not None:
+        payload["approved_bound"] = {
+            "name": bound_name,
+            "value": str(approved_bound),
+        }
+        payload["observed_exposure"] = str(observed_exposure)
+    _event(db, account, "order_dispatch", "blocked", reason, payload)
+    db.commit()
+    raise StockPaperError(reason)
+
+
 def _activity_classification(raw: dict) -> str:
     """Classify provider activity without treating it as strategy performance."""
     activity_type = str(raw.get("activity_type") or "FILL").upper()
@@ -1610,18 +1637,49 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
                  if row.side == "buy" and row.trial_id == order.trial_id),
                 Decimal("0"),
             )
+            trial_symbol_pending = sum(
+                (row.reserved_cash for row in pending
+                 if row.side == "buy"
+                 and row.trial_id == order.trial_id
+                 and row.symbol == order.symbol),
+                Decimal("0"),
+            )
             position_symbol = position.market_value if position and position.market_value else Decimal("0")
             if notional > order_cap:
-                raise StockPaperError("Reserved buy exceeds the approved per-order exposure cap")
-            if position_symbol + trial_pending + notional > symbol_cap:
-                raise StockPaperError("Reserved buy exceeds the approved symbol exposure cap")
+                _block_reserved_order(
+                    db,
+                    account,
+                    order,
+                    "Reserved buy exceeds the approved per-order exposure cap",
+                    bound_name="max_order_notional",
+                    approved_bound=order_cap,
+                    observed_exposure=notional,
+                )
+            if position_symbol + trial_symbol_pending + notional > symbol_cap:
+                _block_reserved_order(
+                    db,
+                    account,
+                    order,
+                    "Reserved buy exceeds the approved symbol exposure cap",
+                    bound_name="max_symbol_notional",
+                    approved_bound=symbol_cap,
+                    observed_exposure=position_symbol + trial_symbol_pending + notional,
+                )
             position_total = sum(
                 (row.market_value or Decimal("0")
                  for row in db.query(StockPaperPosition).filter_by(account_id=account.id).all()),
                 Decimal("0"),
             )
             if position_total + trial_pending + notional > aggregate_cap:
-                raise StockPaperError("Reserved buy exceeds the approved aggregate exposure cap")
+                _block_reserved_order(
+                    db,
+                    account,
+                    order,
+                    "Reserved buy exceeds the approved aggregate exposure cap",
+                    bound_name="max_aggregate_notional",
+                    approved_bound=aggregate_cap,
+                    observed_exposure=position_total + trial_pending + notional,
+                )
     elif not recovery_flatten and order.source not in ALLOWED_ORDER_SOURCES:
         raise StockPaperError("Reserved order source is not approved")
     account_id = account.id

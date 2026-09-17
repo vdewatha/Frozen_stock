@@ -21,11 +21,21 @@ from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
 from app.db.session import get_db
 from app.models import RiskRule, StockPaperRecoveryState
-from app.models.stock_paper import StockPaperAccount, StockPaperBrokerActivity, StockPaperEquitySnapshot, StockPaperFill, StockPaperOrder, StockPaperPosition
+from app.models import StockLearningCycle, StockPaperRunApproval, StockPaperTrial
+from app.models.stock_paper import (
+    StockPaperAccount,
+    StockPaperBrokerActivity,
+    StockPaperEquitySnapshot,
+    StockPaperFill,
+    StockPaperLedgerEvent,
+    StockPaperOrder,
+    StockPaperPosition,
+)
 from app.services.stock_paper_ledger import (
     AlpacaPaperClient,
     StockPaperError,
     StockPaperUnavailable,
+    _approval_digest,
     TradierPaperClient,
     dispatch_reserved_order,
     initialize_stock_paper_account,
@@ -33,6 +43,7 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
     stock_paper_status,
 )
+from app.services.stock_learning_cycle import ONE_SESSION_SYMBOLS
 from app.services.stock_recovery import (
     _accounting_review_digest,
     acknowledge_stock_paper_accounting_review,
@@ -140,6 +151,125 @@ class StockPaperLedgerTests(unittest.TestCase):
         db.add(signal)
         db.flush()
         return signal
+
+    def add_approved_one_session_trial(self, db, now, suffix, *, limits=None):
+        from app.models import Strategy
+
+        limits = limits or {
+            "max_order_notional": "100",
+            "max_symbol_notional": "100",
+            "max_aggregate_notional": "100",
+            "currency": "USD",
+        }
+        cycle = StockLearningCycle(
+            cycle_id=f"cycle-{suffix}",
+            request_sha256=f"{suffix}-request",
+            trigger="manual",
+            status="running_forward_trial",
+            stage="forward_trial",
+            requested_by="operator-test",
+            symbols=list(ONE_SESSION_SYMBOLS),
+            cutoff_date=now.date(),
+            horizon_days=1,
+            provider="test",
+            seed=42,
+            evidence={},
+        )
+        db.add(cycle)
+        db.flush()
+        schedule = {
+            "trigger": "manual",
+            "session_date": now.date().isoformat(),
+            "start_at": (now - timedelta(minutes=1)).isoformat(),
+            "end_at": (now + timedelta(hours=1)).isoformat(),
+            "timezone": "America/New_York",
+        }
+        bounds = {
+            "environment": "paper",
+            "execution_provider": "alpaca_paper",
+            "provider_switch": None,
+            "symbols": list(ONE_SESSION_SYMBOLS),
+            "exposure_limits": limits,
+            "loss_limits": {
+                "max_loss": "0.02",
+                "unit": "fraction_of_baseline_equity",
+                "currency": "USD",
+            },
+            "duration_sessions": 1,
+            "schedule": schedule,
+            "stop_conditions": ["live_authorized:false", "paper_only"],
+            "stop_authority": "operator_and_system",
+            "pending_order_treatment": "cancel",
+            "remaining_position_policy": "hold",
+        }
+        cycle.evidence = {"paper_run_bounds": bounds}
+        trial = StockPaperTrial(
+            id=f"trial-{suffix}",
+            binding_id=1,
+            status="approved",
+            actor="operator-test",
+            source_cycle_id=cycle.cycle_id,
+            policy={
+                "regular_sessions": 1,
+                "paper_session_date": now.date().isoformat(),
+                "max_order_notional": limits["max_order_notional"],
+                "max_symbol_notional": limits["max_symbol_notional"],
+                "max_aggregate_notional": limits["max_aggregate_notional"],
+                "max_loss": "0.02",
+                "loss_unit": "fraction_of_baseline_equity",
+                "stop_authority": "operator_and_system",
+                "pending_order_treatment": "cancel",
+                "remaining_position_policy": "hold",
+            },
+            lineage={"universe": list(ONE_SESSION_SYMBOLS)},
+        )
+        db.add(trial)
+        approval = StockPaperRunApproval(
+            cycle_id=cycle.cycle_id,
+            environment="paper",
+            execution_provider="alpaca_paper",
+            provider_switch=None,
+            symbols=list(ONE_SESSION_SYMBOLS),
+            exposure_limits=limits,
+            loss_limits=bounds["loss_limits"],
+            duration_sessions=1,
+            schedule=schedule,
+            stop_conditions=bounds["stop_conditions"],
+            stop_authority="operator_and_system",
+            pending_order_treatment="cancel",
+            remaining_position_policy="hold",
+            approving_actors=["operator-test"],
+            approval_sha256=_approval_digest({
+                "cycle_id": cycle.cycle_id,
+                **bounds,
+                "approving_actors": ["operator-test"],
+                "paper_only": True,
+                "live_authorized": False,
+            }),
+            paper_only=True,
+            live_authorized=False,
+        )
+        db.add(approval)
+        strategy = Strategy(
+            name=f"Governed dispatch {suffix}",
+            strategy_type="moving_average_crossover",
+            parameters={},
+            is_active=True,
+            current_status="paper_trading_active",
+        )
+        db.add(strategy)
+        db.add(RiskRule(
+            name=f"governed-dispatch-risk-{suffix}",
+            value={
+                "max_risk_per_trade": "0.20",
+                "max_symbol_exposure": "1.0",
+                "max_open_positions": 3,
+            },
+        ))
+        db.flush()
+        signal = self.add_approved_signal(db, strategy, "SPY", suffix, now)
+        db.commit()
+        return trial, signal, now
 
     def test_explicit_import_is_decimal_and_costs_unknown(self):
         with Session(self.engine) as db:
@@ -649,6 +779,106 @@ class StockPaperLedgerTests(unittest.TestCase):
                 with self.assertRaisesRegex(StockPaperError, "symbol exposure"):
                     dispatch_reserved_order(db, order.id, gateway)
             self.assertEqual(gateway.calls, 0)
+
+    def assert_governed_dispatch_cap_blocked(self, suffix, bound_name):
+        expected_reason = {
+            "max_order_notional": "per-order exposure",
+            "max_symbol_notional": "symbol exposure",
+            "max_aggregate_notional": "aggregate exposure",
+        }[bound_name]
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            now = datetime.now(timezone.utc)
+            trial, signal, now = self.add_approved_one_session_trial(db, now, suffix)
+            # The service owns the dispatch clock, so keep the persisted signal
+            # aligned with that clock after the isolated trial is committed.
+            signal.signal_time = datetime.now(timezone.utc)
+            db.commit()
+            with ExitStack() as stack:
+                for patcher in self.reserve_context(now):
+                    stack.enter_context(patcher)
+                order = reserve_stock_paper_order(
+                    db,
+                    symbol="SPY",
+                    side="buy",
+                    quantity=Decimal("0.05"),
+                    reference_price=Decimal("100"),
+                    idempotency_key=f"governed-dispatch-{suffix}",
+                    source="manual_control_room",
+                    signal_id=signal.id,
+                    trial_id=trial.id,
+                )
+
+            if bound_name == "max_order_notional":
+                # The queued reservation was within the approved bound;
+                # another worker changed its final dispatch quantity.
+                order.quantity = Decimal("1.1")
+            elif bound_name == "max_symbol_notional":
+                account = db.query(StockPaperAccount).one()
+                db.add(StockPaperPosition(
+                    account_id=account.id,
+                    symbol="SPY",
+                    quantity=Decimal("1"),
+                    current_price=Decimal("96"),
+                    market_value=Decimal("96"),
+                    observed_at=now,
+                    raw_payload={},
+                ))
+            else:
+                account = db.query(StockPaperAccount).one()
+                db.add(StockPaperOrder(
+                    account_id=account.id,
+                    client_order_id=f"pending-{suffix}",
+                    symbol="AAPL",
+                    side="buy",
+                    quantity=Decimal("1"),
+                    trial_id=trial.id,
+                    order_type="limit",
+                    time_in_force="day",
+                    limit_price=Decimal("100"),
+                    reserved_cash=Decimal("100"),
+                    status="reserved",
+                    source="manual_control_room",
+                ))
+            db.commit()
+
+            gateway = FakeAlpaca()
+            with ExitStack() as stack:
+                for patcher in self.reserve_context(now):
+                    stack.enter_context(patcher)
+                dispatch_patches = []
+                if bound_name == "max_symbol_notional":
+                    dispatch_patches.append(patch(
+                        "app.services.stock_paper_ledger._validate_signal_buy",
+                        return_value=(signal, object()),
+                    ))
+                for patcher in dispatch_patches:
+                    stack.enter_context(patcher)
+                with self.assertRaisesRegex(StockPaperError, f"approved {expected_reason}"):
+                    dispatch_reserved_order(db, order.id, gateway)
+
+            self.assertEqual(gateway.calls, 0)
+            event = db.query(StockPaperLedgerEvent).filter_by(
+                account_id=order.account_id,
+                event_type="order_dispatch",
+                status="blocked",
+            ).one()
+            self.assertEqual(event.reason, f"Reserved buy exceeds the approved {expected_reason} cap")
+            self.assertEqual(event.payload["order_id"], order.id)
+            self.assertEqual(event.payload["trial_id"], trial.id)
+            self.assertEqual(event.payload["approved_bound"]["name"], bound_name)
+            self.assertEqual(event.payload["approved_bound"]["value"], "100")
+            self.assertGreater(Decimal(event.payload["observed_exposure"]), Decimal("100"))
+            self.assertEqual(db.get(StockPaperOrder, order.id).status, "reserved")
+
+    def test_governed_dispatch_rechecks_approved_per_order_cap(self):
+        self.assert_governed_dispatch_cap_blocked("per-order", "max_order_notional")
+
+    def test_governed_dispatch_rechecks_approved_symbol_cap(self):
+        self.assert_governed_dispatch_cap_blocked("symbol", "max_symbol_notional")
+
+    def test_governed_dispatch_rechecks_approved_aggregate_cap(self):
+        self.assert_governed_dispatch_cap_blocked("aggregate", "max_aggregate_notional")
 
     def test_unknown_cost_positions_do_not_publish_cost_basis_or_unrealized_pl(self):
         position = {

@@ -3,7 +3,7 @@ name: Exact one-session paper bounds
 description: Durable rules for configuring and enforcing a governed paper session.
 ---
 
-Cycle-owned one-session paper trials must carry an explicit regular-session date, America/New_York start and end timestamps, exact AAPL/MSFT/QQQ/SPY universe, numeric exposure and loss caps, and immutable stop/order/position policies. Reservation and dispatch must re-read that durable approval so a missed worker deadline cannot authorize late entries.
+Cycle-owned one-session paper trials must carry an explicit regular-session date, America/New_York start and end timestamps, exact AAPL/MSFT/QQQ/SPY universe, numeric exposure and loss caps, and immutable stop/order/position policies. Reservation and dispatch must re-read that durable approval so a missed worker deadline cannot authorize late entries. At final dispatch, pending trial notional is scoped by symbol for the symbol cap and across the full trial for the aggregate cap; cap denials persist the approved bound and observed exposure as ledger evidence before any broker request.
 
 **Why:** An inferred multi-session default allowed approval, worker timing, and broker submission to disagree about the actual paper run.
 
