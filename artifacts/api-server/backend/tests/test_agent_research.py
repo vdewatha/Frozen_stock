@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 import unittest
 
@@ -171,6 +171,7 @@ class AgentResearchTests(unittest.TestCase):
                 },
                 evaluation={"status": "pending", "horizon_days": 5},
                 usage={},
+                decision_at=datetime(2026, 9, 16, 14, 0, tzinfo=timezone.utc),
             )
             db.add(row)
             db.add_all(
@@ -181,12 +182,17 @@ class AgentResearchTests(unittest.TestCase):
                         close=str(251 + offset),
                         volume=1000,
                         source="trusted_fixture",
+                        imported_at=datetime(2026, 9, 17 + offset, 1, 0),
                     )
                     for offset in range(5)
                 ]
             )
             db.commit()
-            self.assertTrue(refresh_agent_research_evaluation(db, row))
+            with patch(
+                "app.services.agent_research._now",
+                return_value=datetime(2026, 9, 22, tzinfo=timezone.utc),
+            ):
+                self.assertTrue(refresh_agent_research_evaluation(db, row))
             self.assertEqual(row.evaluation["status"], "complete")
             self.assertTrue(row.evaluation["agent"]["directional_correct"])
             self.assertEqual(row.evaluation["baseline"]["status"], "unavailable")

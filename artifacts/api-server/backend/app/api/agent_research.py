@@ -15,6 +15,11 @@ from app.services.agent_research import (
     refresh_agent_research_evaluation,
 )
 from app.services.audit import write_audit_log
+from app.services.agent_research_reports import (
+    create_agent_research_report,
+    get_agent_research_report,
+    list_agent_research_reports,
+)
 from app.tasks.jobs import agent_research_job
 
 router = APIRouter(prefix="/research", tags=["agent research"])
@@ -23,6 +28,53 @@ router = APIRouter(prefix="/research", tags=["agent research"])
 class StartAgentResearchBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     symbol: str = Field(min_length=1, max_length=16)
+
+
+class CreateComparisonReportBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+@router.post("/agent-comparison-reports")
+def create_comparison_report(
+    body: CreateComparisonReportBody, request: Request, db: Session = Depends(get_db)
+) -> dict:
+    report = create_agent_research_report(db)
+    write_audit_log(
+        db,
+        event_type="agent_research",
+        action="comparison_report",
+        status="success",
+        message="Research-only matched comparison snapshot saved; no trading authority",
+        entity_type="agent_research_report",
+        payload={
+            "report_id": report["report_id"],
+            "content_sha256": report["content_sha256"],
+            "actor": request.state.actor,
+            "request_id": request.state.request_id,
+        },
+    )
+    db.commit()
+    return report
+
+
+@router.get("/agent-comparison-reports")
+def list_comparison_reports(
+    limit: int = Query(10, ge=1, le=20),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+) -> dict:
+    return list_agent_research_reports(db, limit=limit, offset=offset)
+
+
+@router.get("/agent-comparison-reports/{report_id}")
+def get_comparison_report(
+    report_id: str = Path(..., pattern=r"^[0-9a-f-]{36}$"),
+    db: Session = Depends(get_db),
+) -> dict:
+    report = get_agent_research_report(db, report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Agent comparison report not found")
+    return report
 
 
 @router.post("/agent-runs")

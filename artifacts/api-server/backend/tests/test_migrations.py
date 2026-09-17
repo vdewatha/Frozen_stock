@@ -95,6 +95,23 @@ class MigrationTests(unittest.TestCase):
                 "unknown",
             )
 
+    def test_agent_comparison_reports_are_append_only(self):
+        command.upgrade(self.config, "head")
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO agent_research_reports (report_id,content_sha256,report) "
+                "VALUES ('report-1','digest-1','{}')"
+            ))
+        with self.engine.connect() as connection:
+            for statement in (
+                "UPDATE agent_research_reports SET report = '{\"changed\":true}'",
+                "DELETE FROM agent_research_reports",
+            ):
+                with self.assertRaisesRegex(Exception, "immutable"):
+                    connection.exec_driver_sql(statement)
+                connection.rollback()
+        assert_schema_current(self.engine)
+
     def test_trial_exit_order_link_backfills_hashed_legacy_attempt(self):
         command.upgrade(self.config, "0020_trial_baseline_equity")
         raw_key = "trial-exit:7:attempt-1"

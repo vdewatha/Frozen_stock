@@ -39,6 +39,7 @@ READ_PATHS = {
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
     "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs", "/research/agent-runs",
     "/stock/training/jobs", "/stock/training/binding", "/stock/learning-cycles",
+    "/research/agent-comparison-reports",
     "/stock/learning-cycles/launch-prerequisites",
     "/stock-paper/status",
     "/live-broker/status",
@@ -58,6 +59,7 @@ RESEARCH_POSTS = {
     "/stock/training/jobs",
     "/stock/learning-cycles",
     "/research/agent-runs",
+    "/research/agent-comparison-reports",
 }
 OPERATOR_POSTS = {
     "/crypto/paper/intents", "/crypto/paper/kill-switch/enable",
@@ -138,6 +140,8 @@ def required_role(method: str, path: str) -> str:
     if method == "GET" and re.fullmatch(r"/research/runs/[^/]+", path):
         return "viewer"
     if method == "GET" and re.fullmatch(r"/research/agent-runs/[0-9a-f-]{36}", path):
+        return "viewer"
+    if method == "GET" and re.fullmatch(r"/research/agent-comparison-reports/[0-9a-f-]{36}", path):
         return "viewer"
     if method == "POST" and path == "/research/agent-runs":
         return "researcher"

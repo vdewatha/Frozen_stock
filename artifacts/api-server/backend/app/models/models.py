@@ -495,6 +495,26 @@ class AgentResearchRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class AgentResearchReport(Base):
+    """Immutable, structured snapshots of the comparison research projection."""
+
+    __tablename__ = "agent_research_reports"
+    __table_args__ = (
+        UniqueConstraint("report_id", name="uq_agent_research_report_id"),
+        UniqueConstraint("content_sha256", name="uq_agent_research_report_content"),
+        CheckConstraint("eligible_for_trading = false", name="ck_agent_research_report_ineligible"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    eligible_for_trading: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    report: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
 class StockDatasetSnapshot(Base):
     __tablename__ = "stock_dataset_snapshots"
 

@@ -1610,8 +1610,8 @@ export type StockTrainingJobStatus =
   | "canceled"
   | "pending"
   | string;
-const configuredApi = import.meta.env.VITE_API_BASE_URL ?? "/api";
-const API_BASE_URL = configuredApi.replace(/\/$/, "");
+const configuredApi = import.meta.env?.VITE_API_BASE_URL ?? "/api";
+export const API_BASE_URL = configuredApi.replace(/\/$/, "");
 
 let accessToken = "";
 let authMode: AuthConfig["mode"] = "local_role_keys";
@@ -1664,7 +1664,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+export async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   if (!accessToken && authMode !== "production_identity") throw new Error("Sign in to access the trading service.");
   const headers = new Headers(init.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);

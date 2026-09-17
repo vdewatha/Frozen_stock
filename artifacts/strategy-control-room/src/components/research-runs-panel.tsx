@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { RoleGate } from "@/components/access-control";
+import { AgentComparisonReports } from "@/components/agent-comparison-reports";
 import {
   getAgentResearchRuns,
   getResearchRuns,
@@ -120,12 +121,13 @@ export function ResearchRunsPanel() {
             <div className="font-semibold">{run.symbol} <span className="ml-2 rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">{agentStatus(run)}</span></div>
             <span className="text-xs text-slate-500">{new Date(run.created_at).toLocaleString()}</span>
           </div>
-          {run.result ? <><p className="mt-2 text-sm"><span className="font-semibold">Recommendation:</span> {run.result.recommendation} · confidence {Math.round(run.result.confidence * 100)}%</p><p className="mt-1 text-sm leading-5 text-slate-700">{run.result.rationale}</p></> : run.error ? <p className="mt-2 text-sm text-coral">{run.error}</p> : <p className="mt-2 text-sm text-slate-600">The bounded run is {run.status}; this panel refreshes automatically.</p>}
+          {run.result ? <><p className="mt-2 text-sm"><span className="font-semibold">Recommendation:</span> {run.result.recommendation} · self-reported confidence {Math.round(run.result.confidence * 100)}% (not a calibrated probability)</p><p className="mt-1 text-sm leading-5 text-slate-700">{run.result.rationale}</p></> : run.error ? <p className="mt-2 text-sm text-coral">{run.error}</p> : <p className="mt-2 text-sm text-slate-600">The bounded run is {run.status}; this panel refreshes automatically.</p>}
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500"><span>{run.framework_version}</span><span>{run.prompt_version}</span><span>Forward evaluation: {run.evaluation.status}</span><span>Baseline comparison: {run.evaluation.comparison?.status ?? "pending"}</span><span>Not eligible for trading</span></div>
           {run.evaluation.status === "complete" && <p className="mt-2 text-xs text-slate-600">Observed {run.evaluation.outcome_date}: {run.evaluation.outcome_up ? "up" : "down"} ({(Number(run.evaluation.outcome_return ?? 0) * 100).toFixed(2)}%). The agent recommendation is scored directionally only; it is not a calibrated probability.</p>}
           {run.result?.limitations?.length ? <p className="mt-2 text-xs text-slate-500">Limitations: {run.result.limitations.join(" · ")}</p> : null}
         </article>)}
       </div>}
     </section>
+    <AgentComparisonReports />
   </div>;
 }

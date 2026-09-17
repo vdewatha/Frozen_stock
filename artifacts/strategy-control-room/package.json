@@ -9,6 +9,7 @@
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "test:e2e": "playwright test",
     "test:roles": "tsx --test src/components/access-control.test.tsx",
+    "test:research": "tsx --tsconfig tsconfig.test.json --test src/components/agent-comparison-reports.test.tsx",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
