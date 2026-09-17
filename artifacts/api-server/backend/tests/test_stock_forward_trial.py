@@ -2239,6 +2239,105 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(projection["remaining_positions"][0]["quantity"], "2.00000000")
             self.assertEqual(projection["reconciliation"]["status"], "reconciled")
 
+    def test_position_handling_projection_exposes_per_lot_exit_progress_without_raw_payload(self):
+        with Session(self.engine) as db:
+            row = self.trial(db, status="stopped")
+            row.pause_reason = "paper_session_expired"
+            row.policy = {**row.policy, "remaining_position_policy": "flatten"}
+            self.account(db)
+            entry = StockPaperOrder(
+                account_id=1,
+                client_order_id="progress-entry",
+                symbol="SPY",
+                side="buy",
+                quantity=Decimal("2"),
+                status="filled",
+                source="manual_control_room",
+                raw_payload={"broker_secret": "must-not-leak"},
+            )
+            exit_order = StockPaperOrder(
+                account_id=1,
+                client_order_id="progress-exit",
+                symbol="SPY",
+                side="sell",
+                quantity=Decimal("2"),
+                status="partially_filled",
+                source="manual_control_room",
+                raw_payload={"broker_secret": "must-not-leak"},
+            )
+            db.add_all([entry, exit_order])
+            db.flush()
+            decision = StockPaperTrialDecision(
+                trial_id=row.id,
+                symbol="SPY",
+                bar_timestamp=datetime(2025, 1, 2),
+                decision_timestamp=datetime(2025, 1, 2),
+                action="buy",
+                qualifying=True,
+                lineage=row.lineage,
+                order_id=entry.id,
+            )
+            db.add(decision)
+            db.flush()
+            lot = StockPaperTrialLot(
+                trial_id=row.id,
+                symbol="SPY",
+                entry_decision_id=decision.id,
+                entry_order_id=entry.id,
+                quantity=Decimal("2"),
+                entry_session="2025-01-02",
+                planned_horizon_sessions=5,
+                exit_order_id=exit_order.id,
+                exit_status="partially_filled",
+            )
+            db.add(lot)
+            db.flush()
+            exit_order.trial_lot_id = lot.id
+            db.add_all([
+                StockPaperFill(
+                    account_id=1,
+                    order_id=entry.id,
+                    broker_activity_id="progress-entry-fill",
+                    broker_order_id="progress-entry-broker",
+                    symbol="SPY",
+                    side="buy",
+                    quantity=Decimal("2"),
+                    price=Decimal("100"),
+                    fee=Decimal("0"),
+                    cost_known=True,
+                    filled_at=datetime(2025, 1, 2, 15),
+                    raw_payload={"broker_secret": "must-not-leak"},
+                ),
+                StockPaperFill(
+                    account_id=1,
+                    order_id=exit_order.id,
+                    broker_activity_id="progress-exit-fill",
+                    broker_order_id="progress-exit-broker",
+                    symbol="SPY",
+                    side="sell",
+                    quantity=Decimal("1"),
+                    price=Decimal("101"),
+                    fee=Decimal("0"),
+                    cost_known=True,
+                    filled_at=datetime(2025, 1, 3, 15),
+                    raw_payload={"broker_secret": "must-not-leak"},
+                ),
+            ])
+            db.flush()
+
+            projection = trial_position_handling_projection(db, row)
+
+            self.assertEqual(projection["managed_lots"], [{
+                "symbol": "SPY",
+                "entry_quantity": "2.00000000",
+                "exited_quantity": "1.00000000",
+                "remaining_quantity": "1.00000000",
+                "exit_reason": "paper_session_expired",
+                "exit_status": "partially_filled",
+                "exit_decided_at": None,
+            }])
+            self.assertNotIn("raw_payload", projection["managed_lots"][0])
+
     def test_graduation_rejection_archives_truthful_redacted_blockers(self):
         with Session(self.engine) as db:
             row = self.trial(db, status="completed")

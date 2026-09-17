@@ -423,6 +423,40 @@ export function StockLearningCyclePanel() {
                 ) : (
                   <div className="mt-2 text-slate-500">No remaining paper positions are recorded for this cycle universe.</div>
                 )}
+                {cycle.position_handling.managed_lots.length > 0 ? (
+                  <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-2" data-testid="learning-cycle-exit-progress">
+                    <div className="font-semibold text-ink">Managed symbol exit progress</div>
+                    <div className="mt-2 grid gap-2">
+                      {cycle.position_handling.managed_lots.map((lot, index) => (
+                        <div
+                          className="rounded border border-slate-200 bg-white p-2"
+                          key={`${lot.symbol}-${index}`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-semibold text-ink">{lot.symbol}</span>
+                            <StatusPill status={lot.exit_status ?? "not_started"} />
+                          </div>
+                          <div className="mt-1 grid gap-1 text-slate-600 sm:grid-cols-3">
+                            <span>
+                              <span className="font-semibold text-ink">Entry:</span> {lot.entry_quantity}
+                            </span>
+                            <span>
+                              <span className="font-semibold text-ink">Exited:</span> {lot.exited_quantity}
+                            </span>
+                            <span>
+                              <span className="font-semibold text-ink">Remaining:</span> {lot.remaining_quantity}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-slate-500">
+                            <span className="font-semibold text-ink">Exit reason:</span>{" "}
+                            {lot.exit_reason ? lot.exit_reason.replaceAll("_", " ") : "not recorded"}
+                            {lot.exit_decided_at ? ` · decided ${new Date(lot.exit_decided_at).toLocaleString()}` : ""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
               <div className="mt-3 rounded border border-slate-200 bg-white p-2 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">

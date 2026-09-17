@@ -332,6 +332,7 @@ def trial_position_handling_projection(db: Session, trial: StockPaperTrial) -> d
         managed_remaining += remaining_quantity
         has_exit_intent = has_exit_intent or bool(lot.exit_reason)
         latest_exit = max(exit_orders, key=lambda order: order.id) if exit_orders else None
+        per_lot_exit_reason = lot.exit_reason or stop_reason
         if lot.exit_reason in {"paper_session_expired", "operator_stop"}:
             stop_reason = lot.exit_reason
         projected_lots.append({
@@ -339,7 +340,7 @@ def trial_position_handling_projection(db: Session, trial: StockPaperTrial) -> d
             "entry_quantity": str(entry_quantity),
             "exited_quantity": str(exited_quantity),
             "remaining_quantity": str(remaining_quantity),
-            "exit_reason": lot.exit_reason,
+            "exit_reason": per_lot_exit_reason,
             "exit_status": latest_exit.status if latest_exit else lot.exit_status,
             "exit_decided_at": lot.exit_decided_at,
         })
