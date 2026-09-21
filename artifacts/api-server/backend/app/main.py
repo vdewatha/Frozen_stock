@@ -41,7 +41,12 @@ def on_startup() -> None:
         # Do not include values from the configuration in the error. The process
         # must not start in an ambiguous production security state.
         raise RuntimeError("Production security configuration is incomplete: " + "; ".join(production_blockers))
-    assert_schema_current(engine)
+    assert_schema_current(
+        engine,
+        # Replit Publish applies the managed production schema before startup.
+        # Keep strict Alembic-head enforcement everywhere else.
+        require_migration_head=settings.environment != "production",
+    )
     db = SessionLocal()
     try:
         seed_defaults(db)

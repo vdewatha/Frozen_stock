@@ -18,11 +18,17 @@ def migration_config() -> Config:
     return config
 
 
-def assert_schema_current(engine) -> None:
+def assert_schema_current(engine, *, require_migration_head: bool = True) -> None:
+    """Fail closed on structural drift.
+
+    Replit Publish owns managed production schema application, so its database
+    can be structurally current while retaining an older Alembic revision
+    marker. Local and standalone jobs still require the exact migration head.
+    """
     expected = set(ScriptDirectory.from_config(migration_config()).get_heads())
     with engine.connect() as connection:
         actual = set(MigrationContext.configure(connection).get_current_heads())
-        if actual != expected:
+        if require_migration_head and actual != expected:
             raise RuntimeError("Database migration required: run alembic upgrade head before startup")
         inspector = inspect(connection)
         tables = set(inspector.get_table_names())

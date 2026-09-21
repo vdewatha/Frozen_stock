@@ -48,7 +48,15 @@ else:
     raise SystemExit("Local ephemeral Redis did not become ready")
 PY
 
-python3.11 -m alembic upgrade head
+if [[ "${ENVIRONMENT:-local}" == "production" ]]; then
+  # Replit Publish applies the development schema to the managed production
+  # database before this process starts. Running Alembic here would replay DDL
+  # against that already-current schema while its legacy revision marker still
+  # reflects the last Alembic-managed release.
+  echo "Using the publish-managed production schema; skipping Alembic upgrade."
+else
+  python3.11 -m alembic upgrade head
+fi
 
 PYTHONPATH=. python3.11 scripts/run_stock_watchdog.py &
 pids+=("$!")

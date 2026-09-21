@@ -54,6 +54,17 @@ class MigrationTests(unittest.TestCase):
             trigger_names,
         )
 
+    def test_publish_managed_schema_allows_stale_revision_marker(self):
+        command.upgrade(self.config, "head")
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE alembic_version SET version_num = '0020_trial_baseline_equity'"
+            ))
+
+        with self.assertRaisesRegex(RuntimeError, "Database migration required"):
+            assert_schema_current(self.engine)
+        assert_schema_current(self.engine, require_migration_head=False)
+
     def test_promotion_readiness_reports_are_append_only(self):
         command.upgrade(self.config, "0023_stock_model_lifecycle")
         with self.engine.begin() as connection:
