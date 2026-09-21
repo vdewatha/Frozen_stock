@@ -58,6 +58,8 @@ from app.models.models import (
 )
 from app.models.stock_paper import (
     StockPaperAccount,
+    StockPaperVenueAuthorization,
+    StockPaperVenueQualification,
     StockPaperBrokerActivity,
     StockPaperEquitySnapshot,
     StockPaperFill,
@@ -131,6 +133,8 @@ __all__ = [
     "StockPaperRecoveryState",
     "StockPaperRecoveryEvent",
     "StockPaperAccount",
+    "StockPaperVenueAuthorization",
+    "StockPaperVenueQualification",
     "StockPaperBrokerActivity",
     "StockPaperEquitySnapshot",
     "StockPaperFill",

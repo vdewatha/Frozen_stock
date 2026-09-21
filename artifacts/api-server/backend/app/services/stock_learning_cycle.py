@@ -46,6 +46,7 @@ from app.services.stock_paper_ledger import (
     TRADIER_PAPER_EVIDENCE,
     active_paper_account,
 )
+from app.services.paper_venue_qualification import paper_venue_qualification_status
 from app.services.broker import stock_paper_broker_status
 from app.services.operational_hardening import _audit_chain_check
 from app.services.portfolio_risk import portfolio_risk_snapshot
@@ -768,16 +769,18 @@ def evaluate_launch_admission_prerequisites(
         venue = str(broker.get("paper_broker") or "").strip().lower()
         provider_complete = accounting.get("provider_evidence_complete")
         accounting_ready = accounting.get("ready") is True
-        # Alpaca's stock-paper status intentionally reports provider-specific
-        # evidence as None; its affirmative, persisted accounting projection is
-        # the qualification evidence for that supported venue.  Tradier is
-        # non-qualifying unless its provider evidence is explicitly complete.
+        venue_qualification = accounting.get("venue_qualification")
+        # Keep the historical broker projection compatible for callers that
+        # supply the pre-qualification shape, while the live status path below
+        # always includes the durable package state.
+        legacy_projection = venue_qualification is None
+        venue_qualification = venue_qualification or paper_venue_qualification_status(db, venue)
         qualified = (
             venue == "alpaca_paper" and accounting_ready
-        ) or (
-            venue == "tradier_sandbox"
-            and accounting_ready
-            and provider_complete is True
+            if legacy_projection else
+            accounting_ready
+            and provider_complete is not False
+            and venue_qualification.get("ready_for_paper_admission") is True
         )
         gates["broker_qualification"] = _gate(
             "pass" if qualified else "fail",
@@ -790,8 +793,20 @@ def evaluate_launch_admission_prerequisites(
                 "provider_evidence_complete": provider_complete,
                 "provider_evidence": TRADIER_PAPER_EVIDENCE
                 if provider_complete is False else None,
+                "venue_qualification": venue_qualification,
                 "live_trading_blocked": broker.get("live_trading_blocked"),
             },
+        )
+        package_ready = (
+            not legacy_projection
+            and venue_qualification.get("ready_for_paper_admission") is True
+        )
+        gates["paper_venue_qualification"] = _gate(
+            "pass" if package_ready else "fail",
+            reason=None if package_ready else (
+                "A passing account-specific paper venue package and separate activation authorization are required"
+            ),
+            evidence=venue_qualification,
         )
     except Exception as exc:
         gates["broker_qualification"] = _gate(

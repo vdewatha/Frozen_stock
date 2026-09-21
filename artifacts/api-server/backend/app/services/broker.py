@@ -29,9 +29,11 @@ def stock_paper_broker_status(db: Session) -> dict:
     from app.services.stock_paper_ledger import (
         TRADIER_PAPER_EVIDENCE, active_paper_account, active_paper_broker_name,
     )
+    from app.services.paper_venue_qualification import paper_venue_qualification_status
 
     venue = active_paper_broker_name()
     account = active_paper_account(db)
+    qualification = paper_venue_qualification_status(db, venue)
     provider_complete = TRADIER_PAPER_EVIDENCE["complete"] if venue == "tradier_sandbox" else None
     accounting_ready = bool(
         account and account.status == "reconciled"
@@ -58,6 +60,7 @@ def stock_paper_broker_status(db: Session) -> dict:
             "reconciliation_required": bool(not account or account.reconciliation_required),
             "unexplained_residual": bool(account and account.unexplained_residual),
             "provider_evidence_complete": provider_complete,
+            "venue_qualification": qualification,
             "reason": (
                 "Complete broker accounting is verified."
                 if accounting_ready else

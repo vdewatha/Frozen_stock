@@ -40,6 +40,48 @@ class StockPaperAccount(Base):
     raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
+class StockPaperVenueQualification(Base):
+    """Redacted, immutable review package for one account-specific paper venue."""
+    __tablename__ = "stock_paper_venue_qualifications"
+    __table_args__ = (
+        UniqueConstraint("report_sha256", name="uq_stock_paper_venue_qualification_report"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    account_id_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    qualification_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    report: Mapped[dict] = mapped_column(JSON, nullable=False)
+    report_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewed_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StockPaperVenueAuthorization(Base):
+    """Separate authorization for activating an exact passing package."""
+    __tablename__ = "stock_paper_venue_authorizations"
+    __table_args__ = (
+        UniqueConstraint("authorization_sha256", name="uq_stock_paper_venue_authorization"),
+        CheckConstraint("paper_only = true", name="ck_stock_paper_venue_authorization_paper_only"),
+        CheckConstraint("live_authorized = false", name="ck_stock_paper_venue_authorization_live_disabled"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    qualification_id: Mapped[int] = mapped_column(
+        ForeignKey("stock_paper_venue_qualifications.id"), nullable=False, index=True
+    )
+    authorized_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    authorization_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    paper_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+
 class StockPaperPosition(Base):
     __tablename__ = "stock_paper_positions"
     __table_args__ = (
