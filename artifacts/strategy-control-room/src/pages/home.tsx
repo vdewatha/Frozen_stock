@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAuth, useClerk } from "@clerk/react";
 import { Activity, AlertTriangle, BarChart3, BrainCircuit, FlaskConical, ShieldCheck } from "lucide-react";
 
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
@@ -54,6 +55,8 @@ function LegacyEvidenceQuarantineCard({ title, endpoint, detail }: { title: stri
 }
 
 export default function Login() {
+  const { isLoaded: clerkLoaded, isSignedIn } = useAuth();
+  const { signOut } = useClerk();
   const [token, setToken] = useState("");
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
   const [role, setRole] = useState<AccessRole | null>(null);
@@ -69,8 +72,41 @@ export default function Login() {
       })
       .catch((failure) => setError(getErrorMessage(failure, "Authentication configuration unavailable")));
   }, []);
-  if (dashboard && role && session) return <AccessRoleProvider role={role}><Home dashboard={dashboard} role={role} session={session} onSignOut={() => { setAccessToken(""); setDashboard(null); setRole(null); setSession(null); setToken(""); }} /></AccessRoleProvider>;
-  const productionIdentity = authConfig?.mode === "production_identity";
+  const clerkIdentity = authConfig?.mode === "clerk_gateway";
+  const productionIdentity = authConfig?.mode === "production_identity" || clerkIdentity;
+  useEffect(() => {
+    if (!clerkIdentity || !clerkLoaded || !isSignedIn || dashboard || busy) return;
+    setBusy(true);
+    setError("");
+    Promise.all([getDashboard(), getAuthSession()])
+      .then(([nextDashboard, nextSession]) => {
+        setDashboard(nextDashboard);
+        setRole(nextSession.role);
+        setSession(nextSession);
+      })
+      .catch((failure) => setError(getErrorMessage(failure, "Sign in failed")))
+      .finally(() => setBusy(false));
+  }, [busy, clerkIdentity, clerkLoaded, dashboard, isSignedIn]);
+  if (dashboard && role && session) return <AccessRoleProvider role={role}><Home dashboard={dashboard} role={role} session={session} onSignOut={() => {
+    setAccessToken(""); setDashboard(null); setRole(null); setSession(null); setToken("");
+    if (clerkIdentity) void signOut({ redirectUrl: import.meta.env.BASE_URL });
+  }} /></AccessRoleProvider>;
+  if (clerkIdentity && (!clerkLoaded || (isSignedIn && busy))) {
+    return <main className="mx-auto max-w-lg p-8"><h1 className="text-2xl font-semibold">Opening Strategy Control Room…</h1></main>;
+  }
+  if (clerkIdentity && !isSignedIn) {
+    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+    return <main className="mx-auto grid min-h-[100dvh] max-w-3xl content-center gap-6 p-8">
+      <div className="inline-flex w-fit items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-mint"><ShieldCheck size={18} />Paper-only research system</div>
+      <h1 className="text-4xl font-semibold tracking-tight text-ink">Strategy Control Room</h1>
+      <p className="max-w-2xl text-lg leading-7 text-slate-600">Review model, broker, accounting, recovery, and audit evidence in one governed workspace. New accounts receive read-only access; trading authority is never granted by signing in.</p>
+      <div className="flex flex-wrap gap-3">
+        <a className="focus-ring rounded-md bg-mint px-5 py-3 font-semibold text-white" href={`${base}/sign-in`}>Sign in</a>
+        <a className="focus-ring rounded-md border border-line bg-white px-5 py-3 font-semibold text-ink" href={`${base}/sign-up`}>Create account</a>
+      </div>
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+    </main>;
+  }
   return <main className="mx-auto max-w-lg p-8"><h1>Trading research sign in</h1>
     <p>{productionIdentity ? "Use your organization identity provider. Credentials are never requested or displayed by this control room." : "Enter your local paper-development access key. It is held only in this tab’s memory and cleared when you sign out or reload."}</p>
     <form onSubmit={async event => { event.preventDefault(); setBusy(true); setError(""); setAccessToken(productionIdentity ? "" : token.trim());

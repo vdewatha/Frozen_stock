@@ -198,7 +198,7 @@ def auth_config() -> dict:
     """Expose only how the browser should authenticate, never secret material."""
     return {
         "mode": settings.auth_mode,
-        "requires_identity_provider": settings.auth_mode == "production_identity",
+        "requires_identity_provider": settings.auth_mode in {"production_identity", "clerk_gateway"},
         "paper_only": True,
         "live_orders_allowed": False,
     }

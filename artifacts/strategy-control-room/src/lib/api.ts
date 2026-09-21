@@ -1665,10 +1665,11 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
-  if (!accessToken && authMode !== "production_identity") throw new Error("Sign in to access the trading service.");
+  const cookieIdentity = authMode === "production_identity" || authMode === "clerk_gateway";
+  if (!accessToken && !cookieIdentity) throw new Error("Sign in to access the trading service.");
   const headers = new Headers(init.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-  if (authMode === "production_identity" && init.method && init.method !== "GET") {
+  if (cookieIdentity && init.method && init.method !== "GET") {
     headers.set("X-Action-Confirmation", "confirm");
     headers.set("X-Idempotency-Key", globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
     try {
@@ -1679,7 +1680,7 @@ export async function authenticatedFetch(input: RequestInfo | URL, init: Request
       headers.set("X-Action-Reason", "Explicit control-room action");
     }
   }
-  const response = await globalThis.fetch(input, { ...init, headers, cache: "no-store", credentials: authMode === "production_identity" ? "include" : "omit" });
+  const response = await globalThis.fetch(input, { ...init, headers, cache: "no-store", credentials: cookieIdentity ? "include" : "omit" });
   if (!response.ok) throw new ApiError(response.status, await responseDetail(response));
   return response;
 }

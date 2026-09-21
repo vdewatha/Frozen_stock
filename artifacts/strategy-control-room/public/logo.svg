@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Strategy Control Room</title>
+  <rect width="64" height="64" rx="14" fill="#0f8b6f"/>
+  <path d="M18 43V31h7v12h-7Zm11 0V21h7v22h-7Zm11 0V27h7v16h-7Z" fill="#fff"/>
+  <path d="M15 47h34" stroke="#b7f7df" stroke-width="3" stroke-linecap="round"/>
+</svg>

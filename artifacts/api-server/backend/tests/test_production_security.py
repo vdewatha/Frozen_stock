@@ -232,3 +232,43 @@ def test_named_approved_live_environment_uses_production_identity_path():
         "/dashboard",
         headers={"Authorization": f"Bearer {'v' * 32}"},
     ).status_code == 401
+
+
+def test_clerk_gateway_accepts_only_fresh_signed_internal_identity():
+    secret = "internal-clerk-gateway-secret-" * 2
+    config = Settings(
+        _env_file=None,
+        environment="production",
+        auth_mode="clerk_gateway",
+        internal_auth_secret=secret,
+        clerk_secret_key="sk_test_clerk",
+        clerk_publishable_key="pk_test_clerk",
+        tradier_api_key="paper-key",
+        tradier_account_id="paper-account",
+    )
+    assert config.validate_production_configuration() == []
+
+    app = FastAPI()
+    app.add_middleware(AuthenticationMiddleware, configuration=config)
+    app.add_api_route("/dashboard", lambda: {"ok": True}, methods=["GET"])
+    client = TestClient(app)
+
+    issued_at = str(int(time.time()))
+    actor = "user_clerk"
+    role = "viewer"
+    signature = hmac.new(
+        secret.encode(),
+        f"{issued_at}\n{actor}\n{role}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    headers = {
+        "X-Internal-Auth-Actor": actor,
+        "X-Internal-Auth-Role": role,
+        "X-Internal-Auth-Timestamp": issued_at,
+        "X-Internal-Auth-Signature": signature,
+    }
+    assert client.get("/dashboard", headers=headers).status_code == 200
+    assert client.get(
+        "/dashboard",
+        headers={**headers, "X-Internal-Auth-Role": "admin"},
+    ).status_code == 401

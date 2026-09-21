@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     auth_identity_audience: str = ""
     auth_identity_revoked_before: int = 0
     auth_identity_max_token_seconds: int = 900
+    internal_auth_secret: SecretStr = SecretStr("")
+    clerk_secret_key: SecretStr = SecretStr("")
+    clerk_publishable_key: str = ""
     database_url: str = "sqlite:///./trading_app.db"
     redis_url: str = "redis://localhost:6379/0"
     allow_live_trading: bool = False
@@ -87,8 +90,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_auth_mode(self) -> "Settings":
-        if self.auth_mode not in {"local_role_keys", "production_identity"}:
-            raise ValueError("auth_mode must be local_role_keys or production_identity")
+        if self.auth_mode not in {"local_role_keys", "production_identity", "clerk_gateway"}:
+            raise ValueError("auth_mode must be local_role_keys, production_identity, or clerk_gateway")
         if self.active_market_data_provider not in {"tradier"}:
             raise ValueError("active_market_data_provider must be tradier")
         if self.active_paper_broker not in {"tradier_sandbox", "alpaca_paper"}:
@@ -99,30 +102,36 @@ class Settings(BaseSettings):
         """Return non-secret production blockers without exposing secret values."""
         blockers: list[str] = []
         if self.production_identity_required:
-            signing_secret = self.auth_identity_signing_secret.get_secret_value()
-            if self.auth_mode != "production_identity":
+            if self.auth_mode == "clerk_gateway":
+                if len(self.internal_auth_secret.get_secret_value()) < 32:
+                    blockers.append("internal Clerk gateway authentication is unavailable")
+                if not self.clerk_secret_key.get_secret_value() or not self.clerk_publishable_key:
+                    blockers.append("Clerk production authentication is not configured")
+            elif self.auth_mode == "production_identity":
+                signing_secret = self.auth_identity_signing_secret.get_secret_value()
+                if len(signing_secret) < 32:
+                    blockers.append("identity signing secret is missing or too short")
+                if not self.auth_identity_roles:
+                    blockers.append("identity-to-role mapping is missing")
+                elif any(role not in {"viewer", "researcher", "operator", "admin"} for role in self.auth_identity_roles.values()):
+                    blockers.append("identity-to-role mapping contains an unknown role")
+                principal_types = set(self.auth_identity_principal_types.values())
+                required_types = {"operator", "reviewer", "service", "worker", "scheduler", "emergency"}
+                if set(self.auth_identity_principal_types) != set(self.auth_identity_roles):
+                    blockers.append("identity principal inventory does not match the role mapping")
+                elif not required_types.issubset(principal_types):
+                    blockers.append("identity principal inventory is missing a required production class")
+                if not self.auth_identity_issuer:
+                    blockers.append("identity issuer is missing")
+                if not self.auth_identity_audience:
+                    blockers.append("identity audience is missing")
+                if self.auth_identity_max_token_seconds < 60 or self.auth_identity_max_token_seconds > 3600:
+                    blockers.append("identity token lifetime limit is invalid")
+            else:
                 blockers.append("production identity authentication is not enabled")
-            if len(signing_secret) < 32:
-                blockers.append("identity signing secret is missing or too short")
-            if not self.auth_identity_roles:
-                blockers.append("identity-to-role mapping is missing")
-            elif any(role not in {"viewer", "researcher", "operator", "admin"} for role in self.auth_identity_roles.values()):
-                blockers.append("identity-to-role mapping contains an unknown role")
-            principal_types = set(self.auth_identity_principal_types.values())
-            required_types = {"operator", "reviewer", "service", "worker", "scheduler", "emergency"}
-            if set(self.auth_identity_principal_types) != set(self.auth_identity_roles):
-                blockers.append("identity principal inventory does not match the role mapping")
-            elif not required_types.issubset(principal_types):
-                blockers.append("identity principal inventory is missing a required production class")
-            if not self.auth_identity_issuer:
-                blockers.append("identity issuer is missing")
-            if not self.auth_identity_audience:
-                blockers.append("identity audience is missing")
-            if self.auth_identity_max_token_seconds < 60 or self.auth_identity_max_token_seconds > 3600:
-                blockers.append("identity token lifetime limit is invalid")
             if not self.paper_credentials_configured:
                 blockers.append("explicit paper broker credentials are missing")
-            if not self.paper_broker_account_id.strip():
+            if not self.paper_account_binding:
                 blockers.append("explicit paper broker account binding is missing")
             live_pair = bool(
                 self.live_alpaca_api_key.get_secret_value()
@@ -183,6 +192,14 @@ class Settings(BaseSettings):
             self.paper_alpaca_api_key.get_secret_value()
             and self.paper_alpaca_api_secret.get_secret_value()
         )
+
+    @property
+    def paper_account_binding(self) -> str:
+        if self.paper_broker_account_id.strip():
+            return self.paper_broker_account_id.strip()
+        if self.active_paper_broker == "tradier_sandbox":
+            return self.tradier_account_id.strip()
+        return ""
 
     @property
     def production_identity_required(self) -> bool:

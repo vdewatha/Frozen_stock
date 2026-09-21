@@ -263,6 +263,35 @@ def _decode_identity_token(token: str, configuration, now: int) -> tuple[str, st
     }
 
 
+def _decode_clerk_gateway_identity(request: Request, configuration, now: int) -> tuple[str, str, dict] | None:
+    actor = request.headers.get("x-internal-auth-actor", "").strip()
+    role = request.headers.get("x-internal-auth-role", "").strip()
+    timestamp = request.headers.get("x-internal-auth-timestamp", "").strip()
+    supplied = request.headers.get("x-internal-auth-signature", "").strip()
+    if not actor or role not in ROLES or not timestamp or not supplied:
+        return None
+    try:
+        issued_at = int(timestamp)
+    except ValueError:
+        return None
+    if abs(now - issued_at) > 30:
+        return None
+    secret = configuration.internal_auth_secret.get_secret_value()
+    expected = hmac.new(
+        secret.encode(),
+        f"{timestamp}\n{actor}\n{role}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if not secret or not hmac.compare_digest(expected, supplied):
+        return None
+    return actor, role, {
+        "method": "clerk_session",
+        "subject": actor,
+        "role": role,
+        "issuer": "clerk",
+    }
+
+
 def secondary_approval_identity(
     request: Request,
     *,
@@ -373,7 +402,14 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                         {"detail": "Production authentication is not configured", "request_id": correlation},
                         status_code=status,
                     )
-                verified = _decode_identity_token(candidate, self.configuration, int(time.time()))
+                if self.configuration.auth_mode == "clerk_gateway":
+                    verified = _decode_clerk_gateway_identity(
+                        request, self.configuration, int(time.time())
+                    )
+                else:
+                    verified = _decode_identity_token(
+                        candidate, self.configuration, int(time.time())
+                    )
                 if verified:
                     actor, auth_role, auth_evidence = verified
             else:

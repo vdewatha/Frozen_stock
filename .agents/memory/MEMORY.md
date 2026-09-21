@@ -37,3 +37,4 @@
 - [Operational report freshness](paper-run-report-freshness.md) — historical reports and deployment logs never replace a fresh main-environment preflight before activation.
 - [Paper position disposition](paper-position-disposition.md) — approval policy is not completion evidence; show stop cause, durable exit intent, and reconciled remaining positions separately.
 - [Shadow research evaluation](shadow-research-evaluation.md) — keep agent recommendations non-trading and score them only after strictly later outcomes with exact baseline date/horizon matching.
+- [Production Clerk gateway](production-clerk-gateway.md) — Clerk sessions enter FastAPI only through a loopback gateway; new users remain read-only unless explicitly mapped.
