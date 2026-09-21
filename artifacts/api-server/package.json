@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "cd backend && bash scripts/run_local_stack.sh",
     "build": "python3.11 -m compileall -q backend/app",
-    "start": "cd backend && bash scripts/run_local_stack.sh",
+    "start": "cd backend && bash scripts/run_production_api.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
