@@ -10,9 +10,40 @@ import time
 
 import redis
 
+from app.tasks.celery_app import celery_app
+
 
 LEASE_KEY = "celery:beat:lease:primary"
 LEASE_SECONDS = 15
+STARTUP_REFRESH_KEY = "trading:startup-refresh:market-data"
+STARTUP_REFRESH_TTL_SECONDS = 20 * 60 * 60
+
+
+def _queue_startup_refresh(client: redis.Redis) -> None:
+    """Queue one immediate daily import after a deployment.
+
+    Beat's 24-hour interval would otherwise wait until its next scheduled
+    firing, leaving a newly promoted deployment with stale but otherwise valid
+    historical data. The Redis marker prevents multiple beat leaders from
+    queueing duplicate refreshes during a restart race.
+    """
+    if not client.set(STARTUP_REFRESH_KEY, "queued", nx=True, ex=STARTUP_REFRESH_TTL_SECONDS):
+        return
+    try:
+        celery_app.send_task(
+            "app.tasks.jobs.daily_market_data_import",
+            queue="market_data",
+            expires=15 * 60,
+        )
+        print("Queued startup market-data refresh.", flush=True)
+    except Exception:
+        # A later scheduled run can recover from a transient broker/import
+        # failure. Remove the marker so the next beat leader may retry.
+        try:
+            client.delete(STARTUP_REFRESH_KEY)
+        except redis.RedisError:
+            pass
+        raise
 
 
 def main() -> int:
@@ -21,6 +52,8 @@ def main() -> int:
     if not client.set(LEASE_KEY, owner, nx=True, ex=LEASE_SECONDS):
         print("Another Celery beat scheduler already holds the lease.", file=sys.stderr)
         return 1
+
+    _queue_startup_refresh(client)
 
     child = subprocess.Popen(
         [

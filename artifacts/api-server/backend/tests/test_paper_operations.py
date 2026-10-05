@@ -138,7 +138,7 @@ def test_beat_child_stops_before_lease_release():
         events.append("wait")
     child.wait.side_effect = wait
     child.kill.side_effect = lambda: events.append("kill")
-    with patch.dict("os.environ", {"REDIS_URL": "redis://test"}), patch.object(beat.redis.Redis, "from_url", return_value=client), patch.object(beat.subprocess, "Popen", return_value=child), patch.object(beat.signal, "signal"), patch.object(beat.time, "sleep"):
+    with patch.dict("os.environ", {"REDIS_URL": "redis://test"}), patch.object(beat.redis.Redis, "from_url", return_value=client), patch.object(beat.celery_app, "send_task"), patch.object(beat.subprocess, "Popen", return_value=child), patch.object(beat.signal, "signal"), patch.object(beat.time, "sleep"):
         assert beat.main() == 1
     assert events == ["kill", "wait", "release"]
     assert child.wait.call_count == 2
