@@ -256,3 +256,21 @@ Any future paper activation must first rerun exact-universe and cycle-specific
 gates, obtain the required venue/account/audit approvals, and record the exact
 one-session authorization through the application workflow. This document
 does not grant that authorization.
+
+## October 5 — publish startup dependency repair
+
+- Reproduced the API startup import failure: the backend required
+  `exchange_calendars`, but the root Python install manifest omitted it.
+- Added pinned `exchange-calendars==4.13.2` and `alpaca-py==0.44.0`
+  dependencies to `pyproject.toml` and updated `uv.lock`. Both were already
+  specified by the backend requirements and imported by the newer API code.
+- Added an API module import check to the API package build command.
+  Unlike byte compilation, it detects missing runtime imports before publishing.
+  It does not invoke application startup hooks or trading actions.
+- Recorded the root-manifest dependency constraint in agent memory.
+- Verified the API build, TypeScript check, and 50 focused session/research
+  tests. The production-mode gateway also started locally and returned HTTP
+  200 from `/api/health` with `paper_only: true` and `live_trading: false`.
+  These checks do not establish that a new published deployment succeeded.
+- No production database schema, credentials, broker selection, trading
+  authorization, balances, or order state was changed by this repair.

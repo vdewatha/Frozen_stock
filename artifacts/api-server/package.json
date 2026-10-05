@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "cd backend && bash scripts/run_local_stack.sh",
-    "build": "python3.11 -m compileall -q backend/app && esbuild src/production-server.ts --bundle --platform=node --packages=external --format=esm --outfile=dist/production-server.js",
+    "build": "python3.11 -m compileall -q backend/app && (cd backend && PYTHONPATH=. python3.11 -c 'import app.main') && esbuild src/production-server.ts --bundle --platform=node --packages=external --format=esm --outfile=dist/production-server.js",
     "start": "node dist/production-server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
