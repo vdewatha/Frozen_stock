@@ -38,11 +38,12 @@ import { getAuthConfig, getAuthSession, getDashboard, getErrorMessage, setAccess
 import { workspacePages, resolveWorkspacePage } from "@/lib/workspace-navigation";
 
 const icons = [LayoutDashboard, ChartNoAxesCombined, Wallet, FlaskConical, BookOpen, ShieldCheck, Activity, Settings2];
+const localPaperAuth = import.meta.env.VITE_LOCAL_PAPER_AUTH !== "false";
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const money = (value: number | null) => value === null ? "Unavailable" : currency.format(value);
 
 export default function DashboardHome() {
-  return import.meta.env.VITE_LOCAL_PAPER_AUTH === "true" ? <Workspace /> : <IdentityWorkspace />;
+  return localPaperAuth ? <Workspace /> : <IdentityWorkspace />;
 }
 
 function IdentityWorkspace() {
@@ -146,5 +147,5 @@ function AccessSettings({ session }: { session: AuthSession }) {
     catch (failure) { setAccessToken(""); setError(getErrorMessage(failure, "Access key rejected")); await client.invalidateQueries(); }
     finally { setBusy(false); }
   };
-  return <section className="access-settings"><div className="section-heading"><h2>Workspace access</h2><ShieldCheck size={20}/></div><dl className="access-details"><div><dt>Current role</dt><dd>{session.role}</dd></div><div><dt>Environment</dt><dd>Paper only</dd></div><div><dt>Live order authority</dt><dd>Disabled</dd></div></dl>{import.meta.env.VITE_LOCAL_PAPER_AUTH === "true" && <form onSubmit={event => { event.preventDefault(); void changeAccess(key.trim()); }}><h3>Additional permissions</h3><p>Research and operator actions require a local role key. Access lasts until this tab reloads.</p><label htmlFor="role-key">Role access key</label><div className="access-form-row"><input id="role-key" type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)}/><button className="primary-action" type="submit" disabled={busy || !key.trim()}>Apply key</button></div>{session.role !== "viewer" && <button className="text-link" type="button" disabled={busy} onClick={() => void changeAccess("")}>Return to read-only access</button>}{error && <p role="alert" className="text-red-700">{error}</p>}</form>}</section>;
+  return <section className="access-settings"><div className="section-heading"><h2>Workspace access</h2><ShieldCheck size={20}/></div><dl className="access-details"><div><dt>Current role</dt><dd>{session.role}</dd></div><div><dt>Environment</dt><dd>Paper only</dd></div><div><dt>Live order authority</dt><dd>Disabled</dd></div></dl>{localPaperAuth && <form onSubmit={event => { event.preventDefault(); void changeAccess(key.trim()); }}><h3>Additional permissions</h3><p>Research and operator actions require a local role key. Access lasts until this tab reloads.</p><label htmlFor="role-key">Role access key</label><div className="access-form-row"><input id="role-key" type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)}/><button className="primary-action" type="submit" disabled={busy || !key.trim()}>Apply key</button></div>{session.role !== "viewer" && <button className="text-link" type="button" disabled={busy} onClick={() => void changeAccess("")}>Return to read-only access</button>}{error && <p role="alert" className="text-red-700">{error}</p>}</form>}</section>;
 }

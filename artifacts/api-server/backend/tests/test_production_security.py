@@ -164,6 +164,33 @@ def test_local_role_key_cannot_authorize_production():
     assert client.get("/dashboard", headers={"Authorization": f"Bearer {'v' * 32}"}).status_code == 401
 
 
+def test_anonymous_viewer_is_explicitly_read_only():
+    config = {
+        "environment": "local",
+        "auth_mode": "local_role_keys",
+        "allow_anonymous_viewer": True,
+        "auth_viewer_key": "v" * 32,
+        "auth_researcher_key": "r" * 32,
+        "auth_operator_key": "o" * 32,
+        "auth_admin_key": "a" * 32,
+    }
+    app = FastAPI()
+    app.add_middleware(AuthenticationMiddleware, configuration=Settings(_env_file=None, **config))
+    app.add_api_route("/dashboard", lambda: {"ok": True}, methods=["GET"])
+    app.add_api_route("/safety/kill-switch/enable", lambda: {"ok": True}, methods=["POST"])
+    client = TestClient(app)
+
+    assert client.get("/dashboard").status_code == 200
+    assert client.post(
+        "/safety/kill-switch/enable",
+        headers={
+            "X-Action-Confirmation": "confirm",
+            "X-Action-Reason": "test",
+            "X-Idempotency-Key": "anonymous-mutation",
+        },
+    ).status_code == 401
+
+
 def test_production_configuration_rejects_shared_broker_identity_and_incomplete_live_boundary():
     config = Settings(
         _env_file=None,

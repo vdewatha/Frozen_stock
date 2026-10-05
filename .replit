@@ -47,3 +47,6 @@ packages = ["glibcLocales", "libxcrypt", "postgresql", "redis", "glib", "nss", "
 
 [userenv.shared]
 ALLOW_LIVE_TRADING = "false"
+ALLOW_ANONYMOUS_VIEWER = "true"
+VITE_LOCAL_PAPER_AUTH = "true"
+VITE_LOCAL_AUTO_VIEW = "true"

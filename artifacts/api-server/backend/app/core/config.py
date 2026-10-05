@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./trading_app.db"
     redis_url: str = "redis://localhost:6379/0"
     allow_live_trading: bool = False
+    # Public paper deployments may expose viewer-only GET pages without a
+    # bearer key. Mutations and elevated research routes remain authenticated.
+    allow_anonymous_viewer: bool = False
     live_environment_name: str = "approved-live"
     live_broker_name: str = ""
     freqtrade_paper_execution_enabled: bool = False

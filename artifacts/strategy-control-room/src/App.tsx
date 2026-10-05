@@ -17,7 +17,7 @@ import {
 
 const queryClient = new QueryClient();
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
-const localPaperAuth = import.meta.env.VITE_LOCAL_PAPER_AUTH === 'true';
+const localPaperAuth = import.meta.env.VITE_LOCAL_PAPER_AUTH !== 'false';
 const clerkPubKey = localPaperAuth ? '' : publishableKeyFromHost(
   window.location.hostname,
   import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,

@@ -1694,7 +1694,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
 
 export async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const cookieIdentity = authMode === "production_identity" || authMode === "clerk_gateway";
-  if (!accessToken && !cookieIdentity && import.meta.env.VITE_LOCAL_AUTO_VIEW !== "true") throw new Error("Sign in to access the trading service.");
+  if (!accessToken && !cookieIdentity && import.meta.env.VITE_LOCAL_AUTO_VIEW === "false") throw new Error("Sign in to access the trading service.");
   const headers = new Headers(init.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
   if (cookieIdentity && init.method && init.method !== "GET") {

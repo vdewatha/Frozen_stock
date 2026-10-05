@@ -427,6 +427,15 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                     if key and hmac.compare_digest(hashlib.sha256(candidate.encode()).digest(), hashlib.sha256(key.encode()).digest()):
                         actor, auth_role = role, role
                         auth_evidence = {"method": "local_role_key", "role": role}
+            if (
+                actor == "anonymous"
+                and self.configuration.allow_anonymous_viewer
+                and request.method == "GET"
+                and required == "viewer"
+            ):
+                actor = "anonymous_viewer"
+                auth_role = "viewer"
+                auth_evidence = {"method": "anonymous_viewer", "role": "viewer"}
             identity = actor if actor != "anonymous" else (request.client.host if request.client else "unknown")
             if self._limited(identity):
                 status = 429
