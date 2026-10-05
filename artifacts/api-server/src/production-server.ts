@@ -23,6 +23,14 @@ const internalTarget = `http://127.0.0.1:${internalPort}`;
 const allowedRoles = new Set(["viewer", "researcher", "operator", "admin"]);
 const paperWorkersEnabled = process.env.PAPER_WORKERS_ENABLED === "true";
 
+function boundedConcurrency(name: string, fallback: number, maximum: number): number {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(1, parsed));
+}
+
+const learningConcurrency = boundedConcurrency("PAPER_LEARNING_CONCURRENCY", 2, 8);
+
 function roleMappings(): Record<string, string> {
   try {
     const parsed = JSON.parse(process.env.CLERK_ROLE_MAPPINGS || "{}");
@@ -81,7 +89,7 @@ const workerProcesses: ChildProcess[] = paperWorkersEnabled
   ? [
       spawnPaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=intraday@%h", "--queues=intraday_market_data", "--concurrency=1"]),
       spawnPaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=market@%h", "--queues=default,market_data", "--concurrency=1"]),
-      spawnPaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", "--concurrency=1"]),
+      spawnPaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", `--concurrency=${learningConcurrency}`]),
       spawnPaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=execution@%h", "--queues=paper_trading", "--concurrency=1"]),
       spawnPaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=risk@%h", "--queues=risk", "--concurrency=1"]),
       spawnPaperWorker(["scripts/run_stock_watchdog.py"]),
