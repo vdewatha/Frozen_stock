@@ -3,6 +3,11 @@ modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
+build = "pnpm --filter @workspace/api-server build"
+run = "cd artifacts/api-server && pnpm start"
+
+[packager.features]
+enabledForHosting = true
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
