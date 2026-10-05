@@ -44,6 +44,88 @@ class IntradayDataTests(unittest.TestCase):
         bounds = intraday_data.session_bounds(date(2026, 11, 27))
         self.assertEqual(bounds[1].astimezone(intraday_data.NY).time(), datetime.strptime("13:00", "%H:%M").time())
 
+    def test_scheduled_post_close_repair_imports_final_bars_without_trading_readiness(self):
+        observed = datetime(2026, 9, 29, 20, 2, tzinfo=UTC)
+        calls = []
+
+        def fetch(symbol, start, end):
+            calls.append((start, end))
+            return [bar(start + timedelta(minutes=i)) for i in range(int((end-start).total_seconds()/60))], 0, False
+
+        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
+            settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")
+        ), patch.object(intraday_data, "_fetch_bars", side_effect=fetch):
+            result = intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=observed)
+            preflight = intraday_data.preflight_intraday(self.db, ["SPY"], now=observed)
+        self.assertEqual(result["collection_scope"], "post_close_repair")
+        self.assertFalse(result["ready"])
+        self.assertFalse(result["execution_eligible"])
+        self.assertFalse(preflight["ready"])
+        self.assertEqual(preflight["failure_class"], "timing")
+        self.assertLessEqual(len(calls), 2)
+        for minute in (58, 59):
+            self.assertIsNotNone(self.db.query(IntradayBar).filter_by(
+                symbol="SPY", provider="tradier", opened_at=datetime(2026, 9, 29, 19, minute, tzinfo=UTC)
+            ).one_or_none())
+        audit = self.db.query(AuditLog).filter_by(action="sip_post_close_collection").one()
+        self.assertFalse(audit.payload["ready"])
+
+    def test_post_close_window_respects_early_close_and_does_not_run_overnight(self):
+        early_close = datetime(2026, 11, 27, 18, 2, tzinfo=UTC)
+        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
+            settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")
+        ), patch.object(intraday_data, "ingest_intraday", return_value={"results": [{"symbol": "SPY", "status": "complete"}]}) as ingest:
+            result = intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=early_close)
+            self.assertEqual(result["status"], "complete")
+            self.assertFalse(result["ready"])
+            ingest.assert_called_once()
+            for now in [datetime(2026, 11, 27, 19, 0, tzinfo=UTC), datetime(2026, 11, 28, 18, 2, tzinfo=UTC)]:
+                result = intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=now)
+                self.assertFalse(result["ready"])
+            ingest.assert_called_once()
+
+    def test_regular_session_scheduler_keeps_authenticated_preflight(self):
+        observed = datetime(2026, 9, 29, 18, 0, tzinfo=UTC)
+        with patch.object(intraday_data, "preflight_intraday", return_value={"ready": True}) as preflight:
+            self.assertEqual(intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=observed), {"ready": True})
+        preflight.assert_called_once_with(self.db, ["SPY"], now=observed)
+
+    def test_post_close_provider_failures_do_not_become_success(self):
+        observed = datetime(2026, 9, 29, 20, 2, tzinfo=UTC)
+        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
+            settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")
+        ), patch.object(intraday_data, "_fetch_bars", side_effect=intraday_data.TradierProviderError("denied", "authentication")):
+            result = intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=observed)
+        self.assertEqual(result["status"], "incomplete")
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["results"][0]["failure_class"], "authentication")
+
+    def test_post_close_repair_requires_configured_production_provider(self):
+        observed = datetime(2026, 9, 29, 20, 2, tzinfo=UTC)
+        for provider, key in [("other", "key"), ("tradier", "")]:
+            with self.subTest(provider=provider), patch.object(settings, "active_market_data_provider", provider), patch.object(
+                settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)(key)
+            ), patch.object(intraday_data, "ingest_intraday") as ingest:
+                result = intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=observed)
+            ingest.assert_not_called()
+            self.assertEqual(result["failure_class"], "configuration")
+            self.assertFalse(result["ready"])
+
+    def test_close_boundary_still_waits_for_late_trade_allowance(self):
+        observed = datetime(2026, 9, 29, 20, 0, tzinfo=UTC)
+        intraday_data.upsert_intraday_bars(self.db, "SPY", [bar(observed - timedelta(minutes=1))], ingested_at=observed)
+        self.assertEqual(self.db.query(IntradayBar).count(), 0)
+        intraday_data.upsert_intraday_bars(self.db, "SPY", [bar(observed - timedelta(minutes=1))], ingested_at=observed + timedelta(minutes=1))
+        self.assertEqual(self.db.query(IntradayBar).count(), 1)
+
+    def test_future_ingestion_cannot_prove_current_entitlement(self):
+        observed = datetime(2026, 9, 29, 18, 0, tzinfo=UTC)
+        intraday_data.upsert_intraday_bars(self.db, "SPY", [bar(observed - timedelta(minutes=2))],
+                                         ingested_at=observed + timedelta(minutes=1))
+        with patch.object(settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")):
+            result = intraday_data.feed_status(self.db, "SPY", now=observed)
+        self.assertEqual(result["entitlement_state"], "unverified")
+
     def test_next_regular_session_open_skips_weekends_and_holidays(self):
         before_open = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
         after_close = datetime(2026, 9, 11, 21, 0, tzinfo=UTC)
@@ -134,6 +216,10 @@ class IntradayDataTests(unittest.TestCase):
             status = intraday_data.feed_status(self.db, "SPY", now=observed)
             self.assertEqual(status["status"], "incomplete")
             self.assertIn((session_open + timedelta(minutes=1)).isoformat(), status["missing_intervals"])
+            self.assertEqual(
+                status["deferred_window"]["end"],
+                (observed - timedelta(minutes=1)).isoformat(),
+            )
             with self.assertRaises(UntrustedMarketData):
                 validate_intraday_readiness(self.db, "SPY", now=observed)
 
@@ -202,7 +288,7 @@ class IntradayDataTests(unittest.TestCase):
         ):
             denied = HTTPError("https://example", code, "denied", {}, None)
             with self.subTest(code=code), patch.object(
-                settings, "alpaca_api_key", type(settings.alpaca_api_key)("key")
+                settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")
             ), patch("app.services.intraday_data.urlopen", side_effect=denied):
                 with self.assertRaisesRegex(RuntimeError, message) as raised:
                     intraday_data._request("/markets/timesales", {})

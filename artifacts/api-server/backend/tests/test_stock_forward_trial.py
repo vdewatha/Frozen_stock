@@ -2236,7 +2236,7 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertTrue(projection["new_entries_stopped"])
             self.assertEqual(projection["handling_status"], "flatten_pending")
             self.assertEqual(projection["remaining_positions"][0]["symbol"], "SPY")
-            self.assertEqual(projection["remaining_positions"][0]["quantity"], "2.00000000")
+            self.assertEqual(projection["remaining_positions"][0]["quantity"], "2.000000000")
             self.assertEqual(projection["reconciliation"]["status"], "reconciled")
 
     def test_position_handling_projection_exposes_per_lot_exit_progress_without_raw_payload(self):
@@ -2329,9 +2329,9 @@ class ForwardTrialTests(unittest.TestCase):
 
             self.assertEqual(projection["managed_lots"], [{
                 "symbol": "SPY",
-                "entry_quantity": "2.00000000",
-                "exited_quantity": "1.00000000",
-                "remaining_quantity": "1.00000000",
+                "entry_quantity": "2.000000000",
+                "exited_quantity": "1.000000000",
+                "remaining_quantity": "1.000000000",
                 "exit_reason": "paper_session_expired",
                 "exit_status": "partially_filled",
                 "exit_decided_at": None,
@@ -2458,7 +2458,7 @@ class ForwardTrialTests(unittest.TestCase):
 
             partial = trial_position_handling_projection(db, row)
             self.assertEqual(partial["handling_status"], "flatten_pending")
-            self.assertEqual(partial["managed_lots"][0]["exited_quantity"], "1.00000000")
+            self.assertEqual(partial["managed_lots"][0]["exited_quantity"], "1.000000000")
 
             db.add(StockPaperFill(
                 account_id=1,

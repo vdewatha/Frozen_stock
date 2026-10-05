@@ -1,0 +1,36 @@
+# Low-memory, paper-only profile. Retain prefork so task time limits still work.
+x-small-runtime: &small-runtime
+  environment:
+    OMP_NUM_THREADS: "1"
+    OPENBLAS_NUM_THREADS: "1"
+    MKL_NUM_THREADS: "1"
+    NUMEXPR_NUM_THREADS: "1"
+
+services:
+  backend:
+    <<: *small-runtime
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/api/health', timeout=10)"]
+      interval: 30s
+      timeout: 20s
+      retries: 6
+      start_period: 180s
+  migrate:
+    <<: *small-runtime
+  scheduler:
+    <<: *small-runtime
+  watchdog:
+    <<: *small-runtime
+  intraday:
+    <<: *small-runtime
+  market-data:
+    <<: *small-runtime
+  learning:
+    <<: *small-runtime
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", "--concurrency=1"]
+  execution:
+    <<: *small-runtime
+  risk:
+    <<: *small-runtime
+  postgres:
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "work_mem=2MB", "-c", "maintenance_work_mem=32MB", "-c", "max_connections=40"]

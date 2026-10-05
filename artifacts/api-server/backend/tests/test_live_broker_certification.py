@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+import pandas as pd
 from pydantic import SecretStr
 
 from app.services.live_broker import (
@@ -29,6 +30,7 @@ def _order(order_id: str, *, status: str = "accepted", stamp: datetime | None = 
         "limit_price": "100",
         "status": status,
         "updated_at": stamp.isoformat(),
+        "submitted_at": stamp.isoformat(),
     }
 
 
@@ -51,7 +53,7 @@ def _account(**overrides) -> dict:
 def test_live_client_paginates_orders_and_deduplicates_provider_rows(monkeypatch):
     client = AlpacaLiveClient()
     first = [_order(f"order-{index}", stamp=datetime(2026, 9, 15, 15, 0, tzinfo=UTC) - timedelta(seconds=index)) for index in range(500)]
-    second = [_order("order-500", stamp=datetime(2026, 9, 15, 14, 51, 39, tzinfo=UTC))]
+    second = [first[-1], _order("order-500", stamp=datetime(2026, 9, 15, 14, 51, 39, tzinfo=UTC))]
     calls = []
 
     def request(method, path, *, params=None, payload=None):
@@ -63,15 +65,15 @@ def test_live_client_paginates_orders_and_deduplicates_provider_rows(monkeypatch
 
     assert len(rows) == 501
     assert calls[0]["limit"] == "500"
-    assert calls[1]["until"] == min(row["updated_at"] for row in first).replace("+00:00", "+00:00")
+    assert pd.Timestamp(calls[1]["until"]) == pd.Timestamp(first[-1]["submitted_at"]) + pd.Timedelta(1, unit="ns")
 
 
 def test_live_client_rejects_ambiguous_order_boundary_and_missing_activity_cursor(monkeypatch):
     client = AlpacaLiveClient()
     boundary = datetime(2026, 9, 15, 15, 0, tzinfo=UTC).isoformat()
-    full_page = [_order(f"order-{index}", stamp=datetime.fromisoformat(boundary) if index < 2 else datetime(2026, 9, 15, 14, 0, tzinfo=UTC)) for index in range(500)]
+    full_page = [_order(f"order-{index}", stamp=datetime.fromisoformat(boundary)) for index in range(500)]
     monkeypatch.setattr(client, "_request", lambda *args, **kwargs: full_page)
-    with pytest.raises(LiveBrokerUnavailable, match="ambiguous"):
+    with pytest.raises(LiveBrokerUnavailable, match="boundary requires review"):
         client.orders()
 
     def activity_page(method, path, *, params=None, payload=None):

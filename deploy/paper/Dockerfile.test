@@ -1,0 +1,8 @@
+FROM frozen-stock-paper:local
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends redis-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir pytest==9.1.1 PyYAML==6.0.3
+USER paper
+CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]

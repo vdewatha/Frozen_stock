@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 from uuid import uuid4
 
@@ -1044,8 +1045,24 @@ def report_projection(
         },
         "provenance": {"server_verified": bool(snapshot), "paper_only": True, "live_authorized": False},
         "validation": {"status": "passed" if model else "failed", "phase": "purged_walkforward_and_calibration", "selected_model": chosen, "folds": len(manifest.get("purged_expanding_walkforward", [])), "validation_rows": manifest.get("development_rows"), "walkforward_comparisons": walkforward, "calibration_comparisons": calibration, "failures": [job.failure_detail] if job.failure_detail else []},
-        "holdout": {"status": "passed" if model else "failed", "phase": "final_untouched_holdout", "chosen_model": chosen, "holdout_rows": manifest.get("final_holdout_rows"), "holdout_start": manifest.get("final_holdout_start"), "holdout_end": manifest.get("final_holdout_end"), "chosen_model_metrics": holdout_rows[0] if holdout_rows else None, "baseline_metrics": holdout_rows[1] if len(holdout_rows) > 1 else None, "repeated_holdout_uses": holdout_evaluation_count, "failures": [job.failure_detail] if job.failure_detail else []},
+        "holdout": {"status": holdout_assessment(manifest)["status"] if model else "failed", "assessment": holdout_assessment(manifest), "phase": "final_untouched_holdout", "chosen_model": chosen, "holdout_rows": manifest.get("final_holdout_rows"), "holdout_start": manifest.get("final_holdout_start"), "holdout_end": manifest.get("final_holdout_end"), "chosen_model_metrics": holdout_rows[0] if holdout_rows else None, "baseline_metrics": holdout_rows[1] if len(holdout_rows) > 1 else None, "repeated_holdout_uses": holdout_evaluation_count, "failures": [job.failure_detail] if job.failure_detail else []},
         "comparisons": comparisons, "failures": [job.failure_detail] if job.failure_detail else [], "completed_at": job.completed_at,
+    }
+
+
+def holdout_assessment(manifest: dict) -> dict:
+    """Report prediction error, not profit qualification or statistical significance."""
+    model = manifest.get("final_holdout_metrics", {})
+    baseline = manifest.get("final_holdout_baseline", {})
+    keys = ("brier_score", "log_loss")
+    values = [metrics.get(key) for metrics in (model, baseline) for key in keys]
+    comparable = all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in values)
+    lower = comparable and all(model[key] < baseline[key] for key in keys)
+    return {
+        "status": "lower_prediction_error" if lower else "did_not_beat_baseline" if comparable else "not_comparable",
+        "metrics": list(keys), "beats_baseline_on_both": bool(lower),
+        "profitability_established": False, "execution_authorized": False,
+        "limitation": "One untouched holdout comparison is not statistical significance or forward profit evidence",
     }
 
 

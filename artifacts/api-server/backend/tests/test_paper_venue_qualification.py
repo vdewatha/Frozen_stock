@@ -63,6 +63,9 @@ def test_missing_or_unknown_evidence_is_fail_closed_and_redacted():
 def test_activation_requires_separate_authorization_and_exact_passing_package():
     engine = _db()
     with Session(engine) as db:
+        db.add(StockPaperAccount(broker=SELECTED_PAPER_PROVIDER, broker_account_id="private-account",
+            currency="USD", cash=1000, buying_power=1000, equity=1000, raw_payload={}))
+        db.flush()
         qualification = record_paper_venue_qualification(
             db, provider=SELECTED_PAPER_PROVIDER, account_id="private-account",
             evidence=_evidence(), reviewer="reviewer-a",
@@ -83,6 +86,88 @@ def test_activation_requires_separate_authorization_and_exact_passing_package():
         assert state["ready_for_paper_admission"] is True
         assert state["report_sha256"] == qualification.report_sha256
         assert authorization.live_authorized is False
+    engine.dispose()
+
+
+@pytest.mark.parametrize("corruption", ["account", "report", "report_hash", "reviewer", "authorizer", "authorization_hash", "reason"])
+def test_admission_revalidates_account_and_both_evidence_packages(corruption):
+    engine = _db()
+    with Session(engine) as db:
+        account = StockPaperAccount(broker=SELECTED_PAPER_PROVIDER, broker_account_id="private-account",
+            currency="USD", cash=1000, buying_power=1000, equity=1000, raw_payload={})
+        db.add(account)
+        db.flush()
+        qualification = record_paper_venue_qualification(db, provider=SELECTED_PAPER_PROVIDER,
+            account_id="private-account", evidence=_evidence(), reviewer="reviewer-a")
+        authorization = authorize_paper_venue_activation(db, qualification_id=qualification.id,
+            provider=SELECTED_PAPER_PROVIDER, authorizer="operator-b", reason="Reviewed package")
+        db.commit()
+        assert paper_venue_qualification_status(db, SELECTED_PAPER_PROVIDER)["ready_for_paper_admission"]
+        if corruption == "account":
+            account.broker_account_id = "replacement-account"
+        elif corruption == "report":
+            qualification.report = {**qualification.report, "status": "blocked"}
+        elif corruption == "report_hash":
+            qualification.report_sha256 = "0" * 64
+        elif corruption == "reviewer":
+            qualification.reviewed_by = "operator-b"
+        elif corruption == "authorizer":
+            authorization.authorized_by = " "
+        elif corruption == "authorization_hash":
+            authorization.authorization_sha256 = "0" * 64
+        elif corruption == "reason":
+            authorization.reason = "Modified after approval"
+        db.flush()
+        result = paper_venue_qualification_status(db, SELECTED_PAPER_PROVIDER)
+        assert not result["ready_for_paper_admission"]
+        assert not result["activation_authorized"]
+    engine.dispose()
+
+
+@pytest.mark.parametrize("authorizer", ["", " "])
+def test_blank_authorizer_rejected(authorizer):
+    engine = _db()
+    with Session(engine) as db:
+        db.add(StockPaperAccount(broker=SELECTED_PAPER_PROVIDER, broker_account_id="private-account",
+            currency="USD", cash=1000, buying_power=1000, equity=1000, raw_payload={}))
+        db.flush()
+        qualification = record_paper_venue_qualification(db, provider=SELECTED_PAPER_PROVIDER,
+            account_id="private-account", evidence=_evidence(), reviewer="reviewer-a")
+        with pytest.raises(ValueError):
+            authorize_paper_venue_activation(db, qualification_id=qualification.id,
+                provider=SELECTED_PAPER_PROVIDER, authorizer=authorizer, reason="Reviewed")
+    engine.dispose()
+
+
+def test_activation_requires_a_matching_initialized_account():
+    engine = _db()
+    with Session(engine) as db:
+        qualification = record_paper_venue_qualification(db, provider=SELECTED_PAPER_PROVIDER,
+            account_id="private-account", evidence=_evidence(), reviewer="reviewer-a")
+        with pytest.raises(ValueError):
+            authorize_paper_venue_activation(db, qualification_id=qualification.id,
+                provider=SELECTED_PAPER_PROVIDER, authorizer="operator-b", reason="Reviewed")
+    engine.dispose()
+
+
+@pytest.mark.parametrize("field,value", [("paper_only", False), ("live_authorized", True)])
+def test_invalid_newest_authorization_cannot_fall_back_to_older_approval(field, value):
+    engine = _db()
+    with Session(engine) as db:
+        db.add(StockPaperAccount(broker=SELECTED_PAPER_PROVIDER, broker_account_id="private-account",
+            currency="USD", cash=1000, buying_power=1000, equity=1000, raw_payload={}))
+        db.flush()
+        qualification = record_paper_venue_qualification(db, provider=SELECTED_PAPER_PROVIDER,
+            account_id="private-account", evidence=_evidence(), reviewer="reviewer-a")
+        authorize_paper_venue_activation(db, qualification_id=qualification.id,
+            provider=SELECTED_PAPER_PROVIDER, authorizer="operator-b", reason="Initial approval")
+        newest = authorize_paper_venue_activation(db, qualification_id=qualification.id,
+            provider=SELECTED_PAPER_PROVIDER, authorizer="operator-b", reason="Latest approval")
+        db.commit()
+        # DB constraints already reject these flags; also reject a dirty identity-map object.
+        with db.no_autoflush:
+            setattr(newest, field, value)
+            assert not paper_venue_qualification_status(db, SELECTED_PAPER_PROVIDER)["ready_for_paper_admission"]
     engine.dispose()
 
 

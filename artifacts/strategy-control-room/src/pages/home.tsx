@@ -1,17 +1,19 @@
-import { useEffect, useState } from "react";
-import { useAuth, useClerk } from "@clerk/react";
-import { Activity, AlertTriangle, BarChart3, BrainCircuit, FlaskConical, ShieldCheck } from "lucide-react";
-
-import { AuditHistoryPanel } from "@/components/audit-history-panel";
+import { useEffect, useState, type ReactNode } from "react";
+import { useAuth } from "@clerk/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useLocation } from "wouter";
+import { Activity, ArrowRight, Bell, BookOpen, ChartNoAxesCombined, ChevronRight, FlaskConical, Gauge, LayoutDashboard, Menu, RefreshCw, Settings2, ShieldCheck, TrendingUp, Wallet, X } from "lucide-react";
 import { AccessRoleProvider, RoleGate } from "@/components/access-control";
+import { AuditHistoryPanel } from "@/components/audit-history-panel";
 import { BrokerSafetyLab } from "@/components/broker-safety-lab";
 import { DeploymentMonitorPanel } from "@/components/deployment-monitor-panel";
 import { EconomicContextLab } from "@/components/economic-context-lab";
 import { EquityChart } from "@/components/equity-chart";
 import { ExperimentManagerLab } from "@/components/experiment-manager-lab";
 import { MarketLab } from "@/components/market-lab";
+import { IexResearchPanel } from "@/components/iex-research-panel";
+import { DelayedSipPanel } from "@/components/delayed-sip-panel";
 import { MemoryReplayPanel } from "@/components/memory-replay-panel";
-import { MetricCard } from "@/components/metric-card";
 import { ModelLab } from "@/components/model-lab";
 import { ModelPerformanceLab } from "@/components/model-performance-lab";
 import { NewsSentimentLab } from "@/components/news-sentiment-lab";
@@ -23,10 +25,8 @@ import { ResearchRunsPanel } from "@/components/research-runs-panel";
 import { ReadinessChecklist } from "@/components/readiness-checklist";
 import { RegimeMonitorLab } from "@/components/regime-monitor-lab";
 import { RiskSettingsPanel } from "@/components/risk-settings-panel";
-import { SafetyControlBar } from "@/components/safety-control-bar";
 import { StatusPill } from "@/components/status-pill";
 import { StockPaperLedgerPanel } from "@/components/stock-paper-ledger-panel";
-import { getAuthConfig, getAuthSession, getDashboard, getErrorMessage, setAccessToken, setAuthMode, type AccessRole, type AuthConfig, type AuthSession, type DashboardSnapshot } from "@/lib/api";
 import { StockTrainingLab } from "@/components/stock-training-lab";
 import { StockMonitoringPanel } from "@/components/stock-monitoring-panel";
 import { StockRecoveryPanel } from "@/components/stock-recovery-panel";
@@ -34,320 +34,117 @@ import { StockLearningCyclePanel } from "@/components/stock-learning-cycle-panel
 import { OperationalHardeningPanel } from "@/components/operational-hardening-panel";
 import { LiveOperationsPanel } from "@/components/live-operations-panel";
 import { LivePilotPanel } from "@/components/live-pilot-panel";
+import { getAuthConfig, getAuthSession, getDashboard, getErrorMessage, setAccessToken, setAuthMode, type AuthSession, type DashboardSnapshot } from "@/lib/api";
+import { workspacePages, resolveWorkspacePage } from "@/lib/workspace-navigation";
 
-const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
+const icons = [LayoutDashboard, ChartNoAxesCombined, Wallet, FlaskConical, BookOpen, ShieldCheck, Activity, Settings2];
+const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const money = (value: number | null) => value === null ? "Unavailable" : currency.format(value);
 
-function LegacyEvidenceQuarantineCard({ title, endpoint, detail }: { title: string; endpoint: string; detail: string }) {
-  return (
-    <section className="rounded-md border border-amber-200 bg-amber-50 p-4" data-testid={`quarantine-${endpoint.replaceAll("/", "-").replace(/^-/, "")}`}>
-      <div className="flex items-start gap-2 text-amber-950">
-        <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" />
-        <div>
-          <h2 className="font-semibold">{title} unavailable</h2>
-          <p className="mt-1 text-sm leading-5">{detail}</p>
-          <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-amber-800">Backend response: HTTP 409 — legacy evidence quarantine</p>
-          <p className="mt-1 text-xs text-amber-800">Endpoint <code>{endpoint}</code> is intentionally not retried and no zero values are shown.</p>
-        </div>
-      </div>
-    </section>
-  );
+export default function DashboardHome() {
+  return import.meta.env.VITE_LOCAL_PAPER_AUTH === "true" ? <Workspace /> : <IdentityWorkspace />;
 }
 
-export default function Login() {
-  const { isLoaded: clerkLoaded, isSignedIn } = useAuth();
-  const { signOut } = useClerk();
-  const [token, setToken] = useState("");
-  const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
-  const [role, setRole] = useState<AccessRole | null>(null);
-  const [session, setSession] = useState<AuthSession | null>(null);
-  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
+function IdentityWorkspace() {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) return <div className="workspace-loading">Opening workspace...</div>;
+  if (!isSignedIn) return <main className="workspace-loading"><a href={`${import.meta.env.BASE_URL}sign-in`}>Continue with your organization</a></main>;
+  return <Workspace />;
+}
+
+function Workspace() {
+  const [location] = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const client = useQueryClient();
+  const { data, error, isFetching, refetch } = useQuery({
+    queryKey: ["workspace-session"],
+    queryFn: async () => {
+      const config = await getAuthConfig();
+      setAuthMode(config.mode);
+      const [session, dashboard] = await Promise.all([getAuthSession(), getDashboard()]);
+      return { session, dashboard };
+    },
+    refetchInterval: 60000, retry: 1,
+  });
+  useEffect(() => { setMenuOpen(false); window.scrollTo(0, 0); }, [location]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpen(false); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [menuOpen]);
+  const resolved = resolveWorkspacePage(location);
+  const page = resolved?.page;
+  const title = page?.label ?? "Page not found";
+  return <div className="workspace control-room">
+    {menuOpen && <button className="nav-backdrop" aria-label="Close navigation" onClick={() => setMenuOpen(false)} />}
+    <aside className={`workspace-sidebar ${menuOpen ? "is-open" : ""}`} aria-label="Workspace navigation">
+      <Link href="/" className="workspace-brand"><span className="brand-icon"><ChartNoAxesCombined size={23} /></span><span>Frozen<span className="brand-light"> Stock</span><small>RESEARCH WORKSPACE</small></span></Link>
+      <button className="mobile-nav-close icon-button" aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={20} /></button>
+      <div className="nav-caption">WORKSPACE</div>
+      <nav aria-label="Main navigation">{workspacePages.map((item, index) => {
+        const Icon = icons[index];
+        return <Link key={item.id} href={item.path} onClick={() => setMenuOpen(false)} className={`nav-link ${page?.id === item.id ? "active" : ""}`} aria-current={page?.id === item.id ? "page" : undefined}><Icon size={18} /><span>{item.label}</span>{page?.id === item.id && <ChevronRight size={15} className="nav-chevron" />}</Link>;
+      })}</nav>
+      <div className="sidebar-footer"><span className="environment-dot" />Paper environment<small>Live trading disabled</small><Link href="/system/access" className="access-link">{data?.session.role ?? "Connecting"} access <ArrowRight size={14} /></Link></div>
+    </aside>
+    <div className="workspace-body">
+      <header className="workspace-topbar"><div className="breadcrumb"><button className="mobile-menu icon-button" aria-label="Open navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Menu size={20} /></button><span>Workspace</span><ChevronRight size={14} /><strong>{title}</strong></div><div className="topbar-actions"><span className="paper-label"><ShieldCheck size={14} />Paper only</span><Link href="/activity" className="icon-button" aria-label="Notifications" title="Notifications"><Bell size={18} /></Link></div></header>
+      <main id="main-content" className="workspace-content">
+        <div className="page-heading"><div><div className="eyebrow">FROZEN STOCK / WORKSPACE</div><h1>{title}</h1><p>{page?.description ?? "This page is not available."}</p></div><button className="icon-button refresh-button" aria-label="Refresh data" title="Refresh data" disabled={isFetching} onClick={() => void client.invalidateQueries()}><RefreshCw size={18} className={isFetching ? "animate-spin" : ""} /></button></div>
+        {page && page.tabs.length > 0 && <nav className="page-tabs" aria-label={`${page.label} sections`}>{page.tabs.map(tab => <Link key={tab.id} href={`${page.path}/${tab.id}`} aria-current={resolved?.section === tab.id ? "page" : undefined} className={resolved?.section === tab.id ? "selected" : ""}>{tab.label}</Link>)}</nav>}
+        {error && <div className="workspace-error" role="alert">{getErrorMessage(error, "Workspace unavailable")} <button onClick={() => void refetch()}>Retry</button></div>}
+        {!page ? <Link className="text-link" href="/">Return to overview <ArrowRight size={16} /></Link> : !data ? !error && <div className="loading-grid" aria-label="Loading workspace">{[0, 1, 2].map(i => <div key={i} className="loading-block" />)}</div> : <AccessRoleProvider role={data.session.role}><div className="page-panels" key={`${page.id}/${resolved?.section}`}><PageContent page={page.id} section={resolved?.section ?? ""} dashboard={data.dashboard} session={data.session} /></div></AccessRoleProvider>}
+        <footer className="workspace-footer"><span>Frozen Stock</span><span>{data ? `Snapshot ${new Date(data.dashboard.generated_at).toLocaleString()}` : "Connecting to local service"}</span></footer>
+      </main>
+    </div>
+  </div>;
+}
+
+function ResearchOnly({ children }: { children: ReactNode }) { return <RoleGate requires="researcher">{children}</RoleGate>; }
+
+function PageContent({ page, section, dashboard, session }: { page: string; section: string; dashboard: DashboardSnapshot; session: AuthSession }) {
+  if (page === "overview") return <Overview dashboard={dashboard} />;
+  const views: Record<string, ReactNode> = {
+    "markets/iex": <IexResearchPanel />, "markets/consolidated": <DelayedSipPanel />, "markets/history": <MarketLab />, "markets/context": <><RegimeMonitorLab /><EconomicContextLab /><NewsSentimentLab /></>,
+    "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,
+    "learning/cycles": <StockLearningCyclePanel />, "learning/training": <StockTrainingLab />, "learning/evaluation": <ForwardPaperEvaluationPanel />, "learning/performance": <ModelPerformanceLab />,
+    "research/runs": <ResearchRunsPanel />, "research/experiments": <ExperimentManagerLab />, "research/library": <StrategyLibrary dashboard={dashboard} />, "research/models": <ResearchOnly><ModelLab /></ResearchOnly>, "research/signals": <ResearchOnly><PredictionScanner /><OpportunityRadar /></ResearchOnly>, "research/memory": <ResearchOnly><MemoryReplayPanel /></ResearchOnly>,
+    "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} />, "risk/broker": <BrokerSafetyLab />, "risk/recovery": <StockRecoveryPanel />,
+    "activity/notifications": <NotificationCenter />, "activity/audit": <AuditHistoryPanel />,
+    "system/health": <DeploymentMonitorPanel />, "system/monitoring": <StockMonitoringPanel />, "system/hardening": <OperationalHardeningPanel />, "system/live": <><LiveOperationsPanel /><LivePilotPanel /></>, "system/access": <AccessSettings session={session} />,
+  };
+  return views[`${page}/${section}`] ?? <p role="status">Section not found.</p>;
+}
+
+function Overview({ dashboard }: { dashboard: DashboardSnapshot }) {
+  const metrics = [["Account equity", money(dashboard.paper_account_value), "Broker-reconciled balance"], ["Daily P/L", money(dashboard.daily_pl), "Verified costs and cash flows"], ["Total P/L", money(dashboard.total_pl), "Verified performance only"], ["Open positions", dashboard.paper_account_value === null ? "Unavailable" : String(dashboard.open_paper_trades), "Paper account holdings"]];
+  return <>
+    <div className="overview-notice"><ShieldCheck size={18} /><span><strong>Paper workspace</strong> <span className="notice-detail">{dashboard.risk_state}. Live orders are disabled.</span></span><Link href="/risk">Review readiness <ArrowRight size={15} /></Link></div>
+    <div className="overview-metrics">{metrics.map(([label, value, note]) => <div className="overview-metric" key={label}><span>{label}</span><strong className={value === "Unavailable" ? "metric-unavailable" : ""}>{value}</strong><small>{note}</small></div>)}</div>
+    <div className="overview-split"><EquitySection dashboard={dashboard} /><section className="research-summary"><div className="section-heading"><h2>Research snapshot</h2><FlaskConical size={18} /></div><dl><div><dt>Active strategies</dt><dd>{dashboard.active_strategies}</dd></div><div><dt>Paused strategies</dt><dd>{dashboard.paused_strategies}</dd></div><div><dt>Recent experiments</dt><dd>{dashboard.experiments.length}</dd></div></dl><Link href="/learning" className="text-link">Learning cycles <ArrowRight size={16} /></Link></section></div>
+    <div className="overview-split bottom-split"><StrategyLibrary dashboard={dashboard} compact /><section className="workspace-shortcuts"><div className="section-heading"><h2>Explore your data</h2></div>{[{path:"/markets", label:"Market data", detail:"IEX, delayed SIP & price history", icon:ChartNoAxesCombined}, {path:"/research",label:"Research",detail:"Models, experiments & evaluations",icon:FlaskConical}, {path:"/system",label:"System health",detail:"Workers, collectors & recovery",icon:Gauge}].map(({path,label,detail,icon:Icon}) => <Link key={path} href={path} className="shortcut"><Icon size={20}/><span><strong>{label}</strong><small>{detail}</small></span><ArrowRight size={16}/></Link>)}</section></div>
+  </>;
+}
+
+function EquitySection({ dashboard }: { dashboard: DashboardSnapshot }) {
+  return <section className="equity-section"><div className="section-heading"><h2>Account equity</h2><span className="section-meta">USD · Paper account</span></div>{dashboard.equity_curve.length ? <EquityChart data={dashboard.equity_curve} /> : <div className="equity-empty"><TrendingUp size={34} strokeWidth={1.4} /><h3>No verified equity history yet</h3><p>Reconciled account snapshots will appear here.</p><Link href="/portfolio" className="text-link">View account ledger <ArrowRight size={15} /></Link></div>}</section>;
+}
+
+function StrategyLibrary({ dashboard, compact = false }: { dashboard: DashboardSnapshot; compact?: boolean }) {
+  return <section className="strategy-section"><div className="section-heading"><h2>Strategy library</h2>{compact && <Link href="/research/library" className="text-link">View all <ArrowRight size={14}/></Link>}</div>{dashboard.strategies.length ? <div className="table-scroll"><table className="workspace-table"><thead><tr><th>Strategy</th><th>Status</th>{!compact && <><th>Score</th><th>Win rate</th><th>Drawdown</th></>}</tr></thead><tbody>{dashboard.strategies.slice(0, compact ? 5 : undefined).map(strategy => <tr key={strategy.id}><td>{strategy.name}</td><td><StatusPill status={strategy.status}/></td>{!compact && <><td>{strategy.score?.toFixed(2) ?? "Unavailable"}</td><td>{strategy.win_rate === null ? "Unavailable" : `${(strategy.win_rate * 100).toFixed(1)}%`}</td><td>{strategy.drawdown === null ? "Unavailable" : `${(strategy.drawdown * 100).toFixed(1)}%`}</td></>}</tr>)}</tbody></table></div> : <p className="empty-inline">No strategies available.</p>}</section>;
+}
+
+function AccessSettings({ session }: { session: AuthSession }) {
+  const [key, setKey] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    void getAuthConfig()
-      .then((config) => {
-        setAuthConfig(config);
-        setAuthMode(config.mode);
-      })
-      .catch((failure) => setError(getErrorMessage(failure, "Authentication configuration unavailable")));
-  }, []);
-  const clerkIdentity = authConfig?.mode === "clerk_gateway";
-  const productionIdentity = authConfig?.mode === "production_identity" || clerkIdentity;
-  useEffect(() => {
-    if (!clerkIdentity || !clerkLoaded || !isSignedIn || dashboard || busy) return;
-    setBusy(true);
-    setError("");
-    Promise.all([getDashboard(), getAuthSession()])
-      .then(([nextDashboard, nextSession]) => {
-        setDashboard(nextDashboard);
-        setRole(nextSession.role);
-        setSession(nextSession);
-      })
-      .catch((failure) => setError(getErrorMessage(failure, "Sign in failed")))
-      .finally(() => setBusy(false));
-  }, [busy, clerkIdentity, clerkLoaded, dashboard, isSignedIn]);
-  if (dashboard && role && session) return <AccessRoleProvider role={role}><Home dashboard={dashboard} role={role} session={session} onSignOut={() => {
-    setAccessToken(""); setDashboard(null); setRole(null); setSession(null); setToken("");
-    if (clerkIdentity) void signOut({ redirectUrl: import.meta.env.BASE_URL });
-  }} /></AccessRoleProvider>;
-  if (clerkIdentity && (!clerkLoaded || (isSignedIn && busy))) {
-    return <main className="mx-auto max-w-lg p-8"><h1 className="text-2xl font-semibold">Opening Strategy Control Room…</h1></main>;
-  }
-  if (clerkIdentity && !isSignedIn) {
-    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-    return <main className="mx-auto grid min-h-[100dvh] max-w-3xl content-center gap-6 p-8">
-      <div className="inline-flex w-fit items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-mint"><ShieldCheck size={18} />Paper-only research system</div>
-      <h1 className="text-4xl font-semibold tracking-tight text-ink">Strategy Control Room</h1>
-      <p className="max-w-2xl text-lg leading-7 text-slate-600">Review model, broker, accounting, recovery, and audit evidence in one governed workspace. New accounts receive read-only access; trading authority is never granted by signing in.</p>
-      <div className="flex flex-wrap gap-3">
-        <a className="focus-ring rounded-md bg-mint px-5 py-3 font-semibold text-white" href={`${base}/sign-in`}>Sign in</a>
-        <a className="focus-ring rounded-md border border-line bg-white px-5 py-3 font-semibold text-ink" href={`${base}/sign-up`}>Create account</a>
-      </div>
-      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-    </main>;
-  }
-  return <main className="mx-auto max-w-lg p-8"><h1>Trading research sign in</h1>
-    <p>{productionIdentity ? "Use your organization identity provider. Credentials are never requested or displayed by this control room." : "Enter your local paper-development access key. It is held only in this tab’s memory and cleared when you sign out or reload."}</p>
-    <form onSubmit={async event => { event.preventDefault(); setBusy(true); setError(""); setAccessToken(productionIdentity ? "" : token.trim());
-      try { const [nextDashboard, nextSession] = await Promise.all([getDashboard(), getAuthSession()]); setDashboard(nextDashboard); setRole(nextSession.role); setSession(nextSession); setToken(""); } catch (failure) { setAccessToken(""); setError(getErrorMessage(failure, "Sign in failed")); }
-      finally { setBusy(false); }
-    }}>{productionIdentity ? null : <label>Local paper access key<input className="m-4 border p-2" type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} /></label>}
-    <button disabled={busy || (!productionIdentity && !token.trim())} type="submit">{busy ? "Connecting…" : productionIdentity ? "Continue with organization sign-in" : "Sign in"}</button></form>
-    {error && <p role="alert">{error}</p>}</main>;
-}
-
-function Home({ dashboard, role, session, onSignOut }: { dashboard: DashboardSnapshot; role: AccessRole; session: AuthSession; onSignOut: () => void }) {
-
-  return (
-    <main className="min-h-screen">
-      <header className="border-b border-line bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-mint">
-              <ShieldCheck size={18} />
-              Paper-only research system
-            </div>
-            <h1 className="mt-1 text-2xl font-semibold text-ink">Strategy Control Room</h1>
-          </div>
-          <div className="grid gap-2 md:justify-items-end">
-            <div className="flex items-center gap-2">
-               <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold capitalize text-mint">{session.identity ?? "Local paper principal"} · {role}</span>
-              <button className="focus-ring rounded-md border border-line px-3 py-1 text-sm font-medium" onClick={onSignOut}>Sign out</button>
-            </div>
-            <SafetyControlBar />
-            <div className="text-right text-xs text-slate-500">
-              Permissions: {(session.permissions ?? [role]).join(", ")} · Live mode: {session.live_mode ?? "blocked"}
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <div className="mx-auto grid max-w-7xl gap-4 px-4 py-4">
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="Reconciled Alpaca Paper Account" value={dashboard.paper_account_value === null ? "Unavailable" : currency.format(dashboard.paper_account_value)} delta={dashboard.risk_state} />
-          <MetricCard label="Broker Daily P/L" value={dashboard.daily_pl === null ? "Unavailable" : currency.format(dashboard.daily_pl)} delta={dashboard.daily_pl === null ? "Intentionally withheld until costs and flows are verified" : dashboard.performance_note} />
-          <MetricCard label="Broker Total P/L" value={dashboard.total_pl === null ? "Unavailable" : currency.format(dashboard.total_pl)} delta={dashboard.total_pl === null ? "Intentionally withheld until costs and flows are verified" : dashboard.performance_note} />
-          <MetricCard label="Alpaca Paper Positions" value={dashboard.paper_account_value === null ? "Unavailable" : String(dashboard.open_paper_trades)} delta={dashboard.paper_account_value === null ? "Unavailable until broker reconciliation" : "broker-reported current positions"} />
-        </section>
-
-        <StockPaperLedgerPanel />
-
-        <section className="grid gap-4 lg:grid-cols-[1.7fr_1fr]">
-          <div className="rounded-md border border-line bg-white p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <BarChart3 size={19} className="text-mint" />
-                <h2 className="text-base font-semibold">Reconciled Alpaca Paper Equity Curve</h2>
-              </div>
-              <span className="text-xs text-slate-500">Generated {dashboard.generated_at}</span>
-            </div>
-            <EquityChart data={dashboard.equity_curve} />
-          </div>
-
-          <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} />
-        </section>
-
-        <ReadinessChecklist />
-
-        <LiveOperationsPanel />
-
-        <LivePilotPanel />
-
-        <StockMonitoringPanel />
-
-        <StockRecoveryPanel />
-
-        <StockLearningCyclePanel />
-
-        <OperationalHardeningPanel />
-
-        <DeploymentMonitorPanel />
-
-        <RoleGate requires="researcher"><PredictionScanner /></RoleGate>
-
-        <RoleGate requires="researcher"><OpportunityRadar /></RoleGate>
-
-        <RoleGate requires="researcher">
-          <LegacyEvidenceQuarantineCard
-            title="Predictive trade scorecard"
-            endpoint="/trade-scorecard"
-            detail="Legacy simulator trade rows and StrategyMemory cannot be used as stock-paper performance evidence until a broker-complete accounting integration replaces them."
-          />
-        </RoleGate>
-
-        <RoleGate requires="researcher"><MemoryReplayPanel /></RoleGate>
-
-        <ForwardPaperEvaluationPanel />
-
-        <NotificationCenter />
-
-        <MarketLab />
-
-        <RoleGate requires="researcher"><ModelLab /></RoleGate>
-
-        <ResearchRunsPanel />
-
-        <StockTrainingLab />
-
-        <ModelPerformanceLab />
-
-        <NewsSentimentLab />
-
-        <EconomicContextLab />
-
-        <RegimeMonitorLab />
-
-        <BrokerSafetyLab />
-
-        <RoleGate requires="researcher">
-          <LegacyEvidenceQuarantineCard
-            title="Portfolio risk and allocation"
-            endpoint="/portfolio/risk"
-            detail="Legacy simulator risk, allocation, and review actions are blocked. Use the Alpaca Paper Ledger for broker-reported positions and the signal-gated order path."
-          />
-        </RoleGate>
-
-        <ExperimentManagerLab />
-
-        <RoleGate requires="researcher">
-          <LegacyEvidenceQuarantineCard
-            title="Strategy governance"
-            endpoint="/strategies/evaluate"
-            detail="Governance scoring from legacy StrategyMemory is quarantined and cannot establish qualifying strategy evidence."
-          />
-        </RoleGate>
-
-        <RoleGate requires="researcher">
-          <LegacyEvidenceQuarantineCard
-            title="Strategy improvement queue"
-            endpoint="/strategies/improvement-queue"
-            detail="The improvement queue depends on quarantined simulator evidence and is unavailable rather than rendered as an empty queue."
-          />
-        </RoleGate>
-
-        <RoleGate requires="researcher">
-          <LegacyEvidenceQuarantineCard
-            title="Strategy reactivation"
-            endpoint="/strategies/reactivation-queue"
-            detail="Reactivation decisions cannot use quarantined legacy risk or scorecard evidence."
-          />
-        </RoleGate>
-
-        <AuditHistoryPanel />
-
-        <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-          <div className="rounded-md border border-line bg-white">
-            <div className="flex items-center gap-2 border-b border-line p-4">
-              <Activity size={19} className="text-mint" />
-              <h2 className="text-base font-semibold">Strategy Library</h2>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] border-collapse text-sm">
-                <thead className="bg-panel text-left text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Strategy</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Score</th>
-                    <th className="px-4 py-3 text-right">Win Rate</th>
-                    <th className="px-4 py-3 text-right">Drawdown</th>
-                    <th className="px-4 py-3 text-right">Profit Factor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dashboard.strategies.map((strategy) => (
-                    <tr className="border-t border-line" key={strategy.id}>
-                      <td className="px-4 py-3 font-medium">{strategy.name}</td>
-                      <td className="px-4 py-3"><StatusPill status={strategy.status} /></td>
-                      <td className="px-4 py-3 text-right">{strategy.score?.toFixed(2) ?? "Unavailable"}</td>
-                      <td className="px-4 py-3 text-right">{strategy.win_rate === null ? "Unavailable" : percent.format(strategy.win_rate)}</td>
-                      <td className="px-4 py-3 text-right">{strategy.drawdown === null ? "Unavailable" : percent.format(strategy.drawdown)}</td>
-                      <td className="px-4 py-3 text-right">{strategy.profit_factor?.toFixed(2) ?? "Unavailable"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="rounded-md border border-line bg-white">
-            <div className="flex items-center gap-2 border-b border-line p-4">
-              <FlaskConical size={19} className="text-mint" />
-              <h2 className="text-base font-semibold">Learning Lab</h2>
-            </div>
-            <div className="divide-y divide-line">
-              {dashboard.recent_trades.length === 0 && <p className="p-4 text-sm text-slate-500">Legacy simulator trade rows are quarantined; no qualifying broker P/L is shown here.</p>}
-              {dashboard.experiments.slice(0, 3).map((experiment) => (
-                <div className="p-4" key={experiment.experiment_name}>
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold">{experiment.experiment_name}</h3>
-                    <StatusPill status={experiment.decision} />
-                  </div>
-                  <p className="mt-2 text-sm leading-5 text-slate-600">{experiment.hypothesis}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-md border border-line bg-white">
-            <div className="flex items-center gap-2 border-b border-line p-4">
-              <BrainCircuit size={19} className="text-mint" />
-              <h2 className="text-base font-semibold">AI Review Boundary</h2>
-            </div>
-            <div className="grid gap-3 p-4 text-sm text-slate-700">
-              <div className="rounded-md border border-line bg-panel p-3">Allowed: summarize news, explain performance, suggest controlled experiments.</div>
-              <div className="rounded-md border border-line bg-panel p-3">Blocked: direct order placement, bypassing risk rules, changing strategy code without tests.</div>
-            </div>
-          </div>
-
-          <div className="rounded-md border border-line bg-white">
-            <div className="flex items-center gap-2 border-b border-line p-4">
-              <Activity size={19} className="text-mint" />
-              <h2 className="text-base font-semibold">Legacy Local Simulator Trades</h2>
-            </div>
-            <div className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase text-slate-500">Nonqualifying evidence — not Alpaca paper fills</div>
-            <div className="divide-y divide-line">
-              {dashboard.recent_trades.map((trade, index) => (
-                <div className="grid grid-cols-[72px_1fr_auto] gap-3 p-4 text-sm" key={trade.id ?? `${trade.symbol}-${index}`}>
-                  <div>
-                    <div className="font-semibold">{trade.symbol}</div>
-                    <div className="text-slate-500">{trade.side}</div>
-                  </div>
-                  <div>
-                    <div className="font-medium">{trade.reason}</div>
-                    <div className="text-slate-500">Confidence {trade.confidence === null ? "unavailable" : percent.format(trade.confidence)}</div>
-                  </div>
-                  <div className={trade.profit_loss === null ? "text-slate-500" : trade.profit_loss >= 0 ? "font-semibold text-mint" : "font-semibold text-coral"}>
-                    {trade.profit_loss === null ? "Unavailable" : currency.format(trade.profit_loss)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      </div>
-    </main>
-  );
+  const client = useQueryClient();
+  const changeAccess = async (token: string) => {
+    setBusy(true); setError(""); setAccessToken(token);
+    try { await getAuthSession(); setKey(""); await client.invalidateQueries(); }
+    catch (failure) { setAccessToken(""); setError(getErrorMessage(failure, "Access key rejected")); await client.invalidateQueries(); }
+    finally { setBusy(false); }
+  };
+  return <section className="access-settings"><div className="section-heading"><h2>Workspace access</h2><ShieldCheck size={20}/></div><dl className="access-details"><div><dt>Current role</dt><dd>{session.role}</dd></div><div><dt>Environment</dt><dd>Paper only</dd></div><div><dt>Live order authority</dt><dd>Disabled</dd></div></dl>{import.meta.env.VITE_LOCAL_PAPER_AUTH === "true" && <form onSubmit={event => { event.preventDefault(); void changeAccess(key.trim()); }}><h3>Additional permissions</h3><p>Research and operator actions require a local role key. Access lasts until this tab reloads.</p><label htmlFor="role-key">Role access key</label><div className="access-form-row"><input id="role-key" type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)}/><button className="primary-action" type="submit" disabled={busy || !key.trim()}>Apply key</button></div>{session.role !== "viewer" && <button className="text-link" type="button" disabled={busy} onClick={() => void changeAccess("")}>Return to read-only access</button>}{error && <p role="alert" className="text-red-700">{error}</p>}</form>}</section>;
 }

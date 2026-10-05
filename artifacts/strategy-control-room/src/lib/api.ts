@@ -276,6 +276,32 @@ export type StockPaperEquitySnapshot = {
   observed_at: string;
 };
 
+export type StockPaperObservedPerformance = {
+  status: "provisional" | "unavailable";
+  reason: string;
+  qualifying: false;
+  scope: "observed_since_initialization";
+  net_change: string | null;
+  external_net_funding?: string;
+  reported_fee_expense?: string;
+  costs_complete?: false;
+  new_fills_without_commission?: number;
+  from?: string;
+  as_of?: string;
+  currency?: string;
+};
+
+export type PaperCostSensitivityReport = {
+  status: "research_only" | "unavailable";
+  reason: string;
+  qualifying: false;
+  costs_verified: false;
+  launch_authorized: false;
+  assumptions: { version: string };
+  fills_without_reported_commission?: number;
+  scenarios: { additional_cost_bps_per_side: number; additional_modeled_cost: string; modeled_fill_cash_change: string }[];
+};
+
 export type StockPaperStatus = {
   status: StockPaperStatusValue;
   reason: string;
@@ -292,6 +318,8 @@ export type StockPaperStatus = {
   };
   legacy_nonqualifying: true;
   costs_known: boolean;
+  observed_performance?: StockPaperObservedPerformance;
+  last_activity_reconciliation?: { observed_at?: string; modeled_cost_sensitivity?: PaperCostSensitivityReport };
   account: StockPaperAccount | null;
   positions: StockPaperPosition[];
   orders: StockPaperOrder[];
@@ -1666,7 +1694,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
 
 export async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   const cookieIdentity = authMode === "production_identity" || authMode === "clerk_gateway";
-  if (!accessToken && !cookieIdentity) throw new Error("Sign in to access the trading service.");
+  if (!accessToken && !cookieIdentity && import.meta.env.VITE_LOCAL_AUTO_VIEW !== "true") throw new Error("Sign in to access the trading service.");
   const headers = new Headers(init.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
   if (cookieIdentity && init.method && init.method !== "GET") {
@@ -1866,8 +1894,8 @@ export async function getStockPaperStatus(): Promise<StockPaperStatus> {
   return handleResponse<StockPaperStatus>(response);
 }
 
-export async function initializeStockPaperAccount(): Promise<StockPaperStatus> {
-  return postJson<StockPaperStatus>("/stock-paper/initialize", {});
+export async function initializeStockPaperAccount(activityContract: "legacy-v1" | "alpaca-activities-v2" = "legacy-v1"): Promise<StockPaperStatus> {
+  return postJson<StockPaperStatus>("/stock-paper/initialize", { activity_contract: activityContract });
 }
 
 export async function reconcileStockPaperAccount(): Promise<StockPaperStatus> {

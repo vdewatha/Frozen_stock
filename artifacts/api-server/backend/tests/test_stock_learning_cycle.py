@@ -58,6 +58,44 @@ from app.services.stock_learning_cycle import (
 )
 
 
+@pytest.mark.parametrize("status,required,verified,expected", [
+    (None, None, False, ["paper ledger account is not initialized"]),
+    ("reconciled", False, True, []),
+    ("reconciled", True, True, ["paper ledger reconciliation is required"]),
+    ("reconciled", False, False, ["paper ledger accounting and cost qualification are not verified"]),
+    ("halted", False, True, ["paper ledger account is not in reconciled status"]),
+    ("halted", False, False, [
+        "paper ledger accounting and cost qualification are not verified",
+        "paper ledger account is not in reconciled status",
+    ]),
+    ("halted", True, False, [
+        "paper ledger reconciliation is required",
+        "paper ledger accounting and cost qualification are not verified",
+        "paper ledger account is not in reconciled status",
+    ]),
+])
+def test_preflight_ledger_reasons_preserve_admission(status, required, verified, expected):
+    account = None if status is None else SimpleNamespace(
+        status=status, reconciliation_required=required, accounting_verified=verified,
+    )
+    db = MagicMock()
+    with (
+        patch.object(learning_cycle_service, "active_paper_account", return_value=account),
+        patch.object(learning_cycle_service, "_scheduler_health", return_value={}),
+        patch.object(learning_cycle_service, "_readiness_history_gate", return_value={}),
+    ):
+        gate = learning_cycle_service.evaluate_cycle_prerequisites(
+            db, symbols=[], provider="yfinance",
+            now=datetime(2026, 10, 3, 16, tzinfo=timezone.utc),
+        )["paper_ledger"]
+    assert gate["status"] == ("fail" if expected else "pass")
+    assert gate.get("reason") == ("; ".join(expected) if expected else None)
+    assert gate["evidence"]["blockers"] == expected
+    assert gate["evidence"]["accounting_verified"] is verified
+    db.commit.assert_not_called()
+    db.flush.assert_not_called()
+
+
 def _approve_paper_cycle(db: Session, cycle: StockLearningCycle) -> None:
     # Seed historical approval evidence for handoff tests, not a new operator
     # approval: several fixtures intentionally begin before admission.

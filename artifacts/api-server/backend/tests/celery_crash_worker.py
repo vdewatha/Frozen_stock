@@ -32,7 +32,7 @@ def _test_intraday_preflight(db, *args, **kwargs) -> dict:
 
 def main() -> None:
     jobs.INTRADAY_JOB_LOCK_TTL_SECONDS = int(os.environ["INTRADAY_TEST_LOCK_TTL"])
-    jobs.preflight_intraday = _test_intraday_preflight
+    jobs.collect_scheduled_intraday = _test_intraday_preflight
     celery_app.worker_main(
         [
             "worker",

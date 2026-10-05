@@ -206,6 +206,41 @@ def test_audit_chain_check_diagnoses_historical_fork_without_mutating_rows():
         db.close()
 
 
+def test_full_audit_verification_bounds_loaded_rows_and_detects_late_tampering():
+    db = _db()
+    try:
+        for index in range(250):
+            write_audit_log(db, event_type="operations_probe", action="bounded_scan",
+                            status="complete", message="Streaming verification",
+                            payload={"sequence": index})
+            db.flush()
+        db.commit()
+        db.expunge_all()
+        loaded = []
+
+        def canonical(value):
+            loaded.append(sum(isinstance(row, AuditLog) for row in db.identity_map.values()))
+            return _canonical(value)
+
+        with patch("app.services.operational_hardening._canonical", side_effect=canonical):
+            result = _audit_chain_check(db)
+        assert result["status"] == "clear"
+        assert result["details"]["event_count"] == 250
+        assert len(loaded) == 250
+        assert max(loaded) <= 101
+        row = db.scalars(select(AuditLog).order_by(AuditLog.id).offset(200).limit(1)).one()
+        changed_id = row.id
+        row.payload = {"sequence": "tampered"}
+        db.commit()
+        db.expunge_all()
+        result = _audit_chain_check(db)
+        assert result["status"] == "breach"
+        assert result["details"]["first_broken_row_id"] == changed_id
+        assert result["details"]["classification"] == "event_digest_mismatch"
+    finally:
+        db.close()
+
+
 def test_historical_audit_fork_is_quarantined_once_and_separated_from_runtime_health():
     db = _db()
     try:

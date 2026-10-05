@@ -20,6 +20,7 @@ def _settings() -> Settings:
     return Settings(
         _env_file=None,
         environment="production",
+        active_paper_broker="alpaca_paper",
         auth_mode="production_identity",
         auth_identity_signing_secret="secondary-test-secret-" * 2,
         auth_identity_roles=roles,

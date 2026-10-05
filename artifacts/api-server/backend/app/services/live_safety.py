@@ -173,7 +173,7 @@ def _current_data_gate(db: Session, now: datetime) -> dict:
         or any(token in str(check.get("key", "")).lower() for token in ("feed", "freshness", "provenance"))
         or str(check.get("category", "")).lower() in {"market_data", "data"}
     ]
-    healthy = snapshot.status == "clear" and age <= 300 and bool(feed_checks) and all(
+    healthy = snapshot.status == "clear" and 0 <= age <= 300 and bool(feed_checks) and all(
         check.get("status") == "clear" for check in feed_checks
     )
     return _gate(
@@ -193,7 +193,7 @@ def _monitoring_gate(db: Session, now: datetime) -> dict:
     if generated.tzinfo is None:
         generated = generated.replace(tzinfo=timezone.utc)
     age = (now - generated).total_seconds()
-    healthy = snapshot.status == "clear" and age <= 300 and bool(snapshot.checks)
+    healthy = snapshot.status == "clear" and 0 <= age <= 300 and bool(snapshot.checks)
     return _gate(
         "pass" if healthy else "fail",
         None if healthy else "monitoring health is stale or not clear",
@@ -201,15 +201,28 @@ def _monitoring_gate(db: Session, now: datetime) -> dict:
     )
 
 
-def _recovery_gate(db: Session) -> dict:
+def _recovery_gate(db: Session, now: datetime | None = None) -> dict:
+    from app.services.stock_recovery import HEARTBEAT_TIMEOUT
+
     state = db.get(StockPaperRecoveryState, 1)
     if not state:
         return _gate("unknown", "recovery readiness has not been initialized")
+    observed_at = now or _now()
+
+    def age(value):
+        if value is None:
+            return None
+        stamp = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+        return (observed_at - stamp).total_seconds()
+
+    monitor_age = age(state.last_monitor_heartbeat_at)
+    watchdog_age = age(state.last_watchdog_heartbeat_at)
+    timeout = HEARTBEAT_TIMEOUT.total_seconds()
     ready = (
         state.status in {"armed", "resumable"}
         and not state.accounting_review_required
-        and state.last_watchdog_heartbeat_at is not None
-        and state.last_monitor_heartbeat_at is not None
+        and monitor_age is not None and 0 <= monitor_age <= timeout
+        and watchdog_age is not None and 0 <= watchdog_age <= timeout
     )
     return _gate(
         "pass" if ready else "fail",
@@ -219,6 +232,9 @@ def _recovery_gate(db: Session) -> dict:
             "accounting_review_required": state.accounting_review_required,
             "monitor_heartbeat": state.last_monitor_heartbeat_at,
             "watchdog_heartbeat": state.last_watchdog_heartbeat_at,
+            "monitor_age_seconds": monitor_age,
+            "watchdog_age_seconds": watchdog_age,
+            "heartbeat_timeout_seconds": timeout,
         },
     )
 
@@ -230,22 +246,36 @@ def _lineage_gate(db: Session) -> dict:
     snapshot = db.get(StockDatasetSnapshot, binding.snapshot_id) if binding else None
     if not binding or not model or not snapshot:
         return _gate("unknown", "immutable model and dataset lineage is unavailable")
+    from app.services.stock_training_jobs import get_stock_model_lifecycle_state
+
     metadata = model.training_metadata if isinstance(model.training_metadata, dict) else {}
-    lifecycle_eligible = model.lifecycle_state in {"paper_canary", "champion"} or (
-        not metadata and model.lifecycle_state == "challenger"
-    )
-    explicitly_eligible = metadata.get("live_eligible") is not False and metadata.get("eligible_for_trading") is not False
+    lifecycle = get_stock_model_lifecycle_state(db, model.run_id)
+    lifecycle_eligible = lifecycle in {"paper_canary", "champion"}
+    explicitly_eligible = metadata.get("live_eligible") is True and metadata.get("eligible_for_trading") is True
     complete = bool(
         binding.binding_sha256
         and model.manifest_sha256
         and snapshot.dataset_sha256
         and binding.model_run_id == model.run_id
         and binding.snapshot_id == snapshot.snapshot_id
+        and model.snapshot_id == snapshot.snapshot_id
         and lifecycle_eligible
         and explicitly_eligible
     )
+    integrity_valid = False
+    if complete:
+        from app.services.stock_training_jobs import (
+            StockTrainingError, _dataset_from_record, validate_registered_stock_model,
+        )
+        try:
+            dataset = _dataset_from_record(snapshot)
+            validate_registered_stock_model(model, dataset)
+            integrity_valid = True
+        except (StockTrainingError, OSError, ValueError, TypeError, KeyError):
+            # No file paths or exception payloads belong in the public projection.
+            return _gate("fail", "immutable model or dataset artifact integrity verification failed")
     return _gate(
-        "pass" if complete else "fail",
+        "pass" if complete and integrity_valid else "fail",
         None if complete else "immutable model lineage or model eligibility does not permit live execution",
         {
             "binding_id": binding.id,
@@ -254,9 +284,10 @@ def _lineage_gate(db: Session) -> dict:
             "model_manifest_sha256": model.manifest_sha256,
             "snapshot_id": snapshot.snapshot_id,
             "dataset_sha256": snapshot.dataset_sha256,
-            "lifecycle_state": model.lifecycle_state,
+            "lifecycle_state": lifecycle,
             "live_eligible": metadata.get("live_eligible"),
             "eligible_for_trading": metadata.get("eligible_for_trading"),
+            "artifact_integrity_verified": integrity_valid,
         },
     )
 
@@ -321,7 +352,7 @@ def evaluate_live_safety(db: Session, *, now: datetime | None = None) -> dict:
         "broker_account": _broker_account_gate(db),
         "current_data": _current_data_gate(db, observed_at),
         "monitoring_health": _monitoring_gate(db, observed_at),
-        "recovery_readiness": _recovery_gate(db),
+        "recovery_readiness": _recovery_gate(db, observed_at),
         "immutable_model_lineage": _lineage_gate(db),
         "recovery_control": _recovery_control_gate(state, observed_at),
         "pilot_launch": pilot_gate,

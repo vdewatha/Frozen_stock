@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.models.crypto_data import CryptoCandle, CollectionRun
+from app.models.online_research import OnlineResearchForecast
 from app.models import shadow, execution, stock_paper  # Register priority-package tables with Base.
 
 from app.models.models import (
@@ -60,6 +61,8 @@ from app.models.stock_paper import (
     StockPaperAccount,
     StockPaperVenueAuthorization,
     StockPaperVenueQualification,
+    StockPaperResearchQualification,
+    StockPaperResearchAuthorization,
     StockPaperBrokerActivity,
     StockPaperEquitySnapshot,
     StockPaperFill,
@@ -135,6 +138,8 @@ __all__ = [
     "StockPaperAccount",
     "StockPaperVenueAuthorization",
     "StockPaperVenueQualification",
+    "StockPaperResearchQualification",
+    "StockPaperResearchAuthorization",
     "StockPaperBrokerActivity",
     "StockPaperEquitySnapshot",
     "StockPaperFill",

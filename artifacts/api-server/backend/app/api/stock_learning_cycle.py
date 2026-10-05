@@ -185,6 +185,8 @@ def get_launch_prerequisites(
     reason = eligibility_reason if status == "ready" and not eligible else gate_reason
     return {
         "cycle_id": cycle.cycle_id if cycle is not None else None,
+        "symbols": symbols,
+        "provider": provider,
         "checked_at": checked_at,
         "status": status,
         "eligible_for_approval": eligible,

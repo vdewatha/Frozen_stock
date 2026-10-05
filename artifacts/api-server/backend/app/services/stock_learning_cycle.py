@@ -719,16 +719,26 @@ def evaluate_cycle_prerequisites(
     except Exception as exc:
         scheduler_gate = _gate("unknown", reason=f"scheduler health unavailable: {exc.__class__.__name__}")
 
-    from app.models.stock_paper import StockPaperAccount
     account = active_paper_account(db)
     ledger_ready = bool(
         account and account.status == "reconciled"
         and not account.reconciliation_required and account.accounting_verified
     )
+    ledger_blockers = []
+    if account is None:
+        ledger_blockers.append("paper ledger account is not initialized")
+    else:
+        if account.reconciliation_required:
+            ledger_blockers.append("paper ledger reconciliation is required")
+        if not account.accounting_verified:
+            ledger_blockers.append("paper ledger accounting and cost qualification are not verified")
+        if account.status != "reconciled":
+            ledger_blockers.append("paper ledger account is not in reconciled status")
     ledger_gate = _gate(
         "pass" if ledger_ready else "fail",
-        reason=None if ledger_ready else "paper ledger reconciliation is unavailable",
+        reason=None if ledger_ready else "; ".join(ledger_blockers),
         evidence={
+            "blockers": ledger_blockers,
             "account_status": account.status if account else "uninitialized",
             "reconciliation_required": account.reconciliation_required if account else None,
             "accounting_verified": account.accounting_verified if account else False,

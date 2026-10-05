@@ -35,7 +35,10 @@ class ResearchApiTests(unittest.TestCase):
         with Session(cls.engine) as db, db.begin():
             register_research_run(db, cls.root / "runs" / cls.run_id)
         app = FastAPI()
-        app.add_middleware(AuthenticationMiddleware, configuration=Settings(_env_file=None, auth_viewer_key="v" * 32))
+        app.add_middleware(AuthenticationMiddleware, configuration=Settings(
+            _env_file=None, auth_viewer_key="v" * 32, auth_researcher_key="r" * 32,
+            auth_operator_key="o" * 32, auth_admin_key="a" * 32,
+        ))
         app.include_router(router)
         def session():
             with Session(cls.engine) as db:

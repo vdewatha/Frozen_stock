@@ -98,7 +98,8 @@ def test_scheduled_challenger_execution_never_binds_or_promotes():
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        db.add(Asset(symbol="SPY", name="S&P 500", asset_type="stock", is_active=True))
+        for symbol in ("AAPL", "MSFT", "QQQ", "SPY"):
+            db.add(Asset(symbol=symbol, name=symbol, asset_type="stock", is_active=True))
         db.commit()
         cycle = SimpleNamespace(
             cycle_id="a" * 64,
@@ -118,7 +119,7 @@ def test_scheduled_challenger_execution_never_binds_or_promotes():
                 scheduled_jobs,
                 "create_learning_cycle",
                 return_value=(cycle, False),
-            ),
+            ) as create_cycle,
             patch.object(scheduled_jobs, "enqueue_stock_training_job") as enqueue,
             patch(
                 "app.services.stock_training_jobs.create_stock_paper_binding"
@@ -132,9 +133,27 @@ def test_scheduled_challenger_execution_never_binds_or_promotes():
         assert result["status"] == "complete"
         assert result["binding_changed"] is False
         assert result["live_authorized"] is False
-        assert enqueue.not_called
-        assert bind.not_called
-        assert transition.not_called
+        create_cycle.assert_called_once()
+        assert create_cycle.call_args.kwargs["symbols"] == ["AAPL", "MSFT", "QQQ", "SPY"]
+        enqueue.assert_not_called()
+        bind.assert_not_called()
+        transition.assert_not_called()
+
+
+def test_scheduled_universe_never_silently_drops_missing_assets():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(Asset(symbol="SPY", name="SPY", asset_type="stock", is_active=True))
+        db.commit()
+        with (
+            patch.object(scheduled_jobs, "_run_job", side_effect=lambda _name, work: work(db)),
+            patch.object(scheduled_jobs, "create_learning_cycle") as create_cycle,
+        ):
+            result = scheduled_jobs.scheduled_stock_challenger_retraining_job()
+        assert result["status"] == "blocked"
+        assert result["missing_symbols"] == ["AAPL", "MSFT", "QQQ"]
+        create_cycle.assert_not_called()
 
 
 def test_lost_running_job_is_redelivered_from_database_state():

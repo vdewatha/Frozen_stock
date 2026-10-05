@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from hashlib import sha256
 from decimal import Decimal
+import logging
 from typing import Callable
 
 import redis
@@ -18,7 +19,7 @@ from app.services.deployment_monitor import run_deployment_monitor
 from app.services.experiments import run_strategy_experiments
 from app.services.governance import evaluate_strategy_governance
 from app.services.market_data import import_market_prices
-from app.services.intraday_data import ingest_corporate_actions, preflight_intraday
+from app.services.intraday_data import ingest_corporate_actions, collect_scheduled_intraday
 from app.services.market_regime import detect_and_store_market_regime
 from app.services.memory_replay import run_memory_replay_gate_monitor
 from app.services.model_tracking import run_and_persist_model_predictions, score_realized_predictions
@@ -52,6 +53,8 @@ from app.services.stock_learning_cycle import (
 )
 from app.services.agent_research import run_agent_research, refresh_agent_research_evaluations
 
+logger = logging.getLogger(__name__)
+
 
 def _json_safe(value):
     if isinstance(value, Decimal):
@@ -80,6 +83,8 @@ def _normalize_pending_json(db) -> None:
 REDIS_LOCKED_JOBS = frozenset(
     {
         "intraday_market_data_import",
+        "iex_research_collection_job",
+        "delayed_sip_collection_job",
         "stock_forward_trial_observe_job",
         "stock_forward_trial_reconcile_job",
     }
@@ -88,14 +93,17 @@ REDIS_JOB_LOCK_TTL_SECONDS = 15 * 60
 INTRADAY_TASK_SOFT_TIME_LIMIT_SECONDS = 45
 INTRADAY_TASK_TIME_LIMIT_SECONDS = 55
 INTRADAY_JOB_LOCK_TTL_SECONDS = INTRADAY_TASK_TIME_LIMIT_SECONDS + 65
+IEX_TASK_SOFT_TIME_LIMIT_SECONDS = 110
+IEX_TASK_TIME_LIMIT_SECONDS = 120
+IEX_JOB_LOCK_TTL_SECONDS = IEX_TASK_TIME_LIMIT_SECONDS + 60
 
 
 def _acquire_job_lock(job_name: str):
     """Acquire a Redis lease for jobs whose cadence must not overlap.
 
-    PostgreSQL advisory locks protect production workers, but the local stack
-    intentionally uses SQLite. Redis is the shared coordination point for both
-    environments. A Redis outage is an operational failure, not permission to
+    PostgreSQL advisory locks additionally protect PostgreSQL deployments.
+    Redis provides coordination for both PostgreSQL and SQLite. An outage is
+    an operational failure, not permission to
     run an uncoordinated market-data or broker-reconciliation task.
     """
     client = redis.Redis.from_url(
@@ -109,6 +117,8 @@ def _acquire_job_lock(job_name: str):
         lock_ttl = (
             INTRADAY_JOB_LOCK_TTL_SECONDS
             if job_name == "intraday_market_data_import"
+            else IEX_JOB_LOCK_TTL_SECONDS
+            if job_name == "iex_research_collection_job"
             else REDIS_JOB_LOCK_TTL_SECONDS
         )
         lock = client.lock(
@@ -129,6 +139,8 @@ def _run_job(job_name: str, work: Callable) -> dict:
     db = SessionLocal()
     lock_key = int.from_bytes(sha256(f"job:{job_name}".encode()).digest()[:8], "big") % 2_147_483_647
     lock_acquired = False
+    lock_acquisition_confirmed = False
+    lock_connection = None
     redis_lock = None
     try:
         if job_name in REDIS_LOCKED_JOBS:
@@ -140,29 +152,53 @@ def _run_job(job_name: str, work: Callable) -> dict:
                     "reason": "duplicate scheduled job lease is active",
                 }
         if db.get_bind().dialect.name == "postgresql":
-            lock_acquired = bool(db.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}))
+            # Session.commit() returns its connection to the pool. Keep the
+            # session-level advisory lock on a separately owned connection.
+            lock_connection = db.get_bind().connect()
+            lock_acquired = bool(lock_connection.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}))
+            lock_acquisition_confirmed = True
             if not lock_acquired:
                 return {"status": "skipped", "job": job_name, "reason": "duplicate worker lease is active"}
         return work(db)
     except Exception as exc:
-        create_notification(
-            db,
-            category="scheduled_job",
-            severity="critical",
-            source=job_name,
-            title=f"Scheduled job failed: {job_name}",
-            message=str(exc),
-            entity_type="job",
-            payload={"job": job_name, "error": str(exc), "error_type": exc.__class__.__name__},
-        )
-        db.commit()
+        # Failure reporting must never commit pending effects of failed work.
+        try:
+            db.rollback()
+            create_notification(
+                db,
+                category="scheduled_job",
+                severity="critical",
+                source=job_name,
+                title=f"Scheduled job failed: {job_name}",
+                message=str(exc),
+                entity_type="job",
+                payload={"job": job_name, "error": str(exc), "error_type": exc.__class__.__name__},
+            )
+            db.commit()
+        except Exception as notification_error:
+            # Row values and provider errors may contain secrets; log types only.
+            logger.error(
+                "Scheduled job failure notification unavailable: job=%s error_type=%s notification_error_type=%s",
+                job_name, type(exc).__name__, type(notification_error).__name__,
+            )
+            db.rollback()
         raise
     finally:
-        if lock_acquired:
+        if lock_connection is not None:
             try:
-                db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
+                if not lock_acquisition_confirmed:
+                    raise RuntimeError("Scheduled job advisory lock acquisition is uncertain")
+                if lock_acquired and not lock_connection.scalar(
+                    text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key}
+                ):
+                    raise RuntimeError("Scheduled job advisory lock ownership was lost")
             except Exception:
-                db.rollback()
+                logger.error("Scheduled job lock cleanup failed: job=%s", job_name)
+                # A rollback does not release session-level locks. Never return
+                # a connection with uncertain lock ownership to the pool.
+                lock_connection.invalidate()
+            finally:
+                lock_connection.close()
         if redis_lock is not None:
             try:
                 redis_lock.release()
@@ -200,7 +236,7 @@ def daily_market_data_import() -> dict:
 )
 def intraday_market_data_import() -> dict:
     def work(db):
-        result = preflight_intraday(db)
+        result = collect_scheduled_intraday(db)
         db.commit()
         return {"job": "intraday_market_data_import", **result}
 
@@ -215,6 +251,37 @@ def daily_news_import() -> dict:
         return {"status": "complete", "job": "daily_news_import", "results": results}
 
     return _run_job("daily_news_import", work)
+
+
+@celery_app.task(soft_time_limit=IEX_TASK_SOFT_TIME_LIMIT_SECONDS, time_limit=IEX_TASK_TIME_LIMIT_SECONDS)
+def iex_research_collection_job() -> dict:
+    if not settings.iex_research_enabled:
+        return {"status": "disabled", "research_only": True}
+
+    def work(db):
+        from app.services.alpaca_research_data import collect_iex_research
+        result = collect_iex_research(db)
+        db.commit()
+        from app.services.online_research import advance_online_research
+        result["learning"] = advance_online_research(db)
+        db.commit()
+        return result
+
+    return _run_job("iex_research_collection_job", work)
+
+
+@celery_app.task(soft_time_limit=110, time_limit=120)
+def delayed_sip_collection_job() -> dict:
+    if not settings.delayed_sip_research_enabled:
+        return {"status": "disabled", "research_only": True}
+
+    def work(db):
+        from app.services.delayed_sip_research import collect_delayed_sip
+        result = collect_delayed_sip(db)
+        db.commit()
+        return result
+
+    return _run_job("delayed_sip_collection_job", work)
 
 
 @celery_app.task
@@ -520,27 +587,43 @@ def scheduled_stock_challenger_retraining_job() -> dict:
                 "live_authorized": False,
                 "binding_changed": False,
             }
-        assets = db.query(Asset).filter(Asset.is_active.is_(True), Asset.asset_type == "stock").order_by(Asset.symbol).limit(5).all()
+        symbols = list(settings.stock_learning_default_symbols)
+        active_symbols = {
+            row.symbol for row in db.query(Asset).filter(
+                Asset.is_active.is_(True), Asset.asset_type == "stock",
+                Asset.symbol.in_(symbols),
+            ).all()
+        }
+        missing = sorted(set(symbols) - active_symbols)
+        if missing:
+            return {
+                "status": "blocked", "job": "scheduled_stock_challenger_retraining_job",
+                "reason": "Configured learning universe contains missing or inactive assets",
+                "missing_symbols": missing, "challengers": [], "deferred": [], "blocked": [],
+                "paper_only": True, "live_authorized": False, "binding_changed": False,
+            }
         queued, deferred, blocked = [], [], []
-        for asset in assets:
-            try:
-                cycle, duplicate = create_learning_cycle(
-                    db, symbols=[asset.symbol], cutoff_at=date.today(), horizon_days=5,
-                    provider="yfinance", seed=42, actor="scheduler", trigger="scheduled"
-                )
+        # One immutable portfolio cycle shares the launch universe. Independent
+        # symbol/strategy experiments remain on the research-only batch path.
+        try:
+            cycle, duplicate = create_learning_cycle(
+                db, symbols=symbols, cutoff_at=date.today(), horizon_days=5,
+                provider=settings.stock_learning_default_provider,
+                seed=42, actor="scheduler", trigger="scheduled"
+            )
+            db.commit()
+            if cycle.training_job_id and not duplicate and cycle.status == "queued":
+                job = db.get(StockTrainingJob, cycle.training_job_id)
+                if job:
+                    enqueue_stock_training_job(db, job)
                 db.commit()
-                if cycle.training_job_id and not duplicate and cycle.status == "queued":
-                    job = db.get(StockTrainingJob, cycle.training_job_id)
-                    if job:
-                        enqueue_stock_training_job(db, job)
-                    db.commit()
-                item = {"symbol": asset.symbol, "cycle_id": cycle.cycle_id, "job_id": cycle.training_job_id,
-                        "status": cycle.status, "stage": cycle.stage, "deduplicated": duplicate,
-                        "reason": cycle.last_reason}
-                (deferred if cycle.status == "deferred" else blocked if cycle.status == "blocked" else queued).append(item)
-            except StockTrainingError as exc:
-                db.rollback()
-                blocked.append({"symbol": asset.symbol, "reason": str(exc)})
+            item = {"symbols": symbols, "cycle_id": cycle.cycle_id, "job_id": cycle.training_job_id,
+                    "status": cycle.status, "stage": cycle.stage, "deduplicated": duplicate,
+                    "reason": cycle.last_reason}
+            (deferred if cycle.status == "deferred" else blocked if cycle.status == "blocked" else queued).append(item)
+        except StockTrainingError as exc:
+            db.rollback()
+            blocked.append({"symbols": symbols, "reason": str(exc)})
         return {
             "status": "complete",
             "job": "scheduled_stock_challenger_retraining_job",

@@ -530,6 +530,9 @@ def attempt_automatic_stock_recovery(
     if account is None:
         return {"status": "uninitialized"}
 
+    if account.activity_contract == "alpaca-activities-v2":
+        return {"status": "blocked", "reason": "Observed-baseline activity reconciliation is not an all-in cost qualification."}
+
     review_complete = (
         not state.accounting_review_required
         and not account.unexplained_residual

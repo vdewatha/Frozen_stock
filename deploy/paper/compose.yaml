@@ -1,0 +1,139 @@
+name: frozen-stock-paper
+
+x-runtime: &runtime
+  image: frozen-stock-paper:local
+  build:
+    context: ../../artifacts/api-server/backend
+    dockerfile: Dockerfile.paper-stack
+  env_file:
+    - path: paper.env
+    - path: ../../.env
+      required: false
+  environment:
+    DATABASE_URL: postgresql+psycopg://paper:${POSTGRES_PASSWORD:?Initialize paper.env first}@postgres:5432/paper
+    REDIS_URL: redis://redis:6379/0
+    ALLOW_LIVE_TRADING: "false"
+    LIVE_ALPACA_API_KEY: ""
+    LIVE_ALPACA_API_SECRET: ""
+    LIVE_BROKER_ACCOUNT_ID: ""
+    ENVIRONMENT: local
+    AUTH_MODE: local_role_keys
+    ACTIVE_PAPER_BROKER: alpaca_paper
+    IEX_RESEARCH_ENABLED: "true"
+    DELAYED_SIP_RESEARCH_ENABLED: "true"
+    STOCK_TRAINING_ARTIFACT_ROOT: /data/models
+    CELERY_BEAT_SCHEDULE_FILE: /data/beat/schedule
+  volumes:
+    - models:/data/models
+    - reports:/data/reports
+    - beat:/data/beat
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 60s
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+  depends_on:
+    migrate: {condition: service_completed_successfully}
+    redis: {condition: service_healthy}
+
+services:
+  web:
+    image: frozen-stock-web:local
+    env_file: [web.env]
+    build:
+      context: ../..
+      dockerfile: deploy/paper/Dockerfile.web
+    ports: ["127.0.0.1:${PAPER_WEB_PORT:-8088}:8080"]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: paper
+      POSTGRES_DB: paper
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Initialize paper.env first}
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paper -d paper"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis:/data"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    <<: *runtime
+    restart: "no"
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  backend:
+    <<: *runtime
+    ports: ["127.0.0.1:${PAPER_API_PORT:-8010}:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  intraday:
+    <<: *runtime
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=intraday@%h", "--queues=intraday_market_data", "--concurrency=1"]
+
+  market-data:
+    <<: *runtime
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=market@%h", "--queues=default,market_data", "--concurrency=1"]
+
+  learning:
+    <<: *runtime
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", "--concurrency=${LEARNING_CONCURRENCY:-1}"]
+
+  execution:
+    <<: *runtime
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=execution@%h", "--queues=paper_trading", "--concurrency=1"]
+
+  risk:
+    <<: *runtime
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=risk@%h", "--queues=risk", "--concurrency=1"]
+
+  watchdog:
+    <<: *runtime
+    command: ["python", "scripts/run_stock_watchdog.py"]
+
+  scheduler:
+    <<: *runtime
+    command: ["python", "scripts/run_beat_with_lease.py"]
+    depends_on:
+      backend: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+volumes:
+  postgres:
+  redis:
+  models:
+  reports:
+  beat:

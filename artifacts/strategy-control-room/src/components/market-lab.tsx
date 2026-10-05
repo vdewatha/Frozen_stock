@@ -85,7 +85,7 @@ export function MarketLab() {
 
   async function handleIntradayImport() {
     setIsBusy(true);
-    setStatus("Importing Alpaca SIP 1-minute bars");
+    setStatus("Importing Tradier SIP 1-minute bars");
     try {
       const result = await importIntradayMarketData(symbol);
       setIntradayImportResult(result);
@@ -114,10 +114,10 @@ export function MarketLab() {
 
   async function handlePreflight() {
     setIsBusy(true);
-    setStatus("Running four-symbol Alpaca SIP preflight");
+    setStatus("Running four-symbol Tradier SIP preflight");
     try {
       setPreflight(await runIntradayPreflight());
-      setStatus("Alpaca SIP preflight updated");
+      setStatus("Tradier SIP preflight updated");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "SIP preflight failed");
     } finally {
@@ -149,7 +149,7 @@ export function MarketLab() {
           </div>
           <div className="mt-1 text-sm text-slate-500">{status}</div>
         </div>
-        <div className="grid gap-2 sm:grid-cols-[120px_190px_auto_auto_auto_auto]">
+        <div className="flex min-w-0 flex-wrap items-end gap-2">
           <label className="grid gap-1 text-sm">
             <span className="font-medium">Symbol</span>
             <input className="focus-ring h-10 rounded-md border border-line px-3 uppercase" value={symbol} onChange={(event) => setSymbol(event.target.value.toUpperCase())} />
@@ -257,7 +257,7 @@ export function MarketLab() {
                 <span>State</span><strong className={`text-right ${health.is_stale || health.is_incomplete || health.status === "stale" || health.status === "unavailable" ? "text-coral" : "text-mint"}`}>{health.is_stale || health.status === "stale" ? "Stale" : health.is_incomplete ? "Incomplete" : health.status === "unavailable" ? "Unavailable" : "Current"}</strong>
                 {health.unavailable_reason ? <span className="sm:col-span-2 text-coral">Unavailable reason: {health.unavailable_reason}</span> : null}
               </div>
-            ) : <div className="mt-2 text-sm text-slate-500">No real-time health result yet. Historical data and delayed data are not substitutes for the Alpaca SIP feed.</div>}
+            ) : <div className="mt-2 text-sm text-slate-500">No real-time health result yet. Historical, delayed, and IEX data do not satisfy the Tradier SIP contract.</div>}
           </div>
           <div className="rounded-md border border-line p-3" data-testid="sip-preflight">
             <div className="flex items-center justify-between gap-2 text-xs font-semibold uppercase text-slate-500">

@@ -27,6 +27,7 @@ def report_api():
     app = FastAPI()
     app.add_middleware(AuthenticationMiddleware, configuration=Settings(
         _env_file=None, auth_viewer_key="v" * 32, auth_researcher_key="r" * 32,
+        auth_operator_key="o" * 32, auth_admin_key="a" * 32,
     ))
     app.include_router(router, prefix="/api")
 

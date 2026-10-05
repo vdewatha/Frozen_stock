@@ -451,9 +451,9 @@ class StockPaperLedgerTests(unittest.TestCase):
 
     def test_alpaca_bare_order_lists_follow_until_cursor_without_dropping_evidence(self):
         client = AlpacaPaperClient()
-        page_one = [{"id": f"order-{index}", "updated_at": f"2026-01-01T00:{index // 60:02d}:{index % 60:02d}Z"}
-                    for index in range(500)]
-        page_two = [{"id": "order-500", "updated_at": "2025-12-31T23:59:59Z"}]
+        page_one = [{"id": f"order-{index}", "submitted_at": f"2026-01-01T00:{index // 60:02d}:{index % 60:02d}Z"}
+                    for index in reversed(range(500))]
+        page_two = [page_one[-1], {"id": "order-500", "submitted_at": "2025-12-31T23:59:59Z"}]
         requests = []
 
         def request(method, path, *, params=None, payload=None):
@@ -462,9 +462,9 @@ class StockPaperLedgerTests(unittest.TestCase):
 
         with patch.object(client, "_request", side_effect=request):
             rows = client.orders()
-        self.assertEqual([row["id"] for row in rows], [f"order-{index}" for index in range(501)])
+        self.assertEqual([row["id"] for row in rows], [f"order-{index}" for index in reversed(range(500))] + ["order-500"])
         self.assertEqual(requests[0][1:], ("/v2/orders", {"status": "all", "nested": "false", "direction": "desc", "limit": "500"}))
-        self.assertEqual(requests[1][2]["until"], "2026-01-01T00:00:00+00:00")
+        self.assertEqual(requests[1][2]["until"], "2026-01-01T00:00:00.000000001+00:00")
 
     def test_activities_page_and_late_fill_are_fully_backfilled_not_lookback_filtered(self):
         client = AlpacaPaperClient()
@@ -527,7 +527,7 @@ class StockPaperLedgerTests(unittest.TestCase):
             self.assertEqual(result["status"], "reconciled")
             self.assertFalse(result["costs_known"])
             self.assertFalse(result["account"]["accounting_verified"])
-            self.assertEqual(result["positions"][0]["quantity"], "2.00000000")
+            self.assertEqual(result["positions"][0]["quantity"], "2.000000000")
 
     def test_missing_commission_never_bypasses_inventory_or_cash_reconciliation(self):
         fill_time = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()

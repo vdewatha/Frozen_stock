@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.schemas.trading import StockPaperInitializeRequest
 from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingReviewRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest, StockPaperRevalidationRequest
 from app.services.stock_paper_ledger import (
     StockPaperError,
@@ -90,10 +91,12 @@ def accounting_review(payload: StockPaperAccountingReviewRequest, request: Reque
 
 
 @router.post("/initialize")
-def initialize(request: Request, db: Session = Depends(get_db)) -> dict:
+def initialize(request: Request, payload: StockPaperInitializeRequest | None = None, db: Session = Depends(get_db)) -> dict:
     _attribute(db, request)
     try:
-        return initialize_stock_paper_account(db)
+        if payload is None:
+            return initialize_stock_paper_account(db)
+        return initialize_stock_paper_account(db, activity_contract=payload.activity_contract)
     except StockPaperError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

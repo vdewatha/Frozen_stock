@@ -74,6 +74,14 @@ def main() -> int:
                 return 1
         return child.returncode or 0
     finally:
+        # Do not release leadership until the old scheduler has stopped.
+        if child.poll() is None:
+            child.terminate()
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=5)
         try:
             release(keys=[LEASE_KEY], args=[owner])
         except redis.RedisError:

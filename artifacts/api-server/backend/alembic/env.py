@@ -1,7 +1,7 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, inspect, pool, text
+from sqlalchemy import engine_from_config, pool
 
 from app.core.config import settings
 from app.db.base import Base
@@ -15,22 +15,6 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
-
-
-def _preserve_legacy_interim_head(connection) -> None:
-    """Keep repaired stock-only namespaces at their documented compatibility head."""
-    tables = set(inspect(connection).get_table_names())
-    if "stock_dataset_snapshots" not in tables:
-        return
-    is_legacy = connection.execute(text(
-        "SELECT 1 FROM stock_dataset_snapshots "
-        "WHERE CAST(metadata_json AS TEXT) LIKE '%legacy_interim_schema%' LIMIT 1"
-    )).scalar()
-    if is_legacy:
-        connection.execute(text(
-            "UPDATE alembic_version "
-            "SET version_num = '0030_stock_accounting_review'"
-        ))
 
 
 def run_migrations_offline() -> None:
@@ -57,7 +41,6 @@ def run_migrations_online() -> None:
 
         with context.begin_transaction():
             context.run_migrations()
-            _preserve_legacy_interim_head(connection)
 
 
 if context.is_offline_mode():

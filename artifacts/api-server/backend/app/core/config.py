@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hmac
+import re
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -60,15 +61,28 @@ class Settings(BaseSettings):
     active_market_data_provider: str = "tradier"
     active_paper_broker: str = "tradier_sandbox"
     intraday_enabled: bool = True
+    iex_research_enabled: bool = False
+    delayed_sip_research_enabled: bool = False
+    research_observation_only: bool = False
     stock_training_artifact_root: str = "./stock_training_artifacts"
     # Read-only launch preflight defaults are deliberately limited to the
     # supported paper-learning universe.  A cycle request always overrides
     # these values with its immutable symbols and provider.
-    stock_learning_default_symbols: list[str] = ["SPY"]
+    stock_learning_default_symbols: list[str] = ["AAPL", "MSFT", "QQQ", "SPY"]
     stock_learning_default_provider: str = "yfinance"
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    @field_validator("stock_learning_default_symbols")
+    @classmethod
+    def validate_learning_universe(cls, values: list[str]) -> list[str]:
+        symbols = sorted({value.strip().upper() for value in values})
+        if not symbols or len(symbols) > 25 or any(
+            not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,15}", symbol) for symbol in symbols
+        ):
+            raise ValueError("Learning universe requires 1 to 25 valid stock symbols")
+        return symbols
 
     @field_validator("database_url", mode="before")
     @classmethod

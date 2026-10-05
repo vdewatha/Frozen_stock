@@ -47,3 +47,31 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Private runtime configuration
+/.env
+/.env.*
+.paper-backups/
+.paper-vault/
+/deploy/paper/web.env
+
+# Local evidence and personal outputs are not application source.
+.paper-training/
+.paper-venue/
+.playwright-mcp/
+/output/
+/frontend/*.png
+/oracle-create-instance.png
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.venv-research/
+.next/
+research_runs/
+stock_training_artifacts/
+._*

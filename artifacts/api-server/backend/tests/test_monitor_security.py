@@ -60,7 +60,9 @@ class MonitorSecurityTests(unittest.TestCase):
                     inspector.ping.return_value = responses
                     result = deployment_monitor._check_celery_workers()
                     self.assertEqual(result["status"] == "ready", healthy)
-                    self.assertEqual(result["details"]["worker_count"], len(responses))
+                    self.assertEqual(result["details"]["worker_count"], sum(
+                        value.get("ok") == "pong" for value in responses.values()
+                    ))
 
             inspector.ping.side_effect = RuntimeError("worker unavailable")
             result = deployment_monitor._check_celery_workers()
@@ -75,7 +77,7 @@ class MonitorSecurityTests(unittest.TestCase):
         }
         inspector.active_queues.return_value = {
             "intraday@host": [{"name": "intraday_market_data"}],
-            "general@host": [{"name": "market_data"}, {"name": "risk"}],
+            "general@host": [{"name": name} for name in deployment_monitor.GENERAL_WORKER_QUEUES],
         }
         with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector), patch.object(
             deployment_monitor.celery_app, "send_task"
@@ -87,10 +89,32 @@ class MonitorSecurityTests(unittest.TestCase):
         self.assertEqual(result["details"]["dedicated_intraday_workers"], ["intraday@host"])
         self.assertEqual(result["details"]["general_workers"], ["general@host"])
         self.assertEqual(result["details"]["worker_queues"]["intraday@host"], ["intraday_market_data"])
-        self.assertEqual(result["details"]["worker_queues"]["general@host"], ["market_data", "risk"])
+        self.assertEqual(result["details"]["worker_queues"]["general@host"], sorted(deployment_monitor.GENERAL_WORKER_QUEUES))
         inspector.ping.assert_called_once_with()
         inspector.active_queues.assert_called_once_with()
         send_task.assert_not_called()
+
+    def test_worker_evidence_requires_every_queue_and_allows_separate_pools(self):
+        inspector = MagicMock()
+        queues = deployment_monitor.GENERAL_WORKER_QUEUES | {"intraday_market_data"}
+        inspector.ping.return_value = {name: {"ok": "pong"} for name in queues}
+        inspector.active_queues.return_value = {name: [{"name": name}] for name in queues}
+        with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):
+            self.assertEqual(deployment_monitor._check_celery_workers()["status"], "ready")
+            for missing in deployment_monitor.GENERAL_WORKER_QUEUES:
+                with self.subTest(missing=missing):
+                    inspector.ping.return_value = {name: {"ok": "pong"} for name in queues if name != missing}
+                    result = deployment_monitor._check_celery_workers()
+                    self.assertEqual(result["status"], "blocked")
+                    self.assertEqual(result["details"]["missing_general_queues"], [missing])
+
+    def test_schedule_requires_governed_learning_jobs_not_only_legacy_jobs(self):
+        schedule = dict(deployment_monitor.celery_app.conf.beat_schedule)
+        del schedule["scheduled-stock-challenger-retraining"]
+        with patch.object(deployment_monitor, "celery_app", MagicMock(conf=MagicMock(beat_schedule=schedule))):
+            result = deployment_monitor._check_celery_schedule()
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("scheduled-stock-challenger-retraining", result["details"]["missing_required_jobs"])
 
     def test_worker_evidence_blocks_when_intraday_queue_is_unserved(self):
         inspector = MagicMock()
@@ -171,6 +195,7 @@ class MonitorSecurityTests(unittest.TestCase):
             self.assertEqual(monitor._load_snapshot("https://example.com", 5), {"status": "blocked"})
             factory.assert_called_once_with(timeout=5, follow_redirects=False, trust_env=False)
             self.assertEqual(client.get.call_args.kwargs["headers"]["Authorization"], "Bearer " + "v" * 32)
+            self.assertEqual(client.get.call_args.args[0], "https://example.com/api/system/deployment-monitor")
             client.get.return_value = httpx.Response(302, headers={"location": "https://evil.example"}, request=httpx.Request("GET", "https://example.com"))
             with self.assertRaises(httpx.HTTPStatusError):
                 monitor._load_snapshot("https://example.com", 5)

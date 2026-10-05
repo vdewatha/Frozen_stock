@@ -22,6 +22,9 @@ class StockPaperAccount(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     broker: Mapped[str] = mapped_column(String(32), nullable=False, default="alpaca_paper")
     broker_account_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    activity_contract: Mapped[str] = mapped_column(String(32), nullable=False, default="legacy-v1", server_default="legacy-v1")
+    activity_baseline: Mapped[Optional[dict]] = mapped_column(JSON)
+    cash_policy: Mapped[str] = mapped_column(String(48), nullable=False, default="exact-v1", server_default="exact-v1")
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
     cash: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
     buying_power: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
@@ -82,6 +85,34 @@ class StockPaperVenueAuthorization(Base):
     )
 
 
+class StockPaperResearchQualification(Base):
+    __tablename__ = "stock_paper_research_qualifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("stock_paper_accounts.id"), nullable=False, index=True)
+    report: Mapped[dict] = mapped_column(JSON, nullable=False)
+    report_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    reviewed_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StockPaperResearchAuthorization(Base):
+    __tablename__ = "stock_paper_research_authorizations"
+    __table_args__ = (
+        CheckConstraint("paper_only = true", name="ck_research_authorization_paper_only"),
+        CheckConstraint("live_authorized = false", name="ck_research_authorization_live_disabled"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    qualification_id: Mapped[int] = mapped_column(ForeignKey("stock_paper_research_qualifications.id"), nullable=False, index=True)
+    authorized_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    authorization_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    paper_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    live_authorized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class StockPaperPosition(Base):
     __tablename__ = "stock_paper_positions"
     __table_args__ = (
@@ -92,7 +123,7 @@ class StockPaperPosition(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("stock_paper_accounts.id"), nullable=False, index=True)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(21, 9), nullable=False)
     average_entry_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
     current_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
     market_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
@@ -122,7 +153,7 @@ class StockPaperOrder(Base):
     broker_order_id: Mapped[Optional[str]] = mapped_column(String(96))
     symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     side: Mapped[str] = mapped_column(String(8), nullable=False)
-    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(21, 9), nullable=False)
     order_type: Mapped[str] = mapped_column(String(16), nullable=False, default="market")
     time_in_force: Mapped[str] = mapped_column(String(16), nullable=False, default="day")
     limit_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
@@ -152,7 +183,7 @@ class StockPaperFill(Base):
     broker_order_id: Mapped[Optional[str]] = mapped_column(String(96), index=True)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     side: Mapped[str] = mapped_column(String(8), nullable=False)
-    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(21, 9), nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
     fee: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
     cost_known: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -183,7 +214,8 @@ class StockPaperBrokerActivity(Base):
     account_id: Mapped[int] = mapped_column(ForeignKey("stock_paper_accounts.id"), nullable=False, index=True)
     broker_activity_id: Mapped[str] = mapped_column(String(128), nullable=False)
     activity_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    occurred_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
+    normalized_payload: Mapped[Optional[dict]] = mapped_column(JSON)
     raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
@@ -227,13 +259,13 @@ class StockPaperTrialLot(Base):
     entry_decision_id: Mapped[int] = mapped_column(ForeignKey("stock_paper_trial_decisions.id"), nullable=False)
     entry_order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_orders.id"))
     entry_fill_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_fills.id"))
-    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(21, 9), nullable=False)
     entry_session: Mapped[str] = mapped_column(String(32), nullable=False)
     planned_horizon_sessions: Mapped[int] = mapped_column(nullable=False, default=5)
     stop_fraction: Mapped[Decimal] = mapped_column(Numeric(12, 8), nullable=False, default=Decimal("0.02"))
     exit_order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("stock_paper_orders.id"))
     exit_status: Mapped[Optional[str]] = mapped_column(String(32))
-    exited_quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    exited_quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(21, 9))
     exit_reason: Mapped[Optional[str]] = mapped_column(String(24))
     exit_decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     exit_reference_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))

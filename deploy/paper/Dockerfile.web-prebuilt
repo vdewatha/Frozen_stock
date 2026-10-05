@@ -1,0 +1,6 @@
+# Build dist/public with the same paper-auth flags as Dockerfile.web first.
+FROM nginxinc/nginx-unprivileged:1.28-alpine
+ENV NGINX_ENVSUBST_FILTER=LOCAL_VIEWER_KEY
+COPY deploy/paper/nginx.conf /etc/nginx/templates/default.conf.template
+COPY artifacts/strategy-control-room/dist/public /usr/share/nginx/html
+EXPOSE 8080

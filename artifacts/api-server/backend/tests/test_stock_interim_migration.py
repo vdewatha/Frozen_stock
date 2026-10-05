@@ -6,6 +6,8 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
@@ -30,6 +32,12 @@ def test_populated_interim_stock_schema_repairs_through_head_with_audit_triggers
             connection.execute(text("CREATE TABLE alembic_version (version_num varchar(32) NOT NULL)"))
             connection.execute(text("INSERT INTO alembic_version VALUES ('0010_stock_training_jobs')"))
             connection.execute(text("CREATE TABLE research_model_runs (run_id varchar(64) PRIMARY KEY)"))
+            # This initial-schema table predates interim 0010 and is referenced
+            # by the later live-order migration, even when it contains no rows.
+            connection.execute(text("CREATE TABLE strategy_signals (id serial PRIMARY KEY)"))
+            scripts = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "alembic"))
+            with Operations.context(MigrationContext.configure(connection)):
+                scripts.get_revision("0009_intraday_alpaca").module.upgrade()
             connection.execute(text("INSERT INTO research_model_runs VALUES ('cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc')"))
             connection.execute(text("""
                 CREATE TABLE stock_dataset_snapshots (
@@ -125,10 +133,12 @@ def test_populated_interim_stock_schema_repairs_through_head_with_audit_triggers
             scoped_url.render_as_string(hide_password=False).replace("%", "%%"),
         )
         command.upgrade(config, "head")
+        # A restart must not reapply newer DDL to a falsely rewound version.
+        command.upgrade(config, "head")
 
         with isolated.connect() as connection:
             inspector = inspect(connection)
-            assert MigrationContext.configure(connection).get_current_heads() == ("0030_stock_accounting_review",)
+            assert MigrationContext.configure(connection).get_current_heads() == tuple(ScriptDirectory.from_config(config).get_heads())
             assert connection.execute(text("SELECT count(*) FROM stock_dataset_snapshots")).scalar() == 1
             assert connection.execute(text("SELECT count(*) FROM stock_holdout_reservations")).scalar() == 1
             assert connection.execute(text("SELECT count(*) FROM stock_training_jobs")).scalar() == 1

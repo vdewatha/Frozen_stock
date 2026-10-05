@@ -17,7 +17,8 @@ import {
 
 const queryClient = new QueryClient();
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
-const clerkPubKey = publishableKeyFromHost(
+const localPaperAuth = import.meta.env.VITE_LOCAL_PAPER_AUTH === 'true';
+const clerkPubKey = localPaperAuth ? '' : publishableKeyFromHost(
   window.location.hostname,
   import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
 );
@@ -95,8 +96,9 @@ function Router() {
     <RoutedErrorBoundary>
       <Switch>
         <Route path="/" component={DashboardHome} />
-        <Route path="/sign-in/*?" component={SignInPage} />
-        <Route path="/sign-up/*?" component={SignUpPage} />
+        <Route path="/sign-in/*?" component={localPaperAuth ? DashboardHome : SignInPage} />
+        <Route path="/sign-up/*?" component={localPaperAuth ? DashboardHome : SignUpPage} />
+        <Route path="/:page/:section?" component={DashboardHome} />
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>
@@ -111,7 +113,7 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
 function App() {
   return (
     <WouterRouter base={basePath}>
-      <ClerkProviderWithRouting />
+      {localPaperAuth ? <ApplicationContent /> : <ClerkProviderWithRouting />}
     </WouterRouter>
   );
 }
@@ -132,14 +134,15 @@ function ClerkProviderWithRouting() {
       routerPush={(to) => setLocation(stripBase(to))}
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <Router />
-          <Toaster />
-        </TooltipProvider>
-      </QueryClientProvider>
+      <ApplicationContent />
     </ClerkProvider>
   );
 }
 
 export default App;
+
+function ApplicationContent() {
+  return <QueryClientProvider client={queryClient}>
+    <TooltipProvider><Router /><Toaster /></TooltipProvider>
+  </QueryClientProvider>;
+}

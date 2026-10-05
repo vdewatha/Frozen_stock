@@ -1,0 +1,25 @@
+# Run after compose.yaml and compose.oracle-micro.yaml on the 1 GB free VM.
+# The IEX collector also performs delayed test-then-train online learning.
+x-observation: &observation
+  environment:
+    RESEARCH_OBSERVATION_ONLY: "true"
+    INTRADAY_ENABLED: "false"
+
+services:
+  backend:
+    <<: *observation
+  market-data:
+    <<: *observation
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=observer@%h", "--queues=market_data", "--concurrency=1"]
+  scheduler:
+    <<: *observation
+  intraday:
+    profiles: [full-stack]
+  learning:
+    profiles: [full-stack]
+  execution:
+    profiles: [full-stack]
+  risk:
+    profiles: [full-stack]
+  watchdog:
+    profiles: [full-stack]

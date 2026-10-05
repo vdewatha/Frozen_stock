@@ -29,6 +29,8 @@ IDEMPOTENCY_HEADER = "x-idempotency-key"
 ACTION_REASON_HEADER = "x-action-reason"
 SECONDARY_AUTHORIZATION_HEADER = "x-secondary-authorization"
 READ_PATHS = {
+    "/market-data/iex/status",
+    "/market-data/delayed-sip/status",
     "/auth/session",
     "/crypto/status", "/crypto/bindings", "/crypto/decisions", "/crypto/shadow-audits",
     "/crypto/paper/account", "/crypto/paper/intents",
@@ -49,6 +51,8 @@ READ_PATHS = {
     "/learning/workers/{task_id}",
 }
 RESEARCH_POSTS = {
+    "/market-data/iex/collect",
+    "/market-data/delayed-sip/collect",
     "/crypto/collect",
     "/market-data/import", "/market-data/intraday/ingest", "/backtests", "/signals", "/models/predict",
     "/models/run", "/models/score-realized", "/news/import", "/economic/import",

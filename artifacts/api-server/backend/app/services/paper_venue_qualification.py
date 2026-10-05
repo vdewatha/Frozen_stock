@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import StockPaperVenueAuthorization, StockPaperVenueQualification
+from app.models import StockPaperAccount, StockPaperVenueAuthorization, StockPaperVenueQualification
 
 QUALIFICATION_VERSION = "paper-venue-v1"
 SELECTED_PAPER_PROVIDER = "alpaca_paper"
@@ -154,6 +154,31 @@ def record_paper_venue_qualification(
     return row
 
 
+def _qualification_is_current(db: Session, qualification: StockPaperVenueQualification, provider: str) -> bool:
+    account = db.scalar(select(StockPaperAccount).where(StockPaperAccount.broker == provider))
+    if (not account or qualification.provider != provider
+            or qualification.status != "qualified" or not qualification.reviewed_by.strip()
+            or qualification.qualification_version != QUALIFICATION_VERSION
+            or not isinstance(qualification.report, dict)
+            or not isinstance(qualification.report.get("evidence"), dict)):
+        return False
+    # Reassess the package, not just its mutable status flag, against today's account.
+    expected = assess_paper_venue_evidence(provider=provider, account_id=account.broker_account_id,
+                                          evidence=qualification.report["evidence"])
+    return (expected["status"] == "qualified" and qualification.report == expected
+            and qualification.account_id_sha256 == expected["account_id_sha256"]
+            and qualification.report_sha256 == expected["report_sha256"])
+
+
+def _authorization_payload(qualification, provider, authorizer, reason):
+    return {
+        "provider": provider, "qualification_id": qualification.id,
+        "qualification_report_sha256": qualification.report_sha256,
+        "authorizer": authorizer, "reason": reason,
+        "paper_only": True, "live_authorized": False,
+    }
+
+
 def authorize_paper_venue_activation(
     db: Session,
     *,
@@ -167,19 +192,15 @@ def authorize_paper_venue_activation(
         raise ValueError("The selected paper venue qualification was not found")
     if qualification.status != "qualified":
         raise ValueError("Only a passing qualification package can be activated")
+    if not _qualification_is_current(db, qualification, provider):
+        raise ValueError("Qualification evidence must match the current initialized paper account")
+    if not authorizer.strip():
+        raise ValueError("A non-empty activation authorizer is required")
     if not reason.strip():
         raise ValueError("A separate activation reason is required")
     if authorizer.strip() == qualification.reviewed_by:
         raise ValueError("Venue activation requires a separate authorizer")
-    payload = {
-        "provider": provider,
-        "qualification_id": qualification.id,
-        "qualification_report_sha256": qualification.report_sha256,
-        "authorizer": authorizer.strip(),
-        "reason": reason.strip(),
-        "paper_only": True,
-        "live_authorized": False,
-    }
+    payload = _authorization_payload(qualification, provider, authorizer.strip(), reason.strip())
     row = StockPaperVenueAuthorization(
         provider=provider,
         qualification_id=qualification.id,
@@ -207,17 +228,24 @@ def paper_venue_qualification_status(db: Session, provider: str) -> dict[str, An
             .where(
                 StockPaperVenueAuthorization.provider == provider,
                 StockPaperVenueAuthorization.qualification_id == qualification.id,
-                StockPaperVenueAuthorization.paper_only.is_(True),
-                StockPaperVenueAuthorization.live_authorized.is_(False),
             )
             .order_by(StockPaperVenueAuthorization.created_at.desc(), StockPaperVenueAuthorization.id.desc())
         )
-    qualified = bool(qualification and qualification.status == "qualified")
-    activated = bool(qualified and authorization)
+    qualified = bool(qualification and _qualification_is_current(db, qualification, provider))
+    activated = bool(qualified and authorization
+        and authorization.paper_only is True and authorization.live_authorized is False
+        and authorization.authorized_by.strip() and authorization.reason.strip()
+        and authorization.authorized_by.strip() != qualification.reviewed_by.strip()
+        and authorization.authorization_sha256 == _digest(_authorization_payload(
+            qualification, provider, authorization.authorized_by, authorization.reason)))
     return {
         "provider": provider,
         "selected_provider": provider == SELECTED_PAPER_PROVIDER,
-        "qualification_status": qualification.status if qualification else "missing",
+        "qualification_status": (
+            "invalid" if qualification and qualification.status == "qualified" and not qualified
+            else qualification.status if qualification else "missing"
+        ),
+        "evidence_verified_for_current_account": qualified,
         "qualified": qualified,
         "activation_authorized": activated,
         "ready_for_paper_admission": activated,
@@ -228,6 +256,8 @@ def paper_venue_qualification_status(db: Session, provider: str) -> dict[str, An
         "reason": (
             "Account-specific paper venue qualification and separate activation authorization passed"
             if activated else
+            "Stored qualification or activation evidence failed current-account validation"
+            if qualification and qualification.status == "qualified" and (not qualified or authorization is not None) else
             "A passing account-specific qualification and separate activation authorization are required"
         ),
     }

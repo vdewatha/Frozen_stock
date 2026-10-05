@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from datetime import date, datetime, time as dt_time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import Asset, CorporateAction, IntradayBar
 from app.services.audit import write_audit_log
+from app.services.exchange_sessions import is_nyse_session, nyse_holidays, session_bounds
 
 NY = ZoneInfo("America/New_York")
 UTC = timezone.utc
@@ -24,6 +25,7 @@ ENTITLEMENT_VERIFICATION_MAX_AGE = timedelta(minutes=5)
 BAR_CADENCE = timedelta(minutes=1)
 LATE_TRADE_ALLOWANCE = timedelta(seconds=60)
 INTRADAY_BACKFILL_WINDOW = timedelta(minutes=60)
+POST_CLOSE_REPAIR_WINDOW = timedelta(hours=1)
 
 
 MARKET_DATA_PROVIDER = "tradier"
@@ -37,83 +39,6 @@ class TradierProviderError(RuntimeError):
     def __init__(self, message: str, failure_class: str):
         super().__init__(message)
         self.failure_class = failure_class
-
-
-def _easter(year: int) -> date:
-    a = year % 19
-    b, c = divmod(year, 100)
-    d, e = divmod(b, 4)
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i, k = divmod(c, 4)
-    weekday = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * weekday) // 451
-    month = (h + weekday - 7 * m + 114) // 31
-    day = (h + weekday - 7 * m + 114) % 31 + 1
-    return date(year, month, day)
-
-
-def _nth_weekday(year: int, month: int, weekday: int, occurrence: int) -> date:
-    first = date(year, month, 1)
-    offset = (weekday - first.weekday()) % 7
-    return first + timedelta(days=offset + 7 * (occurrence - 1))
-
-
-def _last_weekday(year: int, month: int, weekday: int) -> date:
-    next_month = date(year + (month == 12), month % 12 + 1, 1)
-    last = next_month - timedelta(days=1)
-    return last - timedelta(days=(last.weekday() - weekday) % 7)
-
-
-def _observed_fixed(day: date) -> date:
-    if day.weekday() == 5:
-        return day - timedelta(days=1)
-    if day.weekday() == 6:
-        return day + timedelta(days=1)
-    return day
-
-
-def nyse_holidays(year: int) -> set[date]:
-    """NYSE full-day closures for modern US equity sessions."""
-    new_year = date(year, 1, 1)
-    # Unlike other fixed holidays, NYSE does not close Friday for a Saturday New Year.
-    observed_new_year = new_year + timedelta(days=1) if new_year.weekday() == 6 else new_year
-    holidays = {
-        observed_new_year,
-        _nth_weekday(year, 1, 0, 3),  # MLK Day
-        _nth_weekday(year, 2, 0, 3),  # Washington's Birthday
-        _easter(year) - timedelta(days=2),  # Good Friday
-        _last_weekday(year, 5, 0),  # Memorial Day
-        _observed_fixed(date(year, 7, 4)),
-        _nth_weekday(year, 9, 0, 1),  # Labor Day
-        _nth_weekday(year, 11, 3, 4),  # Thanksgiving
-        _observed_fixed(date(year, 12, 25)),
-    }
-    if year >= 2022:
-        holidays.add(_observed_fixed(date(year, 6, 19)))
-    return holidays
-
-
-def is_nyse_session(day: date) -> bool:
-    return day.weekday() < 5 and day not in nyse_holidays(day.year)
-
-
-def session_bounds(day: date) -> tuple[datetime, datetime] | None:
-    """Return regular-session UTC bounds, including standard NYSE early closes."""
-    if not is_nyse_session(day):
-        return None
-    close = dt_time(16, 0)
-    thanksgiving = _nth_weekday(day.year, 11, 3, 4)
-    if day == thanksgiving + timedelta(days=1):
-        close = dt_time(13, 0)
-    elif day.month == 12 and day.day == 24:
-        close = dt_time(13, 0)
-    elif day.month == 7 and day.day == 3 and day.weekday() < 5:
-        close = dt_time(13, 0)
-    opened_at = datetime.combine(day, dt_time(9, 30), NY).astimezone(UTC)
-    closed_at = datetime.combine(day, close, NY).astimezone(UTC)
-    return opened_at, closed_at
 
 
 def _previous_session(day: date) -> date:
@@ -270,12 +195,18 @@ def upsert_intraday_bars(
     bars: list[dict],
     *,
     ingested_at: datetime | None = None,
+    provider: str = MARKET_DATA_PROVIDER,
+    feed_class: str = MARKET_DATA_FEED_CLASS,
 ) -> dict:
+    if (provider, feed_class) not in {("tradier", "sip"), ("alpaca_iex", "iex"), ("alpaca_delayed_sip", "sip_delayed")}:
+        raise ValueError("Unsupported intraday provenance")
     symbol = _symbol(symbol)
     observed_at = _aware_utc(ingested_at or datetime.now(UTC))
     parsed: list[tuple[datetime, dict]] = []
     for raw in bars:
         opened_at, values = _parse_bar(raw)
+        if provider == "alpaca_delayed_sip" and opened_at + BAR_CADENCE + timedelta(minutes=16) > observed_at:
+            raise ValueError("Delayed SIP bar is newer than the research cutoff")
         bounds = session_bounds(opened_at.astimezone(NY).date())
         if bounds is None or not (bounds[0] <= opened_at < bounds[1]):
             continue
@@ -294,7 +225,7 @@ def upsert_intraday_bars(
         .filter(
             IntradayBar.symbol == symbol,
             IntradayBar.timeframe == "1m",
-            IntradayBar.provider == MARKET_DATA_PROVIDER,
+            IntradayBar.provider == provider,
             IntradayBar.opened_at.in_(list(deduplicated)),
         )
         .all()
@@ -307,13 +238,21 @@ def upsert_intraday_bars(
     for opened_at, values in sorted(deduplicated.items()):
         provenance = {
             **values,
-            "provider": MARKET_DATA_PROVIDER,
-            "feed_class": MARKET_DATA_FEED_CLASS,
+            "provider": provider,
+            "feed_class": feed_class,
             "exchange_timestamp": opened_at,
             "ingested_at": observed_at,
         }
         row = existing_by_timestamp.get(opened_at)
         if row:
+            # Re-fetching identical research data must not erase when it became
+            # known. Corrections retain the new observation time, never the old one.
+            if (provider in {"alpaca_iex", "alpaca_delayed_sip"}
+                    and row.feed_class == feed_class
+                    and all(getattr(row, key) == value for key, value in values.items())
+                    and row.exchange_timestamp is not None
+                    and _aware_utc(row.exchange_timestamp) == opened_at):
+                provenance.pop("ingested_at")
             for key, value in provenance.items():
                 setattr(row, key, value)
         else:
@@ -635,7 +574,7 @@ def _provider_failure(exc: Exception) -> tuple[str, str]:
     return "availability", "Tradier market-data service is unavailable"
 
 
-def _record_preflight_audit(db: Session, result: dict) -> dict:
+def _record_preflight_audit(db: Session, result: dict, *, action: str = "sip_preflight") -> dict:
     """Persist only redacted feed evidence; broker credentials never enter the payload."""
     safe_results = []
     for item in result.get("results", []):
@@ -677,6 +616,8 @@ def _record_preflight_audit(db: Session, result: dict) -> dict:
             "reason",
             "next_regular_session_open",
             "next_regular_session_gap",
+            "collection_scope",
+            "execution_eligible",
         )
         if key in result
     }
@@ -684,13 +625,34 @@ def _record_preflight_audit(db: Session, result: dict) -> dict:
     write_audit_log(
         db,
         event_type="market_data",
-        action="sip_preflight",
+        action=action,
         status=result.get("status", "blocked"),
         message=result.get("reason") or "Authenticated Tradier production market-data preflight completed",
         entity_type="intraday_feed",
         payload=payload,
     )
     return result
+
+
+def collect_scheduled_intraday(db: Session, symbols: list[str] | None = None, *, now: datetime | None = None) -> dict:
+    """Finish session data after the close without granting trading readiness."""
+    observed = _aware_utc(now or datetime.now(UTC))
+    bounds = session_bounds(observed.astimezone(NY).date())
+    post_close = bounds is not None and bounds[1] <= observed < bounds[1] + POST_CLOSE_REPAIR_WINDOW
+    configured = (settings.active_market_data_provider.strip().lower() == MARKET_DATA_PROVIDER
+                  and bool(settings.tradier_market_data_api_key.get_secret_value()))
+    if not post_close or not configured:
+        return preflight_intraday(db, symbols, now=observed)
+    selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
+    result = ingest_intraday(db, selected, now=observed)
+    complete = bool(result["results"]) and all(row["status"] == "complete" for row in result["results"])
+    return _record_preflight_audit(db, {
+        **result, "checked_at": observed.isoformat(), "symbols": selected,
+        "status": "complete" if complete else "incomplete", "ready": False,
+        "execution_eligible": False, "collection_scope": "post_close_repair",
+        "reason": "Post-close data repair only; regular-session preflight is required for trading",
+        "next_regular_session_open": next_regular_session_open(observed).isoformat(),
+    }, action="sip_post_close_collection")
 
 
 def preflight_intraday(
@@ -916,7 +878,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
     entitlement_verified = bool(
         configured
         and verification_age is not None
-        and verification_age <= ENTITLEMENT_VERIFICATION_MAX_AGE
+        and timedelta(0) <= verification_age <= ENTITLEMENT_VERIFICATION_MAX_AGE
     )
     base = {
         "symbol": symbol,
@@ -939,7 +901,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             {
                 "start": missing[0],
                 "end": min(
-                    target_bounds[1],
+                    expected_end,
                     datetime.fromisoformat(missing[0]) + INTRADAY_BACKFILL_WINDOW,
                 ).isoformat(),
             }

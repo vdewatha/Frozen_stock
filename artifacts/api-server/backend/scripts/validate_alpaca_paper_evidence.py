@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
 from app.services.stock_paper_ledger import AlpacaPaperClient, StockPaperUnavailable
-from scripts.alpaca_paper_contract import assess_cost_timestamp_contract
+from scripts.alpaca_paper_contract import assess_cost_timestamp_contract, assess_documented_activity_schema
+from app.services.alpaca_activity_v2 import replay
 
 
 class ReadOnlyCandidate(AlpacaPaperClient):
@@ -59,6 +60,11 @@ def main():
                 # Adapter errors deliberately omit broker bodies and credentials.
                 sample[name] = {"error": str(exc)}
         sample["cost_timestamp_contract"] = assess_cost_timestamp_contract(raw.get("fills"))
+        sample["documented_provider_schema"] = assess_documented_activity_schema(raw.get("fills"))
+        try:
+            sample["activity_journal_v2"] = replay(raw.get("fills"))
+        except ValueError:
+            sample["activity_journal_v2"] = {"status": "unavailable_or_requires_review", "launch_authorized": False}
         samples.append((sample, raw))
     report["reads"] = [s[0] for s in samples]
     report["history_replay_equal"] = {

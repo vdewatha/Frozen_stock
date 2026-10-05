@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -369,6 +369,11 @@ class BrokerStatusResponse(BaseModel):
     live_trading_enabled: bool
     live_trading_blocked: bool
     message: str
+
+
+class StockPaperInitializeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    activity_contract: Literal["legacy-v1", "alpaca-activities-v2"] = "legacy-v1"
 
 
 class StockPaperHaltRequest(BaseModel):

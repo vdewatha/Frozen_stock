@@ -92,7 +92,7 @@ function kindLabel(kind: StockTrainingComparison["kind"]): string {
 function stockSymbols(raw: string): { symbols: string[]; error: string | null } {
   const symbols = [...new Set(raw.split(/[,\s]+/).map(symbol => symbol.trim().toUpperCase()).filter(Boolean))];
   if (!symbols.length) return { symbols: [], error: "Add at least one stock ticker." };
-  if (symbols.length > 1) return { symbols, error: "The deployed verified trainer currently accepts one stock ticker per run." };
+  if (symbols.length > 25) return { symbols, error: "Use at most 25 stock tickers per run." };
   const invalid = symbols.filter(symbol => !/^[A-Z][A-Z0-9.-]{0,15}$/.test(symbol));
   if (invalid.length) return { symbols, error: `Invalid stock ticker: ${invalid.join(", ")}.` };
   // The stock training surface must never dispatch a crypto/experimental run.

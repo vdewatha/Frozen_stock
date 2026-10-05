@@ -44,6 +44,7 @@ def _token(
 def _client(**overrides) -> TestClient:
     config = {
         "environment": "production",
+        "active_paper_broker": "alpaca_paper",
         "auth_mode": "production_identity",
         "auth_identity_signing_secret": "primary-signing-secret-" * 2,
         "auth_identity_roles": {
@@ -198,6 +199,7 @@ def test_complete_production_identity_and_live_configuration_has_no_startup_bloc
     config = Settings(
         _env_file=None,
         environment="approved-live",
+        active_paper_broker="alpaca_paper",
         auth_mode="production_identity",
         auth_identity_signing_secret="s" * 32,
         auth_identity_roles={

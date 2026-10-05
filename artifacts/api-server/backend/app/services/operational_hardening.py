@@ -123,48 +123,51 @@ def _worker_lease_check(db: Session) -> dict:
 
 
 def _audit_chain_check(db: Session) -> dict:
-    rows = db.scalars(select(AuditLog).order_by(AuditLog.id)).all()
     previous = None
     previous_row_id = None
-    for row in rows:
-        expected = sha256(_canonical({
-            "event_type": row.event_type,
-            "entity_type": row.entity_type,
-            "entity_id": row.entity_id,
-            "action": row.action,
-            "status": row.status,
-            "message": row.message,
-            "payload": row.payload or {},
-            "previous_event_sha256": previous,
-        })).hexdigest()
-        if row.previous_event_sha256 != previous or row.event_sha256 != expected:
-            previous_mismatch = row.previous_event_sha256 != previous
-            return _check(
-                "audit_chain",
-                "breach",
-                "Audit event digest chain does not verify.",
-                incident_scope="historical_audit_integrity",
-                classification="historical_fork" if previous_mismatch else "event_digest_mismatch",
-                first_broken_row_id=row.id,
-                preceding_row_id=previous_row_id,
-                expected_previous_event_sha256=previous,
-                observed_previous_event_sha256=row.previous_event_sha256,
-                expected_event_sha256=expected,
-                observed_event_sha256=row.event_sha256,
-                event_type=row.event_type,
-                action=row.action,
-                event_status=row.status,
-                created_at=row.created_at.isoformat() if row.created_at else None,
-                original_rows_preserved=True,
-                runtime_health_scope="current runtime probes remain separately evaluated",
-            )
-        previous = row.event_sha256
-        previous_row_id = row.id
+    event_count = 0
+    # Verify the full chain without retaining every payload in each API request.
+    with db.scalars(select(AuditLog).order_by(AuditLog.id).execution_options(yield_per=100)) as rows:
+        for row in rows:
+            event_count += 1
+            expected = sha256(_canonical({
+                "event_type": row.event_type,
+                "entity_type": row.entity_type,
+                "entity_id": row.entity_id,
+                "action": row.action,
+                "status": row.status,
+                "message": row.message,
+                "payload": row.payload or {},
+                "previous_event_sha256": previous,
+            })).hexdigest()
+            if row.previous_event_sha256 != previous or row.event_sha256 != expected:
+                previous_mismatch = row.previous_event_sha256 != previous
+                return _check(
+                    "audit_chain",
+                    "breach",
+                    "Audit event digest chain does not verify.",
+                    incident_scope="historical_audit_integrity",
+                    classification="historical_fork" if previous_mismatch else "event_digest_mismatch",
+                    first_broken_row_id=row.id,
+                    preceding_row_id=previous_row_id,
+                    expected_previous_event_sha256=previous,
+                    observed_previous_event_sha256=row.previous_event_sha256,
+                    expected_event_sha256=expected,
+                    observed_event_sha256=row.event_sha256,
+                    event_type=row.event_type,
+                    action=row.action,
+                    event_status=row.status,
+                    created_at=row.created_at.isoformat() if row.created_at else None,
+                    original_rows_preserved=True,
+                    runtime_health_scope="current runtime probes remain separately evaluated",
+                )
+            previous = row.event_sha256
+            previous_row_id = row.id
     return _check(
         "audit_chain",
         "clear",
         "Audit event digest chain verifies.",
-        event_count=len(rows),
+        event_count=event_count,
         incident_scope="historical_audit_integrity",
         original_rows_preserved=True,
     )

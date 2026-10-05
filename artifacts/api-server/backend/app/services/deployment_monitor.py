@@ -93,6 +93,13 @@ def _check_celery_schedule() -> dict:
         "paper-trade-reconciliation-job",
         "risk-monitor-job",
         "stock-monitoring-job",
+        "intraday-market-data-import",
+        "stock-training-recovery-job",
+        "scheduled-stock-challenger-retraining",
+        "scheduled-stock-paper-trial-handoff",
+        "scheduled-stock-paper-promotion",
+        "stock-forward-trial-observe",
+        "stock-forward-trial-reconcile",
     }
     missing = sorted(required_jobs - set(job_names))
     return {
@@ -108,7 +115,10 @@ def _check_celery_workers() -> dict:
     try:
         inspector = celery_app.control.inspect(timeout=2)
         responses = inspector.ping() or {}
-        workers = sorted(responses)
+        workers = sorted(
+            name for name, response in responses.items()
+            if isinstance(response, dict) and response.get("ok") == "pong"
+        )
         active_queues = inspector.active_queues() or {}
     except Exception as exc:
         return {
@@ -125,6 +135,7 @@ def _check_celery_workers() -> dict:
                 "general_workers": [],
                 "general_worker_count": 0,
                 "worker_queues": {},
+                "missing_general_queues": sorted(GENERAL_WORKER_QUEUES),
                 "error_type": exc.__class__.__name__,
             },
         }
@@ -153,23 +164,25 @@ def _check_celery_workers() -> dict:
         for worker, queues in worker_queues.items()
         if GENERAL_WORKER_QUEUES.intersection(queues)
     )
+    served_queues = {queue for queues in worker_queues.values() for queue in queues}
+    missing_general_queues = sorted(GENERAL_WORKER_QUEUES - served_queues)
     if not dedicated_intraday_workers:
         message = (
             "No dedicated Celery worker is listening exclusively to the intraday "
             "market-data queue; "
             "one-minute market polling is blocked."
         )
-    elif not general_workers:
+    elif missing_general_queues:
         message = (
-            "The dedicated intraday Celery worker is listening, but no general "
-            "Celery worker is evidenced."
+            "Required Celery queues have no responding consumer: "
+            + ", ".join(missing_general_queues)
         )
     else:
         message = "Dedicated intraday and general Celery workers are listening to their queues."
 
     return {
         "name": "Celery workers",
-        "status": _status(bool(workers) and bool(dedicated_intraday_workers) and bool(general_workers)),
+        "status": _status(bool(workers) and bool(dedicated_intraday_workers) and not missing_general_queues),
         "message": message if workers else "No Celery workers responded to ping.",
         "details": {
             "workers": workers,
@@ -183,6 +196,7 @@ def _check_celery_workers() -> dict:
             "worker_queues": worker_queues,
             "required_intraday_queue": INTRADAY_MARKET_DATA_QUEUE,
             "required_general_queues": sorted(GENERAL_WORKER_QUEUES),
+            "missing_general_queues": missing_general_queues,
         },
     }
 

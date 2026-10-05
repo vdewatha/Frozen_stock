@@ -1,0 +1,36 @@
+name: frozen-stock-validation
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: paper_tests
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+  tests:
+    image: frozen-stock-tests:local
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    working_dir: /workspace/artifacts/api-server/backend
+    volumes: ["../..:/workspace:ro"]
+    environment:
+      PYTHONPATH: /workspace/artifacts/api-server/backend
+      DATABASE_URL: postgresql+psycopg://postgres@postgres:5432/paper_tests
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+networks:
+  default:
+    internal: true

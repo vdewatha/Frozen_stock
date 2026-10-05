@@ -1,0 +1,17 @@
+.git
+**/._*
+**/.DS_Store
+.local
+.env
+.env.*
+**/*.env
+**/node_modules
+**/__pycache__
+**/.venv*
+**/*.db
+.paper-training
+.paper-venue
+.playwright-mcp
+output
+**/research_runs
+**/stock_training_artifacts

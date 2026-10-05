@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 from celery import Celery
+from celery.schedules import crontab
 from kombu import Exchange, Queue
 
 from app.core.config import settings
 
 INTRADAY_MARKET_DATA_QUEUE = "intraday_market_data"
 GENERAL_WORKER_QUEUES = frozenset({"default", "market_data", "learning", "paper_trading", "risk"})
+OBSERVATION_TASKS = frozenset({
+    "app.tasks.jobs.iex_research_collection_job",
+    "app.tasks.jobs.delayed_sip_collection_job",
+})
+
+
+def configured_schedule(schedule: dict, *, observation_only: bool) -> dict:
+    if not observation_only:
+        return schedule
+    return {name: entry for name, entry in schedule.items() if entry["task"] in OBSERVATION_TASKS}
 
 celery_app = Celery("trading_app", broker=settings.redis_url, backend=settings.redis_url)
 celery_app.conf.timezone = "America/New_York"
@@ -21,6 +32,8 @@ celery_app.conf.task_queues = (
 celery_app.conf.task_default_queue = "default"
 celery_app.conf.worker_prefetch_multiplier = 1
 celery_app.conf.task_routes = {
+    "app.tasks.jobs.delayed_sip_collection_job": {"queue": "market_data"},
+    "app.tasks.jobs.iex_research_collection_job": {"queue": "market_data"},
     "app.tasks.jobs.daily_market_data_import": {"queue": "market_data"},
     "app.tasks.jobs.intraday_market_data_import": {"queue": INTRADAY_MARKET_DATA_QUEUE},
     "app.tasks.jobs.daily_economic_data_import": {"queue": "market_data"},
@@ -50,12 +63,23 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.stock_forward_trial_evaluate_job": {"queue": "paper_trading"},
 }
 celery_app.conf.beat_schedule = {
+    "delayed-sip-collection": {
+        "task": "app.tasks.jobs.delayed_sip_collection_job",
+        "schedule": 300,
+        "options": {"expires": 240},
+    },
+    "iex-research-collection": {
+        "task": "app.tasks.jobs.iex_research_collection_job",
+        "schedule": crontab(),
+        "options": {"expires": 55},
+    },
     "daily-market-data-import": {"task": "app.tasks.jobs.daily_market_data_import", "schedule": 60 * 60 * 24},
     # Expire a tick before the next cadence window. The task itself also holds
     # a Redis lease, so a slow request is skipped rather than overlapped.
     "intraday-market-data-import": {
         "task": "app.tasks.jobs.intraday_market_data_import",
-        "schedule": 60,
+        # Readiness advances at minute boundaries, independent of beat startup.
+        "schedule": crontab(),
         "options": {"expires": 55},
     },
     "daily-economic-data-import": {"task": "app.tasks.jobs.daily_economic_data_import", "schedule": 60 * 60 * 24},
@@ -94,4 +118,7 @@ celery_app.conf.beat_schedule = {
     },
 }
 
+celery_app.conf.beat_schedule = configured_schedule(
+    celery_app.conf.beat_schedule, observation_only=settings.research_observation_only,
+)
 celery_app.autodiscover_tasks(["app.tasks.jobs"])

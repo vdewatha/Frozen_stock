@@ -114,32 +114,8 @@ class AlpacaLiveClient:
         return result
 
     def orders(self) -> list[dict]:
-        rows, seen, until = [], set(), None
-        for _ in range(100):
-            params = {"status": "all", "nested": "false", "direction": "desc", "limit": "500"}
-            if until:
-                params["until"] = until
-            page = self._request("GET", "/v2/orders", params=params)
-            if not isinstance(page, list):
-                raise LiveBrokerUnavailable("Live Alpaca orders response is invalid")
-            for row in page:
-                ident = str(row.get("id") or "").strip()
-                if not ident:
-                    raise LiveBrokerUnavailable("Live Alpaca order lacks an identifier")
-                if ident not in seen:
-                    seen.add(ident)
-                    rows.append(row)
-            if len(page) < 500:
-                return rows
-            stamps = [_timestamp(row.get("updated_at") or row.get("created_at"), datetime.now(UTC)) for row in page]
-            boundary = min(stamps)
-            if sum(stamp == boundary for stamp in stamps) > 1:
-                raise LiveBrokerUnavailable("Live Alpaca order time boundary is ambiguous")
-            next_until = boundary.isoformat()
-            if next_until == until:
-                raise LiveBrokerUnavailable("Live Alpaca order time cursor did not advance")
-            until = next_until
-        raise LiveBrokerUnavailable("Live Alpaca order pagination exceeded safe page limit")
+        from app.services.alpaca_order_history import collect_orders
+        return collect_orders(self._request, LiveBrokerUnavailable)
 
     def activities(self) -> list[dict]:
         rows, seen, token = [], set(), None
@@ -731,7 +707,11 @@ def _fresh_market_data(db: Session, symbol: str, reference_price: Decimal) -> di
         raise LiveBrokerError("Live order blocked because approved current market data is unavailable") from exc
     if market.get("status") != "ready":
         raise LiveBrokerError(f"Live order blocked by stale or unavailable market data: {market.get('status')}")
-    latest = db.query(IntradayBar).filter_by(symbol=symbol, timeframe="1m").order_by(IntradayBar.opened_at.desc()).first()
+    from app.services.intraday_data import MARKET_DATA_PROVIDER, MARKET_DATA_FEED_CLASS
+    latest = db.query(IntradayBar).filter_by(
+        symbol=symbol, timeframe="1m", provider=MARKET_DATA_PROVIDER,
+        feed_class=MARKET_DATA_FEED_CLASS,
+    ).order_by(IntradayBar.opened_at.desc()).first()
     configured_slippage = DEFAULT_RISK_RULES["max_live_slippage"]
     rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
     if rule and isinstance(rule.value, dict):

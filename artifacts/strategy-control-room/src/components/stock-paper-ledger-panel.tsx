@@ -27,6 +27,9 @@ import {
 } from "@/lib/api";
 
 import { latestEquitySnapshots } from "@/components/stock-paper-ledger-utils";
+import { PaperAccountInitializer } from "@/components/paper-account-initializer";
+import { ObservedPaperPerformance } from "@/components/observed-paper-performance";
+import { PaperCostSensitivity } from "@/components/paper-cost-sensitivity";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const percent = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -492,16 +495,8 @@ export function StockPaperLedgerPanel() {
           </button>
           {status === "uninitialized" ? (
             <RoleGate requires="admin">
-              <button
-                className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white disabled:opacity-60"
-                data-testid="button-initialize-stock-paper-account"
-                disabled={isBusy}
-                onClick={() => void runAction(initializeStockPaperAccount, "Importing existing paper account; no reset will occur")}
-                type="button"
-              >
-                <Play size={15} />
-                Initialize from broker
-              </button>
+              <PaperAccountInitializer broker={ledger?.broker ?? "unknown"} busy={isBusy}
+                onInitialize={contract => void runAction(() => initializeStockPaperAccount(contract), "Importing existing paper account; no reset will occur")} />
             </RoleGate>
           ) : null}
           {canReconcile ? (
@@ -545,7 +540,7 @@ export function StockPaperLedgerPanel() {
               {ledger.status !== "reconciled" ? (
                 <div className="mt-1 font-medium">Account value and P/L are unavailable to qualifying dashboard metrics until reconciliation succeeds.</div>
               ) : !ledger.costs_known ? (
-                <div className="mt-1 font-medium">Broker P/L is intentionally withheld until complete cash flows and reported costs are verified.</div>
+                <div className="mt-1 font-medium">Qualified P/L remains unverified. Observed changes below are provisional.</div>
               ) : null}
             </div>
           </div>
@@ -593,6 +588,9 @@ export function StockPaperLedgerPanel() {
           <div className="mt-1 text-xs text-slate-500">Reconciled: {formatTimestamp(account?.last_reconciled_at)}</div>
         </div>
       </div>
+
+      <ObservedPaperPerformance performance={ledger?.observed_performance} />
+      <PaperCostSensitivity report={ledger?.last_activity_reconciliation?.modeled_cost_sensitivity} />
 
       <div className="grid gap-3 border-b border-line p-4 md:grid-cols-3">
         <div className="rounded-md border border-line p-3 text-sm">

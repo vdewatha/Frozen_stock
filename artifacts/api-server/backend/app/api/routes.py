@@ -111,7 +111,8 @@ from app.services.experiments import list_strategy_experiments, run_strategy_exp
 from app.services.governance import evaluate_strategy_governance, latest_strategy_governance_scorecard
 from app.services.learning import propose_parameter_experiments
 from app.services.market_data import get_price_points, import_market_prices
-from app.services.intraday_data import feed_status, ingest_intraday, preflight_intraday
+from app.services.intraday_data import MARKET_DATA_PROVIDER, MARKET_DATA_FEED_CLASS, feed_status, ingest_intraday, preflight_intraday
+from app.services.alpaca_research_data import iex_research_status
 from app.models import IntradayBar
 from app.services.trusted_data import trusted_history, UntrustedMarketData
 from app.services.market_regime import detect_and_store_market_regime, latest_market_regime, list_market_regimes
@@ -464,6 +465,35 @@ def price_history(symbol: str, limit: int = 260, db: Session = Depends(get_db)) 
     rows, source = get_price_points(db, symbol, limit=limit)
     return {"symbol": symbol.upper(), "source": source, "rows": rows}
 
+
+@router.get("/market-data/iex/status")
+def iex_status(db: Session = Depends(get_db)):
+    return iex_research_status(db)
+
+
+@router.post("/market-data/iex/collect", status_code=202)
+def collect_iex():
+    if not settings.iex_research_enabled:
+        raise HTTPException(status_code=409, detail="IEX research collector is disabled")
+    from app.tasks.jobs import iex_research_collection_job
+    task = iex_research_collection_job.apply_async(expires=240)
+    return {"status": "queued", "task_id": task.id, "research_only": True}
+
+@router.get("/market-data/delayed-sip/status")
+def delayed_sip_status(db: Session = Depends(get_db)):
+    from app.services.delayed_sip_research import delayed_sip_status as read_status
+    return read_status(db)
+
+
+@router.post("/market-data/delayed-sip/collect", status_code=202)
+def collect_delayed_sip():
+    if not settings.delayed_sip_research_enabled:
+        raise HTTPException(status_code=409, detail="Delayed SIP research collector is disabled")
+    from app.tasks.jobs import delayed_sip_collection_job
+    task = delayed_sip_collection_job.apply_async(expires=240)
+    return {"status": "queued", "task_id": task.id, "research_only": True, "execution_eligible": False}
+
+
 @router.post("/market-data/intraday/preflight")
 def intraday_preflight(db: Session = Depends(get_db)):
     result = preflight_intraday(db)
@@ -472,7 +502,11 @@ def intraday_preflight(db: Session = Depends(get_db)):
 
 @router.get("/market-data/intraday/{symbol}", response_model=list[IntradayBarRead])
 def intraday_history(symbol: str, limit: int = 390, db: Session = Depends(get_db)):
-    return db.query(IntradayBar).filter(IntradayBar.symbol == symbol.upper()).order_by(IntradayBar.opened_at.desc()).limit(min(limit, 2000)).all()
+    return db.query(IntradayBar).filter(
+        IntradayBar.symbol == symbol.upper(),
+        IntradayBar.provider == MARKET_DATA_PROVIDER,
+        IntradayBar.feed_class == MARKET_DATA_FEED_CLASS,
+    ).order_by(IntradayBar.opened_at.desc()).limit(max(1, min(limit, 2000))).all()
 
 @router.get("/market-data/intraday/{symbol}/status", response_model=FeedStatusResponse)
 def intraday_feed_status(symbol: str, db: Session = Depends(get_db)):

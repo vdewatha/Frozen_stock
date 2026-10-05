@@ -154,7 +154,7 @@ def _seed_order_context(db: Session):
     db.add(IntradayBar(
         symbol="SPY", timeframe="1m", opened_at=NOW, open=Decimal("99"),
         high=Decimal("101"), low=Decimal("99"), close=Decimal("100"),
-        volume=1000, provider="test", feed_class="sip", exchange_timestamp=NOW,
+        volume=1000, provider="tradier", feed_class="sip", exchange_timestamp=NOW,
     ))
     db.flush()
     return account, signal

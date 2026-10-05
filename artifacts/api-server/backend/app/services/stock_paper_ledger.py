@@ -32,6 +32,7 @@ from app.services.intraday_data import MARKET_DATA_PROVIDER, feed_status, sessio
 from app.services.risk import DEFAULT_RISK_RULES, PortfolioState, StrategyState, approve_trade
 from app.services.strategies.registry import get_strategy
 from app.services.trusted_data import UntrustedMarketData, trusted_history, trusted_intraday_observation
+from app.services import alpaca_activity_v2
 
 ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
 TRADIER_SANDBOX_URL = "https://sandbox.tradier.com/v1"
@@ -40,6 +41,7 @@ BROKER = LEGACY_BROKER
 UTC = timezone.utc
 UNKNOWN_COSTS_REASON = "Broker-reported commissions/spread/slippage are incomplete; costs are unknown."
 ACCOUNTING_RESIDUAL_REVIEW_REASON = "Prior unexplained cash or position residual requires manual accounting review"
+PROBE_HALT = "Paper integration probe reserved; broker reconciliation and recovery review required"
 RECONCILIATION_OVERLAP = timedelta(minutes=10)
 NONTERMINAL_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
 ALLOWED_ORDER_SOURCES = frozenset({"manual_control_room", "manual_close", "manual_reduce", "recovery_flatten", "broker_import"})
@@ -60,7 +62,9 @@ class StockPaperError(RuntimeError):
 
 
 class StockPaperUnavailable(StockPaperError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class AlpacaPaperGateway(Protocol):
@@ -89,7 +93,12 @@ class AlpacaPaperClient:
             with httpx.Client(base_url=self.base_url, timeout=20.0, headers=self._headers()) as client:
                 response = client.request(method, path, params=params, json=payload)
             if response.status_code >= 400:
-                raise StockPaperUnavailable(f"Alpaca paper request failed with HTTP {response.status_code}")
+                raise StockPaperUnavailable(
+                    f"Alpaca paper request failed with HTTP {response.status_code}",
+                    status_code=response.status_code,
+                )
+            if method == "DELETE" and response.status_code == 204:
+                return None, dict(response.headers)
             return response.json(), dict(response.headers)
         except StockPaperUnavailable:
             raise
@@ -117,7 +126,7 @@ class AlpacaPaperClient:
         orders are a bare list and use their documented ``until`` timestamp
         cursor instead.
         """
-        rows, seen, token = [], set(), None
+        rows, seen, token = [], {}, None
         for _ in range(100):  # explicit bounded failure rather than silently truncating evidence
             page_params = dict(params)
             if token:
@@ -126,7 +135,10 @@ class AlpacaPaperClient:
                 "GET", "/v2/account/activities", params=page_params
             )
             if isinstance(result, dict):
-                page = result.get("activities") or result.get("data") or []
+                keys = [key for key in ("activities", "data") if key in result]
+                if len(keys) != 1:
+                    raise StockPaperUnavailable("Alpaca paper activity response envelope is invalid")
+                page = result[keys[0]]
             else:
                 page = result
             if not isinstance(page, list):
@@ -140,9 +152,11 @@ class AlpacaPaperClient:
                 if not ident:
                     raise StockPaperUnavailable("Alpaca paper activity lacks an identifier")
                 page_ids.append(ident)
+                if ident in seen and seen[ident] != row:
+                    raise StockPaperUnavailable("Alpaca paper activity history contains conflicting duplicate evidence")
                 if ident not in seen:
                     rows.append(row)
-                    seen.add(ident)
+                    seen[ident] = row
                     new_ids.append(ident)
             declared_size = int(params.get("page_size") or 0)
             if len(page) < declared_size:
@@ -164,38 +178,9 @@ class AlpacaPaperClient:
         raise StockPaperUnavailable("Alpaca paper pagination exceeded safe page limit")
 
     def orders(self, after: datetime | None = None) -> list[dict]:
-        """Alpaca orders are a bare list; page with its documented `until` cursor."""
-        params = {"status": "all", "nested": "false", "direction": "desc", "limit": "500"}
-        if after:
-            params["after"] = _utc(after - RECONCILIATION_OVERLAP).isoformat()
-        rows, seen, until = [], set(), None
-        for _ in range(100):
-            page_params = dict(params)
-            if until:
-                page_params["until"] = until
-            page = self._request("GET", "/v2/orders", params=page_params)
-            if not isinstance(page, list):
-                raise StockPaperUnavailable("Alpaca paper orders response is invalid")
-            for row in page:
-                ident = str(row.get("id") or "")
-                if not ident:
-                    raise StockPaperUnavailable("Alpaca paper order lacks an identifier")
-                if ident not in seen:
-                    seen.add(ident)
-                    rows.append(row)
-            if len(page) < 500:
-                return rows
-            timestamps = [_timestamp(row.get("updated_at") or row.get("created_at"), fallback=datetime.now(UTC)) for row in page]
-            boundary = min(timestamps)
-            # A timestamp cursor cannot safely split a full same-time boundary:
-            # advancing could skip rows and retaining it can loop forever.
-            if sum(stamp == boundary for stamp in timestamps) > 1:
-                raise StockPaperUnavailable("Alpaca order time boundary is ambiguous; refusing incomplete import")
-            next_until = boundary.isoformat()
-            if next_until == until:
-                raise StockPaperUnavailable("Alpaca order time cursor did not advance")
-            until = next_until
-        raise StockPaperUnavailable("Alpaca order pagination exceeded safe page limit")
+        from app.services.alpaca_order_history import collect_orders
+        return collect_orders(self._request, StockPaperUnavailable,
+                              after=_utc(after - RECONCILIATION_OVERLAP).isoformat() if after else None)
 
     def fills(self, after: datetime | None = None) -> list[dict]:
         # Fetch all reported account activities for the audit trail.  Fill rows
@@ -214,15 +199,20 @@ class AlpacaPaperClient:
         try:
             self._request("DELETE", f"/v2/orders/{broker_order_id}")
         except StockPaperUnavailable as exc:
-            if "HTTP 404" in str(exc):
+            if exc.status_code == 404:
                 return
             raise
 
     def order_by_client_id(self, client_order_id: str) -> dict | None:
         try:
-            return self._request("GET", f"/v2/orders:by_client_order_id", params={"client_order_id": client_order_id})
-        except StockPaperUnavailable:
-            return None
+            result = self._request("GET", "/v2/orders:by_client_order_id", params={"client_order_id": client_order_id})
+        except StockPaperUnavailable as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        if not isinstance(result, dict) or not result.get("id"):
+            raise StockPaperUnavailable("Alpaca paper order response is invalid")
+        return result
 
 
 class TradierPaperClient:
@@ -705,7 +695,7 @@ def _position_values(raw: dict, observed: datetime) -> dict:
 
 def _snapshot(gateway: AlpacaPaperGateway, after: datetime | None = None) -> tuple[dict, list[dict], list[dict], list[dict], datetime]:
     observed = datetime.now(UTC)
-    # Alpaca's `after` filter is based on creation/update evidence rather than
+    # Alpaca's `after` filter is based on submission time rather than
     # a terminal-state watermark. A prior order can fill or cancel days later,
     # so reconciliation imports the bounded, fail-closed complete order history.
     account, positions, orders, fills = gateway.account(), gateway.positions(), gateway.orders(None), gateway.fills(None)
@@ -743,6 +733,8 @@ def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict]) ->
         order = db.query(StockPaperOrder).filter(StockPaperOrder.broker_order_id == broker_order_id).one_or_none()
         if order is None:
             order = db.query(StockPaperOrder).filter(StockPaperOrder.client_order_id == imported_client_id).one_or_none()
+        if order is not None and order.account_id != account.id:
+            raise StockPaperError("Broker order belongs to another ledger account")
         if order is None:
             order = StockPaperOrder(account_id=account.id, client_order_id=imported_client_id, broker_order_id=broker_order_id,
                                     symbol=symbol, side=side, quantity=quantity, order_type=order_type, time_in_force=tif,
@@ -758,6 +750,8 @@ def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict]) ->
             order.uncertain_submission = False
             order.raw_payload = raw
         order.raw_payload = raw
+    # SessionLocal disables autoflush; fills must see orders imported in this batch.
+    db.flush()
 
 
 def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], observed: datetime) -> set[str]:
@@ -767,6 +761,14 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
         if not activity_id:
             raise StockPaperError("Broker activity is missing an identifier")
         activity = db.query(StockPaperBrokerActivity).filter_by(broker_activity_id=activity_id).one_or_none()
+        normalized = None
+        if account.activity_contract == alpaca_activity_v2.VERSION:
+            try:
+                normalized = alpaca_activity_v2.normalize(raw)
+            except ValueError as exc:
+                raise StockPaperError(str(exc)) from exc
+        if activity is not None and activity.account_id != account.id:
+            raise StockPaperError("Broker activity belongs to another ledger account")
         if not activity:
             activity = StockPaperBrokerActivity(account_id=account.id, broker_activity_id=activity_id,
                 activity_type=str(raw.get("activity_type") or "FILL"), occurred_at=_activity_timestamp(raw, observed), raw_payload=raw)
@@ -791,10 +793,29 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
             # fallback once the broker supplies a stable created_at value, while
             # keeping the immutable payload comparison fail-closed.
             activity.occurred_at = _activity_timestamp(raw, activity.occurred_at)
+        if normalized is not None:
+            activity.normalized_payload = normalized
+            activity.occurred_at = (
+                datetime.fromisoformat(normalized["execution_at"]) if normalized["execution_at"] else None
+            )
         if str(raw.get("activity_type") or "FILL").upper() != "FILL":
             continue
+        order_id = str(raw.get("order_id") or "").strip() or None
+        order = db.query(StockPaperOrder).filter_by(broker_order_id=order_id).one_or_none() if order_id else None
+        side = str(raw.get("side") or "").lower()
+        if side not in {"buy", "sell"}:
+            raise StockPaperError("Broker fill has unsupported side")
+        if order is not None:
+            if order.account_id != account.id:
+                raise StockPaperError("Broker fill references another ledger account's order")
+            if (order.symbol, order.side) != (str(raw.get("symbol") or "").strip().upper(), side):
+                raise StockPaperError("Broker fill does not match its order symbol or side")
         existing_fill = db.query(StockPaperFill).filter_by(broker_activity_id=activity_id).one_or_none()
         if existing_fill:
+            if existing_fill.account_id != account.id:
+                raise StockPaperError("Broker fill belongs to another ledger account")
+            if existing_fill.order_id is not None and (order is None or existing_fill.order_id != order.id):
+                raise StockPaperError("Existing broker fill order link conflicts with broker evidence")
             candidate = (
                 str(raw.get("order_id") or "").strip() or None, str(raw.get("symbol") or "").strip().upper(),
                 str(raw.get("side") or "").lower(), _decimal(raw.get("qty"), "fill quantity"),
@@ -824,16 +845,16 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
                 existing_fill.cost_known = True
                 existing_fill.raw_payload = raw
                 enriched_activity_ids.add(activity_id)
-                continue
-            if (existing_fill.broker_order_id, existing_fill.symbol, existing_fill.side, existing_fill.quantity,
+            elif (existing_fill.broker_order_id, existing_fill.symbol, existing_fill.side, existing_fill.quantity,
                     existing_fill.price, existing_fill.fee, _utc(existing_fill.filled_at)) != candidate:
                 raise StockPaperError("Broker fill immutable fields changed; refusing corrupted evidence")
+            if existing_fill.order_id is None and order is not None:
+                existing_fill.order_id = order.id
+                _event(db, account, "fill_order_link_recovered", "recorded",
+                       "Matched unchanged fill evidence to its imported broker order",
+                       {"fill_id": existing_fill.id, "order_id": order.id,
+                        "broker_activity_id": activity_id, "broker_order_id": order_id})
             continue
-        order_id = str(raw.get("order_id") or "").strip() or None
-        order = db.query(StockPaperOrder).filter_by(broker_order_id=order_id).one_or_none() if order_id else None
-        side = str(raw.get("side") or "").lower()
-        if side not in {"buy", "sell"}:
-            raise StockPaperError("Broker fill has unsupported side")
         fee = _decimal(raw["commission"], "commission") if raw.get("commission") is not None else None
         db.add(StockPaperFill(account_id=account.id, order_id=order.id if order else None, broker_activity_id=activity_id,
             broker_order_id=order_id, symbol=str(raw.get("symbol") or "").upper(), side=side,
@@ -1022,15 +1043,58 @@ def _validate_reference_price(db: Session, symbol: str, price: Decimal) -> None:
         raise StockPaperError("Order reference price exceeds allowed deviation from the current completed bar")
 
 
-def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None) -> dict:
+def _v2_snapshot_key(snapshot: tuple) -> str:
+    raw_account, positions, orders, activities, observed = snapshot
+    values = _account_values(raw_account, observed)
+    parsed = [_position_values(row, observed) for row in positions]
+    if len({row["symbol"] for row in parsed}) != len(parsed):
+        raise StockPaperError("Duplicate broker positions require review")
+    try:
+        journal = alpaca_activity_v2.replay(activities)
+    except ValueError as exc:
+        raise StockPaperError(str(exc)) from exc
+    return json.dumps({"id": values["broker_account_id"], "currency": values["currency"],
+                       "cash": str(values["cash"]),
+                       "positions": {row["symbol"]: str(row["quantity"]) for row in parsed},
+                       "orders": sorted(orders, key=lambda row: str(row.get("id", ""))),
+                       "journal": journal["journal_sha256"]}, sort_keys=True)
+
+
+def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None,
+                                 *, activity_contract: str = "legacy-v1") -> dict:
     """Explicitly import the observed sandbox account once; never reset it."""
     broker_name = active_paper_broker_name()
     if db.query(StockPaperAccount).filter_by(broker=broker_name).one_or_none():
         raise StockPaperError("Stock paper account is already initialized; use reconciliation and never reset it")
+    if activity_contract not in {"legacy-v1", alpaca_activity_v2.VERSION}:
+        raise StockPaperError("Unsupported activity reconciliation contract")
+    is_v2 = activity_contract == alpaca_activity_v2.VERSION
+    if is_v2 and broker_name != "alpaca_paper":
+        raise StockPaperError("Alpaca activity contract requires the Alpaca paper provider")
     gateway = gateway or active_paper_gateway()
     raw_account, raw_positions, raw_orders, raw_fills, observed = _snapshot(gateway)
+    if is_v2:
+        first_key = _v2_snapshot_key((raw_account, raw_positions, raw_orders, raw_fills, observed))
+        second = _snapshot(gateway)
+        if first_key != _v2_snapshot_key(second):
+            raise StockPaperError("Broker state changed during baseline capture; retry when stable")
+        raw_account, raw_positions, raw_orders, raw_fills, observed = second
     values = _account_values(raw_account, observed)
+    configured_id = str(getattr(settings, "paper_broker_account_id", "") or "").strip()
+    if broker_name == "alpaca_paper" and configured_id and values["broker_account_id"] != configured_id:
+        raise StockPaperError("Paper broker account does not match the configured account binding")
+    baseline = None
+    if is_v2:
+        try:
+            baseline = alpaca_activity_v2.observed_baseline(
+                raw_fills, values["cash"],
+                {row["symbol"]: row["quantity"] for row in [_position_values(raw, observed) for raw in raw_positions]},
+                observed.isoformat(),
+            )
+        except ValueError as exc:
+            raise StockPaperError(str(exc)) from exc
     account = StockPaperAccount(broker=broker_name, status="reconciled", costs_known=False, accounting_verified=False, reconciliation_required=False,
+                                activity_contract=activity_contract, activity_baseline=baseline,
                                 last_reconciled_at=observed, **values)
     db.add(account)
     db.flush()
@@ -1041,7 +1105,7 @@ def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | No
     review_activity_types = sorted({
         str(row.get("activity_type") or "FILL").upper()
         for row in raw_fills
-        if str(row.get("activity_type") or "FILL").upper() != "FILL"
+        if not is_v2 and str(row.get("activity_type") or "FILL").upper() != "FILL"
     })
     external_outstanding = db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id, StockPaperOrder.source == "broker_import",
@@ -1145,6 +1209,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             if str(row.get("id") or "") not in prior_activity_ids
             or str(row.get("id") or "") in enriched_activity_ids
         ]
+        is_v2 = account.activity_contract == alpaca_activity_v2.VERSION
         residual_resolved = _enriched_fill_resolves_residual(
             db,
             account,
@@ -1163,6 +1228,35 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             previous_reconciled_at,
             enriched_activity_ids,
         )
+        if is_v2:
+            if len({row["symbol"] for row in position_values}) != len(position_values):
+                raise StockPaperError("Duplicate broker positions require review")
+            try:
+                report = alpaca_activity_v2.reconcile_baseline(
+                    account.activity_baseline, raw_fills, account.cash,
+                    {row["symbol"]: row["quantity"] for row in position_values},
+                    previously_seen_ids=prior_activity_ids,
+                )
+                from app.services.alpaca_cash_precision import diagnose
+                report["cash_precision_diagnostic"] = diagnose(
+                    account.activity_baseline, raw_fills, raw_orders, account.cash,
+                    {row["symbol"]: row["quantity"] for row in position_values},
+                    currency=account.currency, broker=account.broker,
+                )
+                from app.services.paper_cash_policy import apply_policy
+                report = apply_policy(report, report["cash_precision_diagnostic"], account.cash_policy,
+                                      broker=account.broker, currency=account.currency)
+                from app.services.paper_cost_sensitivity import evaluate
+                report["modeled_cost_sensitivity"] = evaluate(
+                    account.activity_baseline, raw_fills,
+                    {row["symbol"]: row["quantity"] for row in position_values},
+                    currency=account.currency,
+                )
+            except ValueError as exc:
+                raise StockPaperError(str(exc)) from exc
+            _event(db, account, "activity_reconciliation", report["status"],
+                   "Observed-baseline reconciliation is not cost or trading qualification", report)
+            equation_error = None if report["status"] == "matched" else "Broker cash or inventory does not reconcile to the frozen activity baseline"
         # A quantity delta backed by imported fills is explained, not drift.
         drift = _sync_positions(db, account, raw_positions, observed, detect_drift=False)
         outstanding = db.query(StockPaperOrder).filter(
@@ -1175,7 +1269,8 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             CorporateAction.symbol.in_([str(row.get("symbol", "")).upper() for row in raw_positions]),
         ).count()
         automatic_review_candidate = bool(
-            account.unexplained_residual
+            not is_v2
+            and account.unexplained_residual
             and enriched_activity_ids
             and equation_error is None
             and not unresolved_nonterminal
@@ -1196,7 +1291,8 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             for fill in db.query(StockPaperFill).filter_by(account_id=account.id).all()
         )
         accounting_evidence_complete = bool(
-            prior_accounting_verified
+            not is_v2
+            and prior_accounting_verified
             and fills_complete
             and equation_error is None
             and not unresolved_nonterminal
@@ -1209,7 +1305,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
         # reconciliations stay non-qualifying until that proof exists.
         account.costs_known = accounting_evidence_complete
         account.accounting_verified = accounting_evidence_complete
-        if any(row.get("commission") is None for row in new_activities):
+        if any(str(row.get("activity_type") or "FILL").upper() == "FILL" and row.get("commission") is None for row in new_activities):
             _event(db, account, "accounting_residual", "costs_unknown",
                    "Reported fill commissions are incomplete; P/L remains unavailable",
                    {"activity_ids": [str(row.get("id")) for row in new_activities if row.get("commission") is None]})
@@ -1708,6 +1804,10 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
 
 
 def stock_paper_status(db: Session) -> dict:
+    from app.services.stock_paper_performance import observed_paper_performance
+    from app.services.paper_research_accounting import assess as assess_research_accounting
+    from app.services.paper_research_venue import status as research_venue_status
+
     broker = active_paper_broker_name()
     account = active_paper_account(db)
     base = {
@@ -1732,9 +1832,19 @@ def stock_paper_status(db: Session) -> dict:
     orders = db.query(StockPaperOrder).filter_by(account_id=account.id).order_by(StockPaperOrder.created_at.desc()).limit(200).all()
     fills = db.query(StockPaperFill).filter_by(account_id=account.id).order_by(StockPaperFill.filled_at.desc()).limit(200).all()
     snapshots = db.query(StockPaperEquitySnapshot).filter_by(account_id=account.id).order_by(StockPaperEquitySnapshot.observed_at.desc()).limit(365).all()
+    activity_report = db.query(StockPaperLedgerEvent).filter_by(
+        account_id=account.id, event_type="activity_reconciliation",
+    ).order_by(StockPaperLedgerEvent.id.desc()).first()
     return base | {
         "status": account.status, "reason": account.halt_reason or (UNKNOWN_COSTS_REASON if not account.costs_known else "Reconciled broker paper account"),
         "costs_known": account.costs_known,
+        "activity_contract": account.activity_contract,
+        "cash_policy": account.cash_policy,
+        "observed_performance": observed_paper_performance(db, account),
+        "paper_research_accounting": assess_research_accounting(db, account),
+        "paper_research_venue": research_venue_status(db, account),
+        "last_activity_reconciliation": ({"observed_at": activity_report.created_at.isoformat(),
+                                           **(activity_report.payload or {})} if activity_report else None),
         "account": {"broker": account.broker, "account_id": account.broker_account_id, "currency": account.currency, "cash": money(account.cash),
             "buying_power": money(account.buying_power), "equity": money(account.equity), "last_equity": money(account.last_equity),
             "initialized_at": account.initialized_at.isoformat(), "last_reconciled_at": account.last_reconciled_at.isoformat() if account.last_reconciled_at else None,

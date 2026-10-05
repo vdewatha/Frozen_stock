@@ -19,6 +19,13 @@ def _now_iso() -> str:
 
 
 def _load_snapshot(api_url: str, timeout: float) -> dict[str, Any]:
+    data = _load_json(api_url, "/api/system/deployment-monitor", timeout)
+    if not isinstance(data, dict):
+        raise ValueError("Deployment monitor response was not a JSON object.")
+    return data
+
+
+def _load_json(api_url: str, path: str, timeout: float) -> Any:
     parsed = urlsplit(api_url)
     if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("", "/"):
         raise ValueError("API URL must be a server origin without credentials")
@@ -29,13 +36,11 @@ def _load_snapshot(api_url: str, timeout: float) -> dict[str, Any]:
         raise ValueError("A valid AUTH_VIEWER_KEY is required")
     if not math.isfinite(timeout) or not 0 < timeout <= 30:
         raise ValueError("Timeout must be between zero and 30 seconds")
-    url = api_url.rstrip("/") + "/system/deployment-monitor"
+    url = api_url.rstrip("/") + path
     with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False) as client:
         response = client.get(url, headers={"Accept": "application/json", "Authorization": f"Bearer {token}"})
         response.raise_for_status()
         data = response.json()
-    if not isinstance(data, dict):
-        raise ValueError("Deployment monitor response was not a JSON object.")
     return data
 
 
