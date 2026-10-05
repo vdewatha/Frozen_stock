@@ -99,6 +99,24 @@ operational API requires authentication. On a cloud VM use an SSH tunnel; do not
 this local-role-key deployment directly to the Internet. A public rollout
 requires the existing production identity gateway and HTTPS.
 
+### Replit always-on worker mode
+
+The published Replit Autoscale deployment intentionally runs only the web/API
+gateway. It must not be treated as a worker host: readiness will correctly show
+zero Celery workers and no learning collection will run there. For a single
+always-on VM deployment, provide a private Redis URL and set
+`PAPER_WORKERS_ENABLED=true`. The production gateway then supervises exactly one
+intraday worker, market-data worker, learning worker, paper-execution worker,
+risk worker, watchdog and leased beat scheduler. The flag defaults to false, so
+Autoscale cannot accidentally create duplicate schedulers or workers. Keep
+`ALLOW_LIVE_TRADING=false`; this mode is paper-only and still requires the
+application's data, accounting, strategy and risk gates.
+
+Do not enable this flag on a horizontally scaled deployment. Replit Reserved VM
+or another single-instance host is required, along with durable PostgreSQL and
+Redis configuration. Verify `/api/system/readiness` and worker heartbeats after
+startup; a healthy web endpoint alone is insufficient.
+
 ## Research console
 
 - The IEX Research Feed collects AAPL/MSFT/QQQ/SPY every five minutes through
