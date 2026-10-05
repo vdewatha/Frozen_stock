@@ -27,7 +27,7 @@ class BoundedStockDataClient(StockHistoricalDataClient):
     """Pin the SDK transport's timeout, retries and destination for secret safety."""
 
     def __init__(self):
-        key, secret = settings.paper_broker_credentials()
+        key, secret = settings.research_alpaca_credentials()
         if not key or not secret:
             raise RuntimeError("Alpaca paper data credentials are not configured")
         super().__init__(api_key=key, secret_key=secret, raw_data=True)

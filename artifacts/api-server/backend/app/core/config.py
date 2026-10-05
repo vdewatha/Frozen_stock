@@ -241,6 +241,18 @@ class Settings(BaseSettings):
             self.paper_alpaca_api_secret.get_secret_value(),
         )
 
+    def research_alpaca_credentials(self) -> tuple[str, str]:
+        """Return credentials scoped to read-only Alpaca market-data research.
+
+        A legacy ``ALPACA_API_*`` pair may be used for the data API only. It is
+        never used by the paper broker adapter or any order endpoint.
+        """
+        paper_key = self.paper_alpaca_api_key.get_secret_value()
+        paper_secret = self.paper_alpaca_api_secret.get_secret_value()
+        if paper_key and paper_secret:
+            return paper_key, paper_secret
+        return self.alpaca_api_key.get_secret_value(), self.alpaca_api_secret.get_secret_value()
+
     @property
     def live_credentials_configured(self) -> bool:
         return bool(
