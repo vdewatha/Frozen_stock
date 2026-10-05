@@ -21,11 +21,15 @@ const internalPort = 8090;
 const internalSecret = randomBytes(32).toString("hex");
 const internalTarget = `http://127.0.0.1:${internalPort}`;
 const allowedRoles = new Set(["viewer", "researcher", "operator", "admin"]);
-const paperWorkersEnabled = process.env.PAPER_WORKERS_ENABLED === "true";
+// This entrypoint is only used for the paper deployment. Keep the worker stack
+// on by default so a missing deployment variable cannot silently publish an API
+// with no scheduler or learning workers.
+const paperWorkersEnabled = process.env.PAPER_WORKERS_ENABLED !== "false";
 const embeddedRedisPort = 6380;
 const configuredRedisUrl = process.env.REDIS_URL?.trim();
 const useEmbeddedRedis =
-  process.env.PAPER_EMBEDDED_REDIS === "true" &&
+  paperWorkersEnabled &&
+  process.env.PAPER_EMBEDDED_REDIS !== "false" &&
   (!configuredRedisUrl || /(?:localhost|127\.0\.0\.1|::1)/i.test(configuredRedisUrl));
 const redisUrl = useEmbeddedRedis
   ? `redis://127.0.0.1:${embeddedRedisPort}/0`
