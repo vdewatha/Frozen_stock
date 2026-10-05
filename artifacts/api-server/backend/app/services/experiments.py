@@ -70,6 +70,12 @@ def run_strategy_experiments(
 
     prices, source = trusted_history(db, symbol, 420, minimum=100)
 
+    # Loading trusted history starts a database transaction. Backtests are
+    # CPU-bound and can run longer than PostgreSQL's idle-in-transaction
+    # timeout, so release that connection before computing experiments. The
+    # writes below open a fresh transaction and are committed at the end.
+    db.commit()
+
     current_parameters = strategy.parameters or {}
     config = BacktestConfig()
     old_result = run_backtest(symbol, strategy_slug, prices, config, current_parameters)
