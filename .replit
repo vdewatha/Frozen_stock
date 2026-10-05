@@ -47,3 +47,4 @@ packages = ["alsa-lib", "at-spi2-atk", "atk", "cairo", "cups", "dbus", "expat", 
 
 [userenv.shared]
 ALLOW_LIVE_TRADING = "false"
+VITE_LOCAL_PAPER_AUTH = "true"
