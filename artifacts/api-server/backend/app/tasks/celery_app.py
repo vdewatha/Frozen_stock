@@ -47,6 +47,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.strategy_learning_batch_job": {"queue": "learning"},
     "app.tasks.jobs.paper_trading_signal_job": {"queue": "paper_trading"},
     "app.tasks.jobs.paper_trade_reconciliation_job": {"queue": "paper_trading"},
+    "app.tasks.jobs.stock_paper_broker_reconciliation_job": {"queue": "paper_trading"},
     "app.tasks.jobs.memory_replay_gate_monitor_job": {"queue": "learning"},
     "app.tasks.jobs.deployment_monitor_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_promotion_job": {"queue": "risk"},
@@ -92,6 +93,10 @@ celery_app.conf.beat_schedule = {
     "strategy-learning-batch-job": {"task": "app.tasks.jobs.strategy_learning_batch_job", "schedule": 60 * 60 * 6},
     "paper-trading-signal-job": {"task": "app.tasks.jobs.paper_trading_signal_job", "schedule": 60 * 60},
     "paper-trade-reconciliation-job": {"task": "app.tasks.jobs.paper_trade_reconciliation_job", "schedule": 60 * 30},
+    "stock-paper-broker-reconciliation-job": {
+        "task": "app.tasks.jobs.stock_paper_broker_reconciliation_job",
+        "schedule": 60 * 5,
+    },
     "memory-replay-gate-monitor-job": {"task": "app.tasks.jobs.memory_replay_gate_monitor_job", "schedule": 60 * 30},
     "deployment-monitor-job": {"task": "app.tasks.jobs.deployment_monitor_job", "schedule": 60 * 15},
     "strategy-promotion-job": {"task": "app.tasks.jobs.strategy_promotion_job", "schedule": 60 * 60 * 24},

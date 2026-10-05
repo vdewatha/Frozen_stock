@@ -458,6 +458,43 @@ def paper_trade_reconciliation_job() -> dict:
 
 
 @celery_app.task
+def stock_paper_broker_reconciliation_job() -> dict:
+    """Refresh the broker-observed stock-paper ledger without placing orders."""
+    def work(db):
+        from app.services.stock_paper_ledger import (
+            active_paper_account,
+            active_paper_broker_name,
+            reconcile_stock_paper_account,
+        )
+
+        account = active_paper_account(db)
+        if account is None:
+            return {
+                "status": "skipped",
+                "job": "stock_paper_broker_reconciliation_job",
+                "reason": "stock paper account has not been explicitly initialized",
+                "paper_only": True,
+            }
+        if active_paper_broker_name() != "alpaca_paper":
+            return {
+                "status": "skipped",
+                "job": "stock_paper_broker_reconciliation_job",
+                "reason": "automatic stock-paper reconciliation is limited to Alpaca paper evidence",
+                "paper_only": True,
+            }
+        result = reconcile_stock_paper_account(db)
+        return {
+            "status": "complete",
+            "job": "stock_paper_broker_reconciliation_job",
+            "paper_only": True,
+            "account_status": result.get("account_status"),
+            "reconciliation_required": result.get("reconciliation_required"),
+        }
+
+    return _run_job("stock_paper_broker_reconciliation_job", work)
+
+
+@celery_app.task
 def memory_replay_gate_monitor_job() -> dict:
     def work(db):
         return {"status": "quarantined", "job": "memory_replay_gate_monitor_job",

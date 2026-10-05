@@ -91,6 +91,7 @@ def _check_celery_schedule() -> dict:
         "strategy-learning-batch-job",
         "paper-trading-signal-job",
         "paper-trade-reconciliation-job",
+        "stock-paper-broker-reconciliation-job",
         "risk-monitor-job",
         "stock-monitoring-job",
         "intraday-market-data-import",
