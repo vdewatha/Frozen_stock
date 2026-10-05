@@ -27,6 +27,11 @@ def _best_positive_prediction(predictions: list[dict]) -> Optional[dict]:
     return max(candidates, key=lambda item: (float(item.get("expected_return", 0)), float(item.get("probability_up", 0))), default=None)
 
 
+def _backtest_supported(backtest: dict) -> bool:
+    """Require an unrejected, positive-score backtest for candidate promotion."""
+    return not bool(backtest.get("rejected")) and float(backtest.get("score", 0)) > 0
+
+
 def _journal_feedback_adjustment(db: Session, strategy_row: Strategy, symbol: str) -> dict:
     return {
         "source": "journal_feedback",
@@ -62,12 +67,12 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
         for strategy_row in strategies:
             signal = get_strategy(strategy_row.strategy_type, strategy_row.parameters).generate_signal(asset.symbol, prices)
             backtest = run_backtest(asset.symbol, strategy_row.strategy_type, prices.tail(320), BacktestConfig(), strategy_row.parameters)
-            severe_backtest_reasons = [
-                reason for reason in backtest["rejection_reasons"] if reason != "Fewer than 30 historical trades."
-            ]
             model_supported = best_prediction is not None
             strategy_supported = signal.action == "BUY" and signal.confidence >= 0.55
-            backtest_supported = not severe_backtest_reasons and backtest["score"] > 0
+            # A positive score is not enough to make a candidate actionable:
+            # every backtest rejection, including an insufficient sample, must
+            # be resolved before a strategy can enter the paper-trade lane.
+            backtest_supported = _backtest_supported(backtest)
             status = "positive_candidate" if model_supported and strategy_supported and backtest_supported else "watch"
             if model_supported and strategy_supported and not backtest_supported:
                 status = "needs_more_evidence"
@@ -89,7 +94,7 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
             if not strategy_supported:
                 blockers.append("Technical strategy is not a confident BUY.")
             if not backtest_supported:
-                blockers.extend(severe_backtest_reasons or ["Backtest quality below promotion threshold."])
+                blockers.extend(backtest["rejection_reasons"] or ["Backtest quality below promotion threshold."])
 
             candidates.append(
                 {
