@@ -21,6 +21,8 @@ x-runtime: &runtime
     ACTIVE_PAPER_BROKER: alpaca_paper
     IEX_RESEARCH_ENABLED: "true"
     DELAYED_SIP_RESEARCH_ENABLED: "true"
+    # Optional local research fallback; it never creates signals or orders.
+    AGENT_RESEARCH_RULE_BASED_FALLBACK: "true"
     STOCK_TRAINING_ARTIFACT_ROOT: /data/models
     CELERY_BEAT_SCHEDULE_FILE: /data/beat/schedule
   volumes:

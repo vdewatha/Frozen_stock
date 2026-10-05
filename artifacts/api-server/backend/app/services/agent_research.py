@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+from statistics import pstdev
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest, urlopen
@@ -27,6 +28,8 @@ MAX_PRICE_ROWS = 20
 MAX_CONTEXT_CHARS = 12_000
 MAX_REPORT_RUNS = 100
 REQUEST_TIMEOUT_SECONDS = 30
+RULE_BASED_FALLBACK_ENV = "AGENT_RESEARCH_RULE_BASED_FALLBACK"
+RULE_BASED_MODEL_NAME = "deterministic-technical-ensemble-v1"
 
 
 class AgentResearchError(ValueError):
@@ -135,6 +138,7 @@ def create_agent_research_run(db: Session, *, symbol: str, actor: str) -> tuple[
     sources = _safe_source_snapshot(db, symbol)
     if not sources:
         raise AgentResearchError("No approved market or news observations are available")
+    fallback_enabled = os.getenv(RULE_BASED_FALLBACK_ENV, "").strip().lower() == "true"
     dedupe_key = hashlib.sha256(
         _canonical(
             {
@@ -143,6 +147,7 @@ def create_agent_research_run(db: Session, *, symbol: str, actor: str) -> tuple[
                 "framework_version": UPSTREAM_FRAMEWORK_VERSION,
                 "prompt_version": PROMPT_VERSION,
                 "model_name": MODEL_NAME,
+                "rule_based_fallback": fallback_enabled,
             }
         )
     ).hexdigest()
@@ -232,6 +237,73 @@ def _provider_request(symbol: str, sources: list[dict]) -> tuple[dict, dict]:
     }
 
 
+def _rule_based_request(symbol: str, sources: list[dict]) -> tuple[dict, dict]:
+    """Produce a bounded, reproducible shadow opinion when the optional LLM is down.
+
+    This is deliberately a research fallback, not a replacement model. It uses
+    only the immutable daily-price context already captured for the run and
+    exposes each specialist vote so the result cannot masquerade as an LLM.
+    """
+    closes = [
+        float(source["close"])
+        for source in sources
+        if source.get("kind") == "daily_price" and _positive_number(source.get("close"))
+    ]
+    if len(closes) < 6:
+        raise AgentResearchError("Rule-based research requires at least six daily prices")
+    returns = [closes[index] / closes[index - 1] - 1 for index in range(1, len(closes))]
+    daily_volatility = pstdev(returns[-10:]) if len(returns) > 1 else 0.0
+    one_day = returns[-1]
+    five_day = closes[-1] / closes[-6] - 1
+    ten_day = closes[-1] / closes[-11] - 1 if len(closes) >= 11 else five_day
+    extreme_move = max(0.005, 1.5 * daily_volatility)
+
+    momentum_vote = "BUY" if five_day > 0.01 and ten_day > 0 else (
+        "SELL" if five_day < -0.01 and ten_day < 0 else "HOLD"
+    )
+    mean_reversion_vote = "BUY" if one_day < -extreme_move else (
+        "SELL" if one_day > extreme_move else "HOLD"
+    )
+    risk_vote = "HOLD" if daily_volatility > 0.04 else momentum_vote
+    votes = [momentum_vote, mean_reversion_vote, risk_vote]
+    directional = [vote for vote in votes if vote in {"BUY", "SELL"}]
+    recommendation = "HOLD"
+    if len(directional) >= 2 and len(set(directional)) == 1:
+        recommendation = directional[0]
+    agreement = votes.count(recommendation) / len(votes) if recommendation != "HOLD" else 0.5
+    confidence = min(0.85, max(0.5, 0.5 + 0.35 * agreement))
+    rationale = (
+        f"Deterministic shadow ensemble for {symbol}: 1d={one_day:.2%}, "
+        f"5d={five_day:.2%}, 10d={ten_day:.2%}, daily_vol={daily_volatility:.2%}; "
+        f"momentum={momentum_vote}, mean_reversion={mean_reversion_vote}, risk={risk_vote}."
+    )
+    return {
+        "recommendation": recommendation,
+        "rationale": rationale[:1000],
+        "confidence": confidence,
+        "limitations": [
+            "Deterministic fallback; no LLM provider was available.",
+            "Research-only output; not a calibrated probability or trading signal.",
+            "Daily-price context omits intraday microstructure, fundamentals, and costs.",
+        ],
+        "research_mode": "deterministic_rule_based",
+        "specialist_votes": {
+            "momentum": momentum_vote,
+            "mean_reversion": mean_reversion_vote,
+            "risk_filter": risk_vote,
+        },
+    }, {
+        "model": RULE_BASED_MODEL_NAME,
+        "mode": "deterministic_rule_based",
+        "provider_available": False,
+    }
+
+
+def _provider_failure_allows_fallback(error: AgentResearchError) -> bool:
+    message = str(error).lower()
+    return "provider is unavailable" in message or "provider request failed" in message
+
+
 def run_agent_research(db: Session, run_id: str) -> dict:
     row = db.scalar(select(AgentResearchRun).where(AgentResearchRun.run_id == run_id).with_for_update())
     if row is None:
@@ -242,7 +314,13 @@ def run_agent_research(db: Session, run_id: str) -> dict:
     row.started_at = _now()
     db.commit()
     try:
-        result, usage = _provider_request(row.symbol, row.source_snapshot)
+        try:
+            result, usage = _provider_request(row.symbol, row.source_snapshot)
+        except AgentResearchError as exc:
+            fallback_enabled = os.getenv(RULE_BASED_FALLBACK_ENV, "").strip().lower() == "true"
+            if not fallback_enabled or not _provider_failure_allows_fallback(exc):
+                raise
+            result, usage = _rule_based_request(row.symbol, row.source_snapshot)
         row.status = "completed"
         row.result = result | {"decision_at": _now().isoformat()}
         row.usage = usage

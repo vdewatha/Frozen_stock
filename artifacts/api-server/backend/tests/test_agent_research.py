@@ -93,6 +93,35 @@ class AgentResearchTests(unittest.TestCase):
             self.assertIsNone(row.result)
             self.assertIn("provider is unavailable", row.error)
 
+    def test_opt_in_rule_based_fallback_completes_without_llm(self):
+        with Session(self.engine) as db:
+            db.add_all([
+                MarketPrice(
+                    symbol="AAPL",
+                    price_date=date(2026, 9, 11 + offset),
+                    close=str(247 + offset),
+                    volume=1000,
+                    source="trusted_fixture",
+                )
+                for offset in range(5)
+            ])
+            db.commit()
+            with patch.dict(
+                "os.environ",
+                {"AGENT_RESEARCH_RULE_BASED_FALLBACK": "true"},
+                clear=True,
+            ):
+                row, _ = create_agent_research_run(db, symbol="AAPL", actor="researcher")
+                db.commit()
+                result = run_agent_research(db, row.run_id)
+            db.refresh(row)
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(row.status, "completed")
+            self.assertEqual(row.result["research_mode"], "deterministic_rule_based")
+            self.assertEqual(row.usage["mode"], "deterministic_rule_based")
+            self.assertIn("specialist_votes", row.result)
+            self.assertFalse(row.eligible_for_trading)
+
     def test_structured_output_is_validated_and_tools_are_not_exposed(self):
         payload = {
             "model": "gpt-5.6-terra",

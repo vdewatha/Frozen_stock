@@ -189,6 +189,14 @@ outputs, timeouts and provenance; treat generated code as untrusted. CPU inferen
 should not starve the trading scheduler. A small Oracle VM may be better used for
 collection and classical models, with optional LLM work on the Mac.
 
+Implemented: the paper/research deployment enables an explicitly labeled,
+deterministic technical-ensemble fallback when the optional LLM endpoint is
+unreachable. It uses only the immutable daily-price snapshot, exposes momentum,
+mean-reversion and risk-filter votes, records `provider_available=false`, and
+remains research-only with `eligible_for_trading=false`. Malformed provider
+responses still fail closed; this fallback does not manufacture an LLM result or
+relax any execution gate.
+
 Acceptance: measured inference on target hardware, safe timeout/malformed-output
 handling, no secrets in prompts, and no trading failure when the LLM is offline.
 
