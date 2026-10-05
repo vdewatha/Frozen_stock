@@ -112,7 +112,9 @@ services:
 
   learning:
     <<: *runtime
-    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", "--concurrency=${LEARNING_CONCURRENCY:-1}"]
+    # One bounded process per queued symbol/strategy scope; scale replicas
+    # independently when the host has capacity.
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", "--concurrency=${LEARNING_CONCURRENCY:-4}"]
 
   execution:
     <<: *runtime
