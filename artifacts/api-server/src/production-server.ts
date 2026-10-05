@@ -22,6 +22,24 @@ const internalSecret = randomBytes(32).toString("hex");
 const internalTarget = `http://127.0.0.1:${internalPort}`;
 const allowedRoles = new Set(["viewer", "researcher", "operator", "admin"]);
 const paperWorkersEnabled = process.env.PAPER_WORKERS_ENABLED === "true";
+const embeddedRedisPort = 6380;
+const configuredRedisUrl = process.env.REDIS_URL?.trim();
+const useEmbeddedRedis =
+  process.env.PAPER_EMBEDDED_REDIS === "true" &&
+  (!configuredRedisUrl || /(?:localhost|127\.0\.0\.1|::1)/i.test(configuredRedisUrl));
+const redisUrl = useEmbeddedRedis
+  ? `redis://127.0.0.1:${embeddedRedisPort}/0`
+  : configuredRedisUrl;
+
+const redisProcess = useEmbeddedRedis
+  ? spawn("redis-server", [
+      "--bind", "127.0.0.1",
+      "--port", String(embeddedRedisPort),
+      "--save", "",
+      "--appendonly", "no",
+      "--protected-mode", "yes",
+    ], { stdio: "inherit" })
+  : undefined;
 
 function boundedConcurrency(name: string, fallback: number, maximum: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
@@ -30,6 +48,15 @@ function boundedConcurrency(name: string, fallback: number, maximum: number): nu
 }
 
 const learningConcurrency = boundedConcurrency("PAPER_LEARNING_CONCURRENCY", 2, 8);
+
+const runtimeEnv = {
+  ...process.env,
+  ...(redisUrl ? { REDIS_URL: redisUrl } : {}),
+  AUTH_MODE: "clerk_gateway",
+  INTERNAL_AUTH_SECRET: internalSecret,
+  ALLOW_LIVE_TRADING: "false",
+  PYTHONPATH: ".",
+};
 
 function roleMappings(): Record<string, string> {
   try {
@@ -60,13 +87,7 @@ const python = spawn(
   ],
   {
     cwd: new URL("../backend", import.meta.url),
-    env: {
-      ...process.env,
-      AUTH_MODE: "clerk_gateway",
-      INTERNAL_AUTH_SECRET: internalSecret,
-      ALLOW_LIVE_TRADING: "false",
-      PYTHONPATH: ".",
-    },
+    env: runtimeEnv,
     stdio: "inherit",
   },
 );
@@ -74,13 +95,7 @@ const python = spawn(
 function spawnPaperWorker(args: string[]): ChildProcess {
   return spawn("python3.11", args, {
         cwd: new URL("../backend", import.meta.url),
-        env: {
-          ...process.env,
-          AUTH_MODE: "clerk_gateway",
-          INTERNAL_AUTH_SECRET: internalSecret,
-          ALLOW_LIVE_TRADING: "false",
-          PYTHONPATH: ".",
-        },
+        env: runtimeEnv,
         stdio: "inherit",
       });
 }
@@ -156,6 +171,7 @@ function stop(signal: NodeJS.Signals, exitCode?: number) {
     for (const worker of workerProcesses) {
       if (!worker.killed) worker.kill(signal);
     }
+    if (redisProcess && !redisProcess.killed) redisProcess.kill(signal);
     if (!python.killed) python.kill(signal);
     if (exitCode !== undefined) process.exit(exitCode);
   });
@@ -176,3 +192,7 @@ for (const worker of workerProcesses) {
     }
   });
 }
+
+redisProcess?.on("error", (error) => {
+  console.error(`Embedded Redis failed to start: ${error.message}`);
+});
