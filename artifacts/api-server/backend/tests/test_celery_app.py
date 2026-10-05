@@ -138,6 +138,35 @@ class CeleryConfigurationTests(unittest.TestCase):
             ],
         )
 
+    def test_redis_lease_retries_transient_startup_failure(self):
+        class FakeLock:
+            def acquire(self, blocking=False):
+                return True
+
+        class FakeRedis:
+            def __init__(self):
+                self.ping_attempts = 0
+
+            def ping(self):
+                self.ping_attempts += 1
+                if self.ping_attempts < 3:
+                    raise jobs.redis.RedisError("redis warming up")
+                return True
+
+            def lock(self, name, timeout, blocking=False):
+                return FakeLock()
+
+        client = FakeRedis()
+        with patch.object(jobs.redis.Redis, "from_url", return_value=client), patch.object(
+            jobs.time, "sleep"
+        ) as sleep:
+            lock = jobs._acquire_job_lock("iex_research_collection_job")
+
+        self.assertIsNotNone(lock)
+        self.assertEqual(client.ping_attempts, 3)
+        sleep.assert_any_call(jobs.REDIS_LOCK_RETRY_DELAYS_SECONDS[0])
+        sleep.assert_any_call(jobs.REDIS_LOCK_RETRY_DELAYS_SECONDS[1])
+
     def test_intraday_job_runs_while_shared_queue_job_is_busy(self):
         slow_job_started = threading.Event()
         release_slow_job = threading.Event()

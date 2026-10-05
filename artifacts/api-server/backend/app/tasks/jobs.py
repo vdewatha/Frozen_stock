@@ -4,6 +4,7 @@ from datetime import date, datetime
 from hashlib import sha256
 from decimal import Decimal
 import logging
+import time
 from typing import Callable
 
 import redis
@@ -96,6 +97,7 @@ INTRADAY_JOB_LOCK_TTL_SECONDS = INTRADAY_TASK_TIME_LIMIT_SECONDS + 65
 IEX_TASK_SOFT_TIME_LIMIT_SECONDS = 110
 IEX_TASK_TIME_LIMIT_SECONDS = 120
 IEX_JOB_LOCK_TTL_SECONDS = IEX_TASK_TIME_LIMIT_SECONDS + 60
+REDIS_LOCK_RETRY_DELAYS_SECONDS = (0.25, 0.75, 1.5)
 
 
 def _acquire_job_lock(job_name: str):
@@ -113,7 +115,18 @@ def _acquire_job_lock(job_name: str):
         health_check_interval=15,
     )
     try:
-        client.ping()
+        last_error = None
+        for delay in (0.0, *REDIS_LOCK_RETRY_DELAYS_SECONDS):
+            if delay:
+                time.sleep(delay)
+            try:
+                client.ping()
+                last_error = None
+                break
+            except redis.RedisError as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
         lock_ttl = (
             INTRADAY_JOB_LOCK_TTL_SECONDS
             if job_name == "intraday_market_data_import"
