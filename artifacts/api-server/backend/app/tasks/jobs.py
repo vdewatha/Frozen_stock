@@ -218,10 +218,20 @@ def daily_market_data_import() -> dict:
         journal = refresh_decision_journal_outcomes(db, source="daily_market_data_import", notify=True)
         replay_monitor = run_memory_replay_gate_monitor(db, source="daily_market_data_import", limit=60, top_k=3)
         agent_evaluation_updates = refresh_agent_research_evaluations(db)
+        trusted_imported = sum(1 for result in results if result.get("trusted") is True)
+        learning_refresh = None
+        if trusted_imported:
+            # Queue learning only after the new price history is committed by
+            # this job. The batch remains paper-only and promotion-gated.
+            learning_refresh = strategy_learning_batch_job.apply_async(
+                queue="learning", expires=60 * 60
+            ).id
         return {
             "status": "complete",
             "job": "daily_market_data_import",
             "results": results,
+            "trusted_assets": trusted_imported,
+            "learning_refresh_task_id": learning_refresh,
             "corporate_actions": corporate_actions,
             "decision_journal": journal,
             "memory_replay_gate_monitor": replay_monitor,
