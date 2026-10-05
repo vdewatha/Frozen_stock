@@ -75,7 +75,14 @@ class Settings(BaseSettings):
     stock_learning_default_provider: str = "yfinance"
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # A shared workspace .env also contains frontend and provider-specific
+    # values. The backend should consume only its declared settings rather
+    # than refusing to start because another service added a valid variable.
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     @field_validator("stock_learning_default_symbols")
     @classmethod
