@@ -387,6 +387,12 @@ class StockPaperRecoveryEvent(Base):
 
 class ModelPrediction(Base):
     __tablename__ = "model_predictions"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "prediction_date", "horizon_days", "source",
+            name="uq_model_prediction_identity",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), index=True)

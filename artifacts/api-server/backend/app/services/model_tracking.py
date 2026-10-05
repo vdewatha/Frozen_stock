@@ -33,6 +33,28 @@ def run_and_persist_model_predictions(db: Session, symbol: str) -> dict:
 
     prediction_ids: list[int] = []
     for prediction in result["predictions"]:
+        existing = (
+            db.query(ModelPrediction)
+            .filter(
+                ModelPrediction.symbol == symbol,
+                ModelPrediction.prediction_date == prediction_date,
+                ModelPrediction.horizon_days == prediction["horizon_days"],
+                ModelPrediction.source == source,
+            )
+            .order_by(ModelPrediction.id.asc())
+            .first()
+        )
+        if existing:
+            # Refresh only an unresolved prediction. A realized observation is
+            # immutable evidence and must never be overwritten by a rerun.
+            if not existing.is_realized:
+                existing.probability_up = _decimal(prediction["probability_up"])
+                existing.probability_down = _decimal(prediction["probability_down"])
+                existing.expected_return = _decimal(prediction["expected_return"])
+                existing.features = result["latest_features"] | {"macro_context": macro_context}
+                existing.probabilities_by_model = prediction["probabilities_by_model"]
+            prediction_ids.append(existing.id)
+            continue
         row = ModelPrediction(
             symbol=symbol,
             prediction_date=prediction_date,

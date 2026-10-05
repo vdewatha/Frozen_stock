@@ -114,6 +114,7 @@ class AgentResearchReportTests(unittest.TestCase):
         horizon: int = 5,
         model_version: str | None = "registry-v1",
         created_at: datetime | None = None,
+        source: str = "existing-model",
     ) -> ModelPrediction:
         row = ModelPrediction(
             symbol=symbol,
@@ -122,7 +123,7 @@ class AgentResearchReportTests(unittest.TestCase):
             probability_up=Decimal(probability),
             probability_down=Decimal("0.2"),
             expected_return=Decimal("0.1"),
-            source="existing-model",
+            source=source,
             features={"model_version": model_version} if model_version else {},
             probabilities_by_model={"ensemble": float(probability)},
             created_at=created_at or datetime.combine(cutoff, datetime.min.time()).replace(hour=13),
@@ -245,8 +246,8 @@ class AgentResearchReportTests(unittest.TestCase):
                 cutoff = date(2026, 9, 10)
                 rows.append(self._run(db, symbol=symbol, cutoff=cutoff))
                 self._prices(db, symbol=symbol, cutoff=cutoff, closes=[101, 102, 103, 104, 105])
-            self._prediction(db, symbol="AAPL", cutoff=date(2026, 9, 10))
-            self._prediction(db, symbol="AAPL", cutoff=date(2026, 9, 10))
+            self._prediction(db, symbol="AAPL", cutoff=date(2026, 9, 10), source="existing-model-v1")
+            self._prediction(db, symbol="AAPL", cutoff=date(2026, 9, 10), source="existing-model-v2")
             self._prediction(db, symbol="MSFT", cutoff=date(2026, 9, 10), probability="1.2")
             self._prediction(
                 db,
