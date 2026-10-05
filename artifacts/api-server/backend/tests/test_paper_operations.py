@@ -144,6 +144,16 @@ def test_beat_child_stops_before_lease_release():
     assert child.wait.call_count == 2
 
 
+def test_startup_refresh_is_opt_in():
+    spec = importlib.util.spec_from_file_location("paper_beat_opt_in_test", BACKEND / "scripts/run_beat_with_lease.py")
+    beat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(beat)
+    with patch.dict("os.environ", {"PAPER_STARTUP_REFRESH": "false"}, clear=False):
+        assert beat._startup_refresh_enabled() is False
+    with patch.dict("os.environ", {"PAPER_STARTUP_REFRESH": "true"}, clear=False):
+        assert beat._startup_refresh_enabled() is True
+
+
 def test_both_broker_probes_are_read_only_and_redacted():
     from pydantic import SecretStr
 

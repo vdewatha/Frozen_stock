@@ -19,6 +19,16 @@ STARTUP_REFRESH_KEY = "trading:startup-refresh:market-data"
 STARTUP_REFRESH_TTL_SECONDS = 20 * 60 * 60
 
 
+def _startup_refresh_enabled() -> bool:
+    """Keep deployment bootstrap responsive unless an operator opts in."""
+    return os.environ.get("PAPER_STARTUP_REFRESH", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _queue_startup_refresh(client: redis.Redis) -> None:
     """Queue one immediate daily import after a deployment.
 
@@ -53,7 +63,10 @@ def main() -> int:
         print("Another Celery beat scheduler already holds the lease.", file=sys.stderr)
         return 1
 
-    _queue_startup_refresh(client)
+    if _startup_refresh_enabled():
+        _queue_startup_refresh(client)
+    else:
+        print("Skipped startup market-data refresh; scheduled jobs remain enabled.", flush=True)
 
     child = subprocess.Popen(
         [
