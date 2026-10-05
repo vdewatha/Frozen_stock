@@ -24,7 +24,7 @@ from app.services.market_regime import detect_and_store_market_regime
 from app.services.memory_replay import run_memory_replay_gate_monitor
 from app.services.model_tracking import run_and_persist_model_predictions, score_realized_predictions
 from app.services.news_sentiment import import_mock_news
-from app.services.notifications import create_notification
+from app.services.notifications import create_notification, resolve_successful_job_notifications
 from app.services.paper_trading import reconcile_open_paper_trades, run_paper_signal, update_all_strategy_memory
 from app.services.risk_actions import evaluate_portfolio_risk_actions
 from app.services.trade_candidates import get_trade_candidate_snapshot
@@ -159,7 +159,13 @@ def _run_job(job_name: str, work: Callable) -> dict:
             lock_acquisition_confirmed = True
             if not lock_acquired:
                 return {"status": "skipped", "job": job_name, "reason": "duplicate worker lease is active"}
-        return work(db)
+        result = work(db)
+        # A retry that completes successfully is evidence that the prior
+        # incident is no longer active. Keep unrelated operator alerts open.
+        if isinstance(result, dict) and result.get("status") in {"complete", "observed", "ready", "success"}:
+            if resolve_successful_job_notifications(db, job_name):
+                db.commit()
+        return result
     except Exception as exc:
         # Failure reporting must never commit pending effects of failed work.
         try:

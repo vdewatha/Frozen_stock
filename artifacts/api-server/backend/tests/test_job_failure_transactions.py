@@ -52,3 +52,17 @@ def test_notification_failure_preserves_original_and_redacts_log(sessions, caplo
     assert "notification unavailable" in caplog.text
     assert "private-original-detail" not in caplog.text
     assert "private-provider-detail" not in caplog.text
+
+
+def test_successful_retry_resolves_only_same_job_incidents(sessions):
+    with sessions() as db:
+        db.add_all([
+            Notification(category="scheduled_job", severity="critical", status="open", source="retry_fixture", title="old", message="old"),
+            Notification(category="scheduled_job", severity="critical", status="open", source="other_fixture", title="other", message="other"),
+        ])
+        db.commit()
+
+    assert jobs._run_job("retry_fixture", lambda _db: {"status": "complete"}) == {"status": "complete"}
+    with sessions() as db:
+        assert db.query(Notification).filter_by(source="retry_fixture", status="open").count() == 0
+        assert db.query(Notification).filter_by(source="other_fixture", status="open").count() == 1

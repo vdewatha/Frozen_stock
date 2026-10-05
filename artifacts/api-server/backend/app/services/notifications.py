@@ -82,3 +82,26 @@ def resolve_notification(db: Session, notification_id: int) -> Notification:
     db.commit()
     db.refresh(notification)
     return notification
+
+
+def resolve_successful_job_notifications(db: Session, source: str) -> int:
+    """Close prior critical incidents only after the same job succeeds again."""
+    notifications = (
+        db.query(Notification)
+        .filter(
+            Notification.category == "scheduled_job",
+            Notification.severity == "critical",
+            Notification.status == "open",
+            Notification.source == source,
+        )
+        .all()
+    )
+    if not notifications:
+        return 0
+    now = datetime.utcnow()
+    for notification in notifications:
+        notification.status = "resolved"
+        notification.acknowledged_at = notification.acknowledged_at or now
+        notification.resolved_at = now
+        notification.updated_at = now
+    return len(notifications)
