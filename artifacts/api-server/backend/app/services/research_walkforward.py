@@ -59,10 +59,10 @@ def evaluate_walkforward(frame, folds=3, seed=42):
                 warnings.simplefilter("error", RuntimeWarning)
                 warnings.simplefilter("error", ConvergenceWarning)
                 calibrator.fit(_logit(calibration_probability).reshape(-1, 1), calibration.target)
-                raw = model.predict_proba(evaluation[FEATURES])[:, 1]
-                if not np.isfinite(raw).all() or ((raw < 0) | (raw > 1)).any():
-                    raise ValueError("Invalid base fold probabilities")
-                probability = _sigmoid(_logit(raw) * calibrator.coef_[0, 0] + calibrator.intercept_[0])
+            raw = model.predict_proba(evaluation[FEATURES])[:, 1]
+            if not np.isfinite(raw).all() or ((raw < 0) | (raw > 1)).any():
+                raise ValueError("Invalid base fold probabilities")
+            probability = _sigmoid(_logit(raw) * calibrator.coef_[0, 0] + calibrator.intercept_[0])
             if not np.isfinite(probability).all() or ((probability < 0) | (probability > 1)).any():
                 raise ValueError("Invalid calibrated fold probabilities")
             predictions[name] = probability

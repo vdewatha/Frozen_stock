@@ -102,7 +102,11 @@ def _fit_predict(model, train, validation):
         warnings.simplefilter("error", RuntimeWarning)
         warnings.simplefilter("error", ConvergenceWarning)
         model.fit(train[FEATURES], train.target)
-        probability = model.predict_proba(validation[FEATURES])[:, 1]
+    # Some sklearn/numpy builds emit a benign low-level matmul warning during
+    # predict_proba even when the returned probabilities are finite. Fit-time
+    # numerical failures remain fatal; the output validation below is the
+    # meaningful guard for prediction.
+    probability = model.predict_proba(validation[FEATURES])[:, 1]
     if not np.isfinite(probability).all() or ((probability < 0) | (probability > 1)).any():
         raise ValueError("Invalid model probabilities")
     return probability

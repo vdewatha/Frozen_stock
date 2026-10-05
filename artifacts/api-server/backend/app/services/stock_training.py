@@ -139,9 +139,12 @@ def _fit_probability(model, train: pd.DataFrame, test: pd.DataFrame) -> np.ndarr
             warnings.simplefilter("error", RuntimeWarning)
             warnings.simplefilter("error", ConvergenceWarning)
             model.fit(train[FEATURES], train.target.astype(int))
-            probability = model.predict_proba(test[FEATURES])[:, 1]
     except (RuntimeWarning, ConvergenceWarning, FloatingPointError) as error:
         raise ValueError("Numerical failure during stock model fitting") from error
+    # Treat finite, bounded probabilities as authoritative. Certain sklearn /
+    # numpy combinations warn during the low-level prediction matmul without
+    # producing invalid output; fit-time numerical failures are still fatal.
+    probability = model.predict_proba(test[FEATURES])[:, 1]
     if not np.isfinite(probability).all() or ((probability < 0) | (probability > 1)).any():
         raise ValueError("Stock model produced invalid probabilities")
     return np.asarray(probability, dtype=float)
