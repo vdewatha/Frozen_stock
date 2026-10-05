@@ -1269,6 +1269,33 @@ class StockPaperRecoveryTests(unittest.TestCase):
             with self.assertRaises(StockPaperError):
                 resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Retry after recovery evidence")
 
+    def test_clean_reconciliation_clears_only_watchdog_halt_for_v2(self):
+        from app.models import RiskRule
+
+        with Session(self.engine) as db:
+            db.add(RiskRule(name="watchdog-recovery-risk", value={"kill_switch_enabled": False}))
+            db.commit()
+            initialize_stock_paper_account(db, FakeAlpaca(), activity_contract="alpaca-activities-v2")
+            run_stock_watchdog(db)
+            result = reconcile_stock_paper_account(db, FakeAlpaca())
+
+            account = db.query(StockPaperAccount).one()
+            state = db.query(StockPaperRecoveryState).one()
+            rules = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).one()
+            self.assertEqual(result["status"], "reconciled")
+            self.assertEqual(account.status, "reconciled")
+            self.assertFalse(account.reconciliation_required)
+            self.assertEqual(state.status, "revalidation_required")
+            self.assertTrue(rules.value["kill_switch_enabled"])
+            self.assertFalse(account.accounting_verified)
+            self.assertFalse(account.costs_known)
+            state.cooldown_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.commit()
+            with self.assertRaisesRegex(StockPaperError, "Complete broker accounting"):
+                resume_stock_paper_after_revalidation(
+                    db, actor="operator-test", reason="Review fresh watchdog evidence"
+                )
+
     def test_monitoring_evidence_must_follow_current_pause_and_accounting_halt(self):
         from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
         from app.models.stock_paper import StockPaperAccount

@@ -442,6 +442,12 @@ def resume_stock_paper_after_revalidation(
     account = active_paper_account(db, for_update=True)
     if not account or account.status != "reconciled" or account.reconciliation_required:
         raise StockPaperError("A successful broker reconciliation after recovery is required")
+    if account.activity_contract == "alpaca-activities-v2" and (
+        not account.accounting_verified or not account.costs_known
+    ):
+        raise StockPaperError(
+            "Complete broker accounting, including known costs, is required before recovery can resume"
+        )
     if state.accounting_review_required:
         if not state.accounting_reviewed_at or not state.accounting_reviewed_by:
             raise StockPaperError("Explicit operator accounting review is required before recovery can resume")

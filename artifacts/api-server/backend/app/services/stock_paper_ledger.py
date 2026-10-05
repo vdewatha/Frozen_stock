@@ -1365,9 +1365,29 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                     ACCOUNTING_RESIDUAL_REVIEW_REASON,
                 )
         else:
+            watchdog_halt = (
+                account.status == "halted"
+                and (account.halt_reason or "").startswith("Independent watchdog:")
+            )
             account.reconciliation_required = False
-            if account.status != "halted":
+            if account.status != "halted" or watchdog_halt:
                 account.status, account.halt_reason = "reconciled", None
+            if watchdog_halt:
+                recovery_state = db.get(StockPaperRecoveryState, 1)
+                if recovery_state and recovery_state.status in {"cooldown", "paused"}:
+                    recovery_state.status = "revalidation_required"
+                    recovery_state.updated_by = "stock_reconciler"
+                    recovery_state.pause_reason = (
+                        "Watchdog halt cleared by fresh broker reconciliation; "
+                        "complete accounting and operator revalidation remain required"
+                    )
+                _event(
+                    db,
+                    account,
+                    "watchdog_reconciliation",
+                    "revalidation_required",
+                    "Watchdog halt cleared by fresh broker reconciliation; accounting gates remain active",
+                )
             _event(db, account, "reconcile", "reconciled", UNKNOWN_COSTS_REASON)
         _record_snapshot(db, account, observed)
         db.commit()
