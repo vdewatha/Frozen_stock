@@ -243,11 +243,22 @@ def upsert_prices(db: Session, symbol: str, prices: pd.DataFrame, source: str = 
 
 def import_market_prices(db: Session, symbol: str, period: str = "2y") -> dict:
     symbol = _clean_symbol(symbol)
+    attempts: list[dict[str, str | None]] = []
     prices = fetch_yfinance_prices(symbol, period)
     source = "yfinance"
+    attempts.append({
+        "provider": "yfinance",
+        "status": "ready" if not prices.empty else "unavailable",
+        "reason": None if not prices.empty else "empty_or_invalid_response",
+    })
     if prices.empty:
         prices = fetch_yahoo_chart_prices(symbol, period)
         source = "yahoo_chart" if not prices.empty else "unavailable"
+        attempts.append({
+            "provider": "yahoo_chart",
+            "status": "ready" if not prices.empty else "unavailable",
+            "reason": None if not prices.empty else "empty_or_invalid_response",
+        })
     rows_imported = upsert_prices(db, symbol, prices, source)
     return {
         "symbol": symbol,
@@ -255,6 +266,10 @@ def import_market_prices(db: Session, symbol: str, period: str = "2y") -> dict:
         "start_date": prices["date"].min() if not prices.empty else None,
         "end_date": prices["date"].max() if not prices.empty else None,
         "source": source,
+        "trusted": source in {"yfinance", "yahoo_chart"} and not prices.empty,
+        "synthetic_fallback_used": False,
+        "provider_attempts": attempts,
+        "unavailable_reason": None if not prices.empty else "No trusted market-data provider returned a valid history",
     }
 
 

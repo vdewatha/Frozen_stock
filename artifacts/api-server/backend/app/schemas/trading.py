@@ -83,6 +83,10 @@ class MarketImportResponse(BaseModel):
     start_date: Optional[date]
     end_date: Optional[date]
     source: str
+    trusted: bool = False
+    synthetic_fallback_used: bool = False
+    provider_attempts: list[dict] = Field(default_factory=list)
+    unavailable_reason: Optional[str] = None
     decision_journal: Optional[dict] = None
     memory_replay_gate_monitor: Optional[dict] = None
 

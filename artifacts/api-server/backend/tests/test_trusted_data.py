@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import unittest
 
-from app.services import paper_trading, model_tracking, portfolio_risk
+from app.services import market_data, paper_trading, model_tracking, portfolio_risk
 from app.services.trusted_data import UntrustedMarketData, trusted_history, validate_history
 
 
@@ -103,6 +103,34 @@ def test_mixed_provenance_requires_normalization():
     frame.loc[0, "source"] = "yahoo_chart"
     with unittest.TestCase().assertRaises(UntrustedMarketData):
         validate_history(frame)
+
+
+def test_market_import_reports_trusted_fallback_without_synthetic_data():
+    db = MagicMock()
+    fallback = history().iloc[:80].copy()
+    with patch.object(market_data, "fetch_yfinance_prices", return_value=pd.DataFrame()), \
+         patch.object(market_data, "fetch_yahoo_chart_prices", return_value=fallback), \
+         patch.object(market_data, "upsert_prices", return_value=80):
+        result = market_data.import_market_prices(db, "SPY")
+    assert result["source"] == "yahoo_chart"
+    assert result["trusted"] is True
+    assert result["synthetic_fallback_used"] is False
+    assert [attempt["provider"] for attempt in result["provider_attempts"]] == ["yfinance", "yahoo_chart"]
+    assert result["provider_attempts"][0]["status"] == "unavailable"
+    assert result["provider_attempts"][1]["status"] == "ready"
+
+
+def test_market_import_is_explicitly_unavailable_when_trusted_sources_fail():
+    db = MagicMock()
+    with patch.object(market_data, "fetch_yfinance_prices", return_value=pd.DataFrame()), \
+         patch.object(market_data, "fetch_yahoo_chart_prices", return_value=pd.DataFrame()), \
+         patch.object(market_data, "upsert_prices", return_value=0):
+        result = market_data.import_market_prices(db, "SPY")
+    assert result["source"] == "unavailable"
+    assert result["trusted"] is False
+    assert result["synthetic_fallback_used"] is False
+    assert result["unavailable_reason"]
+    assert all(attempt["status"] == "unavailable" for attempt in result["provider_attempts"])
 
 
 def test_research_persistence_rejects_missing_prices():

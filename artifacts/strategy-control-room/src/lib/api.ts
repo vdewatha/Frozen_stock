@@ -382,6 +382,10 @@ export type MarketImportResponse = {
   start_date: string | null;
   end_date: string | null;
   source: string;
+  trusted: boolean;
+  synthetic_fallback_used: boolean;
+  provider_attempts: Array<{ provider: string; status: string; reason: string | null }>;
+  unavailable_reason: string | null;
 };
 
 export type IntradayImportResponse = {

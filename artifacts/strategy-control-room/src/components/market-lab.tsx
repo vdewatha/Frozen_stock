@@ -211,9 +211,18 @@ export function MarketLab() {
         <div className="grid gap-3">
           <div className="rounded-md border border-line p-3">
             <div className="text-xs font-semibold uppercase text-slate-500">Import Result</div>
-            <div className="mt-2 text-sm">
-              {importResult ? `${importResult.rows_imported} rows, ${importResult.start_date} to ${importResult.end_date}` : "No import run yet"}
-            </div>
+            {importResult ? (
+              <div className="mt-2 grid gap-1 text-sm">
+                <div>{importResult.rows_imported} rows, {importResult.start_date} to {importResult.end_date}</div>
+                <div className={importResult.trusted ? "text-mint" : "text-coral"}>
+                  {importResult.trusted ? `Trusted source: ${importResult.source}` : "Unavailable: no trusted source"}
+                </div>
+                {importResult.unavailable_reason ? <div className="text-xs text-coral">{importResult.unavailable_reason}</div> : null}
+                <div className="text-xs text-slate-500">
+                  Tried: {importResult.provider_attempts.map((attempt) => `${attempt.provider} (${attempt.status})`).join(", ") || "none"}
+                </div>
+              </div>
+            ) : <div className="mt-2 text-sm">No import run yet</div>}
           </div>
            <div className="rounded-md border border-line p-3" data-testid="intraday-import-result">
              <div className="text-xs font-semibold uppercase text-slate-500">Intraday repair</div>
