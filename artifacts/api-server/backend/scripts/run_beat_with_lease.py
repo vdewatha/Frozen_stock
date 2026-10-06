@@ -92,7 +92,7 @@ def _queue_startup_learning_recovery(client: redis.Redis) -> None:
             client.delete(STARTUP_LEARNING_RECOVERY_KEY)
         except redis.RedisError:
             pass
-        raise
+        print("Skipped startup learning recovery: queue unavailable.", flush=True)
 
 
 def main() -> int:

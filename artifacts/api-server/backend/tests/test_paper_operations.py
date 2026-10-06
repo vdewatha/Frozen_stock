@@ -188,6 +188,17 @@ def test_startup_learning_recovery_tolerates_transient_redis_restart():
     send_task.assert_not_called()
 
 
+def test_startup_learning_recovery_tolerates_queue_send_failure():
+    spec = importlib.util.spec_from_file_location("paper_beat_queue_test", BACKEND / "scripts/run_beat_with_lease.py")
+    beat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(beat)
+    client = MagicMock()
+    client.set.return_value = True
+    with patch.object(beat.celery_app, "send_task", side_effect=RuntimeError("broker warming up")):
+        beat._queue_startup_learning_recovery(client)
+    client.delete.assert_called_once_with(beat.STARTUP_LEARNING_RECOVERY_KEY)
+
+
 def test_both_broker_probes_are_read_only_and_redacted():
     from pydantic import SecretStr
 
