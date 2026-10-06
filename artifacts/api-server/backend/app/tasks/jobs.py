@@ -336,6 +336,9 @@ def delayed_sip_collection_job() -> dict:
 def daily_feature_generation() -> dict:
     def work(db):
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).limit(10).all()
+        # Do not keep the asset-query transaction open while each symbol trains
+        # models and refreshes its candidate snapshot.
+        db.commit()
         results = [run_and_persist_model_predictions(db, asset.symbol) for asset in assets]
         candidate_snapshot = get_trade_candidate_snapshot(db, limit=12, refresh=True)
         return {

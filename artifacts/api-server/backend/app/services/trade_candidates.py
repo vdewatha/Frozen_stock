@@ -60,9 +60,19 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
         except UntrustedMarketData as exc:
             blocked_assets.append({"symbol": asset.symbol, "reason": str(exc)})
             continue
-        model = predict_probabilities(asset.symbol, prices, source)
+        # History loading opens a transaction; close it before model fitting
+        # so PostgreSQL does not terminate the session during CPU work.
+        db.commit()
+        model = predict_probabilities(
+            asset.symbol,
+            prices,
+            source,
+            include_walk_forward=False,
+            forest_estimators=40,
+        )
         best_prediction = _best_positive_prediction(model.get("predictions", []))
         news_context = summarize_news_context(db, asset.symbol)
+        db.commit()
 
         for strategy_row in strategies:
             signal = get_strategy(strategy_row.strategy_type, strategy_row.parameters).generate_signal(asset.symbol, prices)
