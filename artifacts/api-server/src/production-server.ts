@@ -58,6 +58,10 @@ const runtimeEnv = {
   AUTH_MODE: "clerk_gateway",
   INTERNAL_AUTH_SECRET: internalSecret,
   ALLOW_LIVE_TRADING: "false",
+  // Seed the trusted research cache once after a production restart. The beat
+  // wrapper deduplicates this through Redis and this task never authorizes
+  // orders; operators can explicitly disable it when needed.
+  PAPER_STARTUP_REFRESH: process.env.PAPER_STARTUP_REFRESH ?? "true",
   PYTHONPATH: ".",
 };
 
