@@ -8,6 +8,7 @@ from app.schemas.trading import StockPaperInitializeRequest
 from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingReviewRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest, StockPaperRevalidationRequest
 from app.services.stock_paper_ledger import (
     StockPaperError,
+    active_paper_broker_name,
     create_stock_paper_signal,
     dispatch_reserved_order,
     halt_stock_paper_account,
@@ -95,7 +96,11 @@ def initialize(request: Request, payload: StockPaperInitializeRequest | None = N
     _attribute(db, request)
     try:
         if payload is None:
-            return initialize_stock_paper_account(db)
+            contract = "alpaca-activities-v2" if active_paper_broker_name() == "alpaca_paper" else None
+            return initialize_stock_paper_account(db, **({"activity_contract": contract} if contract else {}))
+        if payload.activity_contract is None:
+            contract = "alpaca-activities-v2" if active_paper_broker_name() == "alpaca_paper" else None
+            return initialize_stock_paper_account(db, **({"activity_contract": contract} if contract else {}))
         return initialize_stock_paper_account(db, activity_contract=payload.activity_contract)
     except StockPaperError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

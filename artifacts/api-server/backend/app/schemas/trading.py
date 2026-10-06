@@ -377,7 +377,9 @@ class BrokerStatusResponse(BaseModel):
 
 class StockPaperInitializeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    activity_contract: Literal["legacy-v1", "alpaca-activities-v2"] = "legacy-v1"
+    # The route selects the provider-safe default when omitted: Alpaca uses
+    # its versioned activity journal; Tradier retains legacy compatibility.
+    activity_contract: Literal["legacy-v1", "alpaca-activities-v2"] | None = None
 
 
 class StockPaperHaltRequest(BaseModel):

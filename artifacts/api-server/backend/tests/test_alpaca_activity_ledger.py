@@ -460,8 +460,28 @@ def test_api_explicit_version_and_invalid_options(ledger, monkeypatch):
     app.dependency_overrides[get_db] = lambda: db
     with TestClient(app) as client:
         assert client.post("/stock-paper/initialize").status_code == 200
-        assert received[-1] == {}
+        assert received[-1] == {"activity_contract": VERSION}
         assert client.post("/stock-paper/initialize", json={"activity_contract": VERSION}).status_code == 200
         assert received[-1] == {"activity_contract": VERSION}
         assert client.post("/stock-paper/initialize", json={"activity_contract": "guess"}).status_code == 422
         assert client.post("/stock-paper/initialize", json={"allow_live": True}).status_code == 422
+
+
+def test_api_omitted_contract_defaults_to_alpaca_v2(monkeypatch):
+    import app.api.stock_paper as api
+    received = []
+    def capture(session, **kwargs):
+        received.append(kwargs)
+        return {"status": "test"}
+    monkeypatch.setattr(api, "initialize_stock_paper_account", capture)
+    monkeypatch.setattr(api, "active_paper_broker_name", lambda: "alpaca_paper")
+    app = FastAPI()
+    app.include_router(router)
+    class FakeDB:
+        info = {}
+    app.dependency_overrides[get_db] = lambda: FakeDB()
+    with TestClient(app) as client:
+        assert client.post("/stock-paper/initialize").status_code == 200
+        assert received[-1] == {"activity_contract": "alpaca-activities-v2"}
+        assert client.post("/stock-paper/initialize", json={}).status_code == 200
+        assert received[-1] == {"activity_contract": "alpaca-activities-v2"}
