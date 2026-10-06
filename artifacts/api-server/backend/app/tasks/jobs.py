@@ -779,8 +779,11 @@ def stock_training_job(job_id: str) -> dict:
 )
 def agent_research_job(run_id: str) -> dict:
     """Run one bounded research-only agent request with no broker tools."""
+    # Research runs are independent by symbol. Scope the advisory lease to the
+    # immutable run ID so one slow model call cannot serialize the whole
+    # multi-symbol learning queue or cause other queued runs to be discarded.
     return _run_job(
-        "agent_research_job",
+        f"agent_research_job:{run_id}",
         lambda db: run_agent_research(db, run_id),
     )
 

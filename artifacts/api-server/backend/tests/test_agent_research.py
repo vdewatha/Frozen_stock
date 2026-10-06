@@ -17,6 +17,7 @@ from app.services.agent_research import (
     refresh_agent_research_evaluation,
     run_agent_research,
 )
+from app.tasks import jobs
 
 
 class FakeResponse:
@@ -69,6 +70,13 @@ class AgentResearchTests(unittest.TestCase):
 
     def tearDown(self):
         self.engine.dispose()
+
+    def test_agent_task_scopes_worker_lease_to_run_id(self):
+        run_id = "3bb4b093-41e7-4b9b-bec5-eac38dd37b54"
+        with patch.object(jobs, "_run_job", return_value={"status": "queued"}) as runner:
+            result = jobs.agent_research_job.run(run_id)
+        self.assertEqual(result, {"status": "queued"})
+        self.assertEqual(runner.call_args.args[0], f"agent_research_job:{run_id}")
 
     def test_requests_are_deduplicated_and_never_eligible(self):
         with Session(self.engine) as db:
