@@ -89,6 +89,19 @@ class TradierPaperClientTests(unittest.TestCase):
             detail = client.order_details("12")
         self.assertEqual(detail["executions"][0]["id"], "exec-1")
 
+    def test_total_cash_is_used_for_ledger_cash(self):
+        client = self.client()
+        with patch.object(client, "_request", return_value={
+            "balances": {
+                "account_number": "VA000000",
+                "total_equity": "1000",
+                "total_cash": "900",
+                "cash": {"cash_available": "850"},
+                "margin": {"stock_buying_power": "1800"},
+            }
+        }):
+            self.assertEqual(client.account()["cash"], "900")
+
     def test_submit_uses_form_encoding_and_lookup_is_read_only(self):
         client = self.client()
         response = {"order": {"id": 44, "status": "ok"}}

@@ -121,15 +121,16 @@ def score_realized_predictions(db: Session, symbol: Optional[str] = None) -> dic
     predictions = query.order_by(ModelPrediction.prediction_date.asc()).all()
     scored_ids: list[int] = []
     checked = 0
-    prices_by_symbol: dict[str, object] = {}
+    prices_by_identity: dict[tuple[str, str], object] = {}
     for prediction in predictions:
         checked += 1
         if prediction.source not in TRUSTED_SOURCES and prediction.source not in {f"database:{s}" for s in TRUSTED_SOURCES}:
             continue
-        if prediction.symbol not in prices_by_symbol:
+        provider_source = prediction.source.removeprefix("database:")
+        identity = (prediction.symbol, provider_source)
+        if identity not in prices_by_identity:
             try:
-                provider_source = prediction.source.removeprefix("database:")
-                prices_by_symbol[prediction.symbol] = trusted_history(
+                prices_by_identity[identity] = trusted_history(
                     db,
                     prediction.symbol,
                     800,
@@ -138,8 +139,8 @@ def score_realized_predictions(db: Session, symbol: Optional[str] = None) -> dic
                     provider_source=provider_source,
                 )[0]
             except UntrustedMarketData:
-                prices_by_symbol[prediction.symbol] = None
-        prices = prices_by_symbol[prediction.symbol]
+                prices_by_identity[identity] = None
+        prices = prices_by_identity[identity]
         if prices is None:
             continue
         start_price, end_price = realization_prices(prices, prediction.prediction_date, prediction.horizon_days)

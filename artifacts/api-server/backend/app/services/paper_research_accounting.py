@@ -1,5 +1,6 @@
 """Observed paper accounting with explicit cost uncertainty, not execution approval."""
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 
@@ -13,6 +14,16 @@ from app.services.alpaca_paper_cost_contract import assess as assess_cost_contra
 
 VERSION = "paper-research-accounting-v1"
 TRANSPORT_HALT = "Alpaca paper broker is unavailable or returned invalid data"
+
+
+def _same_evidence_value(key, persisted, current):
+    """Treat equivalent persisted Decimal spellings as the same evidence."""
+    if key.endswith("_residual") or key in {"gross_reported_cash_delta", "reported_fill_commissions"}:
+        try:
+            return Decimal(str(persisted)) == Decimal(str(current))
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+    return persisted == current
 
 
 def assess(db, account, *, now=None):
@@ -84,7 +95,7 @@ def _assess(db, account, *, now=None, transport_review=False, probe_review=False
         latest = db.query(StockPaperLedgerEvent).filter_by(account_id=account.id, event_type="activity_reconciliation").order_by(StockPaperLedgerEvent.id.desc()).first()
         require(latest is not None and 0 <= (now-utc(latest.created_at)).total_seconds() <= 120,
                 "Fresh persisted reconciliation evidence is required")
-        require(all((latest.payload or {}).get(key) == value for key, value in report.items()),
+        require(all(_same_evidence_value(key, (latest.payload or {}).get(key), value) for key, value in report.items()),
                 "Independent replay differs from the persisted broker reconciliation")
         fills = db.query(StockPaperFill).filter_by(account_id=account.id).all()
         by_id = {fill.broker_activity_id: fill for fill in fills}

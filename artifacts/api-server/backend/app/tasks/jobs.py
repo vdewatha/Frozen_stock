@@ -285,9 +285,7 @@ def daily_market_data_import() -> dict:
     def work(db):
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
         results = [import_market_prices(db, asset.symbol, "2y") for asset in assets]
-        corporate_actions = ingest_corporate_actions(
-            db, [asset.symbol for asset in assets if asset.symbol in {"AAPL", "MSFT", "QQQ", "SPY"}]
-        )
+        corporate_actions = ingest_corporate_actions(db, [asset.symbol for asset in assets])
         journal = refresh_decision_journal_outcomes(db, source="daily_market_data_import", notify=True)
         replay_monitor = run_memory_replay_gate_monitor(db, source="daily_market_data_import", limit=60, top_k=3)
         agent_evaluation_updates = refresh_agent_research_evaluations(db)
@@ -331,7 +329,7 @@ def intraday_market_data_import() -> dict:
 @celery_app.task
 def daily_news_import() -> dict:
     def work(db):
-        assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).limit(10).all()
+        assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
         results = [import_mock_news(db, asset.symbol) for asset in assets]
         return {"status": "complete", "job": "daily_news_import", "results": results}
 
@@ -391,7 +389,6 @@ def daily_feature_generation() -> dict:
             for (symbol,) in db.query(Asset.symbol)
             .filter(Asset.is_active.is_(True))
             .order_by(Asset.symbol)
-            .limit(10)
             .all()
         ]
         # Do not keep the asset-query transaction open while each symbol trains
@@ -455,7 +452,7 @@ def daily_market_regime_detection() -> dict:
 def nightly_backtest_job() -> dict:
     def work(db):
         strategy = db.query(Strategy).filter(Strategy.strategy_type == "moving_average_crossover").one_or_none()
-        assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).limit(5).all()
+        assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
         if not strategy:
             return {"status": "skipped", "job": "nightly_backtest_job", "reason": "No moving average strategy configured."}
         results = [
@@ -484,11 +481,10 @@ def nightly_backtest_job() -> dict:
 )
 def strategy_learning_scope_job(symbol: str, strategy_slug: str, max_candidates: int = 3) -> dict:
     def work(db):
-        # Keep each scheduled scope short enough for a worker lease. Broader
-        # candidate sweeps remain available through the research service, but
-        # the recurring fan-out should finish one independent comparison per
-        # symbol/strategy so one slow scope cannot starve the learning queue.
-        scoped_candidates = 1
+        # Keep each scheduled scope bounded, while honoring the caller's
+        # candidate budget so recurring fan-out explores more than the first
+        # proposal when worker capacity allows it.
+        scoped_candidates = max(1, min(int(max_candidates), 3))
         result = run_strategy_experiments(
             db,
             symbol=symbol,

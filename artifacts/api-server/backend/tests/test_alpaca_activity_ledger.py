@@ -119,6 +119,20 @@ def test_legacy_alpaca_account_upgrades_only_after_stable_v2_snapshot(ledger):
     assert db.query(StockPaperLedgerEvent).filter_by(event_type="activity_contract_upgrade").count() == 1
 
 
+def test_legacy_upgrade_does_not_hide_unexplained_cash_change(ledger):
+    db, broker = ledger
+    broker.rows = []
+    initialize_stock_paper_account(db, broker, activity_contract="legacy-v1")
+    broker.cash = "999"
+
+    result = reconcile_stock_paper_account(db, broker)
+
+    account = db.query(StockPaperAccount).one()
+    assert account.activity_contract == "legacy-v1"
+    assert account.unexplained_residual is True
+    assert result["status"] == "halted"
+
+
 def set_position(broker, qty="2"):
     broker.position_rows = [{"symbol": "SPY", "qty": qty, "side": "long", "avg_entry_price": "100",
                              "current_price": "100", "market_value": str(Decimal(qty) * 100)}]

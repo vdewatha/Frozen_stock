@@ -10,7 +10,7 @@ services:
     <<: *observation
   market-data:
     <<: *observation
-    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=observer@%h", "--queues=market_data", "--concurrency=1"]
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=observer@%h", "--queues=research_market_data,monitoring", "--concurrency=1"]
   scheduler:
     <<: *observation
   intraday:

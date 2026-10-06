@@ -309,7 +309,7 @@ class TradierPaperClient:
             "id": reported_id,
             "currency": "USD",
             "status": "ACTIVE",
-            "cash": cash.get("cash_available", balances.get("cash_available")),
+            "cash": balances.get("total_cash", cash.get("total_cash", cash.get("cash_available", balances.get("cash_available")))),
             "buying_power": buying_power,
             "equity": equity,
             "last_equity": equity,
@@ -1105,6 +1105,18 @@ def _upgrade_legacy_snapshot(
             return first, False
         raw_account, raw_positions, _, raw_activities, observed = second
         values = _account_values(raw_account, observed)
+        persisted_positions = {
+            row.symbol: row.quantity
+            for row in db.query(StockPaperPosition).filter_by(account_id=account.id).all()
+            if row.quantity
+        }
+        observed_positions = {
+            row["symbol"]: row["quantity"]
+            for row in (_position_values(raw, observed) for raw in raw_positions)
+            if row["quantity"]
+        }
+        if values["cash"] != account.cash or persisted_positions != observed_positions:
+            return first, False
         baseline = alpaca_activity_v2.observed_baseline(
             raw_activities,
             values["cash"],

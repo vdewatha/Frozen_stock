@@ -110,6 +110,14 @@ services:
     <<: *runtime
     command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=market@%h", "--queues=default,market_data", "--concurrency=1"]
 
+  research:
+    <<: *runtime
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=research@%h", "--queues=research_market_data", "--concurrency=1"]
+
+  monitoring:
+    <<: *runtime
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=monitor@%h", "--queues=monitoring", "--concurrency=1"]
+
   learning:
     <<: *runtime
     # One bounded process per queued symbol/strategy scope; scale replicas
