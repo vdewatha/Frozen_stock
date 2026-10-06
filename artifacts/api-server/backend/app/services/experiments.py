@@ -17,12 +17,12 @@ def _decimal(value: float) -> Decimal:
     return Decimal(str(round(float(value), 6)))
 
 
-def _save_backtest(db: Session, strategy: Strategy, symbol: str, parameters: dict, result: dict) -> StrategyBacktest:
+def _save_backtest(db: Session, strategy_id: int, symbol: str, parameters: dict, result: dict) -> StrategyBacktest:
     equity_curve = result.get("equity_curve") or []
     test_start = equity_curve[0]["date"] if equity_curve else None
     test_end = equity_curve[-1]["date"] if equity_curve else None
     row = StrategyBacktest(
-        strategy_id=strategy.id,
+        strategy_id=strategy_id,
         symbol=symbol,
         test_start=datetime.strptime(test_start, "%Y-%m-%d").date() if test_start else None,
         test_end=datetime.strptime(test_end, "%Y-%m-%d").date() if test_end else None,
@@ -68,6 +68,14 @@ def run_strategy_experiments(
     if not strategy:
         raise ValueError(f"Unknown strategy: {strategy_slug}")
 
+    # Materialize the small immutable inputs before the CPU-bound work. The
+    # ORM instance is intentionally not carried through the long experiment
+    # loop; expired attributes can reopen an idle PostgreSQL transaction just
+    # before a later backtest insert.
+    strategy_id = int(strategy.id)
+    strategy_name = strategy.name
+    current_parameters = dict(strategy.parameters or {})
+
     prices, source = trusted_history(db, symbol, 420, minimum=100)
 
     # Loading trusted history starts a database transaction. Backtests are
@@ -76,10 +84,9 @@ def run_strategy_experiments(
     # writes below open a fresh transaction and are committed at the end.
     db.commit()
 
-    current_parameters = strategy.parameters or {}
     config = BacktestConfig()
     old_result = run_backtest(symbol, strategy_slug, prices, config, current_parameters)
-    old_backtest = _save_backtest(db, strategy, symbol, current_parameters, old_result)
+    old_backtest = _save_backtest(db, strategy_id, symbol, current_parameters, old_result)
     # Close the transaction before the next CPU-bound experiment. PostgreSQL
     # may terminate an idle transaction while a long backtest is running.
     db.commit()
@@ -91,7 +98,7 @@ def run_strategy_experiments(
     for proposal in proposals:
         new_parameters = proposal["new_parameters"]
         new_result = run_backtest(symbol, strategy_slug, prices, config, new_parameters)
-        new_backtest = _save_backtest(db, strategy, symbol, new_parameters, new_result)
+        new_backtest = _save_backtest(db, strategy_id, symbol, new_parameters, new_result)
         decision, reason = _decision(old_result, new_result)
         if decision == "promoted":
             promoted_candidates.append((new_result["score"], new_parameters, proposal["experiment_name"]))
@@ -121,7 +128,7 @@ def run_strategy_experiments(
             "reason": reason,
         }
         experiment = StrategyExperiment(
-            strategy_id=strategy.id,
+            strategy_id=strategy_id,
             experiment_name=proposal["experiment_name"],
             old_parameters=current_parameters,
             new_parameters=new_parameters,
@@ -150,6 +157,7 @@ def run_strategy_experiments(
     applied_parameters: Optional[dict] = None
     if apply_promotions and promoted_candidates:
         _score, applied_parameters, experiment_name = sorted(promoted_candidates, reverse=True, key=lambda row: row[0])[0]
+        strategy = db.get(Strategy, strategy_id)
         strategy.parameters = applied_parameters
         strategy.updated_at = datetime.utcnow()
         write_audit_log(
@@ -159,7 +167,7 @@ def run_strategy_experiments(
             entity_id=strategy.id,
             action="apply_promoted_parameters",
             status="applied",
-            message=f"Applied {experiment_name} parameters to {strategy.name}.",
+            message=f"Applied {experiment_name} parameters to {strategy_name}.",
             payload={"old_parameters": current_parameters, "new_parameters": applied_parameters},
         )
 
