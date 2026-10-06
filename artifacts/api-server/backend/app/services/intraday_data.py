@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
 from app.models import Asset, CorporateAction, IntradayBar
@@ -275,7 +276,47 @@ def upsert_intraday_bars(
                 IntradayBar(symbol=symbol, timeframe="1m", opened_at=opened_at, **provenance)
             )
     if new_rows:
-        db.add_all(new_rows)
+        # Two scheduled collectors can legitimately fetch the same completed
+        # minute at the same time.  The pre-query above avoids normal updates,
+        # but it cannot prevent a race between separate PostgreSQL sessions.
+        # Let the database enforce the unique key atomically so a duplicate
+        # observation remains a successful idempotent ingestion.
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            values = [
+                {
+                    "symbol": row.symbol,
+                    "timeframe": row.timeframe,
+                    "opened_at": row.opened_at,
+                    "open": row.open,
+                    "high": row.high,
+                    "low": row.low,
+                    "close": row.close,
+                    "volume": row.volume,
+                    "provider": row.provider,
+                    "feed_class": row.feed_class,
+                    "exchange_timestamp": row.exchange_timestamp,
+                    "ingested_at": row.ingested_at,
+                }
+                for row in new_rows
+            ]
+            statement = pg_insert(IntradayBar).values(values)
+            excluded = statement.excluded
+            statement = statement.on_conflict_do_update(
+                constraint="uq_intraday_bar_provider",
+                set_={
+                    "open": excluded.open,
+                    "high": excluded.high,
+                    "low": excluded.low,
+                    "close": excluded.close,
+                    "volume": excluded.volume,
+                    "feed_class": excluded.feed_class,
+                    "exchange_timestamp": excluded.exchange_timestamp,
+                    "ingested_at": excluded.ingested_at,
+                },
+            )
+            db.execute(statement)
+        else:
+            db.add_all(new_rows)
     db.commit()
     return {
         "rows_imported": len(deduplicated),
