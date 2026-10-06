@@ -711,7 +711,13 @@ def _snapshot(gateway: AlpacaPaperGateway, after: datetime | None = None) -> tup
 
 def _activity_timestamp(raw: dict, fallback: datetime) -> datetime:
     """Use broker-provided activity time before the reconciliation observation time."""
-    return _timestamp(raw.get("transaction_time") or raw.get("created_at"), fallback=fallback)
+    value = raw.get("transaction_time") or raw.get("created_at")
+    if value is None and raw.get("date"):
+        # Alpaca cash activities expose an effective date rather than an
+        # execution timestamp. Preserve that evidence instead of assigning the
+        # activity the reconciliation observation time.
+        value = f"{raw['date']}T00:00:00+00:00"
+    return _timestamp(value, fallback=fallback)
 
 
 def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict]) -> None:
@@ -900,15 +906,17 @@ def _equation_failure(raw_activities: list[dict], previous_cash: Decimal, curren
                       previous_positions: dict[str, Decimal], current_positions: list[dict],
                       since: datetime | None, allowed_late_activity_ids: set[str] | None = None) -> str | None:
     """Verify cash/inventory deltas only for fully reported, supported activity."""
+    supported_cash = alpaca_activity_v2.CASH_TYPES
     unsupported = sorted({str(row.get("activity_type") or "FILL").upper() for row in raw_activities
-                          if str(row.get("activity_type") or "FILL").upper() != "FILL"})
+                          if (str(row.get("activity_type") or "FILL").upper() != "FILL"
+                              and str(row.get("activity_type") or "FILL").upper() not in supported_cash)})
     if unsupported:
         return f"Unsupported broker cash/position activities require review: {', '.join(unsupported)}"
     new_rows = []
     allowed_late_activity_ids = allowed_late_activity_ids or set()
     for row in raw_activities:
-        if not (row.get("transaction_time") or row.get("created_at")):
-            return "Broker fill lacks a stable broker timestamp"
+        if not (row.get("transaction_time") or row.get("created_at") or row.get("date")):
+            return "Broker activity lacks a stable broker timestamp"
         filled_at = _activity_timestamp(row, fallback=datetime.now(UTC))
         if since and filled_at <= _utc(since) and str(row.get("id") or "") not in allowed_late_activity_ids:
             return "Late broker fill predates the reconciliation watermark; full accounting reconstruction is required"
@@ -924,6 +932,13 @@ def _equation_failure(raw_activities: list[dict], previous_cash: Decimal, curren
     cash_delta = Decimal("0")
     qty_delta: dict[str, Decimal] = {}
     for row in new_rows:
+        activity_type = str(row.get("activity_type") or "FILL").upper()
+        if activity_type in supported_cash:
+            try:
+                cash_delta += _decimal(row.get("net_amount"), "cash activity amount")
+            except StockPaperError:
+                return "Broker cash activity lacks a valid net amount"
+            continue
         qty, price = _decimal(row.get("qty"), "fill quantity"), _decimal(row.get("price"), "fill price")
         fee = _decimal(row.get("commission"), "commission") if row.get("commission") is not None else Decimal("0")
         side, symbol = str(row.get("side") or "").lower(), str(row.get("symbol") or "").upper()
@@ -1349,21 +1364,47 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             _halt(account, "Broker position drift detected; reconciliation review is required")
             _event(db, account, "reconcile", "drift", account.halt_reason, {"symbols": drift})
         elif account.unexplained_residual:
-            _halt(account, ACCOUNTING_RESIDUAL_REVIEW_REASON)
-            _mark_accounting_review_required(db)
-            prior_halt = db.query(StockPaperLedgerEvent).filter_by(
-                account_id=account.id,
-                event_type="reconcile",
-                status="halted",
-            ).first()
-            if new_activities or prior_halt is None:
-                _event_once(
+            legacy_cash_halt_resolved = (
+                (account.halt_reason or "").startswith("Unsupported broker cash/position activities require review:")
+                and bool(new_activities)
+                and any(
+                    str(row.get("activity_type") or "FILL").upper() in alpaca_activity_v2.CASH_TYPES
+                    for row in new_activities
+                )
+            )
+            if legacy_cash_halt_resolved:
+                # Older deployments halted on supported cash activity because
+                # the legacy equation only understood fills. The exact cash
+                # equation above is the proof for this narrow reclassification;
+                # it does not verify costs or enable paper execution.
+                account.unexplained_residual = False
+                account.reconciliation_required = False
+                account.status = "reconciled"
+                account.halt_reason = None
+                _event(
                     db,
                     account,
-                    "reconcile",
-                    "halted",
-                    ACCOUNTING_RESIDUAL_REVIEW_REASON,
+                    "accounting_residual_reclassified",
+                    "resolved",
+                    "Legacy cash-activity halt resolved by exact broker cash reconciliation",
+                    {"activity_ids": [str(row.get("id")) for row in new_activities]},
                 )
+            else:
+                _halt(account, ACCOUNTING_RESIDUAL_REVIEW_REASON)
+                _mark_accounting_review_required(db)
+                prior_halt = db.query(StockPaperLedgerEvent).filter_by(
+                    account_id=account.id,
+                    event_type="reconcile",
+                    status="halted",
+                ).first()
+                if new_activities or prior_halt is None:
+                    _event_once(
+                        db,
+                        account,
+                        "reconcile",
+                        "halted",
+                        ACCOUNTING_RESIDUAL_REVIEW_REASON,
+                    )
         else:
             watchdog_halt = (
                 account.status == "halted"
