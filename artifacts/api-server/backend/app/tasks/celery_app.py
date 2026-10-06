@@ -45,6 +45,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.nightly_strategy_learning_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_learning_scope_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_learning_batch_job": {"queue": "learning"},
+    "app.tasks.jobs.retry_failed_strategy_learning_scopes_job": {"queue": "learning"},
     "app.tasks.jobs.paper_trading_signal_job": {"queue": "paper_trading"},
     "app.tasks.jobs.paper_trade_reconciliation_job": {"queue": "paper_trading"},
     "app.tasks.jobs.stock_paper_broker_reconciliation_job": {"queue": "paper_trading"},
