@@ -10,7 +10,11 @@ import sys
 
 import httpx
 
-from check_deployment_monitor import _load_json
+try:
+    # Support both direct script execution and ``python -m scripts...``.
+    from scripts.check_deployment_monitor import _load_json
+except ModuleNotFoundError:  # pragma: no cover - exercised by direct execution
+    from check_deployment_monitor import _load_json
 
 INFRASTRUCTURE_CHECKS = (
     "Database", "Redis", "Scheduled job definitions", "Celery workers", "Celery beat scheduler",
