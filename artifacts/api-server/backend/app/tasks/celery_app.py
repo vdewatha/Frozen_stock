@@ -90,7 +90,10 @@ celery_app.conf.beat_schedule = {
     },
     "daily-economic-data-import": {"task": "app.tasks.jobs.daily_economic_data_import", "schedule": 60 * 60 * 24},
     "daily-news-import": {"task": "app.tasks.jobs.daily_news_import", "schedule": 60 * 60 * 24},
-    "daily-feature-generation": {"task": "app.tasks.jobs.daily_feature_generation", "schedule": 60 * 60 * 24},
+    # Re-run the corrected, trusted prediction pipeline often enough to clear
+    # transient worker failures and keep the multi-symbol research loop fresh.
+    # It remains serialized by the job lease and never authorizes orders.
+    "daily-feature-generation": {"task": "app.tasks.jobs.daily_feature_generation", "schedule": 60 * 60 * 6},
     # Prediction labels mature on trading-day horizons. Re-score often enough
     # to feed the learning and monitoring views without overlapping imports.
     "model-realization-scoring": {

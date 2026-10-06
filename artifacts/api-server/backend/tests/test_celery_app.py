@@ -124,6 +124,11 @@ class CeleryConfigurationTests(unittest.TestCase):
         self.assertTrue(result["paper_only"])
         self.assertFalse(result["live_authorized"])
 
+    def test_feature_generation_refreshes_on_learning_cadence(self):
+        entry = celery_app.conf.beat_schedule["daily-feature-generation"]
+        self.assertEqual(entry["task"], "app.tasks.jobs.daily_feature_generation")
+        self.assertEqual(entry["schedule"], 6 * 60 * 60)
+
     def test_intraday_schedule_remains_expiring_each_minute(self):
         schedule = celery_app.conf.beat_schedule["intraday-market-data-import"]
 
