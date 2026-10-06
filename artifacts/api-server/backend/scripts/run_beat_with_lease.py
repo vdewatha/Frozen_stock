@@ -65,12 +65,20 @@ def _queue_startup_learning_recovery(client: redis.Redis) -> None:
     small, deduplicated fallback for deployments where a persisted beat
     schedule starts after the first minute boundary.
     """
-    if not client.set(
-        STARTUP_LEARNING_RECOVERY_KEY,
-        "queued",
-        nx=True,
-        ex=STARTUP_LEARNING_RECOVERY_TTL_SECONDS,
-    ):
+    try:
+        should_queue = client.set(
+            STARTUP_LEARNING_RECOVERY_KEY,
+            "queued",
+            nx=True,
+            ex=STARTUP_LEARNING_RECOVERY_TTL_SECONDS,
+        )
+    except redis.RedisError as exc:
+        # The beat lease remains authoritative. A transient Redis restart must
+        # not take down the scheduler merely because this optional probe could
+        # not establish its deduplication marker.
+        print(f"Skipped startup learning recovery: {exc.__class__.__name__}.", flush=True)
+        return
+    if not should_queue:
         return
     try:
         celery_app.send_task(

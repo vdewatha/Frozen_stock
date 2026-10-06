@@ -175,6 +175,19 @@ def test_startup_learning_recovery_is_deduplicated_and_paper_only():
     )
 
 
+def test_startup_learning_recovery_tolerates_transient_redis_restart():
+    import redis
+
+    spec = importlib.util.spec_from_file_location("paper_beat_redis_test", BACKEND / "scripts/run_beat_with_lease.py")
+    beat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(beat)
+    client = MagicMock()
+    client.set.side_effect = redis.RedisError("redis restarting")
+    with patch.object(beat.celery_app, "send_task") as send_task:
+        beat._queue_startup_learning_recovery(client)
+    send_task.assert_not_called()
+
+
 def test_both_broker_probes_are_read_only_and_redacted():
     from pydantic import SecretStr
 
