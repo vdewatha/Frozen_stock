@@ -935,7 +935,7 @@ def _equation_failure(raw_activities: list[dict], previous_cash: Decimal, curren
         activity_type = str(row.get("activity_type") or "FILL").upper()
         if activity_type in supported_cash:
             try:
-                cash_delta += _decimal(row.get("net_amount"), "cash activity amount")
+                cash_delta += _decimal(row.get("net_amount"), "cash activity amount", nonnegative=False)
             except StockPaperError:
                 return "Broker cash activity lacks a valid net amount"
             continue
@@ -1364,13 +1364,18 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             _halt(account, "Broker position drift detected; reconciliation review is required")
             _event(db, account, "reconcile", "drift", account.halt_reason, {"symbols": drift})
         elif account.unexplained_residual:
+            supported_cash_activity_ids = [
+                str(row.get("id"))
+                for row in raw_fills
+                if str(row.get("activity_type") or "FILL").upper() in alpaca_activity_v2.CASH_TYPES
+            ]
             legacy_cash_halt_resolved = (
-                (account.halt_reason or "").startswith("Unsupported broker cash/position activities require review:")
-                and bool(new_activities)
-                and any(
-                    str(row.get("activity_type") or "FILL").upper() in alpaca_activity_v2.CASH_TYPES
-                    for row in new_activities
+                account.activity_contract == "legacy-v1"
+                and (
+                    (account.halt_reason or "").startswith("Unsupported broker cash/position activities require review:")
+                    or account.halt_reason == ACCOUNTING_RESIDUAL_REVIEW_REASON
                 )
+                and bool(supported_cash_activity_ids)
             )
             if legacy_cash_halt_resolved:
                 # Older deployments halted on supported cash activity because
@@ -1387,7 +1392,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                     "accounting_residual_reclassified",
                     "resolved",
                     "Legacy cash-activity halt resolved by exact broker cash reconciliation",
-                    {"activity_ids": [str(row.get("id")) for row in new_activities]},
+                    {"activity_ids": supported_cash_activity_ids},
                 )
             else:
                 _halt(account, ACCOUNTING_RESIDUAL_REVIEW_REASON)

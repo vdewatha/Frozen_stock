@@ -15,7 +15,14 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.models.stock_paper import StockPaperAccount, StockPaperBrokerActivity, StockPaperEquitySnapshot, StockPaperFill, StockPaperLedgerEvent, StockPaperOrder
 from app.services.alpaca_activity_v2 import VERSION
-from app.services.stock_paper_ledger import StockPaperError, _upsert_orders, initialize_stock_paper_account, reconcile_stock_paper_account, stock_paper_status
+from app.services.stock_paper_ledger import (
+    ACCOUNTING_RESIDUAL_REVIEW_REASON,
+    StockPaperError,
+    _upsert_orders,
+    initialize_stock_paper_account,
+    reconcile_stock_paper_account,
+    stock_paper_status,
+)
 from app.services.stock_recovery import attempt_automatic_stock_recovery
 
 
@@ -262,6 +269,28 @@ def test_cash_changes_reconcile_without_execution_timestamp(ledger, kind, delta)
     assert report(db)["cash_equation_matches"]
     assert not result["costs_known"]
     assert not result["account"]["accounting_verified"]
+
+
+def test_legacy_review_halt_reclassifies_imported_cash_activity_after_exact_match(ledger):
+    db, broker = ledger
+    broker.rows = []
+    initialize_stock_paper_account(db, broker, activity_contract="legacy-v1")
+    account = db.query(StockPaperAccount).one()
+    account.status = "halted"
+    account.halt_reason = ACCOUNTING_RESIDUAL_REVIEW_REASON
+    account.reconciliation_required = True
+    account.unexplained_residual = True
+    db.commit()
+
+    broker.rows.append(cash_event(id="fee", activity_type="FEE", date="2026-10-07", net_amount="-1"))
+    broker.cash = "999"
+    result = reconcile_stock_paper_account(db, broker)
+
+    assert result["status"] == "reconciled"
+    assert result["account"]["unexplained_residual"] is False
+    assert result["account"]["reconciliation_required"] is False
+    assert result["account"]["accounting_verified"] is False
+    assert result["costs_known"] is False
 
 
 def test_fill_and_separate_fee_replay_do_not_invent_commission(ledger):
