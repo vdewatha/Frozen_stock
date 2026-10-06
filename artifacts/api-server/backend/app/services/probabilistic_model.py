@@ -35,7 +35,13 @@ def build_feature_frame(prices: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def _fit_predict_probability(train_x: pd.DataFrame, train_y: pd.Series, latest_x: pd.DataFrame) -> list[TrainedModelResult]:
+def _fit_predict_probability(
+    train_x: pd.DataFrame,
+    train_y: pd.Series,
+    latest_x: pd.DataFrame,
+    *,
+    forest_estimators: int = 120,
+) -> list[TrainedModelResult]:
     results: list[TrainedModelResult] = []
     if train_y.nunique() < 2:
         return results
@@ -44,7 +50,11 @@ def _fit_predict_probability(train_x: pd.DataFrame, train_y: pd.Series, latest_x
     logistic.fit(train_x, train_y)
     results.append(TrainedModelResult(float(logistic.predict_proba(latest_x)[0][1]), "logistic_regression"))
 
-    forest = RandomForestClassifier(n_estimators=120, min_samples_leaf=5, random_state=42)
+    forest = RandomForestClassifier(
+        n_estimators=max(10, min(int(forest_estimators), 120)),
+        min_samples_leaf=5,
+        random_state=42,
+    )
     forest.fit(train_x, train_y)
     results.append(TrainedModelResult(float(forest.predict_proba(latest_x)[0][1]), "random_forest"))
     return results
@@ -91,7 +101,14 @@ def _walk_forward_for_horizon(model_frame: pd.DataFrame, horizon: int, train_win
     return folds
 
 
-def predict_probabilities(symbol: str, prices: pd.DataFrame, source: str) -> dict:
+def predict_probabilities(
+    symbol: str,
+    prices: pd.DataFrame,
+    source: str,
+    *,
+    include_walk_forward: bool = True,
+    forest_estimators: int = 120,
+) -> dict:
     warnings: list[str] = []
     feature_frame = build_feature_frame(prices)
     model_frame = feature_frame.dropna(subset=FEATURE_COLUMNS).copy()
@@ -124,7 +141,12 @@ def predict_probabilities(symbol: str, prices: pd.DataFrame, source: str) -> dic
 
         train_x = training[FEATURE_COLUMNS]
         train_y = training[target]
-        model_results = _fit_predict_probability(train_x, train_y, latest_x)
+        model_results = _fit_predict_probability(
+            train_x,
+            train_y,
+            latest_x,
+            forest_estimators=forest_estimators,
+        )
         if not model_results:
             warnings.append(f"Horizon {horizon}d could not train a two-class classifier.")
             continue
@@ -141,7 +163,8 @@ def predict_probabilities(symbol: str, prices: pd.DataFrame, source: str) -> dic
                 "probabilities_by_model": {result.model_name: round(result.probability_up, 4) for result in model_results},
             }
         )
-        walk_forward.extend(_walk_forward_for_horizon(training, horizon))
+        if include_walk_forward:
+            walk_forward.extend(_walk_forward_for_horizon(training, horizon))
 
     if not walk_forward:
         warnings.append("Walk-forward validation did not produce folds; add more history before promotion decisions.")

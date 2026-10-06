@@ -128,7 +128,15 @@ class ModelPredictiveLongStrategy(BaseStrategy):
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         min_probability = float(self.parameters.get("min_probability_up", 0.56))
         min_expected_return = float(self.parameters.get("min_expected_return", 0.003))
-        model = predict_probabilities(symbol, data, "strategy_price_history")
+        # Backtest signals must remain causal, but walk-forward validation is a
+        # separate research artifact and should not be recomputed at every bar.
+        model = predict_probabilities(
+            symbol,
+            data,
+            "strategy_price_history",
+            include_walk_forward=False,
+            forest_estimators=40,
+        )
         predictions = model.get("predictions", [])
         candidates = [
             prediction
