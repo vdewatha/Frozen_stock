@@ -122,6 +122,11 @@ def main() -> int:
         print("Skipped startup market-data refresh; scheduled jobs remain enabled.", flush=True)
     _queue_startup_learning_recovery(client)
 
+    schedule_file = os.environ.get(
+        "CELERY_BEAT_SCHEDULE_FILE",
+        f"/tmp/frozen-stock-celerybeat-{owner}",
+    )
+
     def spawn_beat() -> subprocess.Popen:
         return subprocess.Popen(
             [
@@ -132,7 +137,7 @@ def main() -> int:
                 "app.tasks.celery_app:celery_app",
                 "beat",
                 "--loglevel=INFO",
-                f"--schedule={os.environ.get('CELERY_BEAT_SCHEDULE_FILE', '/tmp/frozen-stock-celerybeat-schedule')}",
+                f"--schedule={schedule_file}",
             ]
         )
 
