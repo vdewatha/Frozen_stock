@@ -345,11 +345,19 @@ def import_market_prices(db: Session, symbol: str, period: str = "2y") -> dict:
     }
 
 
-def get_price_history(db: Session, symbol: str, limit: int = 260, auto_seed: bool = True) -> tuple[pd.DataFrame, str]:
+def get_price_history(
+    db: Session,
+    symbol: str,
+    limit: int = 260,
+    auto_seed: bool = True,
+    source_filter: str | None = None,
+) -> tuple[pd.DataFrame, str]:
     symbol = _clean_symbol(symbol)
+    query = db.query(MarketPrice).filter(MarketPrice.symbol == symbol)
+    if source_filter:
+        query = query.filter(MarketPrice.source == source_filter)
     rows = (
-        db.query(MarketPrice)
-        .filter(MarketPrice.symbol == symbol)
+        query
         .order_by(MarketPrice.price_date.desc())
         .limit(limit)
         .all()
@@ -358,9 +366,11 @@ def get_price_history(db: Session, symbol: str, limit: int = 260, auto_seed: boo
     if not rows and auto_seed:
         import_result = import_market_prices(db, symbol, "2y")
         source = import_result["source"]
+        query = db.query(MarketPrice).filter(MarketPrice.symbol == symbol)
+        if source_filter:
+            query = query.filter(MarketPrice.source == source_filter)
         rows = (
-            db.query(MarketPrice)
-            .filter(MarketPrice.symbol == symbol)
+            query
             .order_by(MarketPrice.price_date.desc())
             .limit(limit)
             .all()

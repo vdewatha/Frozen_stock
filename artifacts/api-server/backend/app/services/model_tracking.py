@@ -128,7 +128,15 @@ def score_realized_predictions(db: Session, symbol: Optional[str] = None) -> dic
             continue
         if prediction.symbol not in prices_by_symbol:
             try:
-                prices_by_symbol[prediction.symbol] = trusted_history(db, prediction.symbol, 800, minimum=1, require_active=False)[0]
+                provider_source = prediction.source.removeprefix("database:")
+                prices_by_symbol[prediction.symbol] = trusted_history(
+                    db,
+                    prediction.symbol,
+                    800,
+                    minimum=1,
+                    require_active=False,
+                    provider_source=provider_source,
+                )[0]
             except UntrustedMarketData:
                 prices_by_symbol[prediction.symbol] = None
         prices = prices_by_symbol[prediction.symbol]

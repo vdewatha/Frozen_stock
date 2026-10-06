@@ -81,11 +81,23 @@ def validate_history(prices: pd.DataFrame, minimum: int = 60, max_age_days: int 
         raise UntrustedMarketData("Candle high/low bounds are invalid.")
 
 
-def trusted_history(db, symbol: str, limit: int = 260, minimum: int = 60, require_active: bool = True):
+def trusted_history(
+    db,
+    symbol: str,
+    limit: int = 260,
+    minimum: int = 60,
+    require_active: bool = True,
+    provider_source: str | None = None,
+):
     symbol = symbol.strip().upper()
     if require_active and db.query(Asset).filter(Asset.symbol == symbol, Asset.is_active.is_(True)).one_or_none() is None:
         raise UntrustedMarketData(f"Requested instrument {symbol} is not active.")
-    prices, source = get_price_history(db, symbol, limit, auto_seed=False)
+    if provider_source is None:
+        prices, source = get_price_history(db, symbol, limit, auto_seed=False)
+    else:
+        prices, source = get_price_history(
+            db, symbol, limit, auto_seed=False, source_filter=provider_source
+        )
     validate_history(prices, minimum=minimum)
     if "adjusted_close" in prices:
         adjusted = pd.to_numeric(prices["adjusted_close"], errors="coerce")
