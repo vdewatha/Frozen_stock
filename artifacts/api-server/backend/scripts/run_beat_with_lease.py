@@ -20,7 +20,7 @@ LEASE_SECONDS = 15
 # deduplication keys in Redis.
 STARTUP_REFRESH_KEY = "trading:startup-refresh:market-data:v3"
 STARTUP_REFRESH_TTL_SECONDS = 20 * 60 * 60
-STARTUP_FEATURE_REFRESH_KEY = "trading:startup-refresh:features:v3"
+STARTUP_FEATURE_REFRESH_KEY = "trading:startup-refresh:features:v4"
 STARTUP_FEATURE_REFRESH_TTL_SECONDS = 6 * 60 * 60
 STARTUP_REALIZATION_KEY = "trading:startup-refresh:realization:v2"
 STARTUP_REALIZATION_TTL_SECONDS = 6 * 60 * 60
