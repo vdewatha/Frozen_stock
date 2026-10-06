@@ -111,6 +111,22 @@ def _acquire_lease(client: redis.Redis, owner: str) -> None:
         time.sleep(2)
 
 
+def _stop_child(child: subprocess.Popen) -> None:
+    """Stop beat without allowing shutdown cleanup to kill the wrapper."""
+    if child.poll() is None:
+        child.terminate()
+    try:
+        child.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # The wrapper must remain alive so its next loop can reacquire the
+            # lease after a transient broker or scheduler failure.
+            pass
+
+
 def main() -> int:
     client = redis.Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=2, socket_timeout=2)
     owner = secrets.token_hex(16)
@@ -176,13 +192,20 @@ def main() -> int:
                 time.sleep(LEASE_SECONDS / 3)
                 try:
                     refreshed = refresh(keys=[LEASE_KEY], args=[owner, LEASE_SECONDS])
-                except redis.RedisError:
-                    child.terminate()
-                    print("Celery beat lease coordination is unavailable.", file=sys.stderr)
-                    return 1
+                except redis.RedisError as exc:
+                    _stop_child(child)
+                    print(
+                        f"Celery beat lease coordination is unavailable; retrying: {exc.__class__.__name__}.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    time.sleep(2)
+                    _acquire_lease(client, owner)
+                    child = spawn_beat()
+                    continue
                 if not refreshed:
                     child.terminate()
-                    print("Celery beat lease was lost.", file=sys.stderr)
+                    print("Celery beat lease was lost.", file=sys.stderr, flush=True)
                     return 1
             if stopping:
                 break
@@ -196,13 +219,7 @@ def main() -> int:
         return 0
     finally:
         # Do not release leadership until the old scheduler has stopped.
-        if child.poll() is None:
-            child.terminate()
-        try:
-            child.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            child.kill()
-            child.wait(timeout=5)
+        _stop_child(child)
         try:
             release(keys=[LEASE_KEY], args=[owner])
         except redis.RedisError:
