@@ -177,5 +177,43 @@ def test_scanner_uses_scalar_symbol_for_news_context():
     summarize_news.assert_called_once_with(db, "SPY")
 
 
+def test_scanner_marks_research_only_symbols_as_not_execution_eligible():
+    from app.services import trade_candidates
+    from types import SimpleNamespace
+
+    db = MagicMock()
+    asset_query = MagicMock()
+    asset_query.filter.return_value.order_by.return_value.all.return_value = [("QQQ",)]
+    strategy_query = MagicMock()
+    strategy_query.order_by.return_value.all.return_value = [
+        SimpleNamespace(
+            id=1,
+            name="Test strategy",
+            strategy_type="test",
+            parameters={},
+            current_status="active",
+        )
+    ]
+    db.query.side_effect = [asset_query, strategy_query]
+    signal = MagicMock(action="BUY", confidence=0.8, probability_up=0.6, reason="test")
+    with patch.object(trade_candidates.settings, "paper_execution_symbols", ["SPY"]), \
+         patch.object(trade_candidates, "trusted_history", return_value=(history(), "database:yfinance")), \
+         patch.object(trade_candidates, "summarize_macro_context", return_value={"summary": ""}), \
+         patch.object(trade_candidates, "latest_market_regime", return_value=None), \
+         patch.object(trade_candidates, "predict_probabilities", return_value={"predictions": [{"probability_up": 0.6, "expected_return": 0.01, "horizon_days": 1}]}), \
+         patch.object(trade_candidates, "summarize_news_context", return_value={"summary": ""}), \
+         patch.object(trade_candidates, "get_strategy") as get_strategy, \
+         patch.object(trade_candidates, "run_backtest", return_value={"score": 0.2, "rejected": False, "rejection_reasons": []}):
+        get_strategy.return_value.generate_signal.return_value = signal
+        result = trade_candidates.scan_trade_candidates(db)
+
+    candidate = result["candidates"][0]
+    assert candidate["execution_eligible"] is False
+    assert candidate["execution_blocker"] == "research_only_symbol"
+    assert any("research-only" in blocker for blocker in candidate["blockers"])
+    assert result["positive_count"] == 0
+    assert result["research_positive_count"] == 1
+
+
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(unittest.FunctionTestCase(value) for name, value in globals().items() if name.startswith("test_"))

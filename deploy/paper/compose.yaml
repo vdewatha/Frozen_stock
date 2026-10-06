@@ -6,9 +6,11 @@ x-runtime: &runtime
     context: ../../artifacts/api-server/backend
     dockerfile: Dockerfile.paper-stack
   env_file:
-    - path: paper.env
     - path: ../../.env
       required: false
+    # Keep the isolated paper deployment configuration authoritative when a
+    # developer workspace also has a broader .env file.
+    - path: paper.env
   environment:
     DATABASE_URL: postgresql+psycopg://paper:${POSTGRES_PASSWORD:?Initialize paper.env first}@postgres:5432/paper
     REDIS_URL: redis://redis:6379/0

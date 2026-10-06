@@ -793,6 +793,8 @@ class TradeCandidate(BaseModel):
     strategy_status: str
     strategy_research: dict
     candidate_status: str
+    execution_eligible: bool = False
+    execution_blocker: Optional[str] = None
     base_score: Optional[float] = None
     score: float
     memory_score_adjustment: float = 0.0
@@ -819,6 +821,7 @@ class TradeCandidateResponse(BaseModel):
     cached_at: Optional[datetime] = None
     candidate_count: int
     positive_count: int
+    research_positive_count: int = 0
     candidates: list[TradeCandidate]
 
 

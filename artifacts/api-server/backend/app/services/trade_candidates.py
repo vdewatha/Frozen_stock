@@ -7,6 +7,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.models import Asset, Strategy, StrategyMemory, TradeCandidateSnapshot
+from app.core.config import settings
 from app.services.audit import write_audit_log
 from app.services.backtester import BacktestConfig, run_backtest
 from app.services.economic_data import summarize_macro_context
@@ -47,6 +48,7 @@ def _journal_feedback_adjustment(db: Session, strategy_row: Strategy | dict, sym
 
 
 def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
+    paper_execution_symbols = set(settings.paper_execution_symbols)
     symbols = [
         symbol
         for (symbol,) in db.query(Asset.symbol)
@@ -119,6 +121,11 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
             journal_feedback = _journal_feedback_adjustment(db, strategy_row, symbol)
             score = base_score + float(journal_feedback["score_adjustment"])
             blockers = []
+            execution_eligible = symbol in paper_execution_symbols
+            execution_blocker = None
+            if not execution_eligible:
+                execution_blocker = "research_only_symbol"
+                blockers.append("Symbol remains research-only until its execution feed is complete.")
             if not model_supported:
                 blockers.append("No positive expected-return model horizon.")
             if not strategy_supported:
@@ -134,6 +141,8 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
                     "strategy_status": strategy_row["current_status"],
                     "strategy_research": strategy_research_for(strategy_row["strategy_type"]),
                     "candidate_status": status,
+                    "execution_eligible": execution_eligible,
+                    "execution_blocker": execution_blocker,
                     "base_score": round(base_score, 4),
                     "score": round(score, 4),
                     "memory_score_adjustment": journal_feedback["score_adjustment"],
@@ -162,7 +171,16 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
         "trusted_data_version": 1,
         "candidate_count": len(candidates),
         "blocked_assets": blocked_assets,
-        "positive_count": sum(1 for item in candidates if item["candidate_status"] == "positive_candidate"),
+        # Keep research candidates visible, but only count paper-execution
+        # eligible rows as actionable positives in the summary.
+        "positive_count": sum(
+            1
+            for item in candidates
+            if item["candidate_status"] == "positive_candidate" and item["execution_eligible"]
+        ),
+        "research_positive_count": sum(
+            1 for item in candidates if item["candidate_status"] == "positive_candidate"
+        ),
         "candidates": ranked,
     }
 
@@ -179,8 +197,18 @@ def _hydrate_candidate_strategy_statuses(db: Session, candidates: list[dict]) ->
     )
     strategy_by_type = {strategy.strategy_type: strategy for strategy in strategies}
     hydrated = []
+    paper_execution_symbols = set(settings.paper_execution_symbols)
     for candidate in candidates:
         row = dict(candidate)
+        symbol = str(row.get("symbol") or "").upper()
+        row["execution_eligible"] = symbol in paper_execution_symbols
+        row["execution_blocker"] = (
+            None if row["execution_eligible"] else "research_only_symbol"
+        )
+        blockers = list(row.get("blockers") or [])
+        if not row["execution_eligible"] and not any("research-only" in str(item).lower() for item in blockers):
+            blockers.insert(0, "Symbol remains research-only until its execution feed is complete.")
+        row["blockers"] = blockers[:4]
         strategy = strategy_by_type.get(str(row.get("strategy")))
         if strategy:
             row["strategy_status"] = strategy.current_status
@@ -206,6 +234,16 @@ def get_trade_candidate_snapshot(db: Session, limit: int = 12, refresh: bool = F
             payload.get("candidates") or [],
         )
         payload["candidates"] = sorted(hydrated, key=lambda item: item["score"], reverse=True)[: max(1, min(limit, 50))]
+        # Recompute summary fields so older cached snapshots receive the same
+        # research-only labeling as freshly generated candidates.
+        payload["positive_count"] = sum(
+            1
+            for item in hydrated
+            if item.get("candidate_status") == "positive_candidate" and item.get("execution_eligible")
+        )
+        payload["research_positive_count"] = sum(
+            1 for item in hydrated if item.get("candidate_status") == "positive_candidate"
+        )
         return payload
 
     payload = scan_trade_candidates(db, max(limit, 12))
