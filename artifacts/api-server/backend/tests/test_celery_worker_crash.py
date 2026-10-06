@@ -132,7 +132,9 @@ class CeleryWorkerCrashIntegrationTests(unittest.TestCase):
                 lease_ttl = client.ttl(lock_key)
                 self.assertGreater(lease_ttl, 0)
                 self.assertLessEqual(lease_ttl, lock_ttl)
-                self.assertIsNone(client.get(f"celery-task-meta-{first_task_id}"))
+                started_payload = client.get(f"celery-task-meta-{first_task_id}")
+                self.assertIsNotNone(started_payload)
+                self.assertEqual(json.loads(started_payload)["status"], "STARTED")
 
                 first_worker.kill()
                 first_worker.wait(timeout=5)

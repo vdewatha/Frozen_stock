@@ -187,8 +187,19 @@ def _run_job(job_name: str, work: Callable) -> dict:
             # completed its safety preflight and is a successful no-op.
             "uninitialized",
         }:
-            if resolve_successful_job_notifications(db, job_name):
-                db.commit()
+            try:
+                if resolve_successful_job_notifications(db, job_name):
+                    db.commit()
+            except Exception as notification_error:
+                # Notification cleanup is auxiliary. A successful market-data
+                # or reconciliation job must not be converted into a failure
+                # merely because an older/minimal database lacks notification
+                # tables or the notification store is temporarily unavailable.
+                logger.error(
+                    "Successful scheduled job notification cleanup unavailable: job=%s error_type=%s",
+                    job_name, type(notification_error).__name__,
+                )
+                db.rollback()
         return result
     except Exception as exc:
         # Failure reporting must never commit pending effects of failed work.
@@ -273,6 +284,8 @@ def daily_market_data_import() -> dict:
 @celery_app.task(
     soft_time_limit=INTRADAY_TASK_SOFT_TIME_LIMIT_SECONDS,
     time_limit=INTRADAY_TASK_TIME_LIMIT_SECONDS,
+    acks_late=True,
+    reject_on_worker_lost=True,
 )
 def intraday_market_data_import() -> dict:
     def work(db):

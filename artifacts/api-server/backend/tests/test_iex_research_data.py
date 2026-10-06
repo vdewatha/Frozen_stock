@@ -127,7 +127,7 @@ def test_exception_body_is_never_persisted(db):
 
 
 def test_transport_bounds_and_no_redirects():
-    with patch.object(type(settings), "paper_broker_credentials", return_value=("test", "test")):
+    with patch.object(type(settings), "research_alpaca_credentials", return_value=("test", "test")):
         client = iex.BoundedStockDataClient()
     try:
         with patch("alpaca.common.rest.RESTClient._one_request", return_value={}) as request:

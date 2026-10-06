@@ -96,6 +96,8 @@ class CeleryConfigurationTests(unittest.TestCase):
             jobs.INTRADAY_JOB_LOCK_TTL_SECONDS,
             task.time_limit,
         )
+        self.assertTrue(task.acks_late)
+        self.assertTrue(task.reject_on_worker_lost)
 
     def test_learning_tasks_report_progress_and_have_bounded_runtime(self):
         task = jobs.strategy_learning_scope_job

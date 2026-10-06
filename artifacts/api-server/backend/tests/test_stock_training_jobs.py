@@ -236,7 +236,7 @@ def test_seeded_provider_rows_run_to_immutable_report_and_paper_binding():
                 ))
             db.commit()
             job, duplicate = create_stock_training_job(
-                db, symbols=["SPY"], cutoff_at=date.today(), horizon_bars=5,
+                db, symbols=["SPY"], cutoff_at=datetime.now(timezone.utc).date(), horizon_bars=5,
                 provider="yfinance", actor="researcher",
             )
             assert not duplicate
@@ -578,7 +578,7 @@ def test_binding_post_reactivation_appends_a_new_event_and_makes_a_current():
             completed = {}
             for symbol in ("SPY", "QQQ"):
                 job, duplicate = create_stock_training_job(
-                    db, symbols=[symbol], cutoff_at=date.today(), horizon_bars=5,
+                    db, symbols=[symbol], cutoff_at=datetime.now(timezone.utc).date(), horizon_bars=5,
                     provider="yfinance", actor="researcher",
                 )
                 assert not duplicate
