@@ -98,6 +98,32 @@ class CeleryConfigurationTests(unittest.TestCase):
             {"queue": "market_data"},
         )
 
+    def test_model_realization_scoring_is_scheduled_on_learning_queue(self):
+        routes = celery_app.conf.task_routes
+        entry = celery_app.conf.beat_schedule["model-realization-scoring"]
+
+        self.assertEqual(
+            routes["app.tasks.jobs.model_realization_scoring_job"],
+            {"queue": "learning"},
+        )
+        self.assertEqual(entry["task"], "app.tasks.jobs.model_realization_scoring_job")
+        self.assertEqual(entry["schedule"], 6 * 60 * 60)
+
+    def test_model_realization_scoring_is_research_only(self):
+        db = Mock()
+        with patch.object(jobs, "_run_job", side_effect=lambda _name, work: work(db)), patch.object(
+            jobs,
+            "score_realized_predictions",
+            return_value={"checked": 3, "scored": 2, "scored_prediction_ids": [1, 2]},
+        ) as score:
+            result = jobs.model_realization_scoring_job()
+
+        score.assert_called_once_with(db)
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["scored"], 2)
+        self.assertTrue(result["paper_only"])
+        self.assertFalse(result["live_authorized"])
+
     def test_intraday_schedule_remains_expiring_each_minute(self):
         schedule = celery_app.conf.beat_schedule["intraday-market-data-import"]
 

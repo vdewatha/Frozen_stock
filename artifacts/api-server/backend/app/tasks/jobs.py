@@ -411,6 +411,26 @@ def daily_feature_generation() -> dict:
 
 
 @celery_app.task
+def model_realization_scoring_job() -> dict:
+    """Score matured trusted predictions for the research feedback loop.
+
+    This records out-of-sample prediction outcomes only. It does not create
+    trades, alter paper bindings, or promote a model.
+    """
+    def work(db):
+        result = score_realized_predictions(db)
+        return {
+            "status": "complete",
+            "job": "model_realization_scoring_job",
+            "paper_only": True,
+            "live_authorized": False,
+            **result,
+        }
+
+    return _run_job("model_realization_scoring_job", work)
+
+
+@celery_app.task
 def daily_economic_data_import() -> dict:
     def work(db):
         result = import_fallback_economic_indicators(db)
