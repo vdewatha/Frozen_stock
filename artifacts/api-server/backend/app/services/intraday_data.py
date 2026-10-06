@@ -502,7 +502,11 @@ def ingest_intraday(
             provider_duplicates = 0
             provider_out_of_order = False
             missing: list[str] = []
-            for window_start, window_end in windows[:2]:
+            max_windows = 1 + settings.intraday_backfill_chunks_per_cycle
+            for window_index in range(max_windows):
+                if window_index >= len(windows):
+                    break
+                window_start, window_end = windows[window_index]
                 rows, duplicates, out_of_order = _fetch_bars(symbol, window_start, window_end)
                 persisted = upsert_intraday_bars(db, symbol, rows, ingested_at=observed_at)
                 saved["rows_imported"] += persisted["rows_imported"]
@@ -511,6 +515,12 @@ def ingest_intraday(
                 provider_duplicates += duplicates
                 provider_out_of_order = provider_out_of_order or out_of_order
                 missing.extend(_session_missing(db, symbol, window_start, window_end))
+                if window_index + 1 < max_windows:
+                    next_window = _bounded_missing_window(
+                        db, symbol, previous_bounds[0], previous_bounds[1]
+                    )
+                    if next_window and next_window not in windows:
+                        windows.append(next_window)
             for target_start, target_end in target_ranges:
                 missing.extend(_session_missing(db, symbol, target_start, target_end))
             missing = sorted(set(missing))

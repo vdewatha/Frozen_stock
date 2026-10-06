@@ -19,6 +19,9 @@ x-runtime: &runtime
     ENVIRONMENT: local
     AUTH_MODE: local_role_keys
     ACTIVE_PAPER_BROKER: alpaca_paper
+    ACTIVE_MARKET_DATA_PROVIDER: ${ACTIVE_MARKET_DATA_PROVIDER:-alpaca_iex}
+    INTRADAY_BACKFILL_CHUNKS_PER_CYCLE: ${INTRADAY_BACKFILL_CHUNKS_PER_CYCLE:-8}
+    ALPACA_PAPER_ZERO_COMMISSION_CONTRACT: ${ALPACA_PAPER_ZERO_COMMISSION_CONTRACT:-true}
     IEX_RESEARCH_ENABLED: "true"
     DELAYED_SIP_RESEARCH_ENABLED: "true"
     # Optional local research fallback; it never creates signals or orders.

@@ -6,7 +6,7 @@ import re
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 
 
 class Settings(BaseSettings):
@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     active_market_data_provider: str = "tradier"
     active_paper_broker: str = "tradier_sandbox"
     intraday_enabled: bool = True
+    intraday_backfill_chunks_per_cycle: int = Field(default=1, ge=1, le=8)
     iex_research_enabled: bool = False
     delayed_sip_research_enabled: bool = False
     research_observation_only: bool = False

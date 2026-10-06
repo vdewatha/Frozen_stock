@@ -11,12 +11,15 @@ deployment may use the free IEX feed:
 ```text
 ACTIVE_PAPER_BROKER=alpaca_paper
 ACTIVE_MARKET_DATA_PROVIDER=alpaca_iex
+INTRADAY_BACKFILL_CHUNKS_PER_CYCLE=8
 ```
 
 This path uses authenticated Alpaca IEX one-minute bars, preserves `provider`
 and `feed_class=iex` provenance, requires complete regular-session coverage,
 and remains execution-ineligible whenever live trading is enabled. It does not
 convert IEX observations into SIP data and does not authorize live orders.
+The backfill chunk setting only increases the number of bounded one-hour
+requests a worker may process per cycle; it never fills absent intervals.
 
 ## Cost evidence
 
