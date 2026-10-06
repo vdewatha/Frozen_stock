@@ -80,6 +80,9 @@ def run_strategy_experiments(
     config = BacktestConfig()
     old_result = run_backtest(symbol, strategy_slug, prices, config, current_parameters)
     old_backtest = _save_backtest(db, strategy, symbol, current_parameters, old_result)
+    # Close the transaction before the next CPU-bound experiment. PostgreSQL
+    # may terminate an idle transaction while a long backtest is running.
+    db.commit()
 
     proposals = propose_parameter_experiments(strategy_slug, current_parameters)[: max(1, min(max_candidates, 10))]
     experiments = []
@@ -140,6 +143,9 @@ def run_strategy_experiments(
             payload=summary,
         )
         experiments.append(experiment)
+        # Each candidate is independent. Persist it before the next
+        # backtest, which may take longer than the database idle timeout.
+        db.commit()
 
     applied_parameters: Optional[dict] = None
     if apply_promotions and promoted_candidates:
