@@ -136,4 +136,7 @@ celery_app.conf.beat_schedule = {
 celery_app.conf.beat_schedule = configured_schedule(
     celery_app.conf.beat_schedule, observation_only=settings.research_observation_only,
 )
-celery_app.autodiscover_tasks(["app.tasks.jobs"])
+# The task definitions live in `app.tasks.jobs`, rather than the conventional
+# `app.tasks.tasks` module. Explicitly name that related module so standalone
+# Celery workers register the same tasks as the API process.
+celery_app.autodiscover_tasks(["app.tasks"], related_name="jobs")
