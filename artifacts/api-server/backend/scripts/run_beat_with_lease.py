@@ -17,6 +17,8 @@ LEASE_KEY = "celery:beat:lease:primary"
 LEASE_SECONDS = 15
 STARTUP_REFRESH_KEY = "trading:startup-refresh:market-data"
 STARTUP_REFRESH_TTL_SECONDS = 20 * 60 * 60
+STARTUP_FEATURE_REFRESH_KEY = "trading:startup-refresh:features"
+STARTUP_FEATURE_REFRESH_TTL_SECONDS = 6 * 60 * 60
 STARTUP_LEARNING_RECOVERY_KEY = "trading:startup-recovery:strategy-learning"
 STARTUP_LEARNING_RECOVERY_TTL_SECONDS = 15 * 60
 
@@ -32,12 +34,13 @@ def _startup_refresh_enabled() -> bool:
 
 
 def _queue_startup_refresh(client: redis.Redis) -> None:
-    """Queue one immediate daily import after a deployment.
+    """Queue one immediate import and a dependent research refresh.
 
     Beat's 24-hour interval would otherwise wait until its next scheduled
     firing, leaving a newly promoted deployment with stale but otherwise valid
-    historical data. The Redis marker prevents multiple beat leaders from
-    queueing duplicate refreshes during a restart race.
+    historical data. The feature task is delayed until the import has had time
+    to commit. Redis markers prevent multiple beat leaders from queueing
+    duplicate work during a restart race.
     """
     if not client.set(STARTUP_REFRESH_KEY, "queued", nx=True, ex=STARTUP_REFRESH_TTL_SECONDS):
         return
@@ -47,12 +50,25 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
             queue="market_data",
             expires=15 * 60,
         )
+        if client.set(
+            STARTUP_FEATURE_REFRESH_KEY,
+            "queued",
+            nx=True,
+            ex=STARTUP_FEATURE_REFRESH_TTL_SECONDS,
+        ):
+            celery_app.send_task(
+                "app.tasks.jobs.daily_feature_generation",
+                queue="market_data",
+                countdown=5 * 60,
+                expires=15 * 60,
+            )
         print("Queued startup market-data refresh.", flush=True)
     except Exception:
         # A later scheduled run can recover from a transient broker/import
         # failure. Remove the marker so the next beat leader may retry.
         try:
             client.delete(STARTUP_REFRESH_KEY)
+            client.delete(STARTUP_FEATURE_REFRESH_KEY)
         except redis.RedisError:
             pass
         raise

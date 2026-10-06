@@ -154,6 +154,24 @@ def test_startup_refresh_is_opt_in():
         assert beat._startup_refresh_enabled() is True
 
 
+def test_startup_refresh_queues_delayed_feature_generation_once():
+    spec = importlib.util.spec_from_file_location("paper_beat_refresh_test", BACKEND / "scripts/run_beat_with_lease.py")
+    beat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(beat)
+    client = MagicMock()
+    client.set.side_effect = [True, True]
+    with patch.object(beat.celery_app, "send_task") as send_task:
+        beat._queue_startup_refresh(client)
+    assert send_task.call_args_list[0].args == ("app.tasks.jobs.daily_market_data_import",)
+    assert send_task.call_args_list[0].kwargs == {"queue": "market_data", "expires": 15 * 60}
+    assert send_task.call_args_list[1].args == ("app.tasks.jobs.daily_feature_generation",)
+    assert send_task.call_args_list[1].kwargs == {
+        "queue": "market_data",
+        "countdown": 5 * 60,
+        "expires": 15 * 60,
+    }
+
+
 def test_startup_learning_recovery_is_deduplicated_and_paper_only():
     spec = importlib.util.spec_from_file_location("paper_beat_recovery_test", BACKEND / "scripts/run_beat_with_lease.py")
     beat = importlib.util.module_from_spec(spec)
