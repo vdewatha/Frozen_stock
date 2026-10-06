@@ -348,11 +348,21 @@ def delayed_sip_collection_job() -> dict:
 @celery_app.task
 def daily_feature_generation() -> dict:
     def work(db):
-        assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).limit(10).all()
+        # Materialize scalar symbols before releasing the read transaction.
+        # Keeping expired ORM objects here makes the first later ``asset.symbol``
+        # access issue a database reload after model work has already started.
+        symbols = [
+            symbol
+            for (symbol,) in db.query(Asset.symbol)
+            .filter(Asset.is_active.is_(True))
+            .order_by(Asset.symbol)
+            .limit(10)
+            .all()
+        ]
         # Do not keep the asset-query transaction open while each symbol trains
         # models and refreshes its candidate snapshot.
         db.commit()
-        results = [run_and_persist_model_predictions(db, asset.symbol) for asset in assets]
+        results = [run_and_persist_model_predictions(db, symbol) for symbol in symbols]
         candidate_snapshot = get_trade_candidate_snapshot(db, limit=12, refresh=True)
         return {
             "status": "complete",
