@@ -191,8 +191,11 @@ python.on("exit", (code, signal) => {
 for (const worker of workerProcesses) {
   worker.on("exit", (code, signal) => {
     if (!stopping) {
-      console.error(`Paper worker exited before gateway shutdown: code=${code} signal=${signal}`);
-      stop("SIGTERM", code ?? 1);
+      // Keep the API available when an auxiliary paper worker exits. The
+      // deployment monitor and readiness checks report the missing worker;
+      // taking down the gateway would also hide those diagnostics and make a
+      // single worker failure an outage for every read-only endpoint.
+      console.error(`Paper worker exited; API remains available: code=${code} signal=${signal}`);
     }
   });
 }
