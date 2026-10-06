@@ -18,11 +18,11 @@ LEASE_SECONDS = 15
 # Version the bootstrap markers so a deployment carrying a scheduler fix can
 # perform one fresh research refresh even when an older deployment left its
 # deduplication keys in Redis.
-STARTUP_REFRESH_KEY = "trading:startup-refresh:market-data:v2"
+STARTUP_REFRESH_KEY = "trading:startup-refresh:market-data:v3"
 STARTUP_REFRESH_TTL_SECONDS = 20 * 60 * 60
-STARTUP_FEATURE_REFRESH_KEY = "trading:startup-refresh:features:v2"
+STARTUP_FEATURE_REFRESH_KEY = "trading:startup-refresh:features:v3"
 STARTUP_FEATURE_REFRESH_TTL_SECONDS = 6 * 60 * 60
-STARTUP_REALIZATION_KEY = "trading:startup-refresh:realization:v1"
+STARTUP_REALIZATION_KEY = "trading:startup-refresh:realization:v2"
 STARTUP_REALIZATION_TTL_SECONDS = 6 * 60 * 60
 STARTUP_LEARNING_RECOVERY_KEY = "trading:startup-recovery:strategy-learning"
 STARTUP_LEARNING_RECOVERY_TTL_SECONDS = 15 * 60
