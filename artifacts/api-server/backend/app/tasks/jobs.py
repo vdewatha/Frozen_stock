@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from hashlib import sha256
 from decimal import Decimal
 import logging
@@ -43,7 +43,7 @@ from app.services.live_broker import LiveBrokerError, reconcile_live_broker_acco
 from app.services.stock_forward_trial import observe_trial, execute_pending_decisions, start_trial, evaluate_trial
 from app.models import StockPaperTrial
 from app.tasks.celery_app import celery_app
-from app.models import Asset, PaperTrade, Strategy, StockTrainingJob
+from app.models import Asset, Notification, PaperTrade, Strategy, StockTrainingJob
 from app.services.stock_learning_cycle import (
     create_learning_cycle,
     run_automatic_paper_promotion_job,
@@ -465,6 +465,54 @@ def strategy_learning_batch_job(limit_symbols: int = 8, limit_strategies: int = 
         }
 
     return _run_job("strategy_learning_batch_job", work)
+
+
+@celery_app.task
+def retry_failed_strategy_learning_scopes_job() -> dict:
+    """Requeue aged transient scope failures without waiting for the next batch."""
+    def work(db):
+        now = datetime.utcnow()
+        cooldown = now - timedelta(minutes=15)
+        alerts = db.query(Notification).filter(
+            Notification.category == "scheduled_job",
+            Notification.severity == "critical",
+            Notification.status == "open",
+            Notification.source.like("strategy_learning_scope_job:%"),
+            Notification.created_at <= cooldown,
+        ).order_by(Notification.created_at, Notification.id).limit(32).all()
+        queued = []
+        for alert in alerts:
+            source = alert.source.removeprefix("strategy_learning_scope_job:")
+            if ":" not in source:
+                continue
+            symbol, strategy_slug = source.split(":", 1)
+            payload = dict(alert.payload or {})
+            retry_queued_at = payload.get("retry_queued_at")
+            if retry_queued_at:
+                try:
+                    if datetime.fromisoformat(str(retry_queued_at)) > cooldown:
+                        continue
+                except ValueError:
+                    pass
+            task = strategy_learning_scope_job.apply_async(
+                args=[symbol, strategy_slug, 3], queue="learning", expires=15 * 60
+            )
+            payload.update({
+                "retry_queued_at": now.isoformat(),
+                "retry_task_id": task.id,
+            })
+            alert.payload = payload
+            alert.updated_at = now
+            queued.append({"source": alert.source, "task_id": task.id})
+        db.commit()
+        return {
+            "status": "complete",
+            "job": "retry_failed_strategy_learning_scopes_job",
+            "queued": queued,
+            "paper_only": True,
+        }
+
+    return _run_job("retry_failed_strategy_learning_scopes_job", work)
 
 
 @celery_app.task

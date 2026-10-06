@@ -175,6 +175,12 @@ class CeleryConfigurationTests(unittest.TestCase):
         self.assertTrue(task.retry_backoff)
         self.assertIn(InternalError, task.autoretry_for)
 
+    def test_strategy_learning_failure_retry_is_scheduled(self):
+        entry = celery_app.conf.beat_schedule["strategy-learning-failure-retry"]
+
+        self.assertEqual(entry["task"], "app.tasks.jobs.retry_failed_strategy_learning_scopes_job")
+        self.assertEqual(entry["schedule"], 60 * 15)
+
     def test_intraday_job_runs_while_shared_queue_job_is_busy(self):
         slow_job_started = threading.Event()
         release_slow_job = threading.Event()

@@ -91,6 +91,10 @@ celery_app.conf.beat_schedule = {
     "nightly-backtest-job": {"task": "app.tasks.jobs.nightly_backtest_job", "schedule": 60 * 60 * 24},
     "nightly-learning-job": {"task": "app.tasks.jobs.nightly_strategy_learning_job", "schedule": 60 * 60 * 24},
     "strategy-learning-batch-job": {"task": "app.tasks.jobs.strategy_learning_batch_job", "schedule": 60 * 60 * 6},
+    "strategy-learning-failure-retry": {
+        "task": "app.tasks.jobs.retry_failed_strategy_learning_scopes_job",
+        "schedule": 60 * 15,
+    },
     "paper-trading-signal-job": {"task": "app.tasks.jobs.paper_trading_signal_job", "schedule": 60 * 60},
     "paper-trade-reconciliation-job": {"task": "app.tasks.jobs.paper_trade_reconciliation_job", "schedule": 60 * 30},
     "stock-paper-broker-reconciliation-job": {
