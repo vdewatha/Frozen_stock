@@ -53,22 +53,26 @@ def run_backtest(symbol: str, strategy_slug: str, prices: pd.DataFrame, config: 
     equity_curve: list[dict] = []
 
     min_history = 60
-    for idx in range(min_history, len(prices)):
-        history = prices.iloc[: idx + 1]
+    # A decision can only use the last completed bar. Execute it at the next
+    # bar's open so the backtest cannot use the fill bar's close as input.
+    for idx in range(min_history + 1, len(prices)):
+        history = prices.iloc[:idx]
         current = history.iloc[-1]
-        current_date = str(current["date"])
-        price = float(current["close"])
+        execution_bar = prices.iloc[idx]
+        current_date = str(execution_bar["date"])
+        execution_price = float(execution_bar["open"])
+        mark_price = float(execution_bar["close"])
 
         if position:
             holding_days = idx - position["entry_idx"]
-            pnl_pct = (price - position["entry_price"]) / position["entry_price"]
+            pnl_pct = (execution_price - position["entry_price"]) / position["entry_price"]
             should_exit = (
                 pnl_pct <= -config.stop_loss_pct
                 or pnl_pct >= config.take_profit_pct
                 or holding_days >= config.max_holding_days
             )
             if should_exit:
-                exit_price = price * (1 - config.slippage_bps / 10_000)
+                exit_price = execution_price * (1 - config.slippage_bps / 10_000)
                 proceeds = position["quantity"] * exit_price
                 fee = proceeds * config.fees_bps / 10_000
                 pnl = proceeds - fee - position["cost"]
@@ -89,7 +93,7 @@ def run_backtest(symbol: str, strategy_slug: str, prices: pd.DataFrame, config: 
         if position is None:
             signal = strategy.generate_signal(symbol, history)
             if signal.action == "BUY" and signal.confidence >= 0.55:
-                entry_price = price * (1 + config.slippage_bps / 10_000)
+                entry_price = execution_price * (1 + config.slippage_bps / 10_000)
                 max_risk_dollars = cash * config.risk_per_trade
                 quantity = max_risk_dollars / max(entry_price * config.stop_loss_pct, 1)
                 cost = quantity * entry_price
@@ -104,7 +108,7 @@ def run_backtest(symbol: str, strategy_slug: str, prices: pd.DataFrame, config: 
                         "cost": cost + fee,
                     }
 
-        marked_value = cash + (position["quantity"] * price if position else 0)
+        marked_value = cash + (position["quantity"] * mark_price if position else 0)
         equity_curve.append({"date": current_date, "value": round(marked_value, 2)})
 
     returns = pd.Series([row["value"] for row in equity_curve]).pct_change().dropna()
@@ -135,6 +139,7 @@ def run_backtest(symbol: str, strategy_slug: str, prices: pd.DataFrame, config: 
         "number_of_trades": len(trades),
         "equity_curve": equity_curve,
         "trades": trades,
+        "execution_model": "next_open_no_lookahead",
     }
     metrics["score"] = normalized_score(metrics)
     reasons = rejection_reasons(metrics)

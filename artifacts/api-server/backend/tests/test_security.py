@@ -22,6 +22,8 @@ class SecurityTests(unittest.TestCase):
             ("GET", "/portfolio/allocation-plan"): "researcher",
             ("POST", "/market-data/import"): "researcher",
             ("POST", "/models/run"): "researcher",
+            ("POST", "/learning/workers/scope"): "researcher",
+            ("POST", "/learning/workers/batch"): "researcher",
             ("POST", "/trade-candidates/activation-review"): "researcher",
             ("POST", "/paper-trading/run-signal"): "operator",
             ("POST", "/paper-trading/close/42"): "operator",

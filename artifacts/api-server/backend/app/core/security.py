@@ -64,6 +64,7 @@ RESEARCH_POSTS = {
     "/stock/learning-cycles",
     "/research/agent-runs",
     "/research/agent-comparison-reports",
+    "/learning/workers/scope", "/learning/workers/batch",
 }
 OPERATOR_POSTS = {
     "/crypto/paper/intents", "/crypto/paper/kill-switch/enable",
