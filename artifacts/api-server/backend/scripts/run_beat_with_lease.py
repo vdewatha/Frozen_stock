@@ -17,6 +17,8 @@ LEASE_KEY = "celery:beat:lease:primary"
 LEASE_SECONDS = 15
 STARTUP_REFRESH_KEY = "trading:startup-refresh:market-data"
 STARTUP_REFRESH_TTL_SECONDS = 20 * 60 * 60
+STARTUP_LEARNING_RECOVERY_KEY = "trading:startup-recovery:strategy-learning"
+STARTUP_LEARNING_RECOVERY_TTL_SECONDS = 15 * 60
 
 
 def _startup_refresh_enabled() -> bool:
@@ -56,6 +58,35 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
         raise
 
 
+def _queue_startup_learning_recovery(client: redis.Redis) -> None:
+    """Give aged paper-learning failures one bounded recovery attempt at boot.
+
+    Beat's periodic entry remains the primary mechanism. This boot probe is a
+    small, deduplicated fallback for deployments where a persisted beat
+    schedule starts after the first minute boundary.
+    """
+    if not client.set(
+        STARTUP_LEARNING_RECOVERY_KEY,
+        "queued",
+        nx=True,
+        ex=STARTUP_LEARNING_RECOVERY_TTL_SECONDS,
+    ):
+        return
+    try:
+        celery_app.send_task(
+            "app.tasks.jobs.retry_failed_strategy_learning_scopes_job",
+            queue="learning",
+            expires=15 * 60,
+        )
+        print("Queued startup learning recovery check.", flush=True)
+    except Exception:
+        try:
+            client.delete(STARTUP_LEARNING_RECOVERY_KEY)
+        except redis.RedisError:
+            pass
+        raise
+
+
 def main() -> int:
     client = redis.Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=2, socket_timeout=2)
     owner = secrets.token_hex(16)
@@ -67,6 +98,7 @@ def main() -> int:
         _queue_startup_refresh(client)
     else:
         print("Skipped startup market-data refresh; scheduled jobs remain enabled.", flush=True)
+    _queue_startup_learning_recovery(client)
 
     child = subprocess.Popen(
         [

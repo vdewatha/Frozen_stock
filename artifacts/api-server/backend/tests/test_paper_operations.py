@@ -154,6 +154,27 @@ def test_startup_refresh_is_opt_in():
         assert beat._startup_refresh_enabled() is True
 
 
+def test_startup_learning_recovery_is_deduplicated_and_paper_only():
+    spec = importlib.util.spec_from_file_location("paper_beat_recovery_test", BACKEND / "scripts/run_beat_with_lease.py")
+    beat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(beat)
+    client = MagicMock()
+    client.set.return_value = True
+    with patch.object(beat.celery_app, "send_task") as send_task:
+        beat._queue_startup_learning_recovery(client)
+    client.set.assert_called_once_with(
+        beat.STARTUP_LEARNING_RECOVERY_KEY,
+        "queued",
+        nx=True,
+        ex=beat.STARTUP_LEARNING_RECOVERY_TTL_SECONDS,
+    )
+    send_task.assert_called_once_with(
+        "app.tasks.jobs.retry_failed_strategy_learning_scopes_job",
+        queue="learning",
+        expires=15 * 60,
+    )
+
+
 def test_both_broker_probes_are_read_only_and_redacted():
     from pydantic import SecretStr
 
