@@ -111,6 +111,18 @@ class IntradayDataTests(unittest.TestCase):
             self.assertEqual(result["failure_class"], "configuration")
             self.assertFalse(result["ready"])
 
+    def test_alpaca_iex_provider_uses_bounded_authenticated_fetch(self):
+        start = datetime(2026, 9, 29, 14, 30, tzinfo=UTC)
+        end = start + timedelta(minutes=3)
+        rows = [bar(start + timedelta(minutes=offset)) for offset in range(3)]
+        with patch.object(settings, "active_market_data_provider", "alpaca_iex"), patch.object(
+            intraday_data, "_fetch_alpaca_iex_bars", return_value=rows
+        ) as fetch:
+            result = intraday_data._fetch_bars("SPY", start, end)
+        fetch.assert_called_once_with("SPY", start, end)
+        self.assertEqual(result[0], rows)
+        self.assertEqual(result[1:], (0, False))
+
     def test_close_boundary_still_waits_for_late_trade_allowance(self):
         observed = datetime(2026, 9, 29, 20, 0, tzinfo=UTC)
         intraday_data.upsert_intraday_bars(self.db, "SPY", [bar(observed - timedelta(minutes=1))], ingested_at=observed)

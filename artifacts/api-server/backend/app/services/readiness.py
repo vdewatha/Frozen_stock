@@ -145,7 +145,7 @@ def readiness_snapshot(db: Session) -> dict:
     checks.append(_check(
         "Intraday feed",
         "blocked" if intraday_failures else "ready",
-         "Completed Tradier production bars are fresh." if not intraday_failures else "Fresh complete intraday data is required for paper decisions.",
+         "Completed authenticated intraday bars are fresh." if not intraday_failures else "Fresh complete intraday data is required for paper decisions.",
         {
             "data_mode": "real-time",
              "provider": MARKET_DATA_PROVIDER,

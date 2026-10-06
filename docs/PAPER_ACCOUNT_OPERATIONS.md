@@ -3,6 +3,21 @@
 The application is paper-only. `ALLOW_LIVE_TRADING` must remain `false`, and
 the paper broker must be `alpaca_paper`.
 
+## Free paper market-data path
+
+When Tradier production timesales is unavailable, a live-disabled Alpaca paper
+deployment may use the free IEX feed:
+
+```text
+ACTIVE_PAPER_BROKER=alpaca_paper
+ACTIVE_MARKET_DATA_PROVIDER=alpaca_iex
+```
+
+This path uses authenticated Alpaca IEX one-minute bars, preserves `provider`
+and `feed_class=iex` provenance, requires complete regular-session coverage,
+and remains execution-ineligible whenever live trading is enabled. It does not
+convert IEX observations into SIP data and does not authorize live orders.
+
 ## Cost evidence
 
 `ALPACA_PAPER_ZERO_COMMISSION_CONTRACT` defaults to `false`. Enabling it is a

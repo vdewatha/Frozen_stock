@@ -28,8 +28,16 @@ INTRADAY_BACKFILL_WINDOW = timedelta(minutes=60)
 POST_CLOSE_REPAIR_WINDOW = timedelta(hours=1)
 
 
-MARKET_DATA_PROVIDER = "tradier"
-MARKET_DATA_FEED_CLASS = "sip"
+MARKET_DATA_PROVIDER = settings.active_market_data_provider.strip().lower()
+MARKET_DATA_FEED_CLASS = "iex" if MARKET_DATA_PROVIDER == "alpaca_iex" else "sip"
+MARKET_DATA_EXECUTION_ELIGIBLE = (
+    MARKET_DATA_PROVIDER == "tradier"
+    or (
+        MARKET_DATA_PROVIDER == "alpaca_iex"
+        and settings.active_paper_broker == "alpaca_paper"
+        and not settings.allow_live_trading
+    )
+)
 TRADIER_PRODUCTION_MARKET_DATA_URL = "https://api.tradier.com/v1"
 
 
@@ -187,6 +195,13 @@ def _request(path: str, params: dict, attempts: int = 3) -> dict:
         if attempt < attempts - 1:
             time.sleep(min(2**attempt, 4))
     raise RuntimeError(f"Tradier market-data request unavailable after {attempts} attempts: {last_error}") from last_error
+
+
+def _fetch_alpaca_iex_bars(symbol: str, start: datetime, end: datetime) -> list[dict]:
+    """Fetch bounded free IEX observations for the paper-only provider mode."""
+    from app.services.alpaca_research_data import fetch_iex_bars
+
+    return fetch_iex_bars([symbol], start, end).get(symbol, [])
 
 
 def upsert_intraday_bars(
@@ -401,10 +416,15 @@ def ingest_corporate_actions(db: Session, symbols: list[str] | None = None) -> d
 def _fetch_bars(
     symbol: str, start: datetime, end: datetime, *, max_pages: int = 4
 ) -> tuple[list[dict], int, bool]:
-    if settings.active_market_data_provider.strip().lower() != MARKET_DATA_PROVIDER:
-        raise RuntimeError("Tradier market-data provider is not configured")
     if end <= start or end - start > INTRADAY_BACKFILL_WINDOW:
-        raise ValueError("Tradier timesales request exceeds the bounded one-hour window")
+        raise ValueError("Market-data request exceeds the bounded one-hour window")
+    configured_provider = settings.active_market_data_provider.strip().lower()
+    if configured_provider == "alpaca_iex":
+        page = _fetch_alpaca_iex_bars(symbol, start, end)
+        timestamps = [item.get("t") for item in page]
+        return page, len(timestamps) - len(set(timestamps)), timestamps != sorted(timestamps)
+    if configured_provider != "tradier":
+        raise RuntimeError("Configured market-data provider is not supported")
     params = {
         "symbol": symbol,
         "interval": "1min",
@@ -639,8 +659,12 @@ def collect_scheduled_intraday(db: Session, symbols: list[str] | None = None, *,
     observed = _aware_utc(now or datetime.now(UTC))
     bounds = session_bounds(observed.astimezone(NY).date())
     post_close = bounds is not None and bounds[1] <= observed < bounds[1] + POST_CLOSE_REPAIR_WINDOW
-    configured = (settings.active_market_data_provider.strip().lower() == MARKET_DATA_PROVIDER
-                  and bool(settings.tradier_market_data_api_key.get_secret_value()))
+    configured_provider = settings.active_market_data_provider.strip().lower()
+    configured = configured_provider == MARKET_DATA_PROVIDER and bool(
+        settings.tradier_market_data_api_key.get_secret_value()
+        if configured_provider == "tradier"
+        else settings.research_alpaca_credentials()[0]
+    )
     if not post_close or not configured:
         return preflight_intraday(db, symbols, now=observed)
     selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
@@ -661,7 +685,7 @@ def preflight_intraday(
     *,
     now: datetime | None = None,
 ) -> dict:
-    """Run a bounded authenticated SIP ingestion probe and aggregate readiness.
+    """Run a bounded authenticated intraday ingestion probe and aggregate readiness.
 
     This deliberately requires an active NYSE regular session. Cached data from a
     prior session, delayed data, and data from another feed cannot make a resume
@@ -686,19 +710,20 @@ def preflight_intraday(
             next_regular_session_gap(observed_at, next_open) if next_open else None
         ),
     }
-    if settings.active_market_data_provider.strip().lower() != MARKET_DATA_PROVIDER:
+    configured_provider = settings.active_market_data_provider.strip().lower()
+    if configured_provider not in {"tradier", "alpaca_iex"}:
         return _record_preflight_audit(db, {
             **base,
             "status": "blocked",
             "ready": False,
             "failure_class": "configuration",
-            "reason": "Tradier market-data provider is not configured",
+            "reason": "Configured market-data provider is not supported",
             "results": [
                 {
                     "symbol": symbol,
                     "status": "unavailable",
                     "failure_class": "configuration",
-                    "unavailable_reason": "Tradier market-data provider is not configured",
+                    "unavailable_reason": "Configured market-data provider is not supported",
                     "missing_intervals": [],
                     "deferred_window": None,
                     "oldest_unresolved_interval": None,
@@ -706,20 +731,42 @@ def preflight_intraday(
                 for symbol in selected
             ],
         })
-    market_data_key = settings.tradier_market_data_api_key.get_secret_value()
+    execution_eligible = (
+        configured_provider == "tradier"
+        or (
+            configured_provider == "alpaca_iex"
+            and settings.active_paper_broker == "alpaca_paper"
+            and not settings.allow_live_trading
+        )
+    )
+    if configured_provider == "alpaca_iex" and not execution_eligible:
+        return _record_preflight_audit(db, {
+            **base,
+            "status": "blocked",
+            "ready": False,
+            "execution_eligible": False,
+            "failure_class": "configuration",
+            "reason": "Alpaca IEX is restricted to live-disabled Alpaca paper operation",
+            "results": [],
+        })
+    market_data_key = (
+        settings.tradier_market_data_api_key.get_secret_value()
+        if configured_provider == "tradier"
+        else settings.research_alpaca_credentials()[0]
+    )
     if not market_data_key:
         return _record_preflight_audit(db, {
             **base,
             "status": "blocked",
             "ready": False,
             "failure_class": "configuration",
-            "reason": "Tradier production market-data credentials are not configured in workspace secrets",
+            "reason": "Configured market-data credentials are not available in workspace secrets",
             "results": [
                 {
                     "symbol": symbol,
                     "status": "unavailable",
                     "failure_class": "configuration",
-                    "unavailable_reason": "Tradier production market-data credentials are not configured in workspace secrets",
+                    "unavailable_reason": "Configured market-data credentials are not available in workspace secrets",
                     "missing_intervals": [],
                     "deferred_window": None,
                     "oldest_unresolved_interval": None,
@@ -829,6 +876,7 @@ def preflight_intraday(
             f"{failed[0].get('unavailable_reason') or failed[0].get('status')}"
         ),
         "results": results,
+        "execution_eligible": execution_eligible,
     })
 
 
@@ -869,7 +917,12 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         if expected_end > target_bounds[0]
         else []
     )
-    configured = bool(settings.tradier_market_data_api_key.get_secret_value())
+    configured_provider = settings.active_market_data_provider.strip().lower()
+    configured = bool(
+        settings.tradier_market_data_api_key.get_secret_value()
+        if configured_provider == "tradier"
+        else settings.research_alpaca_credentials()[0]
+    )
     verification_age = (
         observed_at - _aware_utc(latest.ingested_at)
         if latest is not None and latest.ingested_at is not None
@@ -887,6 +940,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         "data_mode": "real-time",
         "timeframe": "1m",
         "session": "regular",
+        "execution_eligible": MARKET_DATA_EXECUTION_ELIGIBLE,
         "entitlement_configured": configured,
         "entitlement_state": (
             "verified" if entitlement_verified else "unverified" if configured else "not_configured"
@@ -917,14 +971,14 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             **base,
             "status": "unavailable",
             "failure_class": "configuration",
-            "unavailable_reason": "Tradier production market-data credentials are not configured in workspace secrets",
+            "unavailable_reason": "Configured market-data credentials are not available in workspace secrets",
         }
     if not entitlement_verified:
         return {
             **base,
             "status": "unavailable",
             "failure_class": "entitlement",
-            "unavailable_reason": "Tradier production market-data entitlement has not been verified by a recent authenticated ingestion",
+            "unavailable_reason": "Configured market-data entitlement has not been verified by a recent authenticated ingestion",
         }
     if market_open and _aware_utc(latest.opened_at) >= expected_end:
         return {
@@ -945,7 +999,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             **base,
             "status": "unavailable",
             "failure_class": "availability",
-            "unavailable_reason": "No completed Tradier production bars are persisted",
+            "unavailable_reason": f"No completed {MARKET_DATA_PROVIDER} bars are persisted",
         }
     if not market_open:
         return {**base, "status": "market_closed", "unavailable_reason": None}

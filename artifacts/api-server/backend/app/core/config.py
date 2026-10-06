@@ -120,8 +120,12 @@ class Settings(BaseSettings):
     def validate_auth_mode(self) -> "Settings":
         if self.auth_mode not in {"local_role_keys", "production_identity", "clerk_gateway"}:
             raise ValueError("auth_mode must be local_role_keys, production_identity, or clerk_gateway")
-        if self.active_market_data_provider not in {"tradier"}:
-            raise ValueError("active_market_data_provider must be tradier")
+        if self.active_market_data_provider not in {"tradier", "alpaca_iex"}:
+            raise ValueError("active_market_data_provider must be tradier or alpaca_iex")
+        if self.active_market_data_provider == "alpaca_iex" and (
+            self.allow_live_trading or self.active_paper_broker != "alpaca_paper"
+        ):
+            raise ValueError("alpaca_iex is available only for live-disabled Alpaca paper operation")
         if self.active_paper_broker not in {"tradier_sandbox", "alpaca_paper"}:
             raise ValueError("active_paper_broker must be tradier_sandbox or alpaca_paper")
         return self
