@@ -7,6 +7,7 @@ from kombu import Exchange, Queue
 from app.core.config import settings
 
 INTRADAY_MARKET_DATA_QUEUE = "intraday_market_data"
+MONITORING_QUEUE = "monitoring"
 GENERAL_WORKER_QUEUES = frozenset({"default", "market_data", "learning", "paper_trading", "risk"})
 OBSERVATION_TASKS = frozenset({
     "app.tasks.jobs.iex_research_collection_job",
@@ -31,6 +32,7 @@ celery_app.conf.task_queues = (
     Queue("learning", Exchange("learning"), routing_key="learning"),
     Queue("paper_trading", Exchange("paper_trading"), routing_key="paper_trading"),
     Queue("risk", Exchange("risk"), routing_key="risk"),
+    Queue(MONITORING_QUEUE, Exchange(MONITORING_QUEUE), routing_key=MONITORING_QUEUE),
 )
 celery_app.conf.task_default_queue = "default"
 celery_app.conf.worker_prefetch_multiplier = 1
@@ -57,7 +59,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.deployment_monitor_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_promotion_job": {"queue": "risk"},
     "app.tasks.jobs.risk_monitor_job": {"queue": "risk"},
-    "app.tasks.jobs.stock_monitoring_job": {"queue": "risk"},
+    "app.tasks.jobs.stock_monitoring_job": {"queue": MONITORING_QUEUE},
     "app.tasks.jobs.live_broker_reconciliation_job": {"queue": "risk"},
     "app.tasks.jobs.stock_training_job": {"queue": "learning"},
     "app.tasks.jobs.recover_stock_training_jobs_job": {"queue": "learning"},
