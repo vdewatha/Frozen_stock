@@ -481,11 +481,16 @@ def nightly_backtest_job() -> dict:
 )
 def strategy_learning_scope_job(symbol: str, strategy_slug: str, max_candidates: int = 3) -> dict:
     def work(db):
+        # Keep each scheduled scope short enough for a worker lease. Broader
+        # candidate sweeps remain available through the research service, but
+        # the recurring fan-out should finish one independent comparison per
+        # symbol/strategy so one slow scope cannot starve the learning queue.
+        scoped_candidates = 1
         result = run_strategy_experiments(
             db,
             symbol=symbol,
             strategy_slug=strategy_slug,
-            max_candidates=max_candidates,
+            max_candidates=scoped_candidates,
             apply_promotions=False,
         )
         return {
