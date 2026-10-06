@@ -6,6 +6,7 @@ from unittest.mock import patch
 from celery import Celery
 from celery.contrib.testing.worker import start_worker
 from celery.schedules import crontab
+from sqlalchemy.exc import InternalError
 
 from app.tasks.celery_app import celery_app, configured_schedule, OBSERVATION_TASKS
 from app.tasks import jobs
@@ -166,6 +167,13 @@ class CeleryConfigurationTests(unittest.TestCase):
         self.assertEqual(client.ping_attempts, 3)
         sleep.assert_any_call(jobs.REDIS_LOCK_RETRY_DELAYS_SECONDS[0])
         sleep.assert_any_call(jobs.REDIS_LOCK_RETRY_DELAYS_SECONDS[1])
+
+    def test_strategy_learning_scope_retries_database_failures(self):
+        task = jobs.strategy_learning_scope_job
+
+        self.assertEqual(task.max_retries, 2)
+        self.assertTrue(task.retry_backoff)
+        self.assertIn(InternalError, task.autoretry_for)
 
     def test_intraday_job_runs_while_shared_queue_job_is_busy(self):
         slow_job_started = threading.Event()

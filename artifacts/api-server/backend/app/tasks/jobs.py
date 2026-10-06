@@ -10,6 +10,7 @@ from typing import Callable
 import redis
 from sqlalchemy import text
 from sqlalchemy import inspect as sqlalchemy_inspect
+from sqlalchemy.exc import DBAPIError, InterfaceError, InternalError, OperationalError
 from sqlalchemy.types import JSON
 
 from app.core.config import settings
@@ -387,7 +388,13 @@ def nightly_backtest_job() -> dict:
     return _run_job("nightly_backtest_job", work)
 
 
-@celery_app.task
+@celery_app.task(
+    autoretry_for=(DBAPIError, InterfaceError, InternalError, OperationalError),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    max_retries=2,
+)
 def strategy_learning_scope_job(symbol: str, strategy_slug: str, max_candidates: int = 3) -> dict:
     def work(db):
         result = run_strategy_experiments(
