@@ -101,6 +101,35 @@ LEARNING_TASK_SOFT_TIME_LIMIT_SECONDS = 12 * 60
 LEARNING_TASK_TIME_LIMIT_SECONDS = 15 * 60
 IEX_JOB_LOCK_TTL_SECONDS = IEX_TASK_TIME_LIMIT_SECONDS + 60
 REDIS_LOCK_RETRY_DELAYS_SECONDS = (0.25, 0.75, 1.5)
+FEATURE_REFRESH_THROTTLE_SECONDS = 10 * 60
+FEATURE_REFRESH_THROTTLE_KEY = "trading:scheduled-refresh:daily_feature_generation"
+
+
+def _queue_feature_refresh() -> str | None:
+    """Queue at most one IEX-triggered feature refresh per throttle window."""
+    client = redis.Redis.from_url(
+        settings.redis_url,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+        health_check_interval=15,
+    )
+    try:
+        if not client.set(
+            FEATURE_REFRESH_THROTTLE_KEY,
+            "1",
+            nx=True,
+            ex=FEATURE_REFRESH_THROTTLE_SECONDS,
+        ):
+            return None
+        try:
+            return daily_feature_generation.apply_async(
+                queue="market_data", expires=60 * 60
+            ).id
+        except Exception:
+            client.delete(FEATURE_REFRESH_THROTTLE_KEY)
+            raise
+    finally:
+        client.close()
 
 
 def _acquire_job_lock(job_name: str):
@@ -321,11 +350,14 @@ def iex_research_collection_job() -> dict:
         if result.get("status") == "observed" and not result.get("synthetic"):
             # IEX is research-only, but a successful real collection is a
             # trustworthy trigger for fresh multi-symbol predictions. The
-            # feature task remains paper-only and never dispatches orders.
-            refresh = daily_feature_generation.apply_async(
-                queue="market_data", expires=60 * 60
-            )
-            result["feature_refresh_task_id"] = refresh.id
+            # feature task remains paper-only and never dispatches orders. A
+            # bounded throttle prevents one full feature run from being
+            # enqueued for every one-minute observation.
+            refresh_id = _queue_feature_refresh()
+            if refresh_id:
+                result["feature_refresh_task_id"] = refresh_id
+            else:
+                result["feature_refresh_throttled"] = True
         return result
 
     return _run_job("iex_research_collection_job", work)

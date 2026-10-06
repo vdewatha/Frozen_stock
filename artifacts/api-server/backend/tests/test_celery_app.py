@@ -1,7 +1,7 @@
 import threading
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from celery import Celery
 from celery.contrib.testing.worker import start_worker
@@ -37,6 +37,40 @@ class CeleryConfigurationTests(unittest.TestCase):
             due = entry["schedule"].is_due(boundary.replace(minute=49, second=57))
         self.assertTrue(due.is_due)
         self.assertEqual(due.next, 60)
+
+    def test_iex_feature_refresh_is_throttled(self):
+        class FakeRedis:
+            def __init__(self, acquired):
+                self.acquired = acquired
+                self.deleted = []
+                self.closed = False
+
+            def set(self, key, value, nx, ex):
+                self.args = (key, value, nx, ex)
+                return self.acquired
+
+            def delete(self, key):
+                self.deleted.append(key)
+
+            def close(self):
+                self.closed = True
+
+        client = FakeRedis(True)
+        with patch.object(jobs.redis.Redis, "from_url", return_value=client), patch.object(
+            jobs.daily_feature_generation, "apply_async", return_value=Mock(id="refresh-1")
+        ) as queue:
+            self.assertEqual(jobs._queue_feature_refresh(), "refresh-1")
+        queue.assert_called_once_with(queue="market_data", expires=60 * 60)
+        self.assertEqual(client.args, (jobs.FEATURE_REFRESH_THROTTLE_KEY, "1", True, jobs.FEATURE_REFRESH_THROTTLE_SECONDS))
+        self.assertTrue(client.closed)
+
+        client = FakeRedis(False)
+        with patch.object(jobs.redis.Redis, "from_url", return_value=client), patch.object(
+            jobs.daily_feature_generation, "apply_async"
+        ) as queue:
+            self.assertIsNone(jobs._queue_feature_refresh())
+        queue.assert_not_called()
+        self.assertTrue(client.closed)
 
     def test_intraday_import_has_a_dedicated_queue(self):
         queues = {queue.name for queue in celery_app.conf.task_queues}
