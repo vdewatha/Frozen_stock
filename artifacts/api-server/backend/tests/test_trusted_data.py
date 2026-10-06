@@ -124,6 +124,7 @@ def test_market_import_is_explicitly_unavailable_when_trusted_sources_fail():
     db = MagicMock()
     with patch.object(market_data, "fetch_yfinance_prices", return_value=pd.DataFrame()), \
          patch.object(market_data, "fetch_yahoo_chart_prices", return_value=pd.DataFrame()), \
+         patch.object(type(market_data.settings), "research_alpaca_credentials", return_value=("", "")), \
          patch.object(market_data, "upsert_prices", return_value=0):
         result = market_data.import_market_prices(db, "SPY")
     assert result["source"] == "unavailable"
