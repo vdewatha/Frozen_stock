@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from celery import Celery
 from celery.schedules import crontab
 from kombu import Exchange, Queue
@@ -158,6 +160,11 @@ celery_app.conf.beat_schedule = {
 celery_app.conf.beat_schedule = configured_schedule(
     celery_app.conf.beat_schedule, observation_only=settings.research_observation_only,
 )
+# Production uses a separately supervised monitor loop so a beat restart cannot
+# leave the recovery heartbeat stale. Keep the Celery schedule for local stacks
+# and deployments that do not opt into the direct loop.
+if os.environ.get("PAPER_DIRECT_MONITOR_LOOP", "false").strip().lower() == "true":
+    celery_app.conf.beat_schedule.pop("stock-monitoring-job", None)
 # The task definitions live in `app.tasks.jobs`, rather than the conventional
 # `app.tasks.tasks` module. Explicitly name that related module so standalone
 # Celery workers register the same tasks as the API process.

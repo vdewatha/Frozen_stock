@@ -132,6 +132,7 @@ if (paperWorkersEnabled) {
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=execution@%h", "--queues=paper_trading", "--concurrency=1"], "execution");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=risk@%h", "--queues=risk", "--concurrency=1"], "risk");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=monitor@%h", "--queues=monitoring", "--concurrency=1"], "monitor");
+  supervisePaperWorker(["scripts/run_stock_monitor_loop.py"], "direct-monitor");
   supervisePaperWorker(["scripts/run_stock_watchdog.py"], "watchdog");
   supervisePaperWorker(["scripts/run_beat_with_lease.py"], "beat");
 }
