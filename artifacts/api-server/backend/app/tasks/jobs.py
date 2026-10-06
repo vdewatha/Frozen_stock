@@ -501,7 +501,10 @@ def retry_failed_strategy_learning_scopes_job() -> dict:
                 except ValueError:
                     pass
             task = strategy_learning_scope_job.apply_async(
-                args=[symbol, strategy_slug, 3], queue="learning", expires=15 * 60
+                # Recovery should prove the database/worker path first. The
+                # regular batch job remains responsible for broader candidate
+                # exploration once the scope is healthy again.
+                args=[symbol, strategy_slug, 1], queue="learning", expires=15 * 60
             )
             payload.update({
                 "retry_queued_at": now.isoformat(),
