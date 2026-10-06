@@ -1075,6 +1075,57 @@ def _v2_snapshot_key(snapshot: tuple) -> str:
                        "journal": journal["journal_sha256"]}, sort_keys=True)
 
 
+def _upgrade_legacy_snapshot(
+    db: Session,
+    account: StockPaperAccount,
+    gateway: AlpacaPaperGateway,
+    first: tuple,
+) -> tuple[tuple, bool]:
+    """Upgrade a legacy Alpaca ledger only after a stable, valid v2 snapshot.
+
+    Older deployments may have initialized the same paper account with the
+    legacy contract.  Reinitializing would discard durable evidence, so the
+    upgrade is performed in place and only when two broker snapshots produce
+    the same v2 journal and account state.  A failed validation leaves the
+    legacy account untouched and lets the existing fail-closed path continue.
+    """
+    if (
+        account.broker != "alpaca_paper"
+        or account.activity_contract != "legacy-v1"
+        or account.unexplained_residual
+    ):
+        return first, False
+    try:
+        first_key = _v2_snapshot_key(first)
+    except StockPaperError:
+        return first, False
+    second = _snapshot(gateway, account.last_reconciled_at)
+    try:
+        if first_key != _v2_snapshot_key(second):
+            return first, False
+        raw_account, raw_positions, _, raw_activities, observed = second
+        values = _account_values(raw_account, observed)
+        baseline = alpaca_activity_v2.observed_baseline(
+            raw_activities,
+            values["cash"],
+            {row["symbol"]: row["quantity"] for row in [_position_values(raw, observed) for raw in raw_positions]},
+            observed.isoformat(),
+        )
+    except (StockPaperError, ValueError):
+        return first, False
+    account.activity_contract = alpaca_activity_v2.VERSION
+    account.activity_baseline = baseline
+    _event(
+        db,
+        account,
+        "activity_contract_upgrade",
+        "recorded",
+        "Legacy Alpaca activity ledger upgraded after a stable v2 baseline capture",
+        {"from": "legacy-v1", "to": alpaca_activity_v2.VERSION, "journal_sha256": baseline["journal_sha256"]},
+    )
+    return second, True
+
+
 def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None,
                                  *, activity_contract: str = "legacy-v1") -> dict:
     """Explicitly import the observed sandbox account once; never reset it."""
@@ -1183,6 +1234,11 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             .filter_by(account_id=account.id).all()
         }
         raw_account, raw_positions, raw_orders, raw_fills, observed = _snapshot(gateway, account.last_reconciled_at)
+        snapshot, upgraded = _upgrade_legacy_snapshot(
+            db, account, gateway, (raw_account, raw_positions, raw_orders, raw_fills, observed)
+        )
+        if upgraded:
+            raw_account, raw_positions, raw_orders, raw_fills, observed = snapshot
         # Poll every client-owned nonterminal order by immutable client id.
         # Full history catches old order transitions; the lookup is the
         # fail-closed evidence path if a provider page cannot show one.
