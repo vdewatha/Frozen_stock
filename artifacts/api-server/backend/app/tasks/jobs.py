@@ -215,6 +215,9 @@ def _run_job(job_name: str, work: Callable) -> dict:
             # A scheduled reconciliation with no initialized paper account
             # completed its safety preflight and is a successful no-op.
             "uninitialized",
+            # Stock paper recovery returns this after importing broker truth
+            # and reconciling the durable ledger.
+            "reconciled",
         }:
             try:
                 if resolve_successful_job_notifications(db, job_name):
