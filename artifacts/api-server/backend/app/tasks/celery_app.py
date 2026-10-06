@@ -125,7 +125,13 @@ celery_app.conf.beat_schedule = {
     "deployment-monitor-job": {"task": "app.tasks.jobs.deployment_monitor_job", "schedule": 60 * 15},
     "strategy-promotion-job": {"task": "app.tasks.jobs.strategy_promotion_job", "schedule": 60 * 60 * 24},
     "risk-monitor-job": {"task": "app.tasks.jobs.risk_monitor_job", "schedule": 60 * 5},
-    "stock-monitoring-job": {"task": "app.tasks.jobs.stock_monitoring_job", "schedule": 60 * 5},
+    "stock-monitoring-job": {
+        "task": "app.tasks.jobs.stock_monitoring_job",
+        "schedule": 60 * 5,
+        # Keep monitoring isolated from risk traffic and discard an overdue
+        # snapshot rather than allowing stale evidence to queue indefinitely.
+        "options": {"queue": MONITORING_QUEUE, "expires": 240},
+    },
     "live-broker-reconciliation-job": {
         "task": "app.tasks.jobs.live_broker_reconciliation_job",
         "schedule": 60,
