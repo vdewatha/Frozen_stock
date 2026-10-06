@@ -24,6 +24,8 @@ STARTUP_FEATURE_REFRESH_KEY = "trading:startup-refresh:features:v4"
 STARTUP_FEATURE_REFRESH_TTL_SECONDS = 6 * 60 * 60
 STARTUP_REALIZATION_KEY = "trading:startup-refresh:realization:v2"
 STARTUP_REALIZATION_TTL_SECONDS = 6 * 60 * 60
+STARTUP_DELAYED_SIP_KEY = "trading:startup-refresh:delayed-sip:v1"
+STARTUP_DELAYED_SIP_TTL_SECONDS = 6 * 60 * 60
 STARTUP_LEARNING_RECOVERY_KEY = "trading:startup-recovery:strategy-learning"
 STARTUP_LEARNING_RECOVERY_TTL_SECONDS = 15 * 60
 
@@ -81,6 +83,17 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
                 countdown=7 * 60,
                 expires=20 * 60,
             )
+        if client.set(
+            STARTUP_DELAYED_SIP_KEY,
+            "queued",
+            nx=True,
+            ex=STARTUP_DELAYED_SIP_TTL_SECONDS,
+        ):
+            celery_app.send_task(
+                "app.tasks.jobs.delayed_sip_collection_job",
+                queue="research_market_data",
+                expires=4 * 60,
+            )
         print("Queued startup research refresh stages.", flush=True)
     except Exception as exc:
         # Startup research is opportunistic. A transient broker/import
@@ -90,6 +103,7 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
             client.delete(STARTUP_REFRESH_KEY)
             client.delete(STARTUP_FEATURE_REFRESH_KEY)
             client.delete(STARTUP_REALIZATION_KEY)
+            client.delete(STARTUP_DELAYED_SIP_KEY)
         except redis.RedisError:
             pass
         print(

@@ -159,17 +159,22 @@ def test_startup_refresh_queues_delayed_feature_generation_once():
     beat = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(beat)
     client = MagicMock()
-    client.set.side_effect = [True, True, True]
+    client.set.side_effect = [True, True, True, True]
     with patch.object(beat.celery_app, "send_task") as send_task:
         beat._queue_startup_refresh(client)
     assert send_task.call_args_list[0].args == ("app.tasks.jobs.daily_market_data_import",)
     assert send_task.call_args_list[0].kwargs == {"queue": "market_data", "expires": 15 * 60}
     assert send_task.call_args_list[1].args == ("app.tasks.jobs.daily_feature_generation",)
     assert send_task.call_args_list[2].args == ("app.tasks.jobs.model_realization_scoring_job",)
+    assert send_task.call_args_list[3].args == ("app.tasks.jobs.delayed_sip_collection_job",)
     assert send_task.call_args_list[1].kwargs == {
         "queue": "market_data",
         "countdown": 5 * 60,
         "expires": 15 * 60,
+    }
+    assert send_task.call_args_list[3].kwargs == {
+        "queue": "research_market_data",
+        "expires": 4 * 60,
     }
 
 
@@ -178,12 +183,13 @@ def test_startup_refresh_recovers_later_stages_when_market_marker_exists():
     beat = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(beat)
     client = MagicMock()
-    client.set.side_effect = [False, True, True]
+    client.set.side_effect = [False, True, True, True]
     with patch.object(beat.celery_app, "send_task") as send_task:
         beat._queue_startup_refresh(client)
     assert [call.args[0] for call in send_task.call_args_list] == [
         "app.tasks.jobs.daily_feature_generation",
         "app.tasks.jobs.model_realization_scoring_job",
+        "app.tasks.jobs.delayed_sip_collection_job",
     ]
 
 
@@ -195,7 +201,7 @@ def test_startup_refresh_queue_failure_does_not_abort_beat_boot():
     client.set.return_value = True
     with patch.object(beat.celery_app, "send_task", side_effect=RuntimeError("broker warming up")):
         beat._queue_startup_refresh(client)
-    assert client.delete.call_count == 3
+    assert client.delete.call_count == 4
 
 
 def test_startup_learning_recovery_is_deduplicated_and_paper_only():
