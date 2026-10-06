@@ -9,6 +9,7 @@ from app.services import alpaca_activity_v2 as activity
 from app.services.alpaca_cash_precision import diagnose
 from app.services.paper_cash_policy import EXACT, CENT, MONETARY_REVIEW_REASON, apply_policy
 from app.services.paper_cost_sensitivity import evaluate
+from app.services.alpaca_paper_cost_contract import assess as assess_cost_contract
 
 VERSION = "paper-research-accounting-v1"
 TRANSPORT_HALT = "Alpaca paper broker is unavailable or returned invalid data"
@@ -100,6 +101,11 @@ def _assess(db, account, *, now=None, transport_review=False, probe_review=False
             require(fill.fee == commission and fill.cost_known == (commission is not None),
                     "Persisted fill costs differ from reported evidence")
         costs = evaluate(account.activity_baseline, raw, {}, currency=account.currency)
+        cost_contract = assess_cost_contract(
+            provider=account.broker,
+            activity_contract=account.activity_contract,
+            activities=raw,
+        )
         require(costs["status"] == "research_only" and costs["journal_sha256"] == report["journal_sha256"],
                 "A closed-inventory modeled-cost report is required")
         result.update(status="observed_ready", accounting_observation_ready=True,
@@ -110,7 +116,8 @@ def _assess(db, account, *, now=None, transport_review=False, probe_review=False
             observed_at=utc(account.last_reconciled_at).isoformat(),
             cost_policy={"assumptions": costs["assumptions"], "assumptions_sha256": costs["assumptions_sha256"],
                          "fills_without_reported_commission": costs["fills_without_reported_commission"],
-                         "missing_fees_treated_as_zero": False},
+                         "missing_fees_treated_as_zero": False,
+                         "provider_contract": cost_contract},
             activity_count=len(rows), execution_count=len(fills), order_count=len(orders))
     except (ValueError, KeyError, TypeError, AttributeError, ArithmeticError) as exc:
         result["reason"] = str(exc) if isinstance(exc, ValueError) else "Invalid paper accounting evidence"

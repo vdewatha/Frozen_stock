@@ -1,4 +1,5 @@
-"""Record automated paper accounting evidence, without activating execution."""
+"""Record paper accounting evidence, without activating execution."""
+import argparse
 import json
 
 from app.core.config import settings
@@ -7,13 +8,17 @@ from app.services.paper_research_venue import record_qualification, status
 from app.services.stock_paper_ledger import active_paper_account, reconcile_stock_paper_account
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--reviewer", required=True,
+                        help="Named reviewer recorded in the audit package")
+    args = parser.parse_args(argv)
     if settings.allow_live_trading or settings.active_paper_broker != "alpaca_paper":
         raise RuntimeError("Only live-disabled Alpaca paper is supported")
     with SessionLocal() as db:
         reconcile_stock_paper_account(db)
         account = active_paper_account(db, for_update=True)
-        record_qualification(db, account, reviewer="automated-paper-accounting-review")
+        record_qualification(db, account, reviewer=args.reviewer)
         report = status(db, account)
         db.commit()
         print(json.dumps(report))

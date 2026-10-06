@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     alpaca_api_secret: SecretStr = SecretStr("")
     alpaca_data_url: str = "https://data.alpaca.markets"
     alpaca_feed: str = "sip"
+    # Alpaca paper equity trades are commission-free, but this must be an
+    # explicit provider-contract choice. It never authorizes live trading and
+    # does not suppress separately reported account-level cash activities.
+    alpaca_paper_zero_commission_contract: bool = False
     tradier_market_data_api_key: SecretStr = SecretStr("")
     tradier_api_key: SecretStr = SecretStr("")
     tradier_account_id: str = ""
