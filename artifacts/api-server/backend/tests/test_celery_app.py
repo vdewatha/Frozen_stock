@@ -93,6 +93,17 @@ class CeleryConfigurationTests(unittest.TestCase):
             task.time_limit,
         )
 
+    def test_learning_tasks_report_progress_and_have_bounded_runtime(self):
+        task = jobs.strategy_learning_scope_job
+
+        self.assertTrue(celery_app.conf.task_track_started)
+        self.assertTrue(celery_app.conf.worker_send_task_events)
+        self.assertTrue(celery_app.conf.task_send_sent_event)
+        self.assertEqual(task.soft_time_limit, jobs.LEARNING_TASK_SOFT_TIME_LIMIT_SECONDS)
+        self.assertEqual(task.time_limit, jobs.LEARNING_TASK_TIME_LIMIT_SECONDS)
+        self.assertTrue(task.acks_late)
+        self.assertTrue(task.reject_on_worker_lost)
+
     def test_intraday_lease_uses_short_dedicated_ttl(self):
         class FakeLock:
             def acquire(self, blocking=False):

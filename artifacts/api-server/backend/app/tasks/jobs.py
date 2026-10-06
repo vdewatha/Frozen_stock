@@ -97,6 +97,8 @@ INTRADAY_TASK_TIME_LIMIT_SECONDS = 55
 INTRADAY_JOB_LOCK_TTL_SECONDS = INTRADAY_TASK_TIME_LIMIT_SECONDS + 65
 IEX_TASK_SOFT_TIME_LIMIT_SECONDS = 110
 IEX_TASK_TIME_LIMIT_SECONDS = 120
+LEARNING_TASK_SOFT_TIME_LIMIT_SECONDS = 12 * 60
+LEARNING_TASK_TIME_LIMIT_SECONDS = 15 * 60
 IEX_JOB_LOCK_TTL_SECONDS = IEX_TASK_TIME_LIMIT_SECONDS + 60
 REDIS_LOCK_RETRY_DELAYS_SECONDS = (0.25, 0.75, 1.5)
 
@@ -394,6 +396,10 @@ def nightly_backtest_job() -> dict:
     retry_backoff_max=300,
     retry_jitter=True,
     max_retries=2,
+    soft_time_limit=LEARNING_TASK_SOFT_TIME_LIMIT_SECONDS,
+    time_limit=LEARNING_TASK_TIME_LIMIT_SECONDS,
+    acks_late=True,
+    reject_on_worker_lost=True,
 )
 def strategy_learning_scope_job(symbol: str, strategy_slug: str, max_candidates: int = 3) -> dict:
     def work(db):

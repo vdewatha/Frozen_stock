@@ -21,6 +21,9 @@ def configured_schedule(schedule: dict, *, observation_only: bool) -> dict:
 
 celery_app = Celery("trading_app", broker=settings.redis_url, backend=settings.redis_url)
 celery_app.conf.timezone = "America/New_York"
+celery_app.conf.task_track_started = True
+celery_app.conf.worker_send_task_events = True
+celery_app.conf.task_send_sent_event = True
 celery_app.conf.task_queues = (
     Queue("default", Exchange("default"), routing_key="default"),
     Queue("market_data", Exchange("market_data"), routing_key="market_data"),
