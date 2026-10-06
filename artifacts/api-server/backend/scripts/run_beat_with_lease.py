@@ -22,6 +22,8 @@ STARTUP_REFRESH_KEY = "trading:startup-refresh:market-data:v2"
 STARTUP_REFRESH_TTL_SECONDS = 20 * 60 * 60
 STARTUP_FEATURE_REFRESH_KEY = "trading:startup-refresh:features:v2"
 STARTUP_FEATURE_REFRESH_TTL_SECONDS = 6 * 60 * 60
+STARTUP_REALIZATION_KEY = "trading:startup-refresh:realization:v1"
+STARTUP_REALIZATION_TTL_SECONDS = 6 * 60 * 60
 STARTUP_LEARNING_RECOVERY_KEY = "trading:startup-recovery:strategy-learning"
 STARTUP_LEARNING_RECOVERY_TTL_SECONDS = 15 * 60
 
@@ -65,6 +67,18 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
                 countdown=5 * 60,
                 expires=15 * 60,
             )
+        if client.set(
+            STARTUP_REALIZATION_KEY,
+            "queued",
+            nx=True,
+            ex=STARTUP_REALIZATION_TTL_SECONDS,
+        ):
+            celery_app.send_task(
+                "app.tasks.jobs.model_realization_scoring_job",
+                queue="learning",
+                countdown=7 * 60,
+                expires=20 * 60,
+            )
         print("Queued startup market-data refresh.", flush=True)
     except Exception:
         # A later scheduled run can recover from a transient broker/import
@@ -72,6 +86,7 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
         try:
             client.delete(STARTUP_REFRESH_KEY)
             client.delete(STARTUP_FEATURE_REFRESH_KEY)
+            client.delete(STARTUP_REALIZATION_KEY)
         except redis.RedisError:
             pass
         raise

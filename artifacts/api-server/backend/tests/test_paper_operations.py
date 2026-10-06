@@ -159,12 +159,13 @@ def test_startup_refresh_queues_delayed_feature_generation_once():
     beat = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(beat)
     client = MagicMock()
-    client.set.side_effect = [True, True]
+    client.set.side_effect = [True, True, True]
     with patch.object(beat.celery_app, "send_task") as send_task:
         beat._queue_startup_refresh(client)
     assert send_task.call_args_list[0].args == ("app.tasks.jobs.daily_market_data_import",)
     assert send_task.call_args_list[0].kwargs == {"queue": "market_data", "expires": 15 * 60}
     assert send_task.call_args_list[1].args == ("app.tasks.jobs.daily_feature_generation",)
+    assert send_task.call_args_list[2].args == ("app.tasks.jobs.model_realization_scoring_job",)
     assert send_task.call_args_list[1].kwargs == {
         "queue": "market_data",
         "countdown": 5 * 60,
