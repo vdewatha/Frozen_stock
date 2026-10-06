@@ -149,7 +149,7 @@ def test_research_persistence_rejects_missing_prices():
 def test_scanner_reports_missing_data_without_candidate():
     from app.services import trade_candidates
     db = MagicMock()
-    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [SimpleNamespace(symbol="SPY")]
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [("SPY",)]
     with patch.object(trade_candidates, "trusted_history", side_effect=UntrustedMarketData("missing")), patch.object(trade_candidates, "summarize_macro_context", return_value={}), patch.object(trade_candidates, "latest_market_regime", return_value=None):
         result = trade_candidates.scan_trade_candidates(db)
     assert result["candidates"] == []

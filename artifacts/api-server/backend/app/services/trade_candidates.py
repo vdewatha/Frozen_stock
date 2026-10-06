@@ -47,11 +47,17 @@ def _journal_feedback_adjustment(db: Session, strategy_row: Strategy | dict, sym
 
 
 def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
-    assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
-    # Keep only scalar strategy metadata while the scanner performs model
-    # fitting and backtests. ORM instances expire after commits, so touching
-    # one later can reopen a PostgreSQL transaction after the connection has
-    # been idle for the duration of the CPU-bound work.
+    symbols = [
+        symbol
+        for (symbol,) in db.query(Asset.symbol)
+        .filter(Asset.is_active.is_(True))
+        .order_by(Asset.symbol)
+        .all()
+    ]
+    # Keep only scalar metadata while the scanner performs model fitting and
+    # backtests. ORM instances expire after commits, so touching one later can
+    # reopen a PostgreSQL transaction after the connection has been idle for
+    # the duration of the CPU-bound work.
     strategies = [
         {
             "id": strategy.id,
@@ -68,17 +74,17 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
     candidates: list[dict] = []
     blocked_assets: list[dict] = []
 
-    for asset in assets:
+    for symbol in symbols:
         try:
-            prices, source = trusted_history(db, asset.symbol, 420, minimum=140)
+            prices, source = trusted_history(db, symbol, 420, minimum=140)
         except UntrustedMarketData as exc:
-            blocked_assets.append({"symbol": asset.symbol, "reason": str(exc)})
+            blocked_assets.append({"symbol": symbol, "reason": str(exc)})
             continue
         # History loading opens a transaction; close it before model fitting
         # so PostgreSQL does not terminate the session during CPU work.
         db.commit()
         model = predict_probabilities(
-            asset.symbol,
+            symbol,
             prices,
             source,
             include_walk_forward=False,
@@ -89,8 +95,8 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
         db.commit()
 
         for strategy_row in strategies:
-            signal = get_strategy(strategy_row["strategy_type"], strategy_row["parameters"]).generate_signal(asset.symbol, prices)
-            backtest = run_backtest(asset.symbol, strategy_row["strategy_type"], prices.tail(320), BacktestConfig(), strategy_row["parameters"])
+            signal = get_strategy(strategy_row["strategy_type"], strategy_row["parameters"]).generate_signal(symbol, prices)
+            backtest = run_backtest(symbol, strategy_row["strategy_type"], prices.tail(320), BacktestConfig(), strategy_row["parameters"])
             model_supported = best_prediction is not None
             strategy_supported = signal.action == "BUY" and signal.confidence >= 0.55
             # A positive score is not enough to make a candidate actionable:
@@ -110,7 +116,7 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
                 + float(backtest["score"]) * 0.25
                 + (0.10 if status == "positive_candidate" else 0)
             )
-            journal_feedback = _journal_feedback_adjustment(db, strategy_row, asset.symbol)
+            journal_feedback = _journal_feedback_adjustment(db, strategy_row, symbol)
             score = base_score + float(journal_feedback["score_adjustment"])
             blockers = []
             if not model_supported:
@@ -122,7 +128,7 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
 
             candidates.append(
                 {
-                    "symbol": asset.symbol,
+                    "symbol": symbol,
                     "strategy": strategy_row["strategy_type"],
                     "strategy_name": strategy_row["name"],
                     "strategy_status": strategy_row["current_status"],
