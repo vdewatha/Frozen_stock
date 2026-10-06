@@ -1457,7 +1457,7 @@ def observe_trial(db: Session, trial_id: str) -> dict:
         ))
         if existing: continue
         daily = db.scalars(select(MarketPrice).where(
-            MarketPrice.symbol == symbol, MarketPrice.source.in_(("yfinance", "yahoo_chart")),
+            MarketPrice.symbol == symbol, MarketPrice.source.in_(("yfinance", "yahoo_chart", "alpaca_iex_daily")),
             MarketPrice.price_date <= now.astimezone(timezone.utc).date()
         ).order_by(MarketPrice.price_date.asc())).all()
         reason, probability, features, feature_timestamp = None, None, None, None

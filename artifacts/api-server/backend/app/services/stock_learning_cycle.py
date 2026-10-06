@@ -745,8 +745,8 @@ def evaluate_cycle_prerequisites(
         },
     )
     provider_gate = _gate(
-        "pass" if provider in {"yfinance", "yahoo_chart"} else "fail",
-        reason=None if provider in {"yfinance", "yahoo_chart"} else "provider provenance is not verified",
+        "pass" if provider in {"yfinance", "yahoo_chart", "alpaca_iex_daily"} else "fail",
+        reason=None if provider in {"yfinance", "yahoo_chart", "alpaca_iex_daily"} else "provider provenance is not verified",
         evidence={"provider": provider},
     )
     protection_gate = _readiness_history_gate(db)

@@ -36,7 +36,7 @@ from app.services.feature_pipeline import feature_config_id as default_feature_c
 # These are the only provenance values produced by the real daily equity
 # importer.  In particular, "database:*", "fixture", "mock" and "unknown"
 # are display/source claims, not provider provenance.
-VERIFIED_EQUITY_PROVIDERS = frozenset({"yfinance", "yahoo_chart"})
+VERIFIED_EQUITY_PROVIDERS = frozenset({"yfinance", "yahoo_chart", "alpaca_iex_daily"})
 DATASET_FORMAT = "verified-stock-dataset-v1"
 
 

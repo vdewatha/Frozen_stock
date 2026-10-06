@@ -6,7 +6,7 @@ import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from urllib.request import Request, urlopen
-from urllib.parse import quote as urlquote
+from urllib.parse import quote as urlquote, urlencode
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,7 @@ from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models import Asset, MarketPrice
 
 
@@ -183,6 +184,67 @@ def fetch_yahoo_chart_prices(symbol: str, period: str = "2y") -> pd.DataFrame:
     return _validated_provider_frame(pd.DataFrame(rows))
 
 
+def fetch_alpaca_iex_daily_prices(symbol: str, period: str = "2y") -> pd.DataFrame:
+    """Fetch real daily research bars when Yahoo is unavailable.
+
+    This is a read-only Alpaca market-data request using the paper-scoped
+    research credentials. IEX daily bars are valid historical observations
+    for research, but they do not satisfy the separate consolidated intraday
+    execution gate.
+    """
+    symbol = _provider_symbol(symbol)
+    key, secret = settings.research_alpaca_credentials()
+    if not key or not secret:
+        return pd.DataFrame()
+    end = datetime.now(timezone.utc)
+    start = end - pd.Timedelta(days=_period_to_days(period) + 10).to_pytimedelta()
+    params = urlencode({
+        "symbols": symbol,
+        "timeframe": "1Day",
+        "start": start.isoformat().replace("+00:00", "Z"),
+        "end": end.isoformat().replace("+00:00", "Z"),
+        "adjustment": "all",
+        "feed": "iex",
+        "limit": "1000",
+    })
+    request = Request(
+        f"https://data.alpaca.markets/v2/stocks/bars?{params}",
+        headers={
+            "APCA-API-KEY-ID": key,
+            "APCA-API-SECRET-KEY": secret,
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            payload = json.load(response)
+    except Exception:
+        return pd.DataFrame()
+    if not isinstance(payload, dict) or not isinstance(payload.get("bars"), dict):
+        return pd.DataFrame()
+    bars = payload["bars"].get(symbol)
+    if not isinstance(bars, list) or not bars:
+        return pd.DataFrame()
+    rows = []
+    for bar in bars:
+        if not isinstance(bar, dict) or not isinstance(bar.get("t"), str):
+            return pd.DataFrame()
+        try:
+            stamp = datetime.fromisoformat(bar["t"].replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return pd.DataFrame()
+        rows.append({
+            "date": stamp.astimezone(timezone.utc).date(),
+            "open": bar.get("o"),
+            "high": bar.get("h"),
+            "low": bar.get("l"),
+            "close": bar.get("c"),
+            "adjusted_close": bar.get("c"),
+            "volume": bar.get("v"),
+        })
+    return _validated_provider_frame(pd.DataFrame(rows), as_of=end)
+
+
 def upsert_prices(db: Session, symbol: str, prices: pd.DataFrame, source: str = "unknown") -> int:
     symbol = _clean_symbol(symbol)
     if prices.empty:
@@ -259,6 +321,16 @@ def import_market_prices(db: Session, symbol: str, period: str = "2y") -> dict:
             "status": "ready" if not prices.empty else "unavailable",
             "reason": None if not prices.empty else "empty_or_invalid_response",
         })
+    if prices.empty:
+        key, secret = settings.research_alpaca_credentials()
+        if key and secret:
+            prices = fetch_alpaca_iex_daily_prices(symbol, period)
+            source = "alpaca_iex_daily" if not prices.empty else "unavailable"
+            attempts.append({
+                "provider": "alpaca_iex_daily",
+                "status": "ready" if not prices.empty else "unavailable",
+                "reason": None if not prices.empty else "empty_or_invalid_response",
+            })
     rows_imported = upsert_prices(db, symbol, prices, source)
     return {
         "symbol": symbol,
@@ -266,7 +338,7 @@ def import_market_prices(db: Session, symbol: str, period: str = "2y") -> dict:
         "start_date": prices["date"].min() if not prices.empty else None,
         "end_date": prices["date"].max() if not prices.empty else None,
         "source": source,
-        "trusted": source in {"yfinance", "yahoo_chart"} and not prices.empty,
+        "trusted": source in {"yfinance", "yahoo_chart", "alpaca_iex_daily"} and not prices.empty,
         "synthetic_fallback_used": False,
         "provider_attempts": attempts,
         "unavailable_reason": None if not prices.empty else "No trusted market-data provider returned a valid history",

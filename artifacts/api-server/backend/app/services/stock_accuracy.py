@@ -33,7 +33,7 @@ MIN_ACCURACY_SAMPLES = 30
 MIN_DRIFT_SAMPLES = 20
 MAX_EVALUATION_SAMPLES = 200
 ACCURACY_CONTRACT_VERSION = "stock-point-in-time-accuracy-v1"
-VERIFIED_PROVIDERS = {"yfinance", "yahoo_chart"}
+VERIFIED_PROVIDERS = {"yfinance", "yahoo_chart", "alpaca_iex_daily"}
 
 
 def _utc(value: datetime) -> datetime:

@@ -12,7 +12,7 @@ from app.services.intraday_data import (
     MARKET_DATA_FEED_CLASS,
 )
 
-TRUSTED_SOURCES = frozenset({"yfinance", "yahoo_chart"})
+TRUSTED_SOURCES = frozenset({"yfinance", "yahoo_chart", "alpaca_iex_daily"})
 
 
 class UntrustedMarketData(ValueError):

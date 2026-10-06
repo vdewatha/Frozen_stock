@@ -16,6 +16,12 @@ def payload():
         "timestamp": [1704153600], "indicators": {"quote": [{"open": [100], "high": [110], "low": [90], "close": [105], "volume": [20]}]}}]}}
 
 
+def alpaca_payload():
+    return {"bars": {"SPY": [{
+        "t": "2026-10-02T00:00:00Z", "o": 100, "h": 110, "l": 90, "c": 105, "v": 20,
+    }]}}
+
+
 class ProviderTests(unittest.TestCase):
     def fetch(self, value):
         with patch.object(market_data, "urlopen", return_value=io.StringIO(json.dumps(value))):
@@ -69,6 +75,16 @@ class ProviderTests(unittest.TestCase):
         frame.columns = pd.MultiIndex.from_product([frame.columns, ["ETH-USD"]])
         with patch.object(market_data.yf, "download", return_value=frame):
             self.assertTrue(market_data.fetch_yfinance_prices("BTC-USD").empty)
+
+    def test_alpaca_daily_fallback_is_real_provenance_and_bounded(self):
+        with patch.object(type(market_data.settings), "research_alpaca_credentials", return_value=("key", "secret")), \
+             patch.object(market_data, "urlopen", return_value=io.StringIO(json.dumps(alpaca_payload()))) as network:
+            frame = market_data.fetch_alpaca_iex_daily_prices("SPY")
+        self.assertEqual(list(frame.date), [date(2026, 10, 2)])
+        request = network.call_args.args[0]
+        self.assertIn("data.alpaca.markets/v2/stocks/bars", request.full_url)
+        self.assertIn("feed=iex", request.full_url)
+        self.assertNotIn("key", request.full_url)
 
     def test_current_and_future_daily_bars_are_not_available(self):
         frame = pd.DataFrame({"date": ["2026-09-03", "2026-09-04", "2026-09-05"],
