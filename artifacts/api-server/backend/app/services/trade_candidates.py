@@ -32,7 +32,7 @@ def _backtest_supported(backtest: dict) -> bool:
     return not bool(backtest.get("rejected")) and float(backtest.get("score", 0)) > 0
 
 
-def _journal_feedback_adjustment(db: Session, strategy_row: Strategy, symbol: str) -> dict:
+def _journal_feedback_adjustment(db: Session, strategy_row: Strategy | dict, symbol: str) -> dict:
     return {
         "source": "journal_feedback",
         "status": "quarantined",
@@ -48,9 +48,23 @@ def _journal_feedback_adjustment(db: Session, strategy_row: Strategy, symbol: st
 
 def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
     assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
-    strategies = db.query(Strategy).order_by(Strategy.name).all()
+    # Keep only scalar strategy metadata while the scanner performs model
+    # fitting and backtests. ORM instances expire after commits, so touching
+    # one later can reopen a PostgreSQL transaction after the connection has
+    # been idle for the duration of the CPU-bound work.
+    strategies = [
+        {
+            "id": strategy.id,
+            "name": strategy.name,
+            "strategy_type": strategy.strategy_type,
+            "parameters": strategy.parameters,
+            "current_status": strategy.current_status,
+        }
+        for strategy in db.query(Strategy).order_by(Strategy.name).all()
+    ]
     macro_context = summarize_macro_context(db)
     regime = latest_market_regime(db, auto_detect=False) or {}
+    db.commit()
     candidates: list[dict] = []
     blocked_assets: list[dict] = []
 
@@ -75,8 +89,8 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
         db.commit()
 
         for strategy_row in strategies:
-            signal = get_strategy(strategy_row.strategy_type, strategy_row.parameters).generate_signal(asset.symbol, prices)
-            backtest = run_backtest(asset.symbol, strategy_row.strategy_type, prices.tail(320), BacktestConfig(), strategy_row.parameters)
+            signal = get_strategy(strategy_row["strategy_type"], strategy_row["parameters"]).generate_signal(asset.symbol, prices)
+            backtest = run_backtest(asset.symbol, strategy_row["strategy_type"], prices.tail(320), BacktestConfig(), strategy_row["parameters"])
             model_supported = best_prediction is not None
             strategy_supported = signal.action == "BUY" and signal.confidence >= 0.55
             # A positive score is not enough to make a candidate actionable:
@@ -109,10 +123,10 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
             candidates.append(
                 {
                     "symbol": asset.symbol,
-                    "strategy": strategy_row.strategy_type,
-                    "strategy_name": strategy_row.name,
-                    "strategy_status": strategy_row.current_status,
-                    "strategy_research": strategy_research_for(strategy_row.strategy_type),
+                    "strategy": strategy_row["strategy_type"],
+                    "strategy_name": strategy_row["name"],
+                    "strategy_status": strategy_row["current_status"],
+                    "strategy_research": strategy_research_for(strategy_row["strategy_type"]),
                     "candidate_status": status,
                     "base_score": round(base_score, 4),
                     "score": round(score, 4),
