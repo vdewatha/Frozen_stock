@@ -32,6 +32,17 @@ class MonitorSecurityTests(unittest.TestCase):
         self.assertTrue(result["details"]["configured_jobs"])
         self.assertEqual(result["status"], "ready")
 
+    def test_direct_monitor_loop_replaces_beat_monitoring_task(self):
+        schedule = dict(deployment_monitor.celery_app.conf.beat_schedule)
+        schedule.pop("stock-monitoring-job", None)
+        with patch.dict("os.environ", {"PAPER_DIRECT_MONITOR_LOOP": "true"}), patch.object(
+            deployment_monitor, "celery_app", MagicMock(conf=MagicMock(beat_schedule=schedule))
+        ):
+            result = deployment_monitor._check_celery_schedule()
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["details"]["monitoring_mode"], "direct_supervised_loop")
+        self.assertNotIn("stock-monitoring-job", result["details"]["missing_required_jobs"])
+
     def test_redis_distinguishes_configuration_and_reachability(self):
         with patch.dict("os.environ", {}, clear=True), patch.object(deployment_monitor.settings, "redis_url", ""):
             result = deployment_monitor._check_redis()

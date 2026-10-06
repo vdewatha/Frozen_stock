@@ -110,7 +110,6 @@ def _check_celery_schedule() -> dict:
         "paper-trade-reconciliation-job",
         "stock-paper-broker-reconciliation-job",
         "risk-monitor-job",
-        "stock-monitoring-job",
         "intraday-market-data-import",
         "stock-training-recovery-job",
         "scheduled-stock-challenger-retraining",
@@ -119,12 +118,20 @@ def _check_celery_schedule() -> dict:
         "stock-forward-trial-observe",
         "stock-forward-trial-reconcile",
     }
+    direct_monitor = os.environ.get("PAPER_DIRECT_MONITOR_LOOP", "false").strip().lower() == "true"
+    if not direct_monitor:
+        required_jobs.add("stock-monitoring-job")
     missing = sorted(required_jobs - set(job_names))
     return {
         "name": "Scheduled job definitions",
         "status": _status(not missing),
         "message": "Required scheduled jobs are defined." if not missing else "Required scheduled job definitions are missing.",
-        "details": {"configured_jobs": job_names, "missing_required_jobs": missing},
+        "details": {
+            "configured_jobs": job_names,
+            "missing_required_jobs": missing,
+            "monitoring_mode": "direct_supervised_loop" if direct_monitor else "celery_beat_task",
+            "direct_monitor_loop_enabled": direct_monitor,
+        },
     }
 
 
