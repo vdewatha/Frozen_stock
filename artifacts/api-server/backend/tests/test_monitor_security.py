@@ -94,6 +94,27 @@ class MonitorSecurityTests(unittest.TestCase):
         inspector.active_queues.assert_called_once_with()
         send_task.assert_not_called()
 
+    def test_worker_evidence_requires_critical_task_registration(self):
+        inspector = MagicMock()
+        inspector.ping.return_value = {
+            "intraday@host": {"ok": "pong"},
+            "general@host": {"ok": "pong"},
+        }
+        inspector.active_queues.return_value = {
+            "intraday@host": [{"name": "intraday_market_data"}],
+            "general@host": [{"name": name} for name in deployment_monitor.GENERAL_WORKER_QUEUES],
+        }
+        inspector.registered.return_value = {
+            "intraday@host": ["app.tasks.jobs.intraday_market_data_import"],
+            "general@host": [],
+        }
+
+        with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):
+            result = deployment_monitor._check_celery_workers()
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("app.tasks.jobs.strategy_learning_scope_job", result["details"]["missing_registered_tasks"])
+
     def test_worker_evidence_requires_every_queue_and_allows_separate_pools(self):
         inspector = MagicMock()
         queues = deployment_monitor.GENERAL_WORKER_QUEUES | {"intraday_market_data"}

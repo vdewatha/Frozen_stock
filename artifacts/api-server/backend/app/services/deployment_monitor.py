@@ -16,6 +16,15 @@ from app.services.notifications import create_notification
 from app.services.readiness import readiness_snapshot
 from app.tasks.celery_app import GENERAL_WORKER_QUEUES, INTRADAY_MARKET_DATA_QUEUE, celery_app
 
+REQUIRED_REGISTERED_TASKS = frozenset(
+    {
+        "app.tasks.jobs.strategy_learning_scope_job",
+        "app.tasks.jobs.retry_failed_strategy_learning_scopes_job",
+        "app.tasks.jobs.intraday_market_data_import",
+        "app.tasks.jobs.paper_trading_signal_job",
+    }
+)
+
 
 def _status(ok: bool) -> str:
     return "ready" if ok else "blocked"
@@ -122,6 +131,7 @@ def _check_celery_workers() -> dict:
             if isinstance(response, dict) and response.get("ok") == "pong"
         )
         active_queues = inspector.active_queues() or {}
+        registered_responses = inspector.registered() or {}
     except Exception as exc:
         return {
             "name": "Celery workers",
@@ -138,6 +148,8 @@ def _check_celery_workers() -> dict:
                 "general_worker_count": 0,
                 "worker_queues": {},
                 "missing_general_queues": sorted(GENERAL_WORKER_QUEUES),
+                "registered_tasks": {},
+                "missing_registered_tasks": sorted(REQUIRED_REGISTERED_TASKS),
                 "error_type": exc.__class__.__name__,
             },
         }
@@ -168,6 +180,20 @@ def _check_celery_workers() -> dict:
     )
     served_queues = {queue for queues in worker_queues.values() for queue in queues}
     missing_general_queues = sorted(GENERAL_WORKER_QUEUES - served_queues)
+    registered_tasks = {
+        worker: sorted(set(tasks or []))
+        for worker, tasks in registered_responses.items()
+        if isinstance(tasks, (list, tuple, set))
+    } if isinstance(registered_responses, dict) else {}
+    registered_union = {
+        task
+        for tasks in registered_tasks.values()
+        for task in tasks
+    }
+    registration_evidence_available = isinstance(registered_responses, dict) and bool(registered_responses)
+    missing_registered_tasks = sorted(
+        REQUIRED_REGISTERED_TASKS - registered_union
+    ) if registration_evidence_available else []
     if not dedicated_intraday_workers:
         message = (
             "No dedicated Celery worker is listening exclusively to the intraday "
@@ -179,12 +205,22 @@ def _check_celery_workers() -> dict:
             "Required Celery queues have no responding consumer: "
             + ", ".join(missing_general_queues)
         )
+    elif missing_registered_tasks:
+        message = (
+            "Required Celery task registrations are missing: "
+            + ", ".join(missing_registered_tasks)
+        )
     else:
         message = "Dedicated intraday and general Celery workers are listening to their queues."
 
     return {
         "name": "Celery workers",
-        "status": _status(bool(workers) and bool(dedicated_intraday_workers) and not missing_general_queues),
+        "status": _status(
+            bool(workers)
+            and bool(dedicated_intraday_workers)
+            and not missing_general_queues
+            and not missing_registered_tasks
+        ),
         "message": message if workers else "No Celery workers responded to ping.",
         "details": {
             "workers": workers,
@@ -199,6 +235,8 @@ def _check_celery_workers() -> dict:
             "required_intraday_queue": INTRADAY_MARKET_DATA_QUEUE,
             "required_general_queues": sorted(GENERAL_WORKER_QUEUES),
             "missing_general_queues": missing_general_queues,
+            "registered_tasks": registered_tasks,
+            "missing_registered_tasks": missing_registered_tasks,
         },
     }
 
