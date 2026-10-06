@@ -187,6 +187,17 @@ def test_startup_refresh_recovers_later_stages_when_market_marker_exists():
     ]
 
 
+def test_startup_refresh_queue_failure_does_not_abort_beat_boot():
+    spec = importlib.util.spec_from_file_location("paper_beat_refresh_failure_test", BACKEND / "scripts/run_beat_with_lease.py")
+    beat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(beat)
+    client = MagicMock()
+    client.set.return_value = True
+    with patch.object(beat.celery_app, "send_task", side_effect=RuntimeError("broker warming up")):
+        beat._queue_startup_refresh(client)
+    assert client.delete.call_count == 3
+
+
 def test_startup_learning_recovery_is_deduplicated_and_paper_only():
     spec = importlib.util.spec_from_file_location("paper_beat_recovery_test", BACKEND / "scripts/run_beat_with_lease.py")
     beat = importlib.util.module_from_spec(spec)

@@ -82,16 +82,21 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
                 expires=20 * 60,
             )
         print("Queued startup research refresh stages.", flush=True)
-    except Exception:
-        # A later scheduled run can recover from a transient broker/import
-        # failure. Remove the marker so the next beat leader may retry.
+    except Exception as exc:
+        # Startup research is opportunistic. A transient broker/import
+        # failure must not prevent the beat process from starting and
+        # publishing its lease; the regular schedule can retry later.
         try:
             client.delete(STARTUP_REFRESH_KEY)
             client.delete(STARTUP_FEATURE_REFRESH_KEY)
             client.delete(STARTUP_REALIZATION_KEY)
         except redis.RedisError:
             pass
-        raise
+        print(
+            f"Skipped incomplete startup research refresh: {exc.__class__.__name__}.",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _queue_startup_learning_recovery(client: redis.Redis) -> None:
