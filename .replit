@@ -62,3 +62,11 @@ PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 PAPER_STARTUP_REFRESH = "false"
 ACTIVE_PAPER_BROKER = "alpaca_paper"
+
+[[ports]]
+localPort = 8081
+externalPort = 80
+
+[[ports]]
+localPort = 18936
+externalPort = 3000
