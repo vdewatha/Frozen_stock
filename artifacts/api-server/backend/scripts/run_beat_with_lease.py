@@ -95,12 +95,26 @@ def _queue_startup_learning_recovery(client: redis.Redis) -> None:
         print("Skipped startup learning recovery: queue unavailable.", flush=True)
 
 
+def _acquire_lease(client: redis.Redis, owner: str) -> None:
+    """Wait through deployment overlap instead of abandoning the scheduler."""
+    while True:
+        try:
+            if client.set(LEASE_KEY, owner, nx=True, ex=LEASE_SECONDS):
+                return
+            print("Another Celery beat scheduler holds the lease; waiting.", flush=True)
+        except redis.RedisError as exc:
+            print(
+                f"Celery beat lease coordination unavailable; retrying: {exc.__class__.__name__}.",
+                file=sys.stderr,
+                flush=True,
+            )
+        time.sleep(2)
+
+
 def main() -> int:
     client = redis.Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=2, socket_timeout=2)
     owner = secrets.token_hex(16)
-    if not client.set(LEASE_KEY, owner, nx=True, ex=LEASE_SECONDS):
-        print("Another Celery beat scheduler already holds the lease.", file=sys.stderr)
-        return 1
+    _acquire_lease(client, owner)
 
     if _startup_refresh_enabled():
         _queue_startup_refresh(client)
