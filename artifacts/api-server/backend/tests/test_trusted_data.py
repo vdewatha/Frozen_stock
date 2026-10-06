@@ -156,5 +156,25 @@ def test_scanner_reports_missing_data_without_candidate():
     assert result["blocked_assets"] == [{"symbol": "SPY", "reason": "missing"}]
 
 
+def test_scanner_uses_scalar_symbol_for_news_context():
+    from app.services import trade_candidates
+
+    db = MagicMock()
+    asset_query = MagicMock()
+    asset_query.filter.return_value.order_by.return_value.all.return_value = [("SPY",)]
+    strategy_query = MagicMock()
+    strategy_query.order_by.return_value.all.return_value = []
+    db.query.side_effect = [asset_query, strategy_query]
+    with patch.object(trade_candidates, "trusted_history", return_value=(history(), "database:yfinance")), \
+         patch.object(trade_candidates, "summarize_macro_context", return_value={"summary": ""}), \
+         patch.object(trade_candidates, "latest_market_regime", return_value=None), \
+         patch.object(trade_candidates, "predict_probabilities", return_value={"predictions": []}), \
+         patch.object(trade_candidates, "summarize_news_context", return_value={"summary": ""}) as summarize_news:
+        result = trade_candidates.scan_trade_candidates(db)
+
+    assert result["candidates"] == []
+    summarize_news.assert_called_once_with(db, "SPY")
+
+
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(unittest.FunctionTestCase(value) for name, value in globals().items() if name.startswith("test_"))

@@ -91,7 +91,7 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
             forest_estimators=40,
         )
         best_prediction = _best_positive_prediction(model.get("predictions", []))
-        news_context = summarize_news_context(db, asset.symbol)
+        news_context = summarize_news_context(db, symbol)
         db.commit()
 
         for strategy_row in strategies:
