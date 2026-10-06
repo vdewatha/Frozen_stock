@@ -21,6 +21,7 @@ REQUIRED_REGISTERED_TASKS = frozenset(
         "app.tasks.jobs.strategy_learning_scope_job",
         "app.tasks.jobs.retry_failed_strategy_learning_scopes_job",
         "app.tasks.jobs.intraday_market_data_import",
+        "app.tasks.jobs.model_realization_scoring_job",
         "app.tasks.jobs.paper_trading_signal_job",
     }
 )
@@ -96,6 +97,7 @@ def _check_celery_schedule() -> dict:
     job_names = sorted(celery_app.conf.beat_schedule.keys())
     required_jobs = {
         "daily-market-data-import",
+        "model-realization-scoring",
         "deployment-monitor-job",
         "strategy-learning-batch-job",
         "strategy-learning-failure-retry",
