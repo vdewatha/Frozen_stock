@@ -1093,6 +1093,8 @@ def _upgrade_legacy_snapshot(
         account.broker != "alpaca_paper"
         or account.activity_contract != "legacy-v1"
         or account.unexplained_residual
+        or account.accounting_verified
+        or account.costs_known
     ):
         return first, False
     try:

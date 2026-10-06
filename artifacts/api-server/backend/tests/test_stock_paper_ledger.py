@@ -908,7 +908,7 @@ class StockPaperLedgerTests(unittest.TestCase):
             result = reconcile_stock_paper_account(db, gateway)
             self.assertEqual(result["status"], "reconciled")
             self.assertEqual(db.query(StockPaperOrder).filter_by(client_order_id="old-client").one().status, "canceled")
-            self.assertEqual(gateway.orders_after, [None])
+            self.assertEqual(gateway.orders_after, [None, None])
             self.assertEqual(gateway.lookups, 1)
 
     def test_stale_data_and_kill_switch_block_reservations(self):

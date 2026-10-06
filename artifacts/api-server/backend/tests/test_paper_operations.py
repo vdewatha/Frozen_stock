@@ -116,6 +116,9 @@ def test_persistent_stack_is_private_paper_only_and_has_isolated_queues():
         assert services[service]["restart"] == "unless-stopped"
     for service, queue in (("learning", "learning"), ("risk", "risk"), ("execution", "paper_trading"), ("intraday", "intraday_market_data")):
         assert f"--queues={queue}" in services[service]["command"]
+    assert "--concurrency=${LEARNING_CONCURRENCY:-8}" in services["learning"]["command"]
+    assert "--concurrency=1" in services["risk"]["command"]
+    assert "--concurrency=1" in services["execution"]["command"]
     assert services["migrate"]["restart"] == "no"
 
 
