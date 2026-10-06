@@ -125,7 +125,19 @@ def readiness_snapshot(db: Session) -> dict:
     )
     intraday_failures = {}
     intraday_status = {}
-    intraday_assets = [asset for asset in active_assets if asset.symbol in ALLOWED_SYMBOLS]
+    active_symbols = {asset.symbol for asset in active_assets}
+    execution_symbols = set(settings.paper_execution_symbols)
+    missing_execution_symbols = sorted(execution_symbols - active_symbols)
+    if missing_execution_symbols:
+        intraday_failures["__configuration__"] = (
+            "Configured paper execution symbols are not active assets: "
+            + ", ".join(missing_execution_symbols)
+        )
+    intraday_assets = [
+        asset for asset in active_assets
+        if asset.symbol in ALLOWED_SYMBOLS and asset.symbol in execution_symbols
+    ]
+    research_only_symbols = sorted(active_symbols - execution_symbols)
     unsupported_intraday_assets = [
         asset.symbol for asset in active_assets if asset.symbol not in ALLOWED_SYMBOLS
     ]
@@ -170,6 +182,9 @@ def readiness_snapshot(db: Session) -> dict:
             "unavailable_reason": representative.get("unavailable_reason"),
             "failures": intraday_failures,
             "symbols": intraday_status,
+            "execution_symbols": sorted(execution_symbols),
+            "research_only_symbols": research_only_symbols,
+            "missing_execution_symbols": missing_execution_symbols,
             "unsupported_active_assets": unsupported_intraday_assets,
         },
     ))

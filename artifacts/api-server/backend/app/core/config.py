@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # these values with its immutable symbols and provider.
     stock_learning_default_symbols: list[str] = ["AAPL", "MSFT", "QQQ", "SPY"]
     stock_learning_default_provider: str = "yfinance"
+    # Research can cover a wider universe than the symbols admitted to paper
+    # decisions. A symbol with incomplete execution data stays research-only.
+    paper_execution_symbols: list[str] = ["AAPL", "MSFT", "QQQ", "SPY"]
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # A shared workspace .env also contains frontend and provider-specific
@@ -97,6 +100,16 @@ class Settings(BaseSettings):
             not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,15}", symbol) for symbol in symbols
         ):
             raise ValueError("Learning universe requires 1 to 25 valid stock symbols")
+        return symbols
+
+    @field_validator("paper_execution_symbols")
+    @classmethod
+    def validate_paper_execution_universe(cls, values: list[str]) -> list[str]:
+        symbols = sorted({value.strip().upper() for value in values})
+        if not symbols or len(symbols) > 25 or any(
+            not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,15}", symbol) for symbol in symbols
+        ):
+            raise ValueError("Paper execution universe requires 1 to 25 valid stock symbols")
         return symbols
 
     @field_validator("database_url", mode="before")

@@ -63,3 +63,13 @@ Tradier sandbox is not a qualification fallback because its account-history
 support is insufficient for this accounting contract. A fresh Alpaca paper
 account with newly issued paper credentials is the cleanest path when an
 existing account cannot pass the upgrade preflight.
+
+## Research and execution universes
+
+The paper stack deliberately separates these universes. It researches
+`AAPL`, `MSFT`, `QQQ`, and `SPY`, but the default execution universe is
+`AAPL`, `MSFT`, and `SPY` while QQQ has incomplete IEX minute coverage. QQQ
+continues collecting real research observations and can be returned to the
+execution universe only after its feed is complete. Missing bars are never
+synthesized, and this setting does not clear
+accounting, risk, or authorization gates.

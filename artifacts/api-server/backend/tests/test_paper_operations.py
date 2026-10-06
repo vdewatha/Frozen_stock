@@ -44,6 +44,13 @@ def test_universe_is_normalized_and_deduplicated():
     assert Settings(_env_file=None, stock_learning_default_symbols=[" spy ", "AAPL", "SPY"]).stock_learning_default_symbols == ["AAPL", "SPY"]
 
 
+def test_paper_execution_universe_is_normalized_and_validated_separately():
+    settings = Settings(_env_file=None, paper_execution_symbols=[" spy ", "AAPL", "SPY"])
+    assert settings.paper_execution_symbols == ["AAPL", "SPY"]
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, paper_execution_symbols=["SPY;command"])
+
+
 def _ready_runtime():
     return {
         "checks": [{"name": name, "status": "ready"} for name in (*INFRASTRUCTURE_CHECKS, "Live trading safety")],
