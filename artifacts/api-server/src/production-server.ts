@@ -64,6 +64,9 @@ const runtimeEnv = {
   // wrapper deduplicates this through Redis and this task never authorizes
   // orders; operators can explicitly disable it when needed.
   PAPER_STARTUP_REFRESH: process.env.PAPER_STARTUP_REFRESH ?? "true",
+  // The direct monitor owns the monitoring cadence in this supervisor. Keep
+  // Celery beat from running a second copy of the same task.
+  PAPER_DIRECT_MONITOR_LOOP: "true",
   PYTHONPATH: ".",
 };
 

@@ -89,6 +89,9 @@ class CeleryConfigurationTests(unittest.TestCase):
 
     def test_jobs_module_is_registered_for_standalone_workers(self):
         self.assertIn("app.tasks.jobs.strategy_learning_scope_job", celery_app.tasks)
+
+    def test_stock_monitoring_job_uses_a_redis_lease(self):
+        self.assertIn("stock_monitoring_job", jobs.REDIS_LOCKED_JOBS)
         self.assertIn("app.tasks.jobs.retry_failed_strategy_learning_scopes_job", celery_app.tasks)
 
     def test_other_market_data_jobs_stay_on_shared_queue(self):

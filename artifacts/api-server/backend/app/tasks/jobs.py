@@ -89,6 +89,7 @@ REDIS_LOCKED_JOBS = frozenset(
         "delayed_sip_collection_job",
         "stock_forward_trial_observe_job",
         "stock_forward_trial_reconcile_job",
+        "stock_monitoring_job",
     }
 )
 REDIS_JOB_LOCK_TTL_SECONDS = 15 * 60
