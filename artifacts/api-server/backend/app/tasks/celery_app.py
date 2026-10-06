@@ -98,7 +98,9 @@ celery_app.conf.beat_schedule = {
     # to feed the learning and monitoring views without overlapping imports.
     "model-realization-scoring": {
         "task": "app.tasks.jobs.model_realization_scoring_job",
-        "schedule": 60 * 60 * 6,
+        # Matured one-day forecasts should enter the feedback loop within an
+        # hour of their next trusted daily bar, without creating any orders.
+        "schedule": 60 * 60,
     },
     "trade-candidate-scan-job": {"task": "app.tasks.jobs.trade_candidate_scan_job", "schedule": 60 * 60 * 6},
     "daily-market-regime-detection": {"task": "app.tasks.jobs.daily_market_regime_detection", "schedule": 60 * 60 * 24},

@@ -107,7 +107,7 @@ class CeleryConfigurationTests(unittest.TestCase):
             {"queue": "learning"},
         )
         self.assertEqual(entry["task"], "app.tasks.jobs.model_realization_scoring_job")
-        self.assertEqual(entry["schedule"], 6 * 60 * 60)
+        self.assertEqual(entry["schedule"], 60 * 60)
 
     def test_model_realization_scoring_is_research_only(self):
         db = Mock()
