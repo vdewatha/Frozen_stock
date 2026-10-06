@@ -173,6 +173,20 @@ def test_startup_refresh_queues_delayed_feature_generation_once():
     }
 
 
+def test_startup_refresh_recovers_later_stages_when_market_marker_exists():
+    spec = importlib.util.spec_from_file_location("paper_beat_refresh_recovery_test", BACKEND / "scripts/run_beat_with_lease.py")
+    beat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(beat)
+    client = MagicMock()
+    client.set.side_effect = [False, True, True]
+    with patch.object(beat.celery_app, "send_task") as send_task:
+        beat._queue_startup_refresh(client)
+    assert [call.args[0] for call in send_task.call_args_list] == [
+        "app.tasks.jobs.daily_feature_generation",
+        "app.tasks.jobs.model_realization_scoring_job",
+    ]
+
+
 def test_startup_learning_recovery_is_deduplicated_and_paper_only():
     spec = importlib.util.spec_from_file_location("paper_beat_recovery_test", BACKEND / "scripts/run_beat_with_lease.py")
     beat = importlib.util.module_from_spec(spec)

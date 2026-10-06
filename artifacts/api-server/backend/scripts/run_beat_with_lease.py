@@ -47,14 +47,16 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
     to commit. Redis markers prevent multiple beat leaders from queueing
     duplicate work during a restart race.
     """
-    if not client.set(STARTUP_REFRESH_KEY, "queued", nx=True, ex=STARTUP_REFRESH_TTL_SECONDS):
-        return
+    market_refresh_queued = client.set(
+        STARTUP_REFRESH_KEY, "queued", nx=True, ex=STARTUP_REFRESH_TTL_SECONDS
+    )
     try:
-        celery_app.send_task(
-            "app.tasks.jobs.daily_market_data_import",
-            queue="market_data",
-            expires=15 * 60,
-        )
+        if market_refresh_queued:
+            celery_app.send_task(
+                "app.tasks.jobs.daily_market_data_import",
+                queue="market_data",
+                expires=15 * 60,
+            )
         if client.set(
             STARTUP_FEATURE_REFRESH_KEY,
             "queued",
@@ -79,7 +81,7 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
                 countdown=7 * 60,
                 expires=20 * 60,
             )
-        print("Queued startup market-data refresh.", flush=True)
+        print("Queued startup research refresh stages.", flush=True)
     except Exception:
         # A later scheduled run can recover from a transient broker/import
         # failure. Remove the marker so the next beat leader may retry.
