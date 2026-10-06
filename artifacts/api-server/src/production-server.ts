@@ -29,8 +29,7 @@ const embeddedRedisPort = 6380;
 const configuredRedisUrl = process.env.REDIS_URL?.trim();
 const useEmbeddedRedis =
   paperWorkersEnabled &&
-  process.env.PAPER_EMBEDDED_REDIS !== "false" &&
-  (!configuredRedisUrl || /(?:localhost|127\.0\.0\.1|::1)/i.test(configuredRedisUrl));
+  process.env.PAPER_EMBEDDED_REDIS === "true";
 const redisUrl = useEmbeddedRedis
   ? `redis://127.0.0.1:${embeddedRedisPort}/0`
   : configuredRedisUrl;
