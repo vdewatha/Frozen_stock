@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 import pytest
@@ -43,6 +43,32 @@ def test_window_is_delayed_and_prior_session_is_bounded():
     assert sip.delayed_window(datetime(2025, 7, 3, 20, tzinfo=UTC))[1] == datetime(2025, 7, 3, 17, tzinfo=UTC)
     with pytest.raises(ValueError):
         sip.delayed_window(NOW.replace(tzinfo=None))
+
+
+def test_historical_qqq_session_backfill_adds_real_research_rows_without_eligibility(db):
+    session_day = date(2026, 9, 25)
+    observed = datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+    start, end = sip.historical_session_window(session_day, now=observed)
+    rows = {"QQQ": [bar(start + timedelta(minutes=offset)) for offset in range(390)]}
+    with patch.object(sip, "fetch_delayed_sip_bars", return_value=rows) as fetch:
+        result = sip.collect_delayed_sip_history(db, session_day, now=observed)
+
+    fetch.assert_called_once_with(["QQQ"], start, end, now=observed)
+    assert result["status"] == "observed"
+    assert result["execution_eligible"] is False
+    assert result["synthetic"] is False
+    assert result["results"][0]["rows_imported"] == 390
+    assert db.query(IntradayBar).filter_by(
+        symbol="QQQ", provider=sip.PROVIDER, feed_class=sip.FEED
+    ).count() == 390
+    assert feed_status(db, "QQQ", now=observed)["status"] != "ready"
+
+
+def test_historical_backfill_rejects_non_session_and_unready_dates():
+    with pytest.raises(ValueError, match="NYSE session"):
+        sip.historical_session_window(date(2026, 9, 26), now=NOW)
+    with pytest.raises(ValueError, match="research cutoff"):
+        sip.historical_session_window(date(2026, 9, 28), now=datetime(2026, 9, 28, 13, 40, tzinfo=UTC))
 
 
 def test_sdk_feed_raw_and_pagination_are_explicit():

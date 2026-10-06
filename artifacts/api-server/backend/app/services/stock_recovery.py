@@ -59,6 +59,18 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _heartbeat_issue(observed: datetime | None, now: datetime, label: str) -> str | None:
+    """Reject both stale and future-dated evidence as a readiness signal."""
+    if observed is None:
+        return f"{label} is missing"
+    age = now - _utc(observed)
+    if age < timedelta(0):
+        return f"{label} is future-dated"
+    if age > HEARTBEAT_TIMEOUT:
+        return f"{label} is stale"
+    return None
+
+
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
 
@@ -1051,14 +1063,13 @@ def run_stock_watchdog(db: Session) -> dict:
     state = _state(db)
     account = active_paper_account(db)
     reasons = []
-    if account and account.last_reconciled_at and now - _utc(account.last_reconciled_at) > HEARTBEAT_TIMEOUT:
-        reasons.append("broker reconciliation heartbeat is stale")
-    if account and not account.last_reconciled_at:
-        reasons.append("broker reconciliation heartbeat is missing")
-    if state.last_monitor_heartbeat_at and now - _utc(state.last_monitor_heartbeat_at) > HEARTBEAT_TIMEOUT:
-        reasons.append("continuous monitor heartbeat is stale")
-    if state.last_monitor_heartbeat_at is None:
-        reasons.append("continuous monitor heartbeat is missing")
+    if account:
+        issue = _heartbeat_issue(account.last_reconciled_at, now, "broker reconciliation heartbeat")
+        if issue:
+            reasons.append(issue)
+    issue = _heartbeat_issue(state.last_monitor_heartbeat_at, now, "continuous monitor heartbeat")
+    if issue:
+        reasons.append(issue)
     if reasons and (account is None or account.status != "halted"):
         enter_stock_recovery(db, reason="Independent watchdog: " + "; ".join(reasons), actor="stock_watchdog")
         status = "paused"

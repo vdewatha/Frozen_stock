@@ -1,5 +1,5 @@
 """Delayed consolidated observations, never a real-time execution entitlement."""
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from alpaca.data.enums import DataFeed
@@ -9,7 +9,12 @@ from app.core.config import settings
 from app.models import AuditLog, IntradayBar
 from app.services.alpaca_research_data import _fetch_research_bars, collection_window
 from app.services.audit import write_audit_log
-from app.services.intraday_data import ALLOWED_SYMBOLS, _aware_utc, upsert_intraday_bars
+from app.services.intraday_data import (
+    ALLOWED_SYMBOLS,
+    _aware_utc,
+    session_bounds,
+    upsert_intraday_bars,
+)
 
 PROVIDER = "alpaca_delayed_sip"
 FEED = "sip_delayed"
@@ -29,6 +34,64 @@ def fetch_delayed_sip_bars(symbols, start, end, *, now=None, client=None):
             or end > observed - timedelta(minutes=DELAY_MINUTES)):
         raise ValueError("Delayed SIP requires an end at least 16 minutes old")
     return _fetch_research_bars(symbols, start, end, feed=DataFeed.SIP, client=client)
+
+
+def historical_session_window(session_day: date, *, now: datetime) -> tuple[datetime, datetime]:
+    """Return one complete, bounded NYSE session that is old enough to research."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Historical delayed SIP clock must be timezone aware")
+    bounds = session_bounds(session_day)
+    if bounds is None:
+        raise ValueError("Historical delayed SIP requires an NYSE session")
+    observed = now.astimezone(UTC)
+    cutoff = (observed - timedelta(minutes=DELAY_MINUTES)).replace(second=0, microsecond=0)
+    end = min(bounds[1], cutoff)
+    if end <= bounds[0]:
+        raise ValueError("Historical delayed SIP session is not past the research cutoff")
+    return bounds[0], end
+
+
+def collect_delayed_sip_history(db: Session, session_day: date, *, symbols=None, now=None):
+    """Backfill real delayed SIP bars for one bounded historical session.
+
+    Delayed SIP provenance stays isolated from the execution feed, and missing
+    minutes remain missing rather than being filled.
+    """
+    observed = now or datetime.now(UTC)
+    selected = sorted(symbols or {"QQQ"})
+    if not selected or not set(selected) <= ALLOWED_SYMBOLS or len(set(selected)) != len(selected):
+        raise ValueError("Historical delayed SIP symbols must be unique supported symbols")
+    start, end = historical_session_window(session_day, now=observed)
+    base = {
+        "provider": PROVIDER, "feed_class": FEED, "upstream_feed": "sip",
+        "research_only": True, "execution_eligible": False, "synthetic": False,
+        "delay_minutes": DELAY_MINUTES, "adjustment": "raw",
+        "checked_at": observed.isoformat(), "session_day": session_day.isoformat(),
+        "window_start": start.isoformat(), "window_end": end.isoformat(),
+        "coverage_policy": "Observed delayed consolidated minutes; missing minutes remain unknown",
+    }
+    try:
+        bars = fetch_delayed_sip_bars(selected, start, end, now=observed)
+    except Exception as exc:
+        code = getattr(exc, "status_code", None)
+        failure = {401: "authentication", 403: "entitlement", 422: "invalid_request_or_entitlement", 429: "rate_limit"}.get(
+            code, "unavailable_or_invalid"
+        )
+        return {**base, "status": "unavailable", "failure_class": failure, "results": []}
+
+    results = [{
+        "symbol": symbol,
+        **upsert_intraday_bars(
+            db, symbol, bars.get(symbol, []), ingested_at=observed,
+            provider=PROVIDER, feed_class=FEED,
+        ),
+    } for symbol in selected]
+    return {
+        **base,
+        "status": "observed" if all(row["rows_imported"] for row in results) else "sparse_or_empty",
+        "failure_class": None,
+        "results": results,
+    }
 
 
 def collect_delayed_sip(db: Session, *, now=None):
