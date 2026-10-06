@@ -122,20 +122,26 @@ def main() -> int:
         print("Skipped startup market-data refresh; scheduled jobs remain enabled.", flush=True)
     _queue_startup_learning_recovery(client)
 
-    child = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "celery",
-            "-A",
-            "app.tasks.celery_app:celery_app",
-            "beat",
-            "--loglevel=INFO",
-            f"--schedule={os.environ.get('CELERY_BEAT_SCHEDULE_FILE', '/tmp/frozen-stock-celerybeat-schedule')}",
-        ]
-    )
+    def spawn_beat() -> subprocess.Popen:
+        return subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "celery",
+                "-A",
+                "app.tasks.celery_app:celery_app",
+                "beat",
+                "--loglevel=INFO",
+                f"--schedule={os.environ.get('CELERY_BEAT_SCHEDULE_FILE', '/tmp/frozen-stock-celerybeat-schedule')}",
+            ]
+        )
+
+    child = spawn_beat()
+    stopping = False
 
     def stop(_signum: int, _frame: object) -> None:
+        nonlocal stopping
+        stopping = True
         if child.poll() is None:
             child.terminate()
 
@@ -160,19 +166,29 @@ def main() -> int:
     )
 
     try:
-        while child.poll() is None:
-            time.sleep(LEASE_SECONDS / 3)
-            try:
-                refreshed = refresh(keys=[LEASE_KEY], args=[owner, LEASE_SECONDS])
-            except redis.RedisError:
-                child.terminate()
-                print("Celery beat lease coordination is unavailable.", file=sys.stderr)
-                return 1
-            if not refreshed:
-                child.terminate()
-                print("Celery beat lease was lost.", file=sys.stderr)
-                return 1
-        return child.returncode or 0
+        while not stopping:
+            while child.poll() is None and not stopping:
+                time.sleep(LEASE_SECONDS / 3)
+                try:
+                    refreshed = refresh(keys=[LEASE_KEY], args=[owner, LEASE_SECONDS])
+                except redis.RedisError:
+                    child.terminate()
+                    print("Celery beat lease coordination is unavailable.", file=sys.stderr)
+                    return 1
+                if not refreshed:
+                    child.terminate()
+                    print("Celery beat lease was lost.", file=sys.stderr)
+                    return 1
+            if stopping:
+                break
+            print(
+                f"Celery beat exited with code {child.returncode}; restarting.",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(2)
+            child = spawn_beat()
+        return 0
     finally:
         # Do not release leadership until the old scheduler has stopped.
         if child.poll() is None:
