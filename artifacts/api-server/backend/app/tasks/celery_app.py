@@ -94,7 +94,9 @@ celery_app.conf.beat_schedule = {
     "strategy-learning-batch-job": {"task": "app.tasks.jobs.strategy_learning_batch_job", "schedule": 60 * 60 * 6},
     "strategy-learning-failure-retry": {
         "task": "app.tasks.jobs.retry_failed_strategy_learning_scopes_job",
-        "schedule": 60 * 15,
+        # The task applies a per-alert 15-minute cooldown, so a minutely
+        # check reduces recovery latency without duplicating scope work.
+        "schedule": 60,
     },
     "paper-trading-signal-job": {"task": "app.tasks.jobs.paper_trading_signal_job", "schedule": 60 * 60},
     "paper-trade-reconciliation-job": {"task": "app.tasks.jobs.paper_trade_reconciliation_job", "schedule": 60 * 30},
