@@ -227,7 +227,7 @@ def _freshness_and_provenance(db: Session) -> dict:
     status = "breach" if failures else "clear"
     return _check(
         "data.freshness_provenance", "data", "data_freshness_and_provenance", status,
-         "Fresh trusted Tradier production data is not available for every active stock."
+         "Fresh trusted execution-feed data is not available for every active stock."
         if failures else "Freshness and provider provenance are valid for the active stock universe.",
         value={"failed_symbols": sorted(failures), "ready_symbols": sorted(set(results) - set(failures))},
          threshold={"provider": MARKET_DATA_PROVIDER, "feed_class": MARKET_DATA_FEED_CLASS, "timeframe": "1m", "session": "regular"},
