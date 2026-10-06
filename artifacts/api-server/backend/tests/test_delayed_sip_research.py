@@ -147,7 +147,7 @@ def test_worker_disabled_and_shared_coordination(monkeypatch):
     with patch.object(jobs, "_run_job", return_value={"status": "test"}) as run:
         assert jobs.delayed_sip_collection_job()["status"] == "test"
         assert run.call_args.args[0] in jobs.REDIS_LOCKED_JOBS
-    assert celery_app.conf.task_routes["app.tasks.jobs.delayed_sip_collection_job"]["queue"] == "market_data"
+    assert celery_app.conf.task_routes["app.tasks.jobs.delayed_sip_collection_job"]["queue"] == "research_market_data"
     assert celery_app.conf.beat_schedule["delayed-sip-collection"]["schedule"] == 300
 
 

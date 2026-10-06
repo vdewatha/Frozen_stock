@@ -77,9 +77,14 @@ class CeleryConfigurationTests(unittest.TestCase):
 
         self.assertIn("market_data", queues)
         self.assertIn("intraday_market_data", queues)
+        self.assertIn("research_market_data", queues)
         self.assertEqual(
             celery_app.conf.task_routes["app.tasks.jobs.intraday_market_data_import"],
             {"queue": "intraday_market_data"},
+        )
+        self.assertEqual(
+            celery_app.conf.task_routes["app.tasks.jobs.iex_research_collection_job"],
+            {"queue": "research_market_data"},
         )
 
     def test_jobs_module_is_registered_for_standalone_workers(self):

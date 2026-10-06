@@ -14,7 +14,12 @@ from app.services.audit import write_audit_log
 from app.services.broker import broker_status
 from app.services.notifications import create_notification
 from app.services.readiness import readiness_snapshot
-from app.tasks.celery_app import GENERAL_WORKER_QUEUES, INTRADAY_MARKET_DATA_QUEUE, celery_app
+from app.tasks.celery_app import (
+    GENERAL_WORKER_QUEUES,
+    INTRADAY_MARKET_DATA_QUEUE,
+    RESEARCH_MARKET_DATA_QUEUE,
+    celery_app,
+)
 
 REQUIRED_REGISTERED_TASKS = frozenset(
     {
@@ -148,8 +153,14 @@ def _check_celery_workers() -> dict:
                 "dedicated_intraday_worker_count": 0,
                 "general_workers": [],
                 "general_worker_count": 0,
+                "research_workers": [],
+                "research_worker_count": 0,
+                "dedicated_research_workers": [],
+                "dedicated_research_worker_count": 0,
                 "worker_queues": {},
                 "missing_general_queues": sorted(GENERAL_WORKER_QUEUES),
+                "required_research_queue": RESEARCH_MARKET_DATA_QUEUE,
+                "missing_research_queue": True,
                 "registered_tasks": {},
                 "missing_registered_tasks": sorted(REQUIRED_REGISTERED_TASKS),
                 "error_type": exc.__class__.__name__,
@@ -175,6 +186,16 @@ def _check_celery_workers() -> dict:
         for worker, queues in worker_queues.items()
         if queues == [INTRADAY_MARKET_DATA_QUEUE]
     )
+    research_workers = sorted(
+        worker
+        for worker, queues in worker_queues.items()
+        if RESEARCH_MARKET_DATA_QUEUE in queues
+    )
+    dedicated_research_workers = sorted(
+        worker
+        for worker, queues in worker_queues.items()
+        if queues == [RESEARCH_MARKET_DATA_QUEUE]
+    )
     general_workers = sorted(
         worker
         for worker, queues in worker_queues.items()
@@ -182,6 +203,7 @@ def _check_celery_workers() -> dict:
     )
     served_queues = {queue for queues in worker_queues.values() for queue in queues}
     missing_general_queues = sorted(GENERAL_WORKER_QUEUES - served_queues)
+    missing_research_queue = not dedicated_research_workers
     registered_tasks = {
         worker: sorted(set(tasks or []))
         for worker, tasks in registered_responses.items()
@@ -202,6 +224,11 @@ def _check_celery_workers() -> dict:
             "market-data queue; "
             "one-minute market polling is blocked."
         )
+    elif missing_research_queue:
+        message = (
+            "No dedicated Celery worker is listening exclusively to the research "
+            "market-data queue; delayed observations are blocked."
+        )
     elif missing_general_queues:
         message = (
             "Required Celery queues have no responding consumer: "
@@ -220,6 +247,7 @@ def _check_celery_workers() -> dict:
         "status": _status(
             bool(workers)
             and bool(dedicated_intraday_workers)
+            and not missing_research_queue
             and not missing_general_queues
             and not missing_registered_tasks
         ),
@@ -233,10 +261,16 @@ def _check_celery_workers() -> dict:
             "dedicated_intraday_worker_count": len(dedicated_intraday_workers),
             "general_workers": general_workers,
             "general_worker_count": len(general_workers),
+            "research_workers": research_workers,
+            "research_worker_count": len(research_workers),
+            "dedicated_research_workers": dedicated_research_workers,
+            "dedicated_research_worker_count": len(dedicated_research_workers),
             "worker_queues": worker_queues,
             "required_intraday_queue": INTRADAY_MARKET_DATA_QUEUE,
             "required_general_queues": sorted(GENERAL_WORKER_QUEUES),
             "missing_general_queues": missing_general_queues,
+            "required_research_queue": RESEARCH_MARKET_DATA_QUEUE,
+            "missing_research_queue": missing_research_queue,
             "registered_tasks": registered_tasks,
             "missing_registered_tasks": missing_registered_tasks,
         },
