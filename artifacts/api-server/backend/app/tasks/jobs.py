@@ -133,6 +133,17 @@ def _queue_feature_refresh() -> str | None:
         client.close()
 
 
+def _close_job_lock_client(client, job_name: str) -> None:
+    try:
+        client.close()
+    except Exception as exc:
+        # Cleanup must not hide the work result or the original failure.
+        logger.error(
+            "Scheduled job Redis client cleanup failed: job=%s error_type=%s",
+            job_name, type(exc).__name__,
+        )
+
+
 def _acquire_job_lock(job_name: str):
     """Acquire a Redis lease for jobs whose cadence must not overlap.
 
@@ -147,6 +158,7 @@ def _acquire_job_lock(job_name: str):
         socket_timeout=2,
         health_check_interval=15,
     )
+    acquired = False
     try:
         last_error = None
         for delay in (0.0, *REDIS_LOCK_RETRY_DELAYS_SECONDS):
@@ -174,11 +186,15 @@ def _acquire_job_lock(job_name: str):
         )
         if not lock.acquire(blocking=False):
             return None
+        acquired = True
         return lock
     except redis.RedisError as exc:
         raise RuntimeError(
             f"Redis coordination is unavailable for scheduled job {job_name}"
         ) from exc
+    finally:
+        if not acquired:
+            _close_job_lock_client(client, job_name)
 
 
 def _run_job(job_name: str, work: Callable) -> dict:
@@ -283,8 +299,16 @@ def _run_job(job_name: str, work: Callable) -> dict:
         if redis_lock is not None:
             try:
                 redis_lock.release()
-            except redis.RedisError:
-                pass
+            except Exception as exc:
+                # Expiry/lost ownership can indicate that work outlived its
+                # lease. Surface it without retrying already-completed work or
+                # deleting a successor's token. Redis release checks ownership.
+                logger.error(
+                    "Scheduled job Redis lease cleanup failed: job=%s error_type=%s",
+                    job_name, type(exc).__name__,
+                )
+            finally:
+                _close_job_lock_client(redis_lock.redis, job_name)
         db.close()
 
 

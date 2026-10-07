@@ -111,14 +111,17 @@ def run_backtest(symbol: str, strategy_slug: str, prices: pd.DataFrame, config: 
         marked_value = cash + (position["quantity"] * mark_price if position else 0)
         equity_curve.append({"date": current_date, "value": round(marked_value, 2)})
 
-    returns = pd.Series([row["value"] for row in equity_curve]).pct_change().dropna()
+    # Anchor risk statistics to capital before the first fill. Otherwise the
+    # first evaluated bar's P&L disappears from returns and its loss becomes
+    # the initial high-water mark, understating drawdown.
+    values = pd.Series([config.starting_cash] + [row["value"] for row in equity_curve], dtype=float)
+    returns = values.pct_change().dropna()
     ending_value = equity_curve[-1]["value"] if equity_curve else config.starting_cash
     total_return = ending_value / config.starting_cash - 1
     annualized_return = (1 + total_return) ** (252 / max(len(equity_curve), 1)) - 1
     sharpe = (returns.mean() / returns.std() * math.sqrt(252)) if len(returns) > 1 and returns.std() else 0
     downside = returns[returns < 0]
     sortino = (returns.mean() / downside.std() * math.sqrt(252)) if len(downside) > 1 and downside.std() else 0
-    values = pd.Series([row["value"] for row in equity_curve])
     drawdown = (values / values.cummax() - 1).min() if len(values) else 0
     wins = [trade for trade in trades if trade["profit_loss"] > 0]
     losses = [trade for trade in trades if trade["profit_loss"] <= 0]
