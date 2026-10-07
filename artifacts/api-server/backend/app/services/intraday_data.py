@@ -258,6 +258,10 @@ def upsert_intraday_bars(
             "feed_class": feed_class,
             "exchange_timestamp": opened_at,
             "ingested_at": observed_at,
+            # A successful authenticated refresh is evidence even when the
+            # provider returns the same OHLCV values. Keep it separate from
+            # ingested_at so research observation timestamps remain immutable.
+            "last_verified_at": observed_at,
         }
         row = existing_by_timestamp.get(opened_at)
         if row:
@@ -296,6 +300,7 @@ def upsert_intraday_bars(
                     "feed_class": row.feed_class,
                     "exchange_timestamp": row.exchange_timestamp,
                     "ingested_at": row.ingested_at,
+                    "last_verified_at": row.last_verified_at,
                 }
                 for row in new_rows
             ]
@@ -312,6 +317,7 @@ def upsert_intraday_bars(
                     "feed_class": excluded.feed_class,
                     "exchange_timestamp": excluded.exchange_timestamp,
                     "ingested_at": excluded.ingested_at,
+                    "last_verified_at": excluded.last_verified_at,
                 },
             )
             db.execute(statement)
@@ -974,9 +980,14 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         if configured_provider == "tradier"
         else settings.research_alpaca_credentials()[0]
     )
+    verification_timestamp = (
+        latest.last_verified_at
+        if latest is not None and latest.last_verified_at is not None
+        else latest.ingested_at if latest is not None else None
+    )
     verification_age = (
-        observed_at - _aware_utc(latest.ingested_at)
-        if latest is not None and latest.ingested_at is not None
+        observed_at - _aware_utc(verification_timestamp)
+        if verification_timestamp is not None
         else None
     )
     entitlement_verified = bool(
@@ -997,7 +1008,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             "verified" if entitlement_verified else "unverified" if configured else "not_configured"
         ),
         "exchange_timestamp": _aware_utc(latest.exchange_timestamp) if latest else None,
-        "ingestion_timestamp": _aware_utc(latest.ingested_at) if latest else None,
+        "ingestion_timestamp": _aware_utc(verification_timestamp) if verification_timestamp else None,
         "latency_seconds": (
             _aware_utc(latest.ingested_at) - (_aware_utc(latest.opened_at) + BAR_CADENCE)
         ).total_seconds() if latest else None,

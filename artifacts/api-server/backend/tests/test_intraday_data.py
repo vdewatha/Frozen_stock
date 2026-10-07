@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.db.base import Base
 from app.models import AuditLog, CorporateAction, IntradayBar
 from app.services import intraday_data
+from app.services.intraday_data import _aware_utc
 from app.services.trusted_data import UntrustedMarketData, validate_intraday_readiness
 
 UTC = timezone.utc
@@ -137,6 +138,26 @@ class IntradayDataTests(unittest.TestCase):
         with patch.object(settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")):
             result = intraday_data.feed_status(self.db, "SPY", now=observed)
         self.assertEqual(result["entitlement_state"], "unverified")
+
+    def test_authenticated_refresh_updates_verification_without_rewriting_observation(self):
+        first_observed = datetime(2026, 9, 29, 18, 0, tzinfo=UTC)
+        refreshed_at = first_observed + timedelta(minutes=4)
+        with patch.object(settings, "active_market_data_provider", "alpaca_iex"), patch.object(
+            settings, "paper_alpaca_api_key", type(settings.paper_alpaca_api_key)("key")
+        ):
+            intraday_data.upsert_intraday_bars(
+                self.db, "SPY", [bar(first_observed - timedelta(minutes=2))],
+                ingested_at=first_observed, provider="alpaca_iex", feed_class="iex",
+            )
+            intraday_data.upsert_intraday_bars(
+                self.db, "SPY", [bar(first_observed - timedelta(minutes=2))],
+                ingested_at=refreshed_at, provider="alpaca_iex", feed_class="iex",
+            )
+            row = self.db.query(IntradayBar).one()
+            result = intraday_data.feed_status(self.db, "SPY", now=refreshed_at)
+        self.assertEqual(_aware_utc(row.ingested_at), first_observed)
+        self.assertEqual(_aware_utc(row.last_verified_at), refreshed_at)
+        self.assertEqual(result["entitlement_state"], "verified")
 
     def test_next_regular_session_open_skips_weekends_and_holidays(self):
         before_open = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)

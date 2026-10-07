@@ -60,6 +60,9 @@ class IntradayBar(Base):
     feed_class: Mapped[str] = mapped_column(String(32), default="sip")
     exchange_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Latest authenticated provider observation. This is separate from
+    # ingested_at, which preserves the original research-bar observation time.
+    last_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class CorporateAction(Base):
