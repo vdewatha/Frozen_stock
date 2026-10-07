@@ -136,3 +136,61 @@ def simulate(rows: list[dict], decisions: list[int], config: SimulationConfig = 
     result["mode"] = "offline_research"
     result["eligible_for_trading"] = False
     return result
+
+
+def simulate_research_matrix(cases: list[dict], config: SimulationConfig = SimulationConfig()) -> dict:
+    """Run an offline research matrix across symbols and strategy variants.
+
+    Each case is simulated independently with the existing causal, next-open
+    fill model. Results are intentionally *not* combined into a portfolio:
+    aggregating independent starting cash would create a misleading capital
+    curve. The returned summary is therefore an equal-weight research view,
+    suitable for comparing coverage and robustness before any paper binding.
+    This function has no execution or broker imports and is never trading
+    eligible.
+    """
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("At least one research case is required")
+
+    seen = set()
+    runs = []
+    for case in cases:
+        if not isinstance(case, dict):
+            raise ValueError("Research cases must be objects")
+        symbol = case.get("symbol")
+        strategy = case.get("strategy")
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError("Each research case requires a symbol")
+        if not isinstance(strategy, str) or not strategy.strip():
+            raise ValueError("Each research case requires a strategy")
+        key = (symbol.strip().upper(), strategy.strip())
+        if key in seen:
+            raise ValueError("Duplicate symbol and strategy research case")
+        seen.add(key)
+        result = simulate(case.get("rows"), case.get("decisions"), config)
+        runs.append({"symbol": key[0], "strategy": key[1], "result": result})
+
+    def aggregate(selected):
+        returns = [row["result"]["total_return"] for row in selected]
+        drawdowns = [row["result"]["max_drawdown"] for row in selected]
+        fills = sum(row["result"]["fill_count"] for row in selected)
+        return {
+            "case_count": len(selected),
+            "mean_return": sum(returns, Decimal(0)) / len(returns),
+            "worst_return": min(returns),
+            "max_drawdown": max(drawdowns),
+            "fill_count": fills,
+        }
+
+    symbols = sorted({row["symbol"] for row in runs})
+    strategies = sorted({row["strategy"] for row in runs})
+    return {
+        "mode": "offline_research_matrix",
+        "eligible_for_trading": False,
+        "coverage": {"case_count": len(runs), "symbols": symbols, "strategies": strategies,
+                     "complete": len(runs) == len(symbols) * len(strategies)},
+        "runs": runs,
+        "by_symbol": {symbol: aggregate([row for row in runs if row["symbol"] == symbol]) for symbol in symbols},
+        "by_strategy": {strategy: aggregate([row for row in runs if row["strategy"] == strategy]) for strategy in strategies},
+        "overall": aggregate(runs),
+    }

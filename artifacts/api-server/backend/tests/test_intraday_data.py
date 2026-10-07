@@ -55,6 +55,8 @@ class IntradayDataTests(unittest.TestCase):
 
         with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
             settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")
+        ), patch.object(intraday_data, "MARKET_DATA_PROVIDER", "tradier"), patch.object(
+            intraday_data, "MARKET_DATA_FEED_CLASS", "sip"
         ), patch.object(intraday_data, "_fetch_bars", side_effect=fetch):
             result = intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=observed)
             preflight = intraday_data.preflight_intraday(self.db, ["SPY"], now=observed)
@@ -63,7 +65,7 @@ class IntradayDataTests(unittest.TestCase):
         self.assertFalse(result["execution_eligible"])
         self.assertFalse(preflight["ready"])
         self.assertEqual(preflight["failure_class"], "timing")
-        self.assertLessEqual(len(calls), 2)
+        self.assertLessEqual(len(calls), 1 + settings.intraday_backfill_chunks_per_cycle)
         for minute in (58, 59):
             self.assertIsNotNone(self.db.query(IntradayBar).filter_by(
                 symbol="SPY", provider="tradier", opened_at=datetime(2026, 9, 29, 19, minute, tzinfo=UTC)
@@ -75,6 +77,8 @@ class IntradayDataTests(unittest.TestCase):
         early_close = datetime(2026, 11, 27, 18, 2, tzinfo=UTC)
         with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
             settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")
+        ), patch.object(intraday_data, "MARKET_DATA_PROVIDER", "tradier"), patch.object(
+            intraday_data, "MARKET_DATA_FEED_CLASS", "sip"
         ), patch.object(intraday_data, "ingest_intraday", return_value={"results": [{"symbol": "SPY", "status": "complete"}]}) as ingest:
             result = intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=early_close)
             self.assertEqual(result["status"], "complete")
@@ -95,6 +99,8 @@ class IntradayDataTests(unittest.TestCase):
         observed = datetime(2026, 9, 29, 20, 2, tzinfo=UTC)
         with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
             settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")
+        ), patch.object(intraday_data, "MARKET_DATA_PROVIDER", "tradier"), patch.object(
+            intraday_data, "MARKET_DATA_FEED_CLASS", "sip"
         ), patch.object(intraday_data, "_fetch_bars", side_effect=intraday_data.TradierProviderError("denied", "authentication")):
             result = intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=observed)
         self.assertEqual(result["status"], "incomplete")
@@ -290,10 +296,12 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(result["rows_imported"], 1)
 
     def test_unconfigured_and_entitlement_errors(self):
-        with patch.object(
+        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
             settings,
             "tradier_market_data_api_key",
             type(settings.tradier_market_data_api_key)(""),
+        ), patch.object(intraday_data, "MARKET_DATA_PROVIDER", "tradier"), patch.object(
+            intraday_data, "MARKET_DATA_FEED_CLASS", "sip"
         ):
             with self.assertRaisesRegex(RuntimeError, "workspace secrets"):
                 intraday_data._request("/markets/timesales", {})
@@ -347,17 +355,19 @@ class IntradayDataTests(unittest.TestCase):
             low=99,
             close=100,
             volume=100,
-            provider=intraday_data.MARKET_DATA_PROVIDER,
+            provider="tradier",
             feed_class="sip",
             exchange_timestamp=now,
             ingested_at=now,
         )
         self.db.add(future)
         self.db.commit()
-        with patch.object(
+        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
             settings,
             "tradier_market_data_api_key",
             type(settings.tradier_market_data_api_key)("key"),
+        ), patch.object(intraday_data, "MARKET_DATA_PROVIDER", "tradier"), patch.object(
+            intraday_data, "MARKET_DATA_FEED_CLASS", "sip"
         ):
             status = intraday_data.feed_status(self.db, "SPY", now=now)
         self.assertEqual(status["status"], "stale")
@@ -535,7 +545,9 @@ class IntradayDataTests(unittest.TestCase):
                 for offset in range(int((end - start).total_seconds() // 60))
             ], 0, False
 
-        with patch.object(intraday_data, "_fetch_bars", side_effect=fetch):
+        with patch.object(settings, "intraday_backfill_chunks_per_cycle", 1), patch.object(
+            intraday_data, "_fetch_bars", side_effect=fetch
+        ):
             with self.assertRaises(WorkerLost):
                 intraday_data.ingest_intraday(self.db, ["SPY"], now=observed)
 
@@ -544,7 +556,9 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(self.db.query(IntradayBar).count(), 60)
 
         calls.clear()
-        with patch.object(intraday_data, "_fetch_bars", side_effect=fetch):
+        with patch.object(settings, "intraday_backfill_chunks_per_cycle", 1), patch.object(
+            intraday_data, "_fetch_bars", side_effect=fetch
+        ):
             result = intraday_data.ingest_intraday(self.db, ["SPY"], now=observed)
 
         self.assertEqual(len(calls), 2)

@@ -211,9 +211,13 @@ def upsert_intraday_bars(
     bars: list[dict],
     *,
     ingested_at: datetime | None = None,
-    provider: str = MARKET_DATA_PROVIDER,
-    feed_class: str = MARKET_DATA_FEED_CLASS,
+    provider: str | None = None,
+    feed_class: str | None = None,
 ) -> dict:
+    # Resolve provenance at call time so a configured provider change cannot
+    # leave persisted bars tagged with the provider active at import time.
+    provider = provider or settings.active_market_data_provider.strip().lower()
+    feed_class = feed_class or ("iex" if provider == "alpaca_iex" else "sip")
     if (provider, feed_class) not in {("tradier", "sip"), ("alpaca_iex", "iex"), ("alpaca_delayed_sip", "sip_delayed")}:
         raise ValueError("Unsupported intraday provenance")
     symbol = _symbol(symbol)
