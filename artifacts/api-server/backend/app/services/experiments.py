@@ -106,7 +106,21 @@ def run_strategy_experiments(
     db.commit()
 
     config = BacktestConfig()
-    old_result = run_backtest(symbol, strategy_slug, prices, config, current_parameters)
+    evaluation_prices = prices
+    if apply_promotions:
+        split_at = max(61, int(len(prices) * 0.8))
+        if split_at < len(prices) - 1:
+            # Candidate selection must not inspect the rows reserved for the
+            # untouched validation run. Include only the training prefix in
+            # both the baseline and candidate backtests; the validation tail
+            # gets its indicator warm-up separately below.
+            evaluation_prices = prices.iloc[:split_at].copy()
+        else:
+            split_at = None
+    else:
+        split_at = None
+
+    old_result = run_backtest(symbol, strategy_slug, evaluation_prices, config, current_parameters)
     old_backtest = _save_backtest(db, strategy_id, symbol, current_parameters, old_result)
     # Close the transaction before the next CPU-bound experiment. PostgreSQL
     # may terminate an idle transaction while a long backtest is running.
@@ -117,18 +131,16 @@ def run_strategy_experiments(
     promoted_candidates = []
     validation_old = validation_new = None
     validation_prices = None
-    if apply_promotions:
-        split_at = max(61, int(len(prices) * 0.8))
-        if split_at < len(prices) - 1:
-            # Keep a warm-up window for indicators, but score only the
-            # untouched tail after the split. This path is used only for the
-            # explicit promotion workflow; research fan-out stays fast.
-            validation_prices = prices.iloc[max(0, split_at - 60):].copy()
-            validation_old = run_backtest(symbol, strategy_slug, validation_prices, config, current_parameters)
+    if split_at is not None:
+        # Keep a warm-up window for indicators, but score only the untouched
+        # tail after the split. This path is used only for the explicit
+        # promotion workflow; research fan-out stays fast.
+        validation_prices = prices.iloc[max(0, split_at - 60):].copy()
+        validation_old = run_backtest(symbol, strategy_slug, validation_prices, config, current_parameters)
 
     for proposal in proposals:
         new_parameters = proposal["new_parameters"]
-        new_result = run_backtest(symbol, strategy_slug, prices, config, new_parameters)
+        new_result = run_backtest(symbol, strategy_slug, evaluation_prices, config, new_parameters)
         new_backtest = _save_backtest(db, strategy_id, symbol, new_parameters, new_result)
         if validation_prices is not None:
             validation_new = run_backtest(symbol, strategy_slug, validation_prices, config, new_parameters)
@@ -138,6 +150,11 @@ def run_strategy_experiments(
             validation_old=validation_old,
             validation_new=validation_new,
         )
+        if not apply_promotions and decision == "promoted":
+            # Research fan-out is never promotion-authorized, even if the
+            # decision policy is changed or replaced in the future.
+            decision = "needs_more_data"
+            reason = "Research-only experiment; explicit promotion validation was not requested."
         if decision == "promoted":
             promoted_candidates.append((new_result["score"], new_parameters, proposal["experiment_name"]))
 
