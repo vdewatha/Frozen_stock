@@ -145,3 +145,11 @@ No support message was sent. No live account, new order or provider switch is
 proposed as a workaround. If Alpaca cannot supply this source, the unchanged
 per-fill/all-in cost requirement remains unsatisfied; modeled paper research can
 continue to describe assumptions only within its existing authorization contract.
+
+A read-only request to the documented Broker API sandbox document endpoint was
+also tested on October 7 using the configured paper Trading API key pair and
+the reconciled account binding. It returned HTTP `401 unauthorized`. No order
+endpoint was called. This confirms that the current credentials do not provide
+Broker API document access; it does not prove that the paper account has no
+documents. A Broker API credential/account entitlement or an authenticated
+broker-provided confirmation export is still required.
