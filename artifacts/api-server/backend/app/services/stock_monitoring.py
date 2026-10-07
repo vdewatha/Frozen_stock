@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models import (
     Asset,
     ModelPrediction,
@@ -207,8 +208,11 @@ def _freshness_and_provenance(db: Session) -> dict:
     assets = db.query(Asset).filter(Asset.is_active.is_(True), Asset.asset_type == "stock").order_by(Asset.symbol).all()
     if not assets:
         return _check("data.freshness_provenance", "data", "data_freshness_and_provenance", "unknown", "No active stock universe is configured.", action_scope="safety")
+    execution_symbols = set(settings.paper_execution_symbols)
+    execution_assets = [asset for asset in assets if asset.symbol in execution_symbols]
+    research_only_symbols = sorted(asset.symbol for asset in assets if asset.symbol not in execution_symbols)
     results, failures = {}, {}
-    for asset in assets:
+    for asset in execution_assets:
         try:
             status = feed_status(db, asset.symbol)
             results[asset.symbol] = {
@@ -229,9 +233,15 @@ def _freshness_and_provenance(db: Session) -> dict:
         "data.freshness_provenance", "data", "data_freshness_and_provenance", status,
          "Fresh trusted execution-feed data is not available for every active stock."
         if failures else "Freshness and provider provenance are valid for the active stock universe.",
-        value={"failed_symbols": sorted(failures), "ready_symbols": sorted(set(results) - set(failures))},
+         value={"failed_symbols": sorted(failures), "ready_symbols": sorted(set(results) - set(failures))},
          threshold={"provider": MARKET_DATA_PROVIDER, "feed_class": MARKET_DATA_FEED_CLASS, "timeframe": "1m", "session": "regular"},
-        details={"symbols": results, "failures": failures},
+        details={
+            "symbols": results,
+            "failures": failures,
+            "execution_symbols": sorted(execution_symbols),
+            "research_only_symbols": research_only_symbols,
+            "research_only_excluded_from_execution_gate": True,
+        },
         action_scope="safety",
     )
 
