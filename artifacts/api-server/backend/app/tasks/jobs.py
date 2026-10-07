@@ -523,7 +523,7 @@ def strategy_learning_scope_job(symbol: str, strategy_slug: str, max_candidates:
 
 
 @celery_app.task
-def strategy_learning_batch_job(limit_symbols: int = 8, limit_strategies: int = 8, max_candidates: int = 3) -> dict:
+def strategy_learning_batch_job(limit_symbols: int = 25, limit_strategies: int = 25, max_candidates: int = 3) -> dict:
     def work(db):
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).limit(max(1, min(limit_symbols, 25))).all()
         strategies = db.query(Strategy).order_by(Strategy.name).limit(max(1, min(limit_strategies, 25))).all()

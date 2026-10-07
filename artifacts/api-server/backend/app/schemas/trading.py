@@ -1078,8 +1078,8 @@ class LearningWorkerScopeRequest(BaseModel):
 
 
 class LearningWorkerBatchRequest(BaseModel):
-    limit_symbols: int = Field(default=8, ge=1, le=25)
-    limit_strategies: int = Field(default=8, ge=1, le=25)
+    limit_symbols: int = Field(default=25, ge=1, le=25)
+    limit_strategies: int = Field(default=25, ge=1, le=25)
     max_candidates: int = Field(default=3, ge=1, le=10)
 
 
