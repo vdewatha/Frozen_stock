@@ -79,7 +79,7 @@ python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
   --concurrency=2 &
 pids+=("$!")
 
-python3.11 scripts/run_beat_with_lease.py &
+PYTHONPATH=. python3.11 scripts/run_beat_with_lease.py &
 pids+=("$!")
 
 python3.11 -m uvicorn app.main:app \

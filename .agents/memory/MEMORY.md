@@ -5,7 +5,7 @@
 - [Forward-trial feature alignment](forward-trial-feature-alignment.md) — daily features must match the decision session; stale-data rejections never count toward coverage.
 - [Immutable model registry lifecycle](immutable-model-registry-lifecycle.md) — keep mutable champion/challenger state outside append-only registry rows.
 - [Monitoring read safety](monitoring-read-safety.md) — monitoring reads must return unknown before evidence exists and never trigger safety actions.
-- [Independent watchdog launch](independent-watchdog-launch.md) — launch the backend watchdog with the backend directory on PYTHONPATH.
+- [Backend script import path](independent-watchdog-launch.md) — direct backend script launches need `PYTHONPATH=.` so `app.*` imports resolve.
 - [Audit-chain writer serialization](audit-chain-writer-serialization.md) — flush same-transaction audit events before linking digests; never rewrite a detected historical fork.
 - [Alembic revision length](alembic-revision-length.md) — keep migration identifiers within the historical varchar(32) version-column limit.
 - [Broker activity timestamps](broker-activity-timestamps.md) — use stable broker timestamps before reconciliation observation time for immutable activity checks.
