@@ -143,7 +143,13 @@ class IntradayDataTests(unittest.TestCase):
         first_observed = datetime(2026, 9, 29, 18, 0, tzinfo=UTC)
         refreshed_at = first_observed + timedelta(minutes=4)
         with patch.object(settings, "active_market_data_provider", "alpaca_iex"), patch.object(
+            intraday_data, "MARKET_DATA_PROVIDER", "alpaca_iex"
+        ), patch.object(
+            intraday_data, "MARKET_DATA_FEED_CLASS", "iex"
+        ), patch.object(
             settings, "paper_alpaca_api_key", type(settings.paper_alpaca_api_key)("key")
+        ), patch.object(
+            settings, "paper_alpaca_api_secret", type(settings.paper_alpaca_api_secret)("secret")
         ):
             intraday_data.upsert_intraday_bars(
                 self.db, "SPY", [bar(first_observed - timedelta(minutes=2))],
