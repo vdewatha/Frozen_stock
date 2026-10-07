@@ -3,11 +3,13 @@
 ## Disposition
 
 **External evidence blocker remains; no cost verification or trading authority granted.**
-Audited repository HEAD `021cf97d6cf3b2bfe0b7c697daebb86ce07630b1`.
-This is a code/documentation audit and an ingestion proposal, not a fresh account
-certification. No credentials, broker account APIs, orders, account reset,
-provider changes, kill switches, or operational database were used or changed.
-Only this report was added. The tests use synthetic evidence and isolated databases.
+Audited repository HEAD `f5daec1`.
+This remains a non-authorizing account audit. A read-only request was made through
+the running paper backend using its configured paper credentials; no order,
+account reset, provider change, kill-switch change, or live operation was made.
+The operational reconciliation and venue-qualification endpoints were run with
+the current paper account evidence. The tests use synthetic evidence and isolated
+databases.
 
 ## Official source findings
 
@@ -146,10 +148,16 @@ proposed as a workaround. If Alpaca cannot supply this source, the unchanged
 per-fill/all-in cost requirement remains unsatisfied; modeled paper research can
 continue to describe assumptions only within its existing authorization contract.
 
-A read-only request to the documented Broker API sandbox document endpoint was
-also tested on October 7 using the configured paper Trading API key pair and
-the reconciled account binding. It returned HTTP `401 unauthorized`. No order
-endpoint was called. This confirms that the current credentials do not provide
-Broker API document access; it does not prove that the paper account has no
-documents. A Broker API credential/account entitlement or an authenticated
-broker-provided confirmation export is still required.
+A read-only request to the paper Trading API was tested inside the running
+backend on October 7. `GET /v2/account/activities?activity_types=FILL,FEE`
+returned six fills, six separate fee activities, precise UTC fill timestamps,
+and order IDs; `GET /v2/orders?status=closed&nested=true` returned six filled
+orders with filled quantities, average prices, and fill timestamps. Every fill
+still omitted a commission field, while the separate fee activities had
+account-level `net_amount` values. This is authentic transaction confirmation
+evidence, but it is not per-fill or all-in cost evidence and therefore does not
+qualify the venue. The documented Broker API sandbox document endpoint was also
+tested with the same credentials and returned HTTP `401 unauthorized`; that
+does not prove the paper account has no documents. A Broker API entitlement or
+an authenticated broker-provided confirmation export is still required for the
+missing cost evidence.
