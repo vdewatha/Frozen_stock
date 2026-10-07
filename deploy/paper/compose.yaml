@@ -25,7 +25,7 @@ x-runtime: &runtime
     # Admit only symbols with currently complete execution-grade IEX coverage.
     # MSFT and QQQ remain in the research/learning universe until their
     # required minute history is complete.
-    PAPER_EXECUTION_SYMBOLS: '["AAPL","SPY"]'
+    PAPER_EXECUTION_SYMBOLS: '["AAPL"]'
     INTRADAY_BACKFILL_CHUNKS_PER_CYCLE: ${INTRADAY_BACKFILL_CHUNKS_PER_CYCLE:-8}
     ALPACA_PAPER_ZERO_COMMISSION_CONTRACT: ${ALPACA_PAPER_ZERO_COMMISSION_CONTRACT:-true}
     IEX_RESEARCH_ENABLED: "true"
