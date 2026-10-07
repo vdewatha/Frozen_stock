@@ -129,6 +129,26 @@ def test_persistent_stack_is_private_paper_only_and_has_isolated_queues():
     assert services["migrate"]["restart"] == "no"
 
 
+def test_three_learning_worker_launcher_uses_compose_scale_and_bounded_values():
+    launcher = ROOT / "deploy/paper/start-stack.sh"
+    text = launcher.read_text()
+    assert launcher.stat().st_mode & stat.S_IXUSR
+    assert 'learning_replicas="${PAPER_LEARNING_REPLICAS:-3}"' in text
+    assert 'learning_concurrency="${LEARNING_CONCURRENCY:-2}"' in text
+    assert '--scale "learning=${learning_replicas}"' in text
+    assert "backend learning execution intraday" in text
+    assert "PAPER_LEARNING_REPLICAS and LEARNING_CONCURRENCY must be at least 1" in text
+
+
+def test_learning_replicas_have_distinct_celery_node_names():
+    config = yaml.safe_load((ROOT / "deploy/paper/compose.yaml").read_text())
+    learning = config["services"]["learning"]
+    command = learning["command"]
+    assert "--hostname=learning@%h" in command
+    assert "container_name" not in learning
+    assert learning.get("deploy", {}).get("replicas") is None
+
+
 def test_beat_child_stops_before_lease_release():
     spec = importlib.util.spec_from_file_location("paper_beat_test", BACKEND / "scripts/run_beat_with_lease.py")
     beat = importlib.util.module_from_spec(spec)

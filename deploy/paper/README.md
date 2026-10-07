@@ -11,7 +11,8 @@ Run from the repository root on a Docker host with Compose v2.24 or newer:
 ```bash
 python3 artifacts/api-server/backend/scripts/prepare_paper_deployment.py --output deploy/paper/paper.env
 python3 deploy/paper/prepare_web_access.py
-docker compose --env-file deploy/paper/paper.env -f deploy/paper/compose.yaml up -d --build
+PAPER_LEARNING_REPLICAS=3 LEARNING_CONCURRENCY=2 \
+  deploy/paper/start-stack.sh
 ```
 
 The initializer refuses to overwrite an existing configuration. The file is
@@ -209,7 +210,7 @@ data independently and never use this experimental deployment for live money.
   non-root and restart unless explicitly stopped. Host/VM restart and sleep
   remain host-level responsibilities; this does not make a laptop 24/7 hosting.
 
-Increase `LEARNING_CONCURRENCY` cautiously or use `--scale learning=2` with
+Increase `LEARNING_CONCURRENCY` cautiously or set `PAPER_LEARNING_REPLICAS` with
 Compose. Do not scale the scheduler. The deployment monitor requires positive
 worker pings, a dedicated intraday consumer, and coverage of every required
 queue. Queue capacity does not prove that data or a trading session is valid.
