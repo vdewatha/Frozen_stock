@@ -119,7 +119,7 @@ startup; a healthy web endpoint alone is insufficient.
 
 ## Research console
 
-- The IEX Research Feed collects AAPL/MSFT/QQQ/SPY every five minutes through
+- The IEX Research Feed collects AAPL/MSFT/QQQ/SPY every minute through
   the official Alpaca SDK. It persists real completed one-minute observations
   with explicit `alpaca_iex` / `iex` provenance. It has no order authority and
   is not a substitute for the existing consolidated-feed execution contract.
@@ -516,10 +516,16 @@ docker --context colima-frozen-stock compose --env-file deploy/paper/paper.env -
 ## Forward Research Learning
 
 The IEX panel includes per-symbol forward-learning counters. While the stack is
-running, the five-minute collector also advances `iex-sgd-v1`: it scores matured
+running, the minutely collector also advances `iex-sgd-v1`: it scores matured
 predictions before updating a separate incremental model for each symbol. No
 orders are sent. At first startup outside market hours, zero scored forecasts
 is expected; the learner does not backdate predictions using downloaded history.
 Fresh contiguous session bars are required, and missing target minutes expire.
 Lower Brier score means less probability error, not trading profit. The latest
 1,000 scored forecasts form the bounded model replay and displayed metric window.
+
+Daily strategy experiments use the active asset universe, separately from the
+four-symbol intraday allowlist. A complete daily symbol/strategy matrix does not
+establish intraday or forward-learning coverage for every active asset. See the
+[October 7 worker audit](../../reports/research-worker-audit-20261007.md) for a
+dated runtime snapshot, coverage gaps, and validation results.

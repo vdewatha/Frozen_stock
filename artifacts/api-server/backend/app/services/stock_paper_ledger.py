@@ -917,8 +917,13 @@ def _equation_failure(raw_activities: list[dict], previous_cash: Decimal, curren
     for row in raw_activities:
         if not (row.get("transaction_time") or row.get("created_at") or row.get("date")):
             return "Broker activity lacks a stable broker timestamp"
+        activity_type = str(row.get("activity_type") or "FILL").upper()
         filled_at = _activity_timestamp(row, fallback=datetime.now(UTC))
-        if since and filled_at <= _utc(since) and str(row.get("id") or "") not in allowed_late_activity_ids:
+        # Cash activities use settlement/effective dates, which are not
+        # execution watermarks. Only broker fills can be late relative to the
+        # previous execution reconciliation point.
+        if (activity_type == "FILL" and since and filled_at <= _utc(since)
+                and str(row.get("id") or "") not in allowed_late_activity_ids):
             return "Late broker fill predates the reconciliation watermark; full accounting reconstruction is required"
         new_rows.append(row)
     if not new_rows:
