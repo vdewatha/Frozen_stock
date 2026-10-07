@@ -1314,6 +1314,23 @@ class StockPaperRecoveryTests(unittest.TestCase):
                     db, actor="operator-test", reason="Review fresh watchdog evidence"
                 )
 
+    def test_clean_reconciliation_clears_only_transient_provider_halt_for_v2(self):
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca(), activity_contract="alpaca-activities-v2")
+            account = db.query(StockPaperAccount).one()
+            account.status = "halted"
+            account.halt_reason = "Alpaca paper broker is unavailable or returned invalid data"
+            db.commit()
+
+            result = reconcile_stock_paper_account(db, FakeAlpaca())
+
+            account = db.query(StockPaperAccount).one()
+            self.assertEqual(result["status"], "reconciled")
+            self.assertEqual(account.status, "reconciled")
+            self.assertIsNone(account.halt_reason)
+            self.assertFalse(account.accounting_verified)
+            self.assertFalse(account.costs_known)
+
     def test_monitoring_evidence_must_follow_current_pause_and_accounting_halt(self):
         from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
         from app.models.stock_paper import StockPaperAccount

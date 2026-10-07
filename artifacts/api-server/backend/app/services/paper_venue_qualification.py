@@ -139,6 +139,13 @@ def record_paper_venue_qualification(
     report = assess_paper_venue_evidence(
         provider=provider, account_id=account_id, evidence=evidence
     )
+    existing = db.scalar(select(StockPaperVenueQualification).where(
+        StockPaperVenueQualification.report_sha256 == report["report_sha256"]
+    ))
+    if existing is not None:
+        # Qualification packages are immutable. Replaying the same evidence
+        # is an idempotent read, not a second insert or a database error.
+        return existing
     row = StockPaperVenueQualification(
         provider=provider,
         account_id_sha256=report["account_id_sha256"] or "",

@@ -60,6 +60,24 @@ def test_missing_or_unknown_evidence_is_fail_closed_and_redacted():
     assert report["live_authorized"] is False
 
 
+def test_replaying_identical_qualification_evidence_is_idempotent():
+    engine = _db()
+    with Session(engine) as db:
+        first = record_paper_venue_qualification(
+            db, provider=SELECTED_PAPER_PROVIDER, account_id="private-account",
+            evidence=_evidence(), reviewer="reviewer-a",
+        )
+        db.commit()
+        second = record_paper_venue_qualification(
+            db, provider=SELECTED_PAPER_PROVIDER, account_id="private-account",
+            evidence=_evidence(), reviewer="reviewer-b",
+        )
+        assert second.id == first.id
+        assert second.report_sha256 == first.report_sha256
+        assert db.query(type(first)).count() == 1
+    engine.dispose()
+
+
 def test_activation_requires_separate_authorization_and_exact_passing_package():
     engine = _db()
     with Session(engine) as db:

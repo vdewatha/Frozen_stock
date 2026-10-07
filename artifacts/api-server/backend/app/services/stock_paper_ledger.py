@@ -1524,24 +1524,31 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                 account.status == "halted"
                 and (account.halt_reason or "").startswith("Independent watchdog:")
             )
+            transient_provider_halt = (
+                account.status == "halted"
+                and account.halt_reason == "Alpaca paper broker is unavailable or returned invalid data"
+            )
             account.reconciliation_required = False
-            if account.status != "halted" or watchdog_halt:
+            # A fully matched Alpaca activity snapshot is sufficient to clear
+            # only the exact transient-provider halt. Accounting, cost, and
+            # recovery gates remain independent and continue to fail closed.
+            if account.status != "halted" or watchdog_halt or transient_provider_halt:
                 account.status, account.halt_reason = "reconciled", None
-            if watchdog_halt:
+            if watchdog_halt or transient_provider_halt:
                 recovery_state = db.get(StockPaperRecoveryState, 1)
                 if recovery_state and recovery_state.status in {"cooldown", "paused"}:
                     recovery_state.status = "revalidation_required"
                     recovery_state.updated_by = "stock_reconciler"
                     recovery_state.pause_reason = (
-                        "Watchdog halt cleared by fresh broker reconciliation; "
+                        "Transient broker halt cleared by fresh broker reconciliation; "
                         "complete accounting and operator revalidation remain required"
                     )
                 _event(
                     db,
                     account,
-                    "watchdog_reconciliation",
+                    "provider_reconciliation",
                     "revalidation_required",
-                    "Watchdog halt cleared by fresh broker reconciliation; accounting gates remain active",
+                    "Transient provider halt cleared by fresh broker reconciliation; accounting gates remain active",
                 )
             _event(db, account, "reconcile", "reconciled", UNKNOWN_COSTS_REASON)
         _record_snapshot(db, account, observed)
