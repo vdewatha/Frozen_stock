@@ -42,7 +42,13 @@ def _save_backtest(db: Session, strategy_id: int, symbol: str, parameters: dict,
     return row
 
 
-def _decision(old_result: dict, new_result: dict) -> tuple[str, str]:
+def _decision(
+    old_result: dict,
+    new_result: dict,
+    *,
+    validation_old: dict | None = None,
+    validation_new: dict | None = None,
+) -> tuple[str, str]:
     delta_score = new_result["score"] - old_result["score"]
     if new_result["rejected"]:
         return "rejected", "; ".join(new_result["rejection_reasons"])
@@ -51,7 +57,22 @@ def _decision(old_result: dict, new_result: dict) -> tuple[str, str]:
     if new_result["max_drawdown"] > old_result["max_drawdown"] + 0.02:
         return "rejected", "Candidate improved score at the cost of materially higher drawdown."
     if delta_score >= 0.03:
-        return "promoted", f"Candidate score improved by {delta_score:.3f} without breaching drawdown controls."
+        if validation_old is None or validation_new is None:
+            return "needs_more_data", (
+                "In-sample score improved, but an untouched out-of-sample validation run "
+                "is required before promotion."
+            )
+        validation_delta = validation_new["score"] - validation_old["score"]
+        if validation_new["rejected"]:
+            return "rejected", "Candidate failed the untouched out-of-sample validation run."
+        if validation_delta < 0.03:
+            return "needs_more_data", (
+                f"Out-of-sample score delta {validation_delta:.3f} is below the promotion threshold."
+            )
+        return "promoted", (
+            f"Out-of-sample score improved by {validation_delta:.3f} after an in-sample "
+            "improvement without breaching drawdown controls."
+        )
     return "needs_more_data", f"Candidate score delta {delta_score:.3f} is below the promotion threshold."
 
 
@@ -94,12 +115,29 @@ def run_strategy_experiments(
     proposals = propose_parameter_experiments(strategy_slug, current_parameters)[: max(1, min(max_candidates, 10))]
     experiments = []
     promoted_candidates = []
+    validation_old = validation_new = None
+    validation_prices = None
+    if apply_promotions:
+        split_at = max(61, int(len(prices) * 0.8))
+        if split_at < len(prices) - 1:
+            # Keep a warm-up window for indicators, but score only the
+            # untouched tail after the split. This path is used only for the
+            # explicit promotion workflow; research fan-out stays fast.
+            validation_prices = prices.iloc[max(0, split_at - 60):].copy()
+            validation_old = run_backtest(symbol, strategy_slug, validation_prices, config, current_parameters)
 
     for proposal in proposals:
         new_parameters = proposal["new_parameters"]
         new_result = run_backtest(symbol, strategy_slug, prices, config, new_parameters)
         new_backtest = _save_backtest(db, strategy_id, symbol, new_parameters, new_result)
-        decision, reason = _decision(old_result, new_result)
+        if validation_prices is not None:
+            validation_new = run_backtest(symbol, strategy_slug, validation_prices, config, new_parameters)
+        decision, reason = _decision(
+            old_result,
+            new_result,
+            validation_old=validation_old,
+            validation_new=validation_new,
+        )
         if decision == "promoted":
             promoted_candidates.append((new_result["score"], new_parameters, proposal["experiment_name"]))
 
@@ -125,6 +163,18 @@ def run_strategy_experiments(
                 "profit_factor": new_result["profit_factor"],
                 "number_of_trades": new_result["number_of_trades"],
             },
+            "validation": ({
+                "period_start": str(validation_prices.iloc[60]["date"]),
+                "period_end": str(validation_prices.iloc[-1]["date"]),
+                "old_score": validation_old["score"],
+                "new_score": validation_new["score"],
+                "score_delta": round(validation_new["score"] - validation_old["score"], 4),
+                "old_rejected": validation_old["rejected"],
+                "new_rejected": validation_new["rejected"],
+            } if validation_prices is not None and validation_old is not None and validation_new is not None else {
+                "status": "not_run",
+                "reason": "Research-only experiment; no promotion validation was requested.",
+            }),
             "reason": reason,
         }
         experiment = StrategyExperiment(
