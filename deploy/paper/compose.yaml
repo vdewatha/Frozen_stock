@@ -131,7 +131,9 @@ services:
     <<: *runtime
     # One bounded process per queued symbol/strategy scope; scale replicas
     # independently when the host has capacity.
-    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", "--concurrency=${LEARNING_CONCURRENCY:-8}"]
+    # Keep several bounded workers for symbol/strategy parallelism without
+    # allowing one host to fork enough model jobs to OOM the API.
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", "--concurrency=${LEARNING_CONCURRENCY:-2}"]
 
   execution:
     <<: *runtime
