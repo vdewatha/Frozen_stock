@@ -60,7 +60,38 @@ def _assess(db, account, *, now=None, transport_review=False, probe_review=False
         from app.services.stock_paper_ledger import PROBE_HALT
         require(not (transport_review and probe_review), "Review scopes cannot be combined")
         accepted_halt = PROBE_HALT if probe_review else TRANSPORT_HALT if transport_review else MONETARY_REVIEW_REASON
+        # A clean reread may clear only the transient provider halt before the
+        # operator review runs.  The review itself still requires the prior
+        # unavailable event and two fresh matching reconciliations, so allowing
+        # the reconciled/clear state here cannot authorize execution.
+        transport_state_ok = (
+            transport_review
+            and (
+                (account.status == "halted" and account.halt_reason == TRANSPORT_HALT)
+                or (account.status == "reconciled" and account.halt_reason is None)
+            )
+        )
+        monetary_review_state_ok = (
+            not transport_review
+            and not probe_review
+            and account.status == "halted"
+            and account.halt_reason == MONETARY_REVIEW_REASON
+        )
+        latest_transport_failure = db.query(StockPaperLedgerEvent).filter_by(
+            account_id=account.id, event_type="reconcile", status="unavailable",
+            reason=TRANSPORT_HALT,
+        ).order_by(StockPaperLedgerEvent.id.desc()).first()
+        latest_transport_review = db.query(StockPaperLedgerEvent).filter_by(
+            account_id=account.id, event_type="paper_transport_recovery_review",
+        ).order_by(StockPaperLedgerEvent.id.desc()).first()
+        transport_recovery_pending = bool(
+            latest_transport_failure is not None
+            and (latest_transport_review is None
+                 or latest_transport_review.id < latest_transport_failure.id)
+        )
         require((not transport_review and not probe_review and account.status == "reconciled")
+                and not transport_recovery_pending
+                or monetary_review_state_ok or transport_state_ok
                 or (account.status == "halted" and account.halt_reason == accepted_halt),
                 "An unrelated account halt requires separate review")
         require(account.last_reconciled_at is not None and 0 <= (now-utc(account.last_reconciled_at)).total_seconds() <= 120,
