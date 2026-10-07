@@ -142,6 +142,19 @@ if (paperWorkersEnabled) {
 
 const app = express();
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
+
+// Replit's default deployment probe requests `/`. Keep this response
+// dependency-free and immediate; the detailed readiness checks remain under
+// `/api/health` and `/api/ready`.
+app.get("/", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "frozen-stock-paper-gateway",
+    paper_only: true,
+    live_trading: false,
+  });
+});
+
 app.use(
   clerkMiddleware((req) => ({
     publishableKey: publishableKeyFromHost(
