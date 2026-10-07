@@ -632,23 +632,25 @@ def ingest_intraday(
 
 def _provider_failure(exc: Exception) -> tuple[str, str]:
     """Classify provider failures without returning provider or credential details."""
+    provider = settings.active_market_data_provider.strip().lower()
+    provider_label = "Tradier production" if provider == "tradier" else "Alpaca IEX"
     classified = getattr(exc, "failure_class", None)
     if classified == "authentication":
-        return "authentication", "Tradier market-data authentication denied"
+        return "authentication", f"{provider_label} market-data authentication denied"
     if classified == "entitlement":
-        return "entitlement", "Tradier market-data entitlement denied"
+        return "entitlement", f"{provider_label} market-data entitlement denied"
     message = str(exc).lower()
     if "credentials" in message or "not configured" in message:
-        return "configuration", "Tradier production market-data credentials are not configured in workspace secrets"
+        return "configuration", f"{provider_label} market-data credentials are not configured in workspace secrets"
     if "authentication" in message:
-        return "authentication", "Tradier market-data authentication denied"
+        return "authentication", f"{provider_label} market-data authentication denied"
     if "entitlement" in message:
-        return "entitlement", "Authenticated Tradier production market-data entitlement is unavailable"
+        return "entitlement", f"Authenticated {provider_label} market-data entitlement is unavailable"
     if "tradier market-data provider" in message:
-        return "configuration", "Tradier market-data provider is not configured"
+        return "configuration", f"{provider_label} market-data provider is not configured"
     if "invalid tradier" in message or "incomplete" in message or "pagination" in message:
-        return "data_quality", "Tradier returned invalid or incomplete bar data"
-    return "availability", "Tradier market-data service is unavailable"
+        return "data_quality", f"{provider_label} returned invalid or incomplete bar data"
+    return "availability", f"{provider_label} market-data service is unavailable"
 
 
 def _record_preflight_audit(db: Session, result: dict, *, action: str = "sip_preflight") -> dict:
