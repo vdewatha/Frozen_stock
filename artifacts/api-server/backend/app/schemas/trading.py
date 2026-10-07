@@ -431,6 +431,18 @@ class StockPaperRevalidationRequest(BaseModel):
         return value
 
 
+class StockPaperVenueQualificationRequest(BaseModel):
+    provider: str = Field(min_length=1, max_length=64)
+    account_id: str = Field(min_length=1, max_length=128)
+    evidence: dict = Field(min_length=1)
+
+
+class StockPaperVenueActivationRequest(BaseModel):
+    qualification_id: int = Field(ge=1)
+    provider: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
 class LiveBrokerOrderRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=32)
     side: str = Field(pattern="^(buy|sell)$")

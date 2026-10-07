@@ -44,6 +44,7 @@ READ_PATHS = {
     "/research/agent-comparison-reports",
     "/stock/learning-cycles/launch-prerequisites",
     "/stock-paper/status",
+    "/stock-paper/venue-qualification",
     "/live-broker/status",
     "/stock/forward-trials", "/stock/forward-trials/bindings/eligible",
     "/trade-candidates/refresh-jobs/latest",
@@ -76,6 +77,7 @@ OPERATOR_POSTS = {
     "/stock/training/binding",
     "/stock/learning-cycles",
     "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal",
+    "/stock-paper/venue-qualification",
 }
 ADMIN_POSTS = {
     "/system/deployment-monitor/run", "/system/operational-hardening/run", "/system/live-safety/transition", "/notifications/{notification_id}/acknowledge",
@@ -84,6 +86,7 @@ ADMIN_POSTS = {
     "/safety/strategies/resume", "/broker/live/orders",
     "/stock/training/jobs/recover",
     "/stock-paper/initialize", "/stock-paper/resume",
+    "/stock-paper/venue-activation",
 }
 
 

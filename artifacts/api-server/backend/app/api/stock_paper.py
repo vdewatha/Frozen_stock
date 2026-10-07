@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.trading import StockPaperInitializeRequest
-from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingReviewRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest, StockPaperRevalidationRequest
+from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingReviewRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest, StockPaperRevalidationRequest, StockPaperVenueActivationRequest, StockPaperVenueQualificationRequest
+from app.services.paper_venue_qualification import authorize_paper_venue_activation, paper_venue_qualification_status, record_paper_venue_qualification
 from app.services.stock_paper_ledger import (
     StockPaperError,
     active_paper_broker_name,
@@ -19,6 +20,7 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
     resume_stock_paper_account,
     stock_paper_status,
+    active_paper_account,
 )
 from app.services.stock_recovery import acknowledge_stock_paper_accounting_review, cancel_open_stock_orders, recovery_evidence, recovery_status, rollback_to_last_known_good
 from app.services.stock_training_jobs import StockTrainingError
@@ -38,6 +40,47 @@ def _attribute(db: Session, request: Request) -> None:
 @router.get("/status")
 def status(db: Session = Depends(get_db)) -> dict:
     return stock_paper_status(db)
+
+
+@router.get("/venue-qualification")
+def venue_qualification_status(db: Session = Depends(get_db)) -> dict:
+    return paper_venue_qualification_status(db, active_paper_broker_name())
+
+
+@router.post("/venue-qualification")
+def record_venue_qualification(payload: StockPaperVenueQualificationRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    _attribute(db, request)
+    account = active_paper_account(db)
+    if account is None:
+        raise HTTPException(status_code=409, detail="An initialized paper account is required before qualification")
+    try:
+        row = record_paper_venue_qualification(
+            db, provider=payload.provider, account_id=payload.account_id,
+            evidence=payload.evidence, reviewer=str(request.state.actor),
+        )
+        db.commit()
+        return {"qualification_id": row.id, "provider": row.provider, "status": row.status,
+                "report_sha256": row.report_sha256, "paper_only": True, "live_authorized": False}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/venue-activation")
+def authorize_venue_activation(payload: StockPaperVenueActivationRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    _attribute(db, request)
+    try:
+        row = authorize_paper_venue_activation(
+            db, qualification_id=payload.qualification_id, provider=payload.provider,
+            authorizer=str(request.state.actor), reason=payload.reason,
+        )
+        db.commit()
+        return {"authorization_id": row.id, "qualification_id": row.qualification_id,
+                "provider": row.provider, "authorization_sha256": row.authorization_sha256,
+                "paper_only": True, "live_authorized": False}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/recovery")

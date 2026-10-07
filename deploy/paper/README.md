@@ -276,6 +276,36 @@ requested dataset provider consistent with stored provenance. Do not relabel
 7. Repeat across sessions and validate recovery. Any live-money pilot remains a
    separate authorization process and is disabled by this deployment.
 
+### Account-specific qualification workflow
+
+The API now exposes the paper-venue evidence boundary without exposing broker
+payloads or credentials:
+
+1. Read `GET /api/stock-paper/venue-qualification` with a viewer key to see the
+   current qualification and activation state.
+2. Submit a redacted evidence package to
+   `POST /api/stock-paper/venue-qualification` with an operator key. Use the
+   exact configured Alpaca paper account ID and provider `alpaca_paper`. The
+   package must affirm account binding, complete orders and executions,
+   complete commissions, cash activities, precise UTC timestamps, complete
+   pagination, delayed-event capture, and restart/session-expiry replay with no
+   duplicates. Include a bounded `report_period` and `provider_contract`.
+3. A different person or service identity must submit
+   `POST /api/stock-paper/venue-activation` with an admin key, the passing
+   `qualification_id`, and a reason. The authenticated role identity is stored
+   as the reviewer/authorizer, so those identities cannot be supplied as free
+   text. The activation endpoint rejects blocked, stale, mismatched, or
+   self-approved qualification packages.
+4. Reconcile with `POST /api/stock-paper/reconcile`, then run the recovery
+   preflight/revalidation. Unknown commissions, residuals, stale monitoring, or
+   the kill switch still block admission; these endpoints record evidence and
+   authorization but never bypass those gates.
+
+Do not put account IDs, activity IDs, order payloads, or credentials in chat.
+The service stores only a redacted evidence summary and hashes of the account
+identity and report. A successful qualification still means paper-only
+admission; it does not authorize live trading or imply profitability.
+
 ## Backups and recovery
 
 ### Network fault drill
