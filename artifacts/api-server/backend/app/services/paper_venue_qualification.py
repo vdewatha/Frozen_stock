@@ -155,7 +155,9 @@ def record_paper_venue_qualification(
 
 
 def _qualification_is_current(db: Session, qualification: StockPaperVenueQualification, provider: str) -> bool:
-    account = db.scalar(select(StockPaperAccount).where(StockPaperAccount.broker == provider))
+    account = db.scalar(select(StockPaperAccount).where(
+        StockPaperAccount.broker == provider, StockPaperAccount.archived_at.is_(None)
+    ))
     if (not account or qualification.provider != provider
             or qualification.status != "qualified" or not qualification.reviewed_by.strip()
             or qualification.qualification_version != QUALIFICATION_VERSION

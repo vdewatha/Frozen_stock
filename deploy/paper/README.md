@@ -301,6 +301,14 @@ payloads or credentials:
    the kill switch still block admission; these endpoints record evidence and
    authorization but never bypass those gates.
 
+If the local ledger was initialized against a different Alpaca API account,
+reconciliation refuses to merge the accounts. After confirming the configured
+credentials and account binding, an admin may call
+`POST /api/stock-paper/account-transition` with a reason. This archives the
+old local ledger, requires zero local positions and terminal orders, and
+initializes the current account from a fresh broker snapshot. It does not delete
+the old evidence or authorize trading.
+
 Do not put account IDs, activity IDs, order payloads, or credentials in chat.
 The service stores only a redacted evidence summary and hashes of the account
 identity and report. A successful qualification still means paper-only

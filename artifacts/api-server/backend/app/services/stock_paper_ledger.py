@@ -467,7 +467,7 @@ def active_paper_broker_name() -> str:
 
 
 def active_paper_account(db: Session, *, for_update: bool = False) -> StockPaperAccount | None:
-    query = db.query(StockPaperAccount).filter_by(broker=active_paper_broker_name())
+    query = db.query(StockPaperAccount).filter_by(broker=active_paper_broker_name(), archived_at=None)
     return query.with_for_update().one_or_none() if for_update else query.one_or_none()
 
 
@@ -1144,7 +1144,7 @@ def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | No
                                  *, activity_contract: str = "legacy-v1") -> dict:
     """Explicitly import the observed sandbox account once; never reset it."""
     broker_name = active_paper_broker_name()
-    if db.query(StockPaperAccount).filter_by(broker=broker_name).one_or_none():
+    if db.query(StockPaperAccount).filter_by(broker=broker_name, archived_at=None).one_or_none():
         raise StockPaperError("Stock paper account is already initialized; use reconciliation and never reset it")
     if activity_contract not in {"legacy-v1", alpaca_activity_v2.VERSION}:
         raise StockPaperError("Unsupported activity reconciliation contract")
@@ -1223,6 +1223,45 @@ def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | No
                {"shorting_capability_ignored": True, "leverage_capability_ignored": True})
     db.commit()
     return stock_paper_status(db)
+
+
+def transition_stock_paper_account(db: Session, *, reason: str) -> dict:
+    """Archive an old local ledger before initializing a different broker account.
+
+    This preserves the old account's audit rows and refuses transitions while
+    the old local ledger still has positions or nonterminal orders.
+    """
+    if not reason.strip():
+        raise StockPaperError("An account transition reason is required")
+    old = active_paper_account(db, for_update=True)
+    if old is None:
+        raise StockPaperError("Stock paper account is not initialized")
+    open_positions = [row.symbol for row in db.query(StockPaperPosition).filter(
+        StockPaperPosition.account_id == old.id, StockPaperPosition.quantity > 0
+    ).all()]
+    open_orders = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == old.id,
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+    ).count()
+    if open_positions or open_orders:
+        raise StockPaperError("Account transition requires zero local positions and terminal orders")
+    gateway = active_paper_gateway()
+    raw_account, raw_positions, raw_orders, raw_fills, observed = _snapshot(gateway)
+    values = _account_values(raw_account, observed)
+    configured_id = str(getattr(settings, "paper_broker_account_id", "") or "").strip()
+    if configured_id and values["broker_account_id"] != configured_id:
+        raise StockPaperError("Current broker account does not match the configured account binding")
+    if values["broker_account_id"] == old.broker_account_id:
+        raise StockPaperError("The broker account is already the active local account")
+    old.archived_at = observed
+    old.archive_reason = reason.strip()
+    _event(db, old, "account_transition", "archived", reason.strip(), {
+        "old_account_id_sha256": hashlib.sha256(old.broker_account_id.encode()).hexdigest(),
+        "new_account_id_sha256": hashlib.sha256(values["broker_account_id"].encode()).hexdigest(),
+        "new_snapshot_observed_at": observed.isoformat(),
+    })
+    db.flush()
+    return initialize_stock_paper_account(db, gateway=gateway, activity_contract=alpaca_activity_v2.VERSION)
 
 
 def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None) -> dict:

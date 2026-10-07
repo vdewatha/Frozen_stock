@@ -86,6 +86,7 @@ ADMIN_POSTS = {
     "/safety/strategies/resume", "/broker/live/orders",
     "/stock/training/jobs/recover",
     "/stock-paper/initialize", "/stock-paper/resume",
+    "/stock-paper/account-transition",
     "/stock-paper/venue-activation",
 }
 

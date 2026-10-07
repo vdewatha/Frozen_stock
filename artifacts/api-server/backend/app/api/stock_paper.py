@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.trading import StockPaperInitializeRequest
+from app.schemas.trading import StockPaperAccountTransitionRequest, StockPaperInitializeRequest
 from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingReviewRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest, StockPaperRevalidationRequest, StockPaperVenueActivationRequest, StockPaperVenueQualificationRequest
 from app.services.paper_venue_qualification import authorize_paper_venue_activation, paper_venue_qualification_status, record_paper_venue_qualification
 from app.services.stock_paper_ledger import (
@@ -21,6 +21,7 @@ from app.services.stock_paper_ledger import (
     resume_stock_paper_account,
     stock_paper_status,
     active_paper_account,
+    transition_stock_paper_account,
 )
 from app.services.stock_recovery import acknowledge_stock_paper_accounting_review, cancel_open_stock_orders, recovery_evidence, recovery_status, rollback_to_last_known_good
 from app.services.stock_training_jobs import StockTrainingError
@@ -146,6 +147,16 @@ def initialize(request: Request, payload: StockPaperInitializeRequest | None = N
             return initialize_stock_paper_account(db, **({"activity_contract": contract} if contract else {}))
         return initialize_stock_paper_account(db, activity_contract=payload.activity_contract)
     except StockPaperError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/account-transition")
+def account_transition(payload: StockPaperAccountTransitionRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    _attribute(db, request)
+    try:
+        return transition_stock_paper_account(db, reason=payload.reason)
+    except StockPaperError as exc:
+        db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

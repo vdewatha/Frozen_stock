@@ -17,8 +17,6 @@ from app.db.base import Base
 
 class StockPaperAccount(Base):
     __tablename__ = "stock_paper_accounts"
-    __table_args__ = (UniqueConstraint("broker", name="uq_stock_paper_account_broker"),)
-
     id: Mapped[int] = mapped_column(primary_key=True)
     broker: Mapped[str] = mapped_column(String(32), nullable=False, default="alpaca_paper")
     broker_account_id: Mapped[str] = mapped_column(String(96), nullable=False)
@@ -40,6 +38,8 @@ class StockPaperAccount(Base):
     last_reconciled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     source_timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     halted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
+    archive_reason: Mapped[Optional[str]] = mapped_column(Text)
     raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 

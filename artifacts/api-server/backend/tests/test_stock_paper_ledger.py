@@ -1968,6 +1968,7 @@ class StockPaperRoleTests(unittest.TestCase):
         self.assertEqual(required_role("GET", "/stock-paper/venue-qualification"), "viewer")
         self.assertEqual(required_role("POST", "/stock-paper/venue-qualification"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/venue-activation"), "admin")
+        self.assertEqual(required_role("POST", "/stock-paper/account-transition"), "admin")
         self.assertEqual(required_role("GET", "/stock-paper/recovery/evidence"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/initialize"), "admin")
         self.assertEqual(required_role("POST", "/stock-paper/reconcile"), "operator")

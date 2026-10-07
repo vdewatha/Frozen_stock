@@ -382,6 +382,10 @@ class StockPaperInitializeRequest(BaseModel):
     activity_contract: Literal["legacy-v1", "alpaca-activities-v2"] | None = None
 
 
+class StockPaperAccountTransitionRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class StockPaperHaltRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
