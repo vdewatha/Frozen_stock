@@ -39,4 +39,4 @@
 - [Paper position disposition](paper-position-disposition.md) — approval policy is not completion evidence; show stop cause, durable exit intent, and reconciled remaining positions separately.
 - [Shadow research evaluation](shadow-research-evaluation.md) — keep agent recommendations non-trading and score them only after strictly later outcomes with exact baseline date/horizon matching.
 - [Production Clerk gateway](production-clerk-gateway.md) — Clerk sessions enter FastAPI only through a loopback gateway; new users remain read-only unless explicitly mapped.
-- [Artifact mount health probes](artifact-mount-health-probes.md) — make the API artifact’s mounted path return fast unauthenticated 200, not only the gateway root.
+- [Artifact mount health probes](artifact-mount-health-probes.md) — keep root and mount probes, but inspect backend startup errors when the gateway exits.
