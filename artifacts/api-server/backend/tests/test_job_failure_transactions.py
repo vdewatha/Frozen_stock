@@ -54,7 +54,7 @@ def test_notification_failure_preserves_original_and_redacts_log(sessions, caplo
     assert "private-provider-detail" not in caplog.text
 
 
-@pytest.mark.parametrize("success_status", ["complete", "uninitialized", "reconciled"])
+@pytest.mark.parametrize("success_status", ["complete", "uninitialized", "reconciled", "breach", "blocked"])
 def test_successful_retry_resolves_only_same_job_incidents(sessions, success_status):
     with sessions() as db:
         db.add_all([

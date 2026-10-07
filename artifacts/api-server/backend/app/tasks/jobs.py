@@ -219,6 +219,13 @@ def _run_job(job_name: str, work: Callable) -> dict:
             # Stock paper recovery returns this after importing broker truth
             # and reconciling the durable ledger.
             "reconciled",
+            # Monitoring can complete successfully while reporting a safety
+            # breach. The breach remains in the monitoring snapshot; this
+            # status only means the scheduled job itself did not fail.
+            "breach",
+            # Deployment monitoring can complete and persist a truthful
+            # blocked readiness snapshot without being a failed job.
+            "blocked",
         }:
             try:
                 if resolve_successful_job_notifications(db, job_name):
