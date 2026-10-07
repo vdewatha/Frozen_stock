@@ -730,7 +730,7 @@ def collect_scheduled_intraday(db: Session, symbols: list[str] | None = None, *,
     )
     if not post_close or not configured:
         return preflight_intraday(db, symbols, now=observed)
-    selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
+    selected = [_symbol(value) for value in (symbols or settings.paper_execution_symbols)]
     result = ingest_intraday(db, selected, now=observed)
     complete = bool(result["results"]) and all(row["status"] == "complete" for row in result["results"])
     return _record_preflight_audit(db, {
@@ -754,7 +754,7 @@ def preflight_intraday(
     prior session, delayed data, and data from another feed cannot make a resume
     preflight pass.
     """
-    selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
+    selected = [_symbol(value) for value in (symbols or settings.paper_execution_symbols)]
     observed_at = _aware_utc(now or datetime.now(UTC))
     bounds = session_bounds(observed_at.astimezone(NY).date())
     regular_session_open = bounds is not None and bounds[0] <= observed_at < bounds[1]

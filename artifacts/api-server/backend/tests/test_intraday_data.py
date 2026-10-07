@@ -253,7 +253,7 @@ class IntradayDataTests(unittest.TestCase):
         intraday_data.upsert_intraday_bars(
             self.db, "SPY", [bar(session_open)], ingested_at=observed
         )
-        with patch.object(
+        with patch.object(settings, "paper_execution_symbols", ["AAPL", "MSFT", "QQQ", "SPY"]), patch.object(
             settings,
             "tradier_market_data_api_key",
             type(settings.tradier_market_data_api_key)("key"),
@@ -273,7 +273,7 @@ class IntradayDataTests(unittest.TestCase):
         bars = [bar(friday_open + timedelta(minutes=index)) for index in range(390)]
         saturday = datetime(2026, 9, 12, 16, 0, tzinfo=UTC)
         intraday_data.upsert_intraday_bars(self.db, "SPY", bars, ingested_at=saturday)
-        with patch.object(
+        with patch.object(settings, "paper_execution_symbols", ["AAPL", "MSFT", "QQQ", "SPY"]), patch.object(
             settings,
             "tradier_market_data_api_key",
             type(settings.tradier_market_data_api_key)("key"),
@@ -296,7 +296,8 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(result["rows_imported"], 1)
 
     def test_unconfigured_and_entitlement_errors(self):
-        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
+        with patch.object(settings, "paper_execution_symbols", ["AAPL", "MSFT", "QQQ", "SPY"]), patch.object(
+            settings, "active_market_data_provider", "tradier"), patch.object(
             settings,
             "tradier_market_data_api_key",
             type(settings.tradier_market_data_api_key)(""),
@@ -362,7 +363,8 @@ class IntradayDataTests(unittest.TestCase):
         )
         self.db.add(future)
         self.db.commit()
-        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
+        with patch.object(settings, "paper_execution_symbols", ["AAPL", "MSFT", "QQQ", "SPY"]), patch.object(
+            settings, "active_market_data_provider", "tradier"), patch.object(
             settings,
             "tradier_market_data_api_key",
             type(settings.tradier_market_data_api_key)("key"),
