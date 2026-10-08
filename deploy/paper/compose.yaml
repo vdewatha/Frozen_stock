@@ -22,10 +22,10 @@ x-runtime: &runtime
     AUTH_MODE: local_role_keys
     ACTIVE_PAPER_BROKER: alpaca_paper
     ACTIVE_MARKET_DATA_PROVIDER: ${ACTIVE_MARKET_DATA_PROVIDER:-alpaca_iex}
-    # Admit only symbols with currently complete execution-grade IEX coverage.
-    # MSFT and QQQ remain in the research/learning universe until their
-    # required minute history is complete.
-    PAPER_EXECUTION_SYMBOLS: '["AAPL"]'
+    # Admit the supported liquid symbols for paper execution. The order path
+    # still requires a complete authenticated current-session IEX feed for the
+    # selected symbol, so historical gaps remain visible and fail closed.
+    PAPER_EXECUTION_SYMBOLS: '["AAPL", "MSFT", "QQQ", "SPY"]'
     INTRADAY_BACKFILL_CHUNKS_PER_CYCLE: ${INTRADAY_BACKFILL_CHUNKS_PER_CYCLE:-8}
     ALPACA_PAPER_ZERO_COMMISSION_CONTRACT: ${ALPACA_PAPER_ZERO_COMMISSION_CONTRACT:-true}
     IEX_RESEARCH_ENABLED: "true"
