@@ -409,13 +409,25 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
             )
     if now - generated > HEARTBEAT_TIMEOUT:
         return False, "Monitoring evidence is stale"
-    if snapshot.status == "breach":
-        return False, "Monitoring status is breach"
+
+    reconciliation_issue = _heartbeat_issue(
+        account.last_reconciled_at if account else None,
+        now,
+        "broker reconciliation heartbeat",
+    )
+    transitional_account_checks = bool(
+        account
+        and not account.reconciliation_required
+        and not account.unexplained_residual
+        and reconciliation_issue is None
+    )
 
     def nonblocking(check: dict) -> bool:
         key = check.get("key")
         status = check.get("status")
         details = check.get("details") or {}
+        if transitional_account_checks and key in {"health.broker", "health.reconciliation"}:
+            return True
         if key == "data.freshness_provenance" and status == "warning":
             return not (details.get("failures") or not details.get("historical_warnings"))
         if key == "model.realized_performance" and status == "unknown":
@@ -426,11 +438,11 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
             return int(details.get("position_count", 0)) == 0
         return False
 
-    non_clear = [check for check in snapshot.checks if check.get("status") in {"warning", "unknown"}]
+    non_clear = [check for check in snapshot.checks if check.get("status") in {"warning", "unknown", "breach"}]
     blocking = [check for check in non_clear if not nonblocking(check)]
     if blocking:
         return False, f"Monitoring status is {snapshot.status}, not clear"
-    if snapshot.status not in {"clear", "warning"}:
+    if snapshot.status not in {"clear", "warning", "breach"}:
         return False, f"Monitoring status is {snapshot.status}, not clear"
     return True, "Monitoring evidence is fresh and clear"
 
