@@ -30,6 +30,10 @@ Checked on 2026-10-07:
   no commission charges, while regulatory fees may still apply. This supports a
   documented zero-commission provider policy, not a claim that all-in costs or
   per-fill fee allocation are observed.
+- [Alpaca Activity SSE](https://docs.alpaca.markets/us/docs/activity-sse)
+  is the newer historical activity source. It exposes structured `TRD` and
+  `FEE` events, and documents that one-to-one fees such as `COM` may have
+  `details.parent_id`, while volume-based `REG`, `TAF`, and `CAT` fees do not.
 - [Paper Trading](https://docs.alpaca.markets/us/docs/paper-trading)
   explicitly excludes regulatory fees and latency-related slippage from the
   simulation. Missing charges cannot establish observed zero costs or live-cost realism.
@@ -185,3 +189,22 @@ symbol and Alpaca documents daily aggregation and rounding. The correct
 classification is therefore: **provider commission policy documented; daily
 account fees observed; per-fill commission and all-in execution cost
 unverified**. No execution gate is changed by this evidence.
+
+The newer authenticated Activity SSE history was also queried for September 28
+through October 4, 2026. It returned six structured `TRD` events and seven
+structured `FEE` events. The fee subtypes and amounts were:
+
+| Trade date | CAT | REG | TAF | Total |
+| --- | ---: | ---: | ---: | ---: |
+| 2026-09-29 | $0.01 | $0.01 | $0.01 | $0.03 |
+| 2026-09-30 | $0.01 | $0.01 | $0.00 | $0.02 |
+| 2026-10-02 | $0.01 | $0.01 | $0.00 | $0.02 |
+
+The SSE events have stable event and transaction IDs and the trades have
+structured order IDs, symbols, quantities, prices and net cash amounts. None of
+the CAT, REG or TAF events has `details.parent_id`, exactly as the official
+schema predicts. This is the strongest supported API evidence available for
+this paper account, but it still proves daily account-level fees rather than
+per-fill fees. A confirmation or statement from Alpaca would be the only
+remaining route to a transaction-level breakdown, and Alpaca's documentation
+directs customers to support for that exact breakdown.
