@@ -89,6 +89,31 @@ def _assess(db, account, *, now=None, transport_review=False, probe_review=False
             and (latest_transport_review is None
                  or latest_transport_review.id < latest_transport_failure.id)
         )
+        # A historical provider outage must not block a new observation-only
+        # research report after the account has returned to a flat, reconciled
+        # state and two fresh matching journals have been persisted. This does
+        # not clear the recovery state or grant execution authority; the
+        # transport-review endpoint still requires its stricter operator review.
+        recent_reconciliations = db.query(StockPaperLedgerEvent).filter(
+            StockPaperLedgerEvent.account_id == account.id,
+            StockPaperLedgerEvent.event_type == "activity_reconciliation",
+            StockPaperLedgerEvent.status == "matched",
+            StockPaperLedgerEvent.id > (latest_transport_failure.id if latest_transport_failure else 0),
+        ).order_by(StockPaperLedgerEvent.id.desc()).limit(2).all()
+        historical_transport_superseded = bool(
+            transport_recovery_pending
+            and not transport_review
+            and not probe_review
+            and latest_transport_failure is not None
+            and (now - utc(latest_transport_failure.created_at)).total_seconds() >= 900
+            and account.status == "reconciled"
+            and not account.reconciliation_required
+            and not account.unexplained_residual
+            and len(recent_reconciliations) == 2
+        )
+        if historical_transport_superseded:
+            transport_recovery_pending = False
+            result["historical_transport_failure_superseded"] = True
         require((not transport_review and not probe_review and account.status == "reconciled")
                 and not transport_recovery_pending
                 or monetary_review_state_ok or transport_state_ok
@@ -143,6 +168,25 @@ def _assess(db, account, *, now=None, transport_review=False, probe_review=False
             require(fill.fee == commission and fill.cost_known == (commission is not None),
                     "Persisted fill costs differ from reported evidence")
         costs = evaluate(account.activity_baseline, raw, {}, currency=account.currency)
+        if costs.get("reason") == "No new executions to evaluate":
+            # A recovery/research observation can legitimately contain no new
+            # fills. Preserve the modeled-cost contract as a research-only
+            # no-op instead of treating an empty incremental window as missing
+            # cost evidence.
+            costs = {
+                **costs,
+                "status": "research_only",
+                "reason": "No new executions occurred in the reviewed window; no incremental modeled costs apply.",
+                "new_fill_count": 0,
+                "fills_without_reported_commission": 0,
+                "symbols": [],
+                "turnover": "0",
+                "gross_fill_cash_change": "0",
+                "reported_fee_subtotal": "0",
+                "excluded_nonfee_cash_flows": True,
+                "journal_sha256": report["journal_sha256"],
+                "scenarios": [],
+            }
         cost_contract = assess_cost_contract(
             provider=account.broker,
             activity_contract=account.activity_contract,
