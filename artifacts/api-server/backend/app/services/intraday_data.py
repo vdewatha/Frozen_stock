@@ -676,6 +676,11 @@ def _record_preflight_audit(db: Session, result: dict, *, action: str = "sip_pre
                     "missing_intervals",
                     "deferred_window",
                     "oldest_unresolved_interval",
+                    "historical_repair_status",
+                    "historical_missing_intervals",
+                    "historical_deferred_window",
+                    "historical_oldest_unresolved_interval",
+                    "historical_repair_warning",
                     "rows_imported",
                     "unavailable_reason",
                 )
@@ -885,7 +890,7 @@ def preflight_intraday(
                 ),
                 "rows_imported": imported.get("rows_imported", 0),
             }
-            if imported.get("status") in {"unavailable", "incomplete"}:
+            if imported.get("status") == "unavailable":
                 result["status"] = imported["status"]
                 result["failure_class"] = imported.get("failure_class") or {
                     "incomplete": "incomplete_data",
@@ -906,6 +911,43 @@ def preflight_intraday(
                     "oldest_unresolved_interval",
                     result.get("oldest_unresolved_interval"),
                 )
+            elif imported.get("status") == "incomplete":
+                # Session repair can report an older unresolved gap while the
+                # current authenticated session is complete. Keep that fact
+                # visible for research and recovery, but do not let it
+                # masquerade as a current-session execution failure.
+                result["historical_repair_status"] = "incomplete"
+                result["historical_missing_intervals"] = imported.get(
+                    "missing_intervals", []
+                )
+                result["historical_deferred_window"] = imported.get(
+                    "deferred_window"
+                )
+                result["historical_oldest_unresolved_interval"] = imported.get(
+                    "oldest_unresolved_interval"
+                )
+                result["historical_repair_warning"] = (
+                    "Historical session gaps remain unresolved; current-session "
+                    "execution feed is evaluated separately."
+                )
+                if result["status"] != "ready":
+                    result["status"] = imported["status"]
+                    result["failure_class"] = imported.get(
+                        "failure_class", "incomplete_data"
+                    )
+                    result["unavailable_reason"] = imported.get(
+                        "unavailable_reason"
+                    ) or "Authenticated market-data ingestion did not complete"
+                    result["missing_intervals"] = imported.get(
+                        "missing_intervals", result.get("missing_intervals", [])
+                    )
+                    result["deferred_window"] = imported.get(
+                        "deferred_window", result.get("deferred_window")
+                    )
+                    result["oldest_unresolved_interval"] = imported.get(
+                        "oldest_unresolved_interval",
+                        result.get("oldest_unresolved_interval"),
+                    )
             if result["status"] != "ready":
                 result.setdefault(
                     "failure_class",

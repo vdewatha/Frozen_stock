@@ -480,6 +480,57 @@ class IntradayDataTests(unittest.TestCase):
         self.assertNotIn("api_key", json.dumps(audit.payload).lower())
         self.assertNotIn("account", json.dumps(audit.payload).lower())
 
+    def test_historical_repair_gap_does_not_block_complete_current_session(self):
+        now = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
+        current_status = {
+            "symbol": "SPY",
+            "status": "ready",
+            "entitlement_state": "verified",
+            "exchange_timestamp": now - timedelta(minutes=1),
+            "ingestion_timestamp": now,
+            "checked_at": now,
+            "latency_seconds": 60.0,
+            "missing_intervals": [],
+            "unavailable_reason": None,
+        }
+        historical_gap = {
+            "status": "incomplete",
+            "results": [
+                {
+                    "symbol": "SPY",
+                    "status": "incomplete",
+                    "missing_intervals": ["2026-09-10T13:30:00+00:00"],
+                    "deferred_window": "2026-09-10T13:30:00+00:00/2026-09-10T20:00:00+00:00",
+                    "oldest_unresolved_interval": "2026-09-10T13:30:00+00:00",
+                    "rows_imported": 0,
+                }
+            ],
+        }
+        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
+            settings,
+            "tradier_market_data_api_key",
+            type(settings.tradier_market_data_api_key)("key"),
+        ), patch.object(
+            intraday_data,
+            "ingest_intraday",
+            return_value=historical_gap,
+        ), patch.object(
+            intraday_data,
+            "feed_status",
+            return_value=current_status,
+        ):
+            result = intraday_data.preflight_intraday(self.db, ["SPY"], now=now)
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], "ready")
+        item = result["results"][0]
+        self.assertEqual(item["status"], "ready")
+        self.assertEqual(item["historical_repair_status"], "incomplete")
+        self.assertEqual(item["historical_missing_intervals"], historical_gap["results"][0]["missing_intervals"])
+        self.assertIn("Historical session gaps remain unresolved", item["historical_repair_warning"])
+        audit = self.db.query(AuditLog).filter_by(action="sip_preflight").one()
+        self.assertEqual(audit.payload["results"][0]["historical_repair_status"], "incomplete")
+
     def test_preflight_exposes_next_open_and_gap_when_session_is_closed(self):
         observed_at = datetime(2026, 9, 11, 21, 0, tzinfo=UTC)
         with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
