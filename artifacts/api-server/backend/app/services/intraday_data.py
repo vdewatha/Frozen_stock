@@ -667,6 +667,7 @@ def _record_preflight_audit(db: Session, result: dict, *, action: str = "sip_pre
                 for key in (
                     "symbol",
                     "status",
+                    "execution_status",
                     "failure_class",
                     "entitlement_state",
                     "exchange_timestamp",
@@ -1080,6 +1081,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         return {
             **base,
             "status": "unavailable",
+            "execution_status": "unavailable",
             "failure_class": "configuration",
             "unavailable_reason": "Configured market-data credentials are not available in workspace secrets",
         }
@@ -1087,13 +1089,22 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         return {
             **base,
             "status": "unavailable",
+            "execution_status": "unavailable",
             "failure_class": "entitlement",
             "unavailable_reason": "Configured market-data entitlement has not been verified by a recent authenticated ingestion",
         }
-    if market_open and _aware_utc(latest.opened_at) >= expected_end:
+    execution_status = "market_closed"
+    if market_open:
+        execution_status = (
+            "ready"
+            if latest and _aware_utc(latest.opened_at) == expected_end - BAR_CADENCE
+            else "stale"
+        )
+    if market_open and latest and _aware_utc(latest.opened_at) >= expected_end:
         return {
             **base,
             "status": "stale",
+            "execution_status": execution_status,
             "failure_class": "stale_data",
             "unavailable_reason": "Future regular-session observation cannot satisfy the current bar boundary",
         }
@@ -1101,6 +1112,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         return {
             **base,
             "status": "incomplete",
+            "execution_status": execution_status,
             "failure_class": "incomplete_data",
             "unavailable_reason": "Missing completed regular-session intervals",
         }
@@ -1108,18 +1120,20 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         return {
             **base,
             "status": "unavailable",
+            "execution_status": "unavailable",
             "failure_class": "availability",
             "unavailable_reason": f"No completed {MARKET_DATA_PROVIDER} bars are persisted",
         }
     if not market_open:
-        return {**base, "status": "market_closed", "unavailable_reason": None}
+        return {**base, "status": "market_closed", "execution_status": "market_closed", "unavailable_reason": None}
     expected_latest_open = expected_end - BAR_CADENCE
     freshness = (expected_latest_open - _aware_utc(latest.opened_at)).total_seconds()
     if freshness > 0:
         return {
             **base,
             "status": "stale",
+            "execution_status": execution_status,
             "failure_class": "stale_data",
             "unavailable_reason": "Latest completed bar exceeds the selected 60-second delay limit",
         }
-    return {**base, "status": "ready", "unavailable_reason": None}
+    return {**base, "status": "ready", "execution_status": "ready", "unavailable_reason": None}

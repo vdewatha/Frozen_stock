@@ -1965,8 +1965,11 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         market = feed_status(db, symbol, now=now)
     except ValueError as exc:
         raise StockPaperError("Stock paper order has no approved fresh market-data symbol") from exc
-    if market["status"] != "ready":
-        raise StockPaperError(f"Stock paper order blocked by stale/unavailable market data: {market['status']}")
+    if market.get("execution_status", market["status"]) != "ready":
+        raise StockPaperError(
+            "Stock paper order blocked by stale/unavailable market data: "
+            f"{market.get('execution_status', market['status'])}"
+        )
     _validate_reference_price(db, symbol, reference_price)
     rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
     rules = rule.value if rule else {}
@@ -2113,8 +2116,11 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
         market = feed_status(db, order.symbol, now=now)
     except ValueError as exc:
         raise StockPaperError("Reserved order has no approved fresh market-data symbol") from exc
-    if market["status"] != "ready":
-        raise StockPaperError(f"Reserved order blocked by stale/unavailable market data: {market['status']}")
+    if market.get("execution_status", market["status"]) != "ready":
+        raise StockPaperError(
+            "Reserved order blocked by stale/unavailable market data: "
+            f"{market.get('execution_status', market['status'])}"
+        )
     _validate_reference_price(db, order.symbol, order.limit_price)
     pending = db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id,

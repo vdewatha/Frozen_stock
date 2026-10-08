@@ -268,6 +268,25 @@ class IntradayDataTests(unittest.TestCase):
             with self.assertRaises(UntrustedMarketData):
                 validate_intraday_readiness(self.db, "SPY", now=observed)
 
+    def test_alpaca_iex_current_bar_can_be_execution_ready_with_historical_gap(self):
+        observed = datetime(2026, 9, 11, 13, 34, tzinfo=UTC)
+        current_bar = datetime(2026, 9, 11, 13, 32, tzinfo=UTC)
+        with patch.object(settings, "active_market_data_provider", "alpaca_iex"), patch.object(
+            intraday_data, "MARKET_DATA_PROVIDER", "alpaca_iex"
+        ), patch.object(intraday_data, "MARKET_DATA_FEED_CLASS", "iex"), patch.object(
+            settings, "paper_alpaca_api_key", type(settings.paper_alpaca_api_key)("key")
+        ), patch.object(
+            settings, "paper_alpaca_api_secret", type(settings.paper_alpaca_api_secret)("secret")
+        ):
+            intraday_data.upsert_intraday_bars(
+                self.db, "SPY", [bar(current_bar)], ingested_at=observed,
+                provider="alpaca_iex", feed_class="iex",
+            )
+            result = intraday_data.feed_status(self.db, "SPY", now=observed)
+        self.assertEqual(result["status"], "incomplete")
+        self.assertEqual(result["execution_status"], "ready")
+        self.assertTrue(result["missing_intervals"])
+
     def test_market_closed_requires_complete_previous_session(self):
         friday_open = datetime(2026, 9, 11, 13, 30, tzinfo=UTC)
         bars = [bar(friday_open + timedelta(minutes=index)) for index in range(390)]
