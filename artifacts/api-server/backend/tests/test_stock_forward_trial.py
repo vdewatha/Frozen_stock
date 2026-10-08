@@ -1052,6 +1052,22 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(db.query(StockPaperTrialDecision).count(), 0)
             self.assertEqual(db.query(StockPaperOrder).count(), 0)
 
+    def test_mid_session_trial_waits_for_next_complete_session(self):
+        with Session(self.engine) as db:
+            row = self.trial(db)
+            patches, now, _, _ = self._post_close_patches(db, row, 0.8)
+            row.started_at = datetime(2025, 1, 2, 15, 0, tzinfo=timezone.utc)
+            with self.enter_contexts(patches), \
+                 patch("app.services.stock_forward_trial._now", return_value=now), \
+                 patch("app.services.stock_forward_trial.session_bounds", return_value=(
+                     datetime(2025, 1, 2, 14, 30, tzinfo=timezone.utc),
+                     datetime(2025, 1, 2, 21, tzinfo=timezone.utc))):
+                result = observe_trial(db, row.id)
+            self.assertEqual(result["decisions"], 0)
+            self.assertEqual(result["reason"], "trial_started_mid_session_wait_next_session")
+            self.assertEqual(db.query(StockPaperTrialDecision).count(), 0)
+            self.assertEqual(db.query(StockPaperOrder).count(), 0)
+
     def _post_close_patches(self, db, row, probability, feature_date=date(2025, 1, 2)):
         """Return exact-artifact/model/calibrator patches plus a no-network order mock."""
         root = Path(self.tmp.name) / "selected"

@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from app.models import StockLearningWorkerDispatch
 from app.tasks.jobs import _claim_learning_dispatch
 
@@ -48,3 +50,15 @@ def test_learning_dispatch_same_task_can_reclaim_after_worker_loss():
     assert db.row.attempt_count == 2
     assert db.commits == 2
 
+
+def test_learning_dispatch_different_task_reclaims_expired_lease():
+    db = FakeDispatchSession()
+    _claim_learning_dispatch(db, 1, "task-a")
+    db.row.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+    reclaimed, status = _claim_learning_dispatch(db, 1, "task-b")
+
+    assert reclaimed is db.row
+    assert status == "claimed"
+    assert db.row.attempt_count == 2
+    assert db.row.lease_expires_at > datetime.now(timezone.utc)

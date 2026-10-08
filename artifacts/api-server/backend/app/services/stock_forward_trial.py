@@ -1345,6 +1345,17 @@ def observe_trial(db: Session, trial_id: str) -> dict:
         }
     manifest = validate_trial_artifact(db, trial)
     bounds = session_bounds(now.astimezone(timezone.utc).date())
+    if bounds and trial.started_at and _utc(bounds[0]) < _utc(trial.started_at):
+        # A mid-session start cannot produce a complete evidence session. Do
+        # not create a decision that would later execute but be excluded from
+        # the frozen trial window.
+        return {
+            "status": "observed",
+            "trial_id": trial_id,
+            "decisions": 0,
+            "reason": "trial_started_mid_session_wait_next_session",
+            "paper_only": True,
+        }
     feed_checks = {}
     for symbol in trial.lineage.get("universe", []):
         try:
@@ -1690,6 +1701,10 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
         return {"status": trial.status, "trial_id": trial_id, "executed": 0,
                 "reason": trial.pause_reason}
     executed = 0
+    eligible_session_dates = (
+        {day for day, _ in _frozen_window_sessions(trial, now)}
+        if trial.started_at else None
+    )
     pending = db.scalars(select(StockPaperTrialDecision).where(
         StockPaperTrialDecision.trial_id == trial_id,
         StockPaperTrialDecision.action == "buy",
@@ -1699,6 +1714,11 @@ def execute_pending_decisions(db: Session, trial_id: str) -> dict:
     for decision in pending:
         if not previous_bounds or decision.bar_timestamp.date() != previous_bounds[0].date():
             decision.action, decision.qualifying, decision.rejection_reason = "reject", False, "stale_decision_expired"
+            continue
+        if eligible_session_dates is not None and decision.bar_timestamp.date() not in eligible_session_dates:
+            decision.action, decision.qualifying, decision.rejection_reason = (
+                "reject", False, "decision_outside_trial_window"
+            )
             continue
         symbol = decision.symbol
         try:

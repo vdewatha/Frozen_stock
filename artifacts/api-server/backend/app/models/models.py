@@ -261,6 +261,8 @@ class StockLearningWorkerDispatch(Base):
     status: Mapped[str] = mapped_column(String(24), default="planned")
     task_id: Mapped[Optional[str]] = mapped_column(String(100))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), index=True)
     error_type: Mapped[Optional[str]] = mapped_column(String(128))
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

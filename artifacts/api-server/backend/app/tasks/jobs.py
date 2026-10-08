@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from decimal import Decimal
 import logging
@@ -9,7 +9,7 @@ from typing import Callable
 from uuid import uuid4
 
 import redis
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import DBAPIError, InterfaceError, InternalError, OperationalError
 from sqlalchemy.types import JSON
@@ -57,6 +57,8 @@ from app.services.stock_learning_cycle import (
 from app.services.agent_research import run_agent_research, refresh_agent_research_evaluations
 
 logger = logging.getLogger(__name__)
+
+LEARNING_DISPATCH_LEASE = timedelta(minutes=15)
 
 
 def _json_safe(value):
@@ -514,14 +516,20 @@ def _claim_learning_dispatch(db, dispatch_id: int | None, current_task_id: str |
         return None, "claimed"
     if dispatch.status == "succeeded":
         return dispatch, "complete"
+    now = datetime.now(timezone.utc)
     # A different delivery must not run the same scope concurrently. The
     # original Celery task id may reclaim after a worker loss because
     # acks_late/reject_on_worker_lost can redeliver that task.
     if dispatch.status == "running" and dispatch.task_id != current_task_id:
-        return dispatch, "in_progress"
+        if not dispatch.lease_expires_at or dispatch.lease_expires_at > now:
+            return dispatch, "in_progress"
+        dispatch.error_type = "lease_expired"
+        dispatch.error_message = "Learning worker lease expired before completion"
     dispatch.status = "running"
     dispatch.attempt_count = int(dispatch.attempt_count or 0) + 1
     dispatch.task_id = current_task_id
+    dispatch.claimed_at = now
+    dispatch.lease_expires_at = now + LEARNING_DISPATCH_LEASE
     db.commit()
     return dispatch, "claimed"
 
@@ -582,12 +590,14 @@ def strategy_learning_scope_job(
         except Exception as exc:
             if dispatch:
                 dispatch.status = "failed"
+                dispatch.lease_expires_at = None
                 dispatch.error_type = exc.__class__.__name__
                 dispatch.error_message = str(exc)
                 db.commit()
             raise
         if dispatch:
             dispatch.status = "succeeded"
+            dispatch.lease_expires_at = None
             dispatch.completed_at = datetime.utcnow()
             dispatch.error_type = None
             dispatch.error_message = None
@@ -691,12 +701,32 @@ def strategy_learning_batch_job(limit_symbols: int = 25, limit_strategies: int =
 def recover_unpublished_strategy_learning_scopes_job() -> dict:
     """Publish planned/failed research scopes left by a partial fan-out."""
     def work(db):
+        now = datetime.now(timezone.utc)
+        stale_cutoff = now - LEARNING_DISPATCH_LEASE
         rows = db.query(StockLearningWorkerDispatch).filter(
-            StockLearningWorkerDispatch.status.in_(("planned", "failed")),
+            or_(
+                StockLearningWorkerDispatch.status.in_(("planned", "failed")),
+                and_(
+                    StockLearningWorkerDispatch.status == "running",
+                    or_(
+                        StockLearningWorkerDispatch.lease_expires_at <= now,
+                        and_(
+                            StockLearningWorkerDispatch.lease_expires_at.is_(None),
+                            StockLearningWorkerDispatch.updated_at <= stale_cutoff,
+                        ),
+                    ),
+                ),
+            ),
         ).order_by(StockLearningWorkerDispatch.created_at, StockLearningWorkerDispatch.id).limit(128).all()
         queued = []
         for row in rows:
             try:
+                if row.status == "running":
+                    row.status = "failed"
+                    row.error_type = "lease_expired"
+                    row.error_message = "Learning worker lease expired before recovery requeue"
+                    row.lease_expires_at = None
+                    db.commit()
                 task = strategy_learning_scope_job.apply_async(
                     args=[row.symbol, row.strategy_slug, row.max_candidates, row.id],
                     queue="learning",
@@ -705,6 +735,8 @@ def recover_unpublished_strategy_learning_scopes_job() -> dict:
                 if row.status in {"planned", "failed"}:
                     row.task_id = task.id
                     row.status = "published"
+                    row.claimed_at = None
+                    row.lease_expires_at = None
                     row.error_type = None
                     row.error_message = None
                 elif not row.task_id:
@@ -1073,8 +1105,8 @@ def stock_forward_trial_observe_job(trial_id: str | None = None) -> dict:
         results = []
         for row in rows:
             if row:
-                observe_trial(db, row.id)
-                execute_pending_decisions(db, row.id)
+                observation = observe_trial(db, row.id)
+                execution = execute_pending_decisions(db, row.id)
                 # Commit the observation and any broker-intent changes before
                 # calculating numeric evidence. A malformed metric payload must
                 # not erase the durable observation that produced it.
@@ -1094,7 +1126,21 @@ def stock_forward_trial_observe_job(trial_id: str | None = None) -> dict:
                 db.refresh(row)
                 sync_cycle_from_trial(db, row.id, actor="forward_trial_worker")
                 db.commit()
-                result = {"trial_id": row.id, "status": row.status, "classification": classification}
+                result = {
+                    "trial_id": row.id,
+                    "status": row.status,
+                    "classification": classification,
+                    "observation": {
+                        "status": (observation or {}).get("status"),
+                        "reason": (observation or {}).get("reason"),
+                        "decisions": (observation or {}).get("decisions", 0),
+                    },
+                    "execution": {
+                        "status": (execution or {}).get("status"),
+                        "reason": (execution or {}).get("reason"),
+                        "executed": (execution or {}).get("executed", 0),
+                    },
+                }
                 if metric_error:
                     result["metric_error"] = metric_error
                 results.append(result)
