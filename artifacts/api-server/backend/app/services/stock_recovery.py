@@ -108,7 +108,20 @@ def _paper_research_policy_ready(db: Session) -> bool:
     from app.services.broker import stock_paper_broker_status
 
     policy = stock_paper_broker_status(db).get("paper_execution") or {}
-    return bool(policy.get("ready"))
+    if policy.get("ready"):
+        return True
+
+    # Recovery is the transition that clears a broker account's halted state.
+    # Requiring ``paper_execution.ready`` here would require the account to be
+    # reconciled before recovery can make it reconciled.  The remaining fields
+    # are the independent evidence needed to admit the explicit research-only
+    # cost policy while the account is halted.
+    return bool(
+        policy.get("policy_active")
+        and policy.get("reconciliation_matched")
+        and policy.get("venue_activation_authorized")
+        and not policy.get("unexplained_residual")
+    )
 
 
 def _state(db: Session, *, for_update: bool = True) -> StockPaperRecoveryState:
