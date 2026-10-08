@@ -295,7 +295,9 @@ class AlpacaPaperClient:
             ref = str(row.get("id") or "")
             index = by_ref.get(ref)
             if index is None:
-                merged.append(row)
+                # REST remains the complete, stable activity journal. The SSE
+                # replay is enrichment only; unmatched events must not become
+                # duplicate cash transactions with a second identifier.
                 continue
             stable = merged[index].get("id")
             existing = dict(merged[index])
@@ -1026,6 +1028,39 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
     return enriched_activity_ids
 
 
+def _remove_unmatched_sse_cash_duplicates(
+    db: Session, account: StockPaperAccount, broker_activity_ids: set[str]
+) -> int:
+    """Remove only cash rows created by the superseded SSE merge behavior.
+
+    The REST activity journal is the complete durable source. Earlier builds
+    could persist an SSE-only fee or journal row under a second identifier,
+    which made the frozen-baseline replay count cash twice. Fill rows are
+    intentionally excluded because they are immutable ledger evidence.
+    """
+    removed = 0
+    rows = db.query(StockPaperBrokerActivity).filter_by(account_id=account.id).all()
+    for row in rows:
+        raw = row.raw_payload or {}
+        if (
+            row.activity_type.upper() != "FILL"
+            and raw.get("activity_source") == "alpaca_activity_sse"
+            and row.broker_activity_id not in broker_activity_ids
+        ):
+            db.delete(row)
+            removed += 1
+    if removed:
+        _event(
+            db,
+            account,
+            "sse_duplicate_cleanup",
+            "recorded",
+            "Removed unmatched SSE cash rows superseded by the complete REST activity journal",
+            {"removed_count": removed},
+        )
+    return removed
+
+
 def _sync_positions(db: Session, account: StockPaperAccount, broker_rows: list[dict], observed: datetime, *, detect_drift: bool) -> list[str]:
     parsed = [_position_values(row, observed) for row in broker_rows]
     incoming = {row["symbol"]: row for row in parsed}
@@ -1444,11 +1479,21 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
         prior_positions = {row.symbol: row.quantity for row in db.query(StockPaperPosition).filter_by(account_id=account.id).all()}
         prior_accounting_verified = account.accounting_verified
         previous_reconciled_at = account.last_reconciled_at
+        raw_account, raw_positions, raw_orders, raw_fills, observed = _snapshot(gateway, account.last_reconciled_at)
+        rest_activity_ids = {str(row.get("id") or "") for row in raw_fills if row.get("id")}
+        removed_sse_duplicates = _remove_unmatched_sse_cash_duplicates(db, account, rest_activity_ids)
+        if removed_sse_duplicates:
+            # This is a durable repair of rows created by an older adapter
+            # bug. Commit it separately so a later broker/accounting halt does
+            # not restore duplicate cash evidence on the next restart.
+            db.commit()
+            account = active_paper_account(db, for_update=True)
+            if account is None:
+                raise StockPaperError("Stock paper account disappeared during SSE duplicate cleanup")
         prior_activity_ids = {
             row.broker_activity_id for row in db.query(StockPaperBrokerActivity.broker_activity_id)
             .filter_by(account_id=account.id).all()
         }
-        raw_account, raw_positions, raw_orders, raw_fills, observed = _snapshot(gateway, account.last_reconciled_at)
         snapshot, upgraded = _upgrade_legacy_snapshot(
             db, account, gateway, (raw_account, raw_positions, raw_orders, raw_fills, observed)
         )
@@ -1496,6 +1541,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             or str(row.get("id") or "") in enriched_activity_ids
         ]
         is_v2 = account.activity_contract == alpaca_activity_v2.VERSION
+        adapter_repair_resolved = False
         residual_resolved = _enriched_fill_resolves_residual(
             db,
             account,
@@ -1537,6 +1583,17 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                     account.activity_baseline, raw_fills,
                     {row["symbol"]: row["quantity"] for row in position_values},
                     currency=account.currency,
+                )
+                cleanup_was_recorded = bool(
+                    removed_sse_duplicates
+                    or db.query(StockPaperLedgerEvent).filter_by(
+                        account_id=account.id,
+                        event_type="sse_duplicate_cleanup",
+                        status="recorded",
+                    ).first()
+                )
+                adapter_repair_resolved = bool(
+                    cleanup_was_recorded and report.get("status") == "matched"
                 )
             except ValueError as exc:
                 raise StockPaperError(str(exc)) from exc
@@ -1648,7 +1705,20 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                 )
                 and bool(supported_cash_activity_ids)
             )
-            if legacy_cash_halt_resolved:
+            if adapter_repair_resolved:
+                account.unexplained_residual = False
+                account.reconciliation_required = False
+                account.status = "reconciled"
+                account.halt_reason = None
+                _event(
+                    db,
+                    account,
+                    "accounting_residual_reclassified",
+                    "resolved",
+                    "Stale residual resolved after exact v2 replay following SSE duplicate cleanup",
+                    {"removed_sse_duplicates": removed_sse_duplicates},
+                )
+            elif legacy_cash_halt_resolved:
                 # Older deployments halted on supported cash activity because
                 # the legacy equation only understood fills. The exact cash
                 # equation above is the proof for this narrow reclassification;
