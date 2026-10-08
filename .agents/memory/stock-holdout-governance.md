@@ -20,3 +20,9 @@ Current provider-adjusted daily history is an extraction-time dataset, not a poi
 **Why:** Provider prices can be restated and current universe membership can contain later information. Hashes prove reproducibility, not historical availability.
 
 **How to apply:** Keep historical-cutoff runs research-only unless true price/universe vintages are added. Disclose extraction-time limitations even for current-cutoff paper research.
+
+Provider coexistence in storage does not authorize combining providers for research or training. Select an explicit provider at those boundaries; do not relax mixed-provenance rejection to accommodate coexisting rows.
+
+**Why:** Provider-specific snapshots can be valid while older scheduled readers reject the same database because they request mixed histories. Weakening validation would hide that integration gap rather than preserve provenance.
+
+**How to apply:** When extending daily imports or scheduled learning, retain separate provider observations and make consumer selection explicit. A successful import or snapshot extraction is not proof that every learning reader is compatible.
