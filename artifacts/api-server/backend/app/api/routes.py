@@ -514,7 +514,10 @@ def intraday_feed_status(symbol: str, db: Session = Depends(get_db)):
 
 @router.post("/market-data/intraday/ingest")
 def ingest_intraday_route(payload: IntradayImportRequest, db: Session = Depends(get_db)):
-    return ingest_intraday(db, payload.symbols)
+    try:
+        return ingest_intraday(db, payload.symbols)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _research_prices(db, symbol, limit, minimum):
