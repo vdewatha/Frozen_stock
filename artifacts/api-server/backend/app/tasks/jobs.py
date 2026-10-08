@@ -102,8 +102,12 @@ INTRADAY_TASK_TIME_LIMIT_SECONDS = 55
 INTRADAY_JOB_LOCK_TTL_SECONDS = INTRADAY_TASK_TIME_LIMIT_SECONDS + 65
 IEX_TASK_SOFT_TIME_LIMIT_SECONDS = 110
 IEX_TASK_TIME_LIMIT_SECONDS = 120
-LEARNING_TASK_SOFT_TIME_LIMIT_SECONDS = 12 * 60
-LEARNING_TASK_TIME_LIMIT_SECONDS = 15 * 60
+# Research scopes can spend several minutes on broker-history retrieval and
+# bounded experiment evaluation. Keep the task finite, but give one-scope
+# retries enough time to finish instead of turning a slow data source into a
+# repeated scheduler incident.
+LEARNING_TASK_SOFT_TIME_LIMIT_SECONDS = 30 * 60
+LEARNING_TASK_TIME_LIMIT_SECONDS = 35 * 60
 IEX_JOB_LOCK_TTL_SECONDS = IEX_TASK_TIME_LIMIT_SECONDS + 60
 REDIS_LOCK_RETRY_DELAYS_SECONDS = (0.25, 0.75, 1.5)
 FEATURE_REFRESH_THROTTLE_SECONDS = 10 * 60
