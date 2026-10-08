@@ -178,10 +178,18 @@ class TradierMarketDataTests(unittest.TestCase):
                 ["SPY"],
                 now=now,
             )
-        self.assertFalse(result["ready"])
-        self.assertEqual(result["results"][0]["missing_intervals"], [missing])
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["results"][0]["status"], "ready")
         self.assertEqual(
-            result["results"][0]["oldest_unresolved_interval"],
+            result["results"][0]["historical_missing_intervals"],
+            [missing],
+        )
+        self.assertEqual(
+            result["results"][0]["historical_repair_status"],
+            "incomplete",
+        )
+        self.assertEqual(
+            result["results"][0]["historical_oldest_unresolved_interval"],
             missing,
         )
 
