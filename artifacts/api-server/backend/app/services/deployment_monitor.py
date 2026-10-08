@@ -339,7 +339,12 @@ def deployment_monitor_snapshot(db: Session) -> dict:
     readiness_blockers = [check["name"] for check in readiness["checks"] if check["status"] == "blocked"]
     readiness_warnings = [check["name"] for check in readiness["checks"] if check["status"] == "warning"]
 
-    deployable = not blockers and readiness["overall_status"] == "ready"
+    # Readiness warnings can be explicitly acceptable for paper operation
+    # (for example, incomplete broker cost metadata).  They must not turn a
+    # paper-safe deployment into a critical incident when no blocking check
+    # exists.  `paper_trading_allowed` already excludes unexpected warnings
+    # and every blocked check, while live safety remains independently locked.
+    deployable = not blockers and readiness["paper_trading_allowed"]
     return {
         "generated_at": datetime.utcnow(),
         "environment": settings.environment,

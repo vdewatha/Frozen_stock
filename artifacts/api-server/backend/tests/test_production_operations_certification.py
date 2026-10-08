@@ -155,6 +155,28 @@ def test_blocked_monitor_is_traced_to_one_notification_and_audit_event():
         db.close()
 
 
+def test_paper_allowed_readiness_warning_does_not_create_deployment_incident():
+    db = _db()
+    snapshot = {
+        "deployable": True,
+        "blockers": [],
+        "readiness_status": "warning",
+        "readiness_blockers": [],
+        "checks": [],
+    }
+    with patch.object(deployment_monitor, "deployment_monitor_snapshot", return_value=snapshot):
+        result = deployment_monitor.run_deployment_monitor(db, source="paper_warning_check")
+    try:
+        assert result["status"] == "ready"
+        assert result["notification_action"] == "none"
+        assert db.scalar(select(Notification)) is None
+        audit = db.scalar(select(AuditLog))
+        assert audit is not None
+        assert audit.status == "ready"
+    finally:
+        db.close()
+
+
 def test_operational_hardening_is_unknown_on_disposable_sqlite_and_preserves_incident_procedure():
     db = _db()
     try:
