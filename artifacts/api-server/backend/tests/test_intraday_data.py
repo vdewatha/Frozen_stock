@@ -630,6 +630,25 @@ class IntradayDataTests(unittest.TestCase):
             "2026-09-10T13:30:00+00:00",
         )
 
+    def test_current_session_repair_advances_across_multiple_windows(self):
+        calls = []
+        observed = datetime(2026, 9, 11, 18, 0, tzinfo=UTC)
+
+        def fetch(symbol, start, end):
+            calls.append((start, end))
+            return [], 0, False
+
+        with patch.object(settings, "intraday_backfill_chunks_per_cycle", 2), patch.object(
+            intraday_data, "_fetch_bars", side_effect=fetch
+        ):
+            result = intraday_data.ingest_intraday(self.db, ["SPY"], now=observed)
+
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0][1] - calls[0][0], timedelta(minutes=60))
+        self.assertEqual(calls[1][0], datetime(2026, 9, 11, 13, 30, tzinfo=UTC))
+        self.assertEqual(calls[2][0], datetime(2026, 9, 11, 14, 30, tzinfo=UTC))
+        self.assertTrue(result["results"][0]["missing_intervals"])
+
     def test_interrupted_poll_resumes_bounded_repair_on_next_invocation(self):
         observed = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
         calls = []

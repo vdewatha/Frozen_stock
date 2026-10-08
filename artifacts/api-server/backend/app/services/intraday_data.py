@@ -377,6 +377,30 @@ def _bounded_missing_window(
     return window_start, min(end, window_start + INTRADAY_BACKFILL_WINDOW)
 
 
+def _next_missing_window(
+    db: Session,
+    symbol: str,
+    ranges: list[tuple[datetime, datetime]],
+    processed: list[tuple[datetime, datetime]],
+) -> tuple[datetime, datetime] | None:
+    """Find the next unresolved slice across current and prior sessions.
+
+    A cycle may already have polled the newest slice. Advance past each
+    processed slice so a multi-window current-session gap is repaired before
+    falling back to an older session.
+    """
+    for range_start, range_end in ranges:
+        cursor = range_start
+        while cursor < range_end:
+            window = _bounded_missing_window(db, symbol, cursor, range_end)
+            if window is None:
+                break
+            if window not in processed:
+                return window
+            cursor = window[1]
+    return None
+
+
 def _repair_metadata(
     missing: list[str],
     ranges: list[tuple[datetime, datetime]],
@@ -552,6 +576,7 @@ def ingest_intraday(
             provider_duplicates = 0
             provider_out_of_order = False
             missing: list[str] = []
+            processed_windows: list[tuple[datetime, datetime]] = []
             max_windows = 1 + settings.intraday_backfill_chunks_per_cycle
             for window_index in range(max_windows):
                 if window_index >= len(windows):
@@ -565,12 +590,15 @@ def ingest_intraday(
                 provider_duplicates += duplicates
                 provider_out_of_order = provider_out_of_order or out_of_order
                 missing.extend(_session_missing(db, symbol, window_start, window_end))
+                processed_windows.append((window_start, window_end))
                 if window_index + 1 < max_windows:
-                    next_window = _bounded_missing_window(
-                        db, symbol, previous_bounds[0], previous_bounds[1]
+                    next_window = _next_missing_window(
+                        db, symbol, target_ranges, processed_windows
                     )
                     if next_window and next_window not in windows:
-                        windows.append(next_window)
+                        # Put a newly discovered current-session slice ahead
+                        # of any older queued repair slice.
+                        windows.insert(window_index + 1, next_window)
             for target_start, target_end in target_ranges:
                 missing.extend(_session_missing(db, symbol, target_start, target_end))
             missing = sorted(set(missing))
