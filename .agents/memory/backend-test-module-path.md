@@ -20,3 +20,9 @@ Authentication test fixtures must explicitly declare whether anonymous viewer ac
 **Why:** Workspace preview permits anonymous read-only access, which can change a fixture's expected unauthenticated response even when its fake role keys are isolated. This is test-environment leakage, not a reason to change deployment authentication or secrets.
 
 **How to apply:** Set the intended anonymous-access policy on each fixture's settings object; leave runtime configuration untouched.
+
+Broker test isolation must cover event-stream enrichment as well as REST requests. REST-only mocks do not isolate modern activity-history readers.
+
+**Why:** Older ledger fixtures mocked legacy activity responses but still reached the separate broker event stream, causing external requests and long validation runs.
+
+**How to apply:** Mock unused stream enrichment within the test process, provide explicit stream fixtures when testing that evidence, and deny unexpected outbound HTTP. Do not modify credentials or runtime broker behavior to make tests pass.
