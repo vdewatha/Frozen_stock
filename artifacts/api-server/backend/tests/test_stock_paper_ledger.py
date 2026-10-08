@@ -1314,6 +1314,36 @@ class StockPaperRecoveryTests(unittest.TestCase):
                     db, actor="operator-test", reason="Review fresh watchdog evidence"
                 )
 
+    def test_research_only_cost_policy_allows_paper_recovery_without_claiming_costs(self):
+        from app.models import StockPaperRecoveryEvent
+
+        with patch("app.services.stock_recovery._paper_research_policy_ready", return_value=True), \
+             patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "fresh test evidence")), \
+             patch("app.services.stock_recovery._now", return_value=RECOVERY_TEST_NOW), \
+             Session(self.engine) as db:
+            db.add(RiskRule(name="research-policy-risk", value={"kill_switch_enabled": True, "paper_only": True}))
+            db.commit()
+            initialize_stock_paper_account(db, FakeAlpaca(), activity_contract="alpaca-activities-v2")
+            run_stock_watchdog(db)
+            reconcile_stock_paper_account(db, FakeAlpaca())
+            state = db.query(StockPaperRecoveryState).one()
+            state.cooldown_until = RECOVERY_TEST_NOW - timedelta(minutes=1)
+            state.accounting_review_required = True
+            db.commit()
+
+            resumed = resume_stock_paper_after_revalidation(
+                db, actor="operator-test", reason="Approve paper research policy"
+            )
+
+            account = db.query(StockPaperAccount).one()
+            self.assertEqual(resumed["status"], "resumable")
+            self.assertFalse(account.accounting_verified)
+            self.assertFalse(account.costs_known)
+            self.assertFalse(db.query(StockPaperRecoveryState).one().accounting_review_required)
+            event = db.query(StockPaperRecoveryEvent).filter_by(action="resume").one()
+            self.assertEqual(event.payload["cost_policy"], "research_only")
+            self.assertFalse(event.payload["all_in_costs_verified"])
+
     def test_clean_reconciliation_clears_only_transient_provider_halt_for_v2(self):
         with Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca(), activity_contract="alpaca-activities-v2")

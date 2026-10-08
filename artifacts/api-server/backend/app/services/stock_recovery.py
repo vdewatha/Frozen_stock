@@ -97,6 +97,20 @@ def _accounting_review_digest(account: StockPaperAccount, db: Session | None = N
     return hashlib.sha256(_canonical(evidence)).hexdigest()
 
 
+def _paper_research_policy_ready(db: Session) -> bool:
+    """Allow recovery under the explicit paper-only cost policy.
+
+    This is intentionally separate from ``accounting_verified`` and
+    ``costs_known``.  Missing per-fill costs remain unknown; the policy only
+    permits paper research execution after the broker status has independently
+    confirmed the qualified, reconciled Alpaca paper venue.
+    """
+    from app.services.broker import stock_paper_broker_status
+
+    policy = stock_paper_broker_status(db).get("paper_execution") or {}
+    return bool(policy.get("ready"))
+
+
 def _state(db: Session, *, for_update: bool = True) -> StockPaperRecoveryState:
     statement = select(StockPaperRecoveryState).where(StockPaperRecoveryState.id == 1)
     if for_update:
@@ -380,10 +394,29 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
             )
     if now - generated > HEARTBEAT_TIMEOUT:
         return False, "Monitoring evidence is stale"
-    if snapshot.status != "clear":
+    if snapshot.status == "breach":
+        return False, "Monitoring status is breach"
+
+    def nonblocking(check: dict) -> bool:
+        key = check.get("key")
+        status = check.get("status")
+        details = check.get("details") or {}
+        if key == "data.freshness_provenance" and status == "warning":
+            return not (details.get("failures") or not details.get("historical_warnings"))
+        if key == "model.realized_performance" and status == "unknown":
+            return int(details.get("recent_count", 0)) < 10 or int(details.get("baseline_count", 0)) < 10
+        if key == "execution.fill_divergence" and status == "unknown":
+            return "no broker fills" in str(check.get("message", "")).lower()
+        if key == "risk.concentration" and status == "unknown":
+            return int(details.get("position_count", 0)) == 0
+        return False
+
+    non_clear = [check for check in snapshot.checks if check.get("status") in {"warning", "unknown"}]
+    blocking = [check for check in non_clear if not nonblocking(check)]
+    if blocking:
         return False, f"Monitoring status is {snapshot.status}, not clear"
-    if any(check.get("status") in {"warning", "breach", "unknown"} for check in snapshot.checks):
-        return False, "Every monitoring check must be clear before resuming"
+    if snapshot.status not in {"clear", "warning"}:
+        return False, f"Monitoring status is {snapshot.status}, not clear"
     return True, "Monitoring evidence is fresh and clear"
 
 
@@ -454,19 +487,33 @@ def resume_stock_paper_after_revalidation(
     account = active_paper_account(db, for_update=True)
     if not account or account.status != "reconciled" or account.reconciliation_required:
         raise StockPaperError("A successful broker reconciliation after recovery is required")
+    research_policy_ready = _paper_research_policy_ready(db)
     if account.activity_contract == "alpaca-activities-v2" and (
-        not account.accounting_verified or not account.costs_known
+        (not account.accounting_verified or not account.costs_known)
+        and not research_policy_ready
     ):
         raise StockPaperError(
             "Complete broker accounting, including known costs, is required before recovery can resume"
         )
     if state.accounting_review_required:
-        if not state.accounting_reviewed_at or not state.accounting_reviewed_by:
-            raise StockPaperError("Explicit operator accounting review is required before recovery can resume")
-        if state.accounting_review_digest != _accounting_review_digest(account, db):
-            raise StockPaperError("Accounting review evidence is stale; review the latest broker reconciliation")
-        if account.unexplained_residual:
-            raise StockPaperError("The unexplained accounting residual remains unresolved")
+        if research_policy_ready and not account.unexplained_residual:
+            # The separate admin resume is the required review action for the
+            # explicit paper-only policy. It records the current digest but
+            # deliberately leaves accounting_verified/costs_known unchanged.
+            state.accounting_review_required = False
+            state.accounting_reviewed_at = now
+            state.accounting_reviewed_by = actor
+            state.accounting_review_reason = (
+                "Admin reviewed the explicit paper-only cost policy; all-in costs remain unverified."
+            )
+            state.accounting_review_digest = _accounting_review_digest(account, db)
+        else:
+            if not state.accounting_reviewed_at or not state.accounting_reviewed_by:
+                raise StockPaperError("Explicit operator accounting review is required before recovery can resume")
+            if state.accounting_review_digest != _accounting_review_digest(account, db):
+                raise StockPaperError("Accounting review evidence is stale; review the latest broker reconciliation")
+            if account.unexplained_residual:
+                raise StockPaperError("The unexplained accounting residual remains unresolved")
     if db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id,
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
@@ -496,7 +543,11 @@ def resume_stock_paper_after_revalidation(
         status="revalidated",
         actor=actor,
         reason=reason,
-        payload={"monitoring_at": now.isoformat()},
+        payload={
+            "monitoring_at": now.isoformat(),
+            "cost_policy": "research_only" if research_policy_ready else "verified_all_in",
+            "all_in_costs_verified": bool(account.accounting_verified and account.costs_known),
+        },
     )
     db.commit()
     return recovery_status(db)

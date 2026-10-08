@@ -229,15 +229,21 @@ def readiness_snapshot(db: Session) -> dict:
         )
     )
     accounting = broker["accounting"]
+    paper_execution = broker.get("paper_execution") or {}
+    accounting_status = "ready" if accounting["ready"] else (
+        "warning" if paper_execution.get("ready") else "blocked"
+    )
     checks.append(
         _check(
             "Complete accounting",
-            "ready" if accounting["ready"] else "blocked",
-            accounting["reason"],
+            accounting_status,
+            accounting["reason"] if accounting["ready"] else (
+                "Broker reconciliation is exact; all-in costs remain research-only under the explicit Alpaca paper policy."
+                if paper_execution.get("ready") else accounting["reason"]
+            ),
             accounting,
         )
     )
-    paper_execution = broker.get("paper_execution") or {}
     checks.append(
         _check(
             "Paper execution policy",
@@ -249,6 +255,25 @@ def readiness_snapshot(db: Session) -> dict:
                 "Paper execution policy is not yet fully qualified."
             ),
             paper_execution,
+        )
+    )
+
+    from app.services.stock_recovery import recovery_status
+
+    recovery = recovery_status(db)
+    recovery_ready = recovery["status"] in {"resumable", "not_required"}
+    checks.append(
+        _check(
+            "Recovery state",
+            "ready" if recovery_ready else "blocked",
+            "Recovery revalidation is current and paper execution may proceed."
+            if recovery_ready else
+            "Recovery revalidation is required before paper execution may proceed.",
+            {
+                "status": recovery["status"],
+                "last_revalidation_at": recovery.get("last_revalidation_at"),
+                "last_monitoring_preflight": recovery.get("last_monitoring_preflight"),
+            },
         )
     )
 
@@ -324,6 +349,12 @@ def readiness_snapshot(db: Session) -> dict:
         "blocked": sum(1 for check in checks if check["status"] == "blocked"),
     }
     overall_status = "blocked" if summary["blocked"] else ("warning" if summary["warning"] else "ready")
+    allowed_paper_warnings = {"Intraday feed", "Complete accounting"}
+    unexpected_warnings = [
+        check["name"] for check in checks
+        if check["status"] == "warning" and check["name"] not in allowed_paper_warnings
+    ]
+    paper_trading_allowed = not summary["blocked"] and not unexpected_warnings
 
     from app.services.live_safety import evaluate_live_safety
     live_safety = evaluate_live_safety(db)
@@ -332,6 +363,8 @@ def readiness_snapshot(db: Session) -> dict:
         "overall_status": overall_status,
         "summary": summary,
         "checks": checks,
-        "paper_trading_allowed": overall_status == "ready",
+        "paper_trading_allowed": paper_trading_allowed,
+        "paper_trading_warning_exceptions": sorted(allowed_paper_warnings),
+        "paper_trading_unexpected_warnings": unexpected_warnings,
         "live_safety": live_safety,
     }
