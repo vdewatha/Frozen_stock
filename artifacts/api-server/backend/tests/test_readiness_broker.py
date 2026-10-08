@@ -18,7 +18,7 @@ def test_active_venue_and_accounting_are_separate(monkeypatch, venue, initialize
     db = Mock()
     db.query.return_value.filter_by.return_value.one_or_none.return_value = account
     result = stock_paper_broker_status(db)
-    db.query.return_value.filter_by.assert_called_once_with(broker=venue)
+    db.query.return_value.filter_by.assert_called_once_with(broker=venue, archived_at=None)
     assert result["paper_broker"] == venue
     assert result["live_trading_blocked"] is True
     assert result["paper_trading_enabled"] is True
