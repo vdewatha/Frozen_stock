@@ -454,7 +454,7 @@ def get_latest_strategy_governance_scorecard(db: Session = Depends(get_db)) -> d
 
 @router.post("/market-data/import", response_model=MarketImportResponse)
 def import_prices(payload: MarketImportRequest, db: Session = Depends(get_db)) -> dict:
-    result = import_market_prices(db, payload.symbol, payload.period)
+    result = import_market_prices(db, payload.symbol, payload.period, provider=payload.provider)
     result["decision_journal"] = refresh_decision_journal_outcomes(db, source="market_data_import", notify=True)
     result["memory_replay_gate_monitor"] = run_memory_replay_gate_monitor(db, source="market_data_import", limit=60, top_k=3)
     return result

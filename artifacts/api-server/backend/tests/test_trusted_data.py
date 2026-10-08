@@ -124,6 +124,20 @@ def test_market_import_reports_trusted_fallback_without_synthetic_data():
     assert result["provider_attempts"][1]["status"] == "ready"
 
 
+def test_market_import_explicit_provider_does_not_fall_through_to_another_source():
+    db = MagicMock()
+    prices = history().iloc[:2].copy()
+    with patch.object(market_data, "fetch_alpaca_iex_daily_prices", return_value=prices) as alpaca, \
+         patch.object(market_data, "fetch_yfinance_prices") as yahoo, \
+         patch.object(market_data, "upsert_prices", return_value=2):
+        result = market_data.import_market_prices(db, "SPY", provider="alpaca_iex_daily")
+    alpaca.assert_called_once_with("SPY", "5y")
+    yahoo.assert_not_called()
+    assert result["source"] == "alpaca_iex_daily"
+    assert result["trusted"] is True
+    assert result["provider_attempts"] == [{"provider": "alpaca_iex_daily", "status": "ready", "reason": None}]
+
+
 def test_market_import_replaces_short_nominal_success_with_longer_trusted_history():
     db = MagicMock()
     short = history().iloc[:80].copy()

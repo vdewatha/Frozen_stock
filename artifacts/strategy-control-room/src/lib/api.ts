@@ -1868,8 +1868,8 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return handleResponse<T>(response);
 }
 
-export async function importMarketData(symbol: string, period = "5y"): Promise<MarketImportResponse> {
-  return postJson<MarketImportResponse>("/market-data/import", { symbol, period });
+export async function importMarketData(symbol: string, period = "5y", provider: "auto" | "yfinance" | "yahoo_chart" | "alpaca_iex_daily" = "auto"): Promise<MarketImportResponse> {
+  return postJson<MarketImportResponse>("/market-data/import", { symbol, period, provider });
 }
 
 /** Imports completed regular-session one-minute bars; intentionally separate from Yahoo history. */

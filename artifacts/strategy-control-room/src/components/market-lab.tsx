@@ -38,6 +38,7 @@ const strategies = [
 
 export function MarketLab() {
   const [symbol, setSymbol] = useState("SPY");
+  const [dailyProvider, setDailyProvider] = useState<"auto" | "yfinance" | "yahoo_chart" | "alpaca_iex_daily">("auto");
   const [strategy, setStrategy] = useState("moving_average_crossover");
   const [importResult, setImportResult] = useState<MarketImportResponse | null>(null);
   const [intradayImportResult, setIntradayImportResult] = useState<IntradayImportResponse | null>(null);
@@ -57,7 +58,7 @@ export function MarketLab() {
     setIsBusy(true);
     setStatus("Importing market data");
     try {
-      const result = await importMarketData(symbol);
+      const result = await importMarketData(symbol, "5y", dailyProvider);
       setImportResult(result);
       const history = await getPriceHistory(symbol);
       setPrices(history);
@@ -162,6 +163,7 @@ export function MarketLab() {
               ))}
             </select>
           </label>
+          <label className="grid gap-1 text-sm"><span className="font-medium">Daily provider</span><select className="focus-ring h-10 rounded border border-line px-2" value={dailyProvider} onChange={event => setDailyProvider(event.target.value as typeof dailyProvider)}><option value="auto">Automatic trusted provider</option><option value="alpaca_iex_daily">Alpaca IEX daily</option><option value="yfinance">Yahoo Finance</option><option value="yahoo_chart">Yahoo Chart</option></select></label>
           <RoleGate requires="researcher" className="self-end"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={handleImport}>
             <RefreshCw size={16} />
             Import

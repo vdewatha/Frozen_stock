@@ -72,6 +72,7 @@ class SignalRequest(BaseModel):
 class MarketImportRequest(BaseModel):
     symbol: str = "SPY"
     period: str = "5y"
+    provider: Literal["auto", "yfinance", "yahoo_chart", "alpaca_iex_daily"] = "auto"
 
 class IntradayImportRequest(BaseModel):
     symbols: list[str] = Field(default_factory=list)

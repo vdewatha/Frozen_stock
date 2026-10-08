@@ -324,9 +324,32 @@ def upsert_prices(db: Session, symbol: str, prices: pd.DataFrame, source: str = 
     return len(rows)
 
 
-def import_market_prices(db: Session, symbol: str, period: str = "5y") -> dict:
+def import_market_prices(db: Session, symbol: str, period: str = "5y", *, provider: str = "auto") -> dict:
     symbol = _clean_symbol(symbol)
     attempts: list[dict[str, str | None]] = []
+    if provider not in {"auto", "yfinance", "yahoo_chart", "alpaca_iex_daily"}:
+        raise ValueError("Unsupported market-data provider")
+    explicit_fetchers = {
+        "yfinance": fetch_yfinance_prices,
+        "yahoo_chart": fetch_yahoo_chart_prices,
+        "alpaca_iex_daily": fetch_alpaca_iex_daily_prices,
+    }
+    if provider in explicit_fetchers:
+        prices = explicit_fetchers[provider](symbol, period)
+        attempts.append({"provider": provider, "status": "ready" if not prices.empty else "unavailable", "reason": None if not prices.empty else "empty_or_invalid_response"})
+        source = provider if not prices.empty else "unavailable"
+        rows_imported = upsert_prices(db, symbol, prices, source)
+        return {
+            "symbol": symbol,
+            "rows_imported": rows_imported,
+            "start_date": prices["date"].min() if not prices.empty else None,
+            "end_date": prices["date"].max() if not prices.empty else None,
+            "source": source,
+            "trusted": source == provider and not prices.empty,
+            "synthetic_fallback_used": False,
+            "provider_attempts": attempts,
+            "unavailable_reason": None if not prices.empty else f"No {provider} market-data history returned",
+        }
     prices = fetch_yfinance_prices(symbol, period)
     source = "yfinance"
     yfinance_insufficient = _needs_longer_history(prices, period)
