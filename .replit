@@ -59,8 +59,9 @@ AGENT_RESEARCH_RULE_BASED_FALLBACK = "true"
 PAPER_WORKERS_ENABLED = "true"
 PAPER_LEARNING_REPLICAS = "3"
 PAPER_LEARNING_CONCURRENCY = "1"
-# Keep incomplete QQQ intraday history research-only until the feed gap is repaired.
-PAPER_EXECUTION_SYMBOLS = "[\"AAPL\", \"MSFT\", \"SPY\"]"
+# Keep incomplete MSFT and QQQ intraday history research-only until their feed gaps are repaired.
+# AAPL and SPY remain the bounded paper-execution pilot universe.
+PAPER_EXECUTION_SYMBOLS = "[\"AAPL\", \"SPY\"]"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 DELAYED_SIP_RESEARCH_ENABLED = "true"
