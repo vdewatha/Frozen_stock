@@ -79,7 +79,9 @@ def candidate_evidence_drilldown(db: Session, symbol: str, strategy: str) -> dic
 
     model = predict_probabilities(symbol, prices, source)
     signal = get_strategy(strategy_row.strategy_type, strategy_row.parameters).generate_signal(symbol, prices)
-    backtest = run_backtest(symbol, strategy_row.strategy_type, prices.tail(320), BacktestConfig(), strategy_row.parameters)
+    # Use the complete trusted window. Trimming this to a short tail can turn
+    # an otherwise useful history into a thin-sample evidence failure.
+    backtest = run_backtest(symbol, strategy_row.strategy_type, prices, BacktestConfig(), strategy_row.parameters)
     # Qualification evidence must not silently seed mock context.
     stored_news = summarize_news_context(db, symbol, auto_seed=False)
     trusted_headlines = [

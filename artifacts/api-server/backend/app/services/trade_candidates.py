@@ -98,7 +98,9 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
 
         for strategy_row in strategies:
             signal = get_strategy(strategy_row["strategy_type"], strategy_row["parameters"]).generate_signal(symbol, prices)
-            backtest = run_backtest(symbol, strategy_row["strategy_type"], prices.tail(320), BacktestConfig(), strategy_row["parameters"])
+            # Keep the full trusted window so the 30-trade quality gate is
+            # measured against all available evidence, not an arbitrary tail.
+            backtest = run_backtest(symbol, strategy_row["strategy_type"], prices, BacktestConfig(), strategy_row["parameters"])
             model_supported = best_prediction is not None
             strategy_supported = signal.action == "BUY" and signal.confidence >= 0.55
             # A positive score is not enough to make a candidate actionable:
