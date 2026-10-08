@@ -776,9 +776,11 @@ def evaluate_launch_admission_prerequisites(
     try:
         broker = stock_paper_broker_status(db)
         accounting = broker.get("accounting") or {}
+        paper_execution = broker.get("paper_execution") or {}
         venue = str(broker.get("paper_broker") or "").strip().lower()
         provider_complete = accounting.get("provider_evidence_complete")
         accounting_ready = accounting.get("ready") is True
+        paper_execution_ready = paper_execution.get("ready") is True
         venue_qualification = accounting.get("venue_qualification")
         # Keep the historical broker projection compatible for callers that
         # supply the pre-qualification shape, while the live status path below
@@ -788,7 +790,7 @@ def evaluate_launch_admission_prerequisites(
         qualified = (
             venue == "alpaca_paper" and accounting_ready
             if legacy_projection else
-            accounting_ready
+            paper_execution_ready
             and provider_complete is not False
             and venue_qualification.get("ready_for_paper_admission") is True
         )
@@ -800,6 +802,7 @@ def evaluate_launch_admission_prerequisites(
             evidence={
                 "paper_broker": venue or None,
                 "accounting_ready": accounting_ready,
+                "paper_execution_ready": paper_execution_ready,
                 "provider_evidence_complete": provider_complete,
                 "provider_evidence": TRADIER_PAPER_EVIDENCE
                 if provider_complete is False else None,
@@ -2256,15 +2259,18 @@ def automate_paper_promotion(
     )
     ledger_gate = _gate(
         "pass" if account and account.status == "reconciled"
-        and not account.reconciliation_required and account.accounting_verified
+        and not account.reconciliation_required
+        and (broker.get("paper_execution", {}).get("ready") is True)
         else "fail",
         reason=None if account and account.status == "reconciled"
-        and not account.reconciliation_required and account.accounting_verified
-        else "paper ledger reconciliation is not verified",
+        and not account.reconciliation_required
+        and (broker.get("paper_execution", {}).get("ready") is True)
+        else "paper execution policy, exact reconciliation, and venue activation are not verified",
         evidence={
             "account_status": account.status if account else "uninitialized",
             "reconciliation_required": account.reconciliation_required if account else None,
             "accounting_verified": account.accounting_verified if account else False,
+            "paper_execution": broker.get("paper_execution"),
         },
     )
     recovery_gate = _gate(

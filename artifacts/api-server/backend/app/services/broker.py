@@ -30,10 +30,33 @@ def stock_paper_broker_status(db: Session) -> dict:
         TRADIER_PAPER_EVIDENCE, active_paper_account, active_paper_broker_name,
     )
     from app.services.paper_venue_qualification import paper_venue_qualification_status
+    from app.services.alpaca_paper_cost_contract import execution_policy_status
+    from app.models import StockPaperLedgerEvent
 
     venue = active_paper_broker_name()
     account = active_paper_account(db)
     qualification = paper_venue_qualification_status(db, venue)
+    # Some read-only callers provide a lightweight account projection rather
+    # than an ORM row.  In that case there is no durable event lookup to do;
+    # fail closed instead of making status reporting depend on a test/mock
+    # implementation detail.
+    reconciliation = None
+    account_id = getattr(account, "id", None)
+    if account_id is not None:
+        reconciliation = db.query(StockPaperLedgerEvent).filter_by(
+            account_id=account_id,
+            event_type="activity_reconciliation",
+        ).order_by(StockPaperLedgerEvent.id.desc()).first()
+    activation_authorized = bool(qualification.get("activation_authorized"))
+    paper_execution = execution_policy_status(
+        provider=venue,
+        activity_contract=getattr(account, "activity_contract", "") if account else "",
+        account_status=account.status if account else None,
+        reconciliation_required=bool(not account or account.reconciliation_required),
+        unexplained_residual=bool(account and account.unexplained_residual),
+        reconciliation_payload=reconciliation.payload if reconciliation else None,
+        venue_activation_authorized=activation_authorized,
+    )
     provider_complete = TRADIER_PAPER_EVIDENCE["complete"] if venue == "tradier_sandbox" else None
     accounting_ready = bool(
         account and account.status == "reconciled"
@@ -49,7 +72,7 @@ def stock_paper_broker_status(db: Session) -> dict:
         "live_trading_blocked": True,
         "message": (
             f"Stock-paper execution uses {venue}; this paper route cannot place live orders. "
-            "Complete accounting is a separate required gate."
+            "Complete accounting remains a separate required gate for research and graduation."
         ),
         "accounting": {
             "paper_broker": venue,
@@ -70,6 +93,7 @@ def stock_paper_broker_status(db: Session) -> dict:
                 "known costs, and no unexplained residual."
             ),
         },
+        "paper_execution": paper_execution,
     }
 
 

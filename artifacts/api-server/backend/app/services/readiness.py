@@ -220,6 +220,20 @@ def readiness_snapshot(db: Session) -> dict:
             accounting,
         )
     )
+    paper_execution = broker.get("paper_execution") or {}
+    checks.append(
+        _check(
+            "Paper execution policy",
+            "ready" if paper_execution.get("ready") else "blocked",
+            (
+                "Paper orders may use the explicit Alpaca paper commission policy; "
+                "all-in costs remain research-only."
+                if paper_execution.get("ready") else
+                "Paper execution policy is not yet fully qualified."
+            ),
+            paper_execution,
+        )
+    )
 
     risk_rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
     rule_value = (risk_rule.value if risk_rule else {}) or {}

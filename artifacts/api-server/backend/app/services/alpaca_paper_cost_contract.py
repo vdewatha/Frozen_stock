@@ -58,3 +58,68 @@ def assess(*, provider: str, activity_contract: str, activities: list[dict]) -> 
             "No provider zero-commission assumption is active; missing costs remain unknown."
         ),
     }
+
+
+def execution_policy_status(
+    *,
+    provider: str,
+    activity_contract: str,
+    account_status: str | None,
+    reconciliation_required: bool,
+    unexplained_residual: bool,
+    reconciliation_payload: dict | None,
+    venue_activation_authorized: bool,
+) -> dict:
+    """Describe whether paper orders may use the explicit broker policy.
+
+    This is deliberately narrower than ``costs_verified``.  It admits only a
+    reconciled, residual-free Alpaca paper account whose latest observed
+    baseline matches and whose separate venue activation is present.  It does
+    not claim that spread, slippage, or all-in P/L costs are known.
+    """
+    policy_enabled = bool(
+        settings.alpaca_paper_zero_commission_contract
+        and provider == "alpaca_paper"
+        and activity_contract == "alpaca-activities-v2"
+    )
+    try:
+        cash_residual = Decimal(str(reconciliation_payload.get("cash_residual", "1"))) \
+            if isinstance(reconciliation_payload, dict) else Decimal("1")
+    except (InvalidOperation, TypeError, ValueError):
+        cash_residual = Decimal("1")
+    reconciliation_matched = bool(
+        isinstance(reconciliation_payload, dict)
+        and reconciliation_payload.get("status") == "matched"
+        and reconciliation_payload.get("cash_equation_matches") is True
+        and reconciliation_payload.get("inventory_equation_matches") is True
+        and cash_residual == 0
+    )
+    ready = bool(
+        policy_enabled
+        and account_status == "reconciled"
+        and not reconciliation_required
+        and not unexplained_residual
+        and reconciliation_matched
+        and venue_activation_authorized
+    )
+    blockers = []
+    if not policy_enabled:
+        blockers.append("explicit Alpaca paper commission policy is disabled")
+    if account_status != "reconciled" or reconciliation_required:
+        blockers.append("paper account reconciliation is not current")
+    if unexplained_residual:
+        blockers.append("unexplained broker residual remains")
+    if not reconciliation_matched:
+        blockers.append("latest broker activity reconciliation is not an exact match")
+    if not venue_activation_authorized:
+        blockers.append("separate paper venue activation is missing")
+    return {
+        "ready": ready,
+        "policy_active": policy_enabled,
+        "commission_policy": "eligible Alpaca paper U.S. equity API trades modeled as zero broker commission",
+        "all_in_costs_verified": False,
+        "research_only_costs": True,
+        "venue_activation_authorized": bool(venue_activation_authorized),
+        "reconciliation_matched": reconciliation_matched,
+        "blockers": blockers,
+    }
