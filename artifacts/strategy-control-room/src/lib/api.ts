@@ -1983,8 +1983,10 @@ export async function haltStockPaperAccount(reason: string): Promise<StockPaperS
   return postJson<StockPaperStatus>("/stock-paper/halt", { reason });
 }
 
-export async function resumeStockPaperAccount(): Promise<StockPaperStatus> {
-  return postJson<StockPaperStatus>("/stock-paper/resume", {});
+export async function resumeStockPaperAccount(
+  reason = "Admin reviewed fresh broker reconciliation and monitoring evidence for paper recovery",
+): Promise<StockPaperStatus> {
+  return postJson<StockPaperStatus>("/stock-paper/resume", { reason });
 }
 
 export async function getStockPaperRecovery(): Promise<StockPaperRecoveryStatus> {
