@@ -1180,7 +1180,7 @@ def pause_trial(
     )
     return row
 
-def _accounting_halt_reason(account: StockPaperAccount | None) -> str | None:
+def _accounting_halt_reason(db: Session, account: StockPaperAccount | None) -> str | None:
     """Return the fail-closed trial reason for an unsafe paper ledger."""
     if (
         not account
@@ -1188,7 +1188,12 @@ def _accounting_halt_reason(account: StockPaperAccount | None) -> str | None:
         or account.reconciliation_required
     ):
         return "account_uncertainty"
-    if not account.accounting_verified or account.unexplained_residual:
+    from app.services.broker import stock_paper_broker_status
+
+    paper_execution = (stock_paper_broker_status(db).get("paper_execution") or {})
+    if account.unexplained_residual or (
+        not account.accounting_verified and not paper_execution.get("ready")
+    ):
         return "accounting_review_required"
     return None
 
@@ -1198,7 +1203,7 @@ def _halt_trial_for_accounting(
     account: StockPaperAccount | None,
 ) -> str | None:
     """Pause active trial work and persist safe evidence of an accounting halt."""
-    reason = _accounting_halt_reason(account)
+    reason = _accounting_halt_reason(db, account)
     if reason is None:
         return None
     before = (trial.status, trial.pause_reason, trial.blocked_reason)
