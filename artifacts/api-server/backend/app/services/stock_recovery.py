@@ -108,6 +108,7 @@ def _paper_research_policy_ready(db: Session) -> bool:
     from app.services.broker import stock_paper_broker_status
 
     policy = stock_paper_broker_status(db).get("paper_execution") or {}
+    account = active_paper_account(db)
     if policy.get("ready"):
         return True
 
@@ -120,7 +121,8 @@ def _paper_research_policy_ready(db: Session) -> bool:
         policy.get("policy_active")
         and policy.get("reconciliation_matched")
         and policy.get("venue_activation_authorized")
-        and not policy.get("unexplained_residual")
+        and account is not None
+        and not account.unexplained_residual
     )
 
 
