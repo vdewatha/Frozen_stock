@@ -9,6 +9,12 @@ Automatic accounting recovery may clear a residual only when a later broker payl
 
 **How to apply:** Keep recovery halted and notify an operator for unknown fees, unsupported account flows, stale timestamps, mismatches, open orders, or monitoring failures. After the accounting proof, still require the normal cooldown, fresh reconciliation, monitoring, and in-flight-order gates.
 
+When evaluating a halted account's research-policy recovery evidence, residual safety comes from the active paper account, not from an execution-policy summary. A missing summary field must never be treated as proof that no residual exists.
+
+**Why:** The execution-policy summary does not carry the account's unexplained-residual flag; interpreting an omitted field as false could admit unsafe recovery.
+
+**How to apply:** Require an active account and consult its residual evidence alongside the independent policy, reconciliation, and venue-authorization gates.
+
 Active forward trials must re-check accounting safety at observation and pending-execution boundaries; a residual discovered after activation must pause the trial before any new paper submission.
 
 **Why:** Resume-time validation cannot protect a trial from a later reconciliation failure, and an already-persisted qualifying decision must not bypass the newly unsafe ledger.

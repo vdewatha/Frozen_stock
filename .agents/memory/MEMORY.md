@@ -12,7 +12,7 @@
 - [Interim migration compatibility](interim-migration-compatibility.md) — legacy stock-only schemas may omit shared tables; historical migrations must preserve rows and skip unavailable cross-domain constraints.
 - [Automatic accounting recovery](automatic-accounting-recovery.md) — only an exact late-commission enrichment can resolve a residual automatically; stable snapshots never qualify.
 - [Recovery timestamp precision](recovery-timestamp-precision.md) — use precise application-side halt timestamps when qualifying post-pause monitoring evidence.
-- [Backend test module path](backend-test-module-path.md) — run backend pytest with PYTHONPATH=. so app imports resolve from the workspace.
+- [Backend test isolation](backend-test-module-path.md) — use PYTHONPATH=. and isolate fake broker-account bindings inside tests, never by changing project credentials.
 - [Python publish dependencies](python-publish-dependencies.md) — backend requirements alone do not install publish dependencies; keep root Python manifests aligned and test imports during builds.
 - [Recovery evidence linkage](recovery-evidence-linkage.md) — link low-level pause events to cycles while keeping demotion fail-closed and last-known-good bindings immutable.
 - [Recovery evidence export](recovery-evidence-export.md) — expose proof digests and stable identifiers, never raw broker payloads or financial fields.
