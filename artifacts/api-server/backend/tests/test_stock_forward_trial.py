@@ -771,7 +771,7 @@ class ForwardTrialTests(unittest.TestCase):
             ), patch(
                 "app.services.stock_forward_trial.trial_feed_preflight",
                 return_value={"ready": True, "status": "ready"},
-            ):
+                ):
                 expected_statuses = {
                     "start": "running",
                     "pause": "paused",
@@ -921,7 +921,10 @@ class ForwardTrialTests(unittest.TestCase):
                 settings,
                 "tradier_market_data_api_key",
                 type(settings.tradier_market_data_api_key)("sip-test-key"),
-            ):
+                ), patch.object(settings, "active_market_data_provider", "tradier"), \
+                patch("app.services.intraday_data.MARKET_DATA_PROVIDER", "tradier"), \
+                patch("app.services.intraday_data.MARKET_DATA_FEED_CLASS", "sip"), \
+                patch("app.services.stock_forward_trial.MARKET_DATA_PROVIDER", "tradier"):
                 feed_evidence = trial_feed_preflight(db, row, now=now)
                 self.assertFalse(feed_evidence["ready"])
                 self.assertTrue(all(item["status"] == "ready" for item in feed_evidence["symbols"]))

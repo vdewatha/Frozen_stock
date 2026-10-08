@@ -40,6 +40,19 @@ def test_reported_commissions_deducted_once():
     assert not report["costs_verified"]
 
 
+def test_transport_enrichment_does_not_change_economic_baseline():
+    baseline, rows = evidence()
+    enriched = [
+        {**row, "activity_source": "alpaca_activity_sse",
+         "activity_event_id": f"event-{row['id']}",
+         "net_amount": "-200" if row["side"] == "buy" else "202"}
+        for row in rows
+    ]
+    report = evaluate(baseline, enriched, {})
+    assert report["status"] == "research_only"
+    assert report["fills_without_reported_commission"] == 2
+
+
 def test_separate_fees_included_but_funding_and_dividends_not_trade_profit():
     baseline, rows = evidence()
     for kind, value in [("FEE", "-0.2"), ("CSD", "1000"), ("DIV", "20")]:

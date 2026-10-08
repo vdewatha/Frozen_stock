@@ -30,9 +30,15 @@ def evaluate(baseline, activities, closing_positions, *, currency):
         current = replay(activities)
         if baseline.get("journal_sha256") != before["journal_sha256"]:
             raise ValueError("Frozen baseline digest mismatch")
-        old = {r["id"]: r for r in baseline["activities"]}
-        new = {r["id"]: r for r in activities}
-        if any(new.get(identifier) != row for identifier, row in old.items()):
+        # Broker adapters may enrich an already observed activity later (for
+        # example with SSE provenance or a derived net amount).  Compare the
+        # normalized economic contract so harmless transport metadata does not
+        # look like a correction, while changes to price, quantity, side,
+        # commission, or cash amount still fail closed.
+        old = {r["id"]: normalize(r) for r in baseline["activities"]}
+        raw_new = {r["id"]: r for r in activities}
+        new = {identifier: normalize(row) for identifier, row in raw_new.items()}
+        if any(new.get(identifier) != event for identifier, event in old.items()):
             raise ValueError("Baseline activity missing or changed; correction review required")
         if before["mixed_fee_attribution_requires_review"] or current["mixed_fee_attribution_requires_review"]:
             raise ValueError("Mixed fee attribution requires review")
@@ -41,7 +47,7 @@ def evaluate(baseline, activities, closing_positions, *, currency):
         gross = turnover = commissions = cash_fees = Decimal(0)
         quantities = {}
         fills = unknown = 0
-        for identifier, raw in new.items():
+        for identifier, raw in raw_new.items():
             if identifier in old:
                 continue
             event = normalize(raw)
