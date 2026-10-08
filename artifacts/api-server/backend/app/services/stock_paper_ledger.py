@@ -44,7 +44,10 @@ ACCOUNTING_RESIDUAL_REVIEW_REASON = "Prior unexplained cash or position residual
 PROBE_HALT = "Paper integration probe reserved; broker reconciliation and recovery review required"
 RECONCILIATION_OVERLAP = timedelta(minutes=10)
 NONTERMINAL_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
-ALLOWED_ORDER_SOURCES = frozenset({"manual_control_room", "manual_close", "manual_reduce", "recovery_flatten", "broker_import"})
+ALLOWED_ORDER_SOURCES = frozenset({
+    "manual_control_room", "manual_close", "manual_reduce", "recovery_flatten",
+    "broker_import", "scheduled_paper_signal",
+})
 MAX_REFERENCE_PRICE_DEVIATION = Decimal("0.02")
 MAX_BROKER_SNAPSHOT_AGE = timedelta(minutes=5)
 TRADIER_PAPER_EVIDENCE = {
@@ -1888,7 +1891,15 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
 def create_stock_paper_signal(db: Session, symbol: str, strategy_slug: str) -> dict:
     """Persist a real generated signal only; it creates no reservation or order."""
     symbol = symbol.strip().upper()
-    strategy = db.query(Strategy).filter_by(strategy_type=strategy_slug).one_or_none()
+    # Strategy type is the public registry key.  A historical database can
+    # contain more than one row for a type, so choose the oldest active row
+    # deterministically instead of turning a scheduled cycle into a failure.
+    strategy = (
+        db.query(Strategy)
+        .filter_by(strategy_type=strategy_slug)
+        .order_by(Strategy.id)
+        .first()
+    )
     if not strategy:
         raise StockPaperError(f"Unknown strategy: {strategy_slug}")
     try:

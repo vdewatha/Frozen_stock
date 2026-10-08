@@ -848,8 +848,9 @@ def trade_candidate_scan_job() -> dict:
 @celery_app.task
 def paper_trading_signal_job() -> dict:
     def work(db):
-        return {"status": "quarantined", "job": "paper_trading_signal_job",
-                "reason": "Legacy local simulator cannot create stock-paper orders."}
+        from app.services.stock_paper_autotrader import run_stock_paper_signal_cycle
+
+        return run_stock_paper_signal_cycle(db)
 
     return _run_job("paper_trading_signal_job", work)
 
