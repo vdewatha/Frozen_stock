@@ -198,6 +198,20 @@ def test_restart_and_expiry_replay_flags_are_required():
         assert report["status"] == "blocked"
 
 
+def test_static_credential_replay_can_replace_session_expiry_evidence():
+    evidence = _evidence()
+    evidence.pop("session_expiry_replay")
+    evidence["credential_replay"] = {
+        "method": "static_api_key_reinitialization",
+        "activities_preserved": True,
+        "no_duplicates": True,
+    }
+    report = assess_paper_venue_evidence(
+        provider=SELECTED_PAPER_PROVIDER, account_id="paper-account", evidence=evidence
+    )
+    assert report["status"] == "qualified"
+
+
 def test_restart_and_session_expiry_replays_store_each_activity_once():
     engine = _db()
     activity = {

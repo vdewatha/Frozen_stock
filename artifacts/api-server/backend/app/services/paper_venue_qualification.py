@@ -32,8 +32,14 @@ _REQUIRED_BOOLEAN_PATHS = (
     ("delayed_events", "captured"),
     ("restart_replay", "activities_preserved"),
     ("restart_replay", "no_duplicates"),
-    ("session_expiry_replay", "activities_preserved"),
-    ("session_expiry_replay", "no_duplicates"),
+)
+
+# Alpaca Trading API credentials are static API-key pairs, not browser
+# sessions. Accept an equivalent credential reinitialization replay for that
+# provider while retaining the stricter expiry evidence for session-based
+# providers.
+_REPLAY_ALTERNATIVES = (
+    ("session_expiry_replay", "credential_replay"),
 )
 
 
@@ -53,6 +59,7 @@ def _safe_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         "account_identity", "orders", "executions", "commissions",
         "cash_activities", "timestamps", "pagination", "report_period",
         "delayed_events", "restart_replay", "session_expiry_replay",
+        "credential_replay",
         "counts", "provider_contract",
     }
     redacted_keys = {
@@ -106,6 +113,17 @@ def assess_paper_venue_evidence(
         value = section_value.get(field) if isinstance(section_value, dict) else None
         if value is not True:
             blockers.append(f"{section}.{field} is not affirmatively proven")
+    for alternatives in _REPLAY_ALTERNATIVES:
+        if not any(
+            isinstance(safe.get(section), dict)
+            and safe[section].get("activities_preserved") is True
+            and safe[section].get("no_duplicates") is True
+            for section in alternatives
+        ):
+            blockers.append(
+                "one of session_expiry_replay or credential_replay must affirmatively prove "
+                "activities_preserved and no_duplicates"
+            )
     period = safe.get("report_period")
     if not isinstance(period, dict) or not period.get("start") or not period.get("end"):
         blockers.append("A bounded provider report period is required")

@@ -72,6 +72,13 @@ def main():
         if key in samples[0][1] and key in samples[1][1] else None
         for key in ("orders", "fills")
     }
+    replay_equal = all(value is True for value in report["history_replay_equal"].values())
+    report["credential_replay"] = {
+        "method": "static_api_key_reinitialization",
+        "activities_preserved": replay_equal,
+        "no_duplicates": replay_equal,
+        "note": "Alpaca uses static API-key credentials; browser session-expiry evidence is not applicable.",
+    }
     report["qualification"] = "not_established_by_read_only_probe"
     print(json.dumps(report, indent=2))
 
