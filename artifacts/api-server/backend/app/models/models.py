@@ -24,7 +24,12 @@ class Asset(Base):
 
 class MarketPrice(Base):
     __tablename__ = "market_prices"
-    __table_args__ = (UniqueConstraint("symbol", "price_date", name="uq_market_prices_symbol_date"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "price_date", "source",
+            name="uq_market_prices_symbol_date_source",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), index=True)

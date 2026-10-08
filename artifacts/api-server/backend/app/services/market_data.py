@@ -290,12 +290,7 @@ def upsert_prices(db: Session, symbol: str, prices: pd.DataFrame, source: str = 
     if db.bind and db.bind.dialect.name == "postgresql":
         stmt = pg_insert(MarketPrice).values(rows)
         stmt = stmt.on_conflict_do_update(
-            constraint="uq_market_prices_symbol_date",
-            # A fallback provider must not silently replace an existing
-            # observation from a different provider for the same session.
-            # Same-provider refreshes remain idempotent and can correct a
-            # provider's earlier partial response.
-            where=MarketPrice.source == stmt.excluded.source,
+            constraint="uq_market_prices_symbol_date_source",
             set_={
                 "open": stmt.excluded.open,
                 "high": stmt.excluded.high,
@@ -310,15 +305,21 @@ def upsert_prices(db: Session, symbol: str, prices: pd.DataFrame, source: str = 
         db.execute(stmt)
     else:
         existing_sources = {
-            item[0]: item[1]
+            (item[0], item[1]): item[2]
             for item in db.query(MarketPrice.price_date, MarketPrice.source)
+            .add_columns(MarketPrice.id)
             .filter(MarketPrice.symbol == symbol, MarketPrice.price_date.in_([row["price_date"] for row in rows]))
             .all()
         }
         for row in rows:
-            if row["price_date"] in existing_sources and existing_sources[row["price_date"]] == source:
-                db.query(MarketPrice).filter(MarketPrice.symbol == symbol, MarketPrice.price_date == row["price_date"]).update(row)
-            elif row["price_date"] not in existing_sources:
+            key = (row["price_date"], source)
+            if key in existing_sources:
+                db.query(MarketPrice).filter(
+                    MarketPrice.symbol == symbol,
+                    MarketPrice.price_date == row["price_date"],
+                    MarketPrice.source == source,
+                ).update(row)
+            else:
                 db.add(MarketPrice(**row))
     db.commit()
     return len(rows)

@@ -168,7 +168,7 @@ def test_market_import_is_explicitly_unavailable_when_trusted_sources_fail():
     assert all(attempt["status"] == "unavailable" for attempt in result["provider_attempts"])
 
 
-def test_market_import_does_not_replace_a_date_with_a_different_provider():
+def test_market_import_keeps_same_date_for_each_provider():
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     prices = pd.DataFrame([{
@@ -180,15 +180,13 @@ def test_market_import_does_not_replace_a_date_with_a_different_provider():
         replacement = prices.copy()
         replacement.loc[0, "close"] = 999
         market_data.upsert_prices(db, "AAPL", replacement, "yahoo_chart")
-        row = db.query(MarketPrice).filter_by(symbol="AAPL").one()
-        assert row.source == "yfinance"
-        assert row.close == 101
+        rows = db.query(MarketPrice).filter_by(symbol="AAPL").order_by(MarketPrice.source).all()
+        assert [(row.source, row.close) for row in rows] == [("yahoo_chart", 999), ("yfinance", 101)]
 
         replacement.loc[0, "close"] = 102
         market_data.upsert_prices(db, "AAPL", replacement, "yfinance")
-        row = db.query(MarketPrice).filter_by(symbol="AAPL").one()
-        assert row.source == "yfinance"
-        assert row.close == 102
+        rows = db.query(MarketPrice).filter_by(symbol="AAPL").order_by(MarketPrice.source).all()
+        assert [(row.source, row.close) for row in rows] == [("yahoo_chart", 999), ("yfinance", 102)]
 
 
 def test_research_persistence_rejects_missing_prices():
