@@ -9,7 +9,7 @@ from typing import Callable
 from uuid import uuid4
 
 import redis
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy.exc import DBAPIError, InterfaceError, InternalError, OperationalError
 from sqlalchemy.types import JSON
@@ -501,6 +501,31 @@ def nightly_backtest_job() -> dict:
     return _run_job("nightly_backtest_job", work)
 
 
+def _claim_learning_dispatch(db, dispatch_id: int | None, current_task_id: str | None):
+    """Atomically claim one scope and fence duplicate Celery deliveries."""
+    dispatch = db.scalar(
+        select(StockLearningWorkerDispatch)
+        .where(StockLearningWorkerDispatch.id == dispatch_id)
+        .with_for_update()
+    ) if dispatch_id else None
+    if dispatch_id and dispatch is None:
+        raise RuntimeError("Durable research worker dispatch is missing")
+    if dispatch is None:
+        return None, "claimed"
+    if dispatch.status == "succeeded":
+        return dispatch, "complete"
+    # A different delivery must not run the same scope concurrently. The
+    # original Celery task id may reclaim after a worker loss because
+    # acks_late/reject_on_worker_lost can redeliver that task.
+    if dispatch.status == "running" and dispatch.task_id != current_task_id:
+        return dispatch, "in_progress"
+    dispatch.status = "running"
+    dispatch.attempt_count = int(dispatch.attempt_count or 0) + 1
+    dispatch.task_id = current_task_id
+    db.commit()
+    return dispatch, "claimed"
+
+
 @celery_app.task(
     autoretry_for=(DBAPIError, InterfaceError, InternalError, OperationalError),
     retry_backoff=True,
@@ -519,10 +544,12 @@ def strategy_learning_scope_job(
     dispatch_id: int | None = None,
 ) -> dict:
     def work(db):
-        dispatch = db.get(StockLearningWorkerDispatch, dispatch_id) if dispatch_id else None
-        if dispatch_id and dispatch is None:
-            raise RuntimeError("Durable research worker dispatch is missing")
-        if dispatch and dispatch.status == "succeeded":
+        dispatch, claim_status = _claim_learning_dispatch(
+            db,
+            dispatch_id,
+            getattr(strategy_learning_scope_job.request, "id", None),
+        )
+        if dispatch and claim_status == "complete":
             return {
                 "status": "complete",
                 "job": "strategy_learning_scope_job",
@@ -531,11 +558,15 @@ def strategy_learning_scope_job(
                 "paper_only": True,
                 "deduplicated": True,
             }
-        if dispatch:
-            dispatch.status = "running"
-            dispatch.attempt_count = int(dispatch.attempt_count or 0) + 1
-            dispatch.task_id = getattr(strategy_learning_scope_job.request, "id", None)
-            db.commit()
+        if dispatch and claim_status == "in_progress":
+            return {
+                "status": "in_progress",
+                "job": "strategy_learning_scope_job",
+                "symbol": dispatch.symbol,
+                "strategy": dispatch.strategy_slug,
+                "paper_only": True,
+                "deduplicated": True,
+            }
         # Keep each scheduled scope bounded, while honoring the caller's
         # candidate budget so recurring fan-out explores more than the first
         # proposal when worker capacity allows it.

@@ -320,7 +320,6 @@ def upsert_intraday_bars(
                     "volume": excluded.volume,
                     "feed_class": excluded.feed_class,
                     "exchange_timestamp": excluded.exchange_timestamp,
-                    "ingested_at": excluded.ingested_at,
                     "last_verified_at": excluded.last_verified_at,
                 },
             )
