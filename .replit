@@ -74,4 +74,4 @@ ACTIVE_MARKET_DATA_PROVIDER = "alpaca_iex"
 INTRADAY_BACKFILL_CHUNKS_PER_CYCLE = "8"
 
 [userenv.production]
-CLERK_ROLE_MAPPINGS = "{\"user_3KQ4j0KxYM5iVpPz4Y0pnYC4mIR\":\"admin\"}"
+CLERK_ROLE_MAPPINGS = "{\"user_3KQ4j0KxYM5iVpPz4Y0pnYC4mIR\":\"admin\",\"user_3KQ9CGy7ikGFcIHnxjKO2Vk89PD\":\"admin\"}"
