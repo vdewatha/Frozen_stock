@@ -15,6 +15,12 @@ When evaluating a halted account's research-policy recovery evidence, residual s
 
 **How to apply:** Require an active account and consult its residual evidence alongside the independent policy, reconciliation, and venue-authorization gates.
 
+A fresh broker reconciliation can legitimately coexist with a durable monitoring halt. A halted account may pass the reconciliation prerequisite only when its broker evidence is fresh and reconciliation is no longer required; this does not clear the halt or bypass the remaining recovery gates.
+
+**Why:** Successful reconciliation updates evidence without erasing the independent monitoring incident. Requiring the account to be unhalted before explicit recovery creates a circular dependency.
+
+**How to apply:** Evaluate freshness and the reconciliation-required flag independently from the durable halt, rejecting stale, missing, or future-dated evidence and preserving operator revalidation, cooldown, monitoring, and residual checks.
+
 Active forward trials must re-check accounting safety at observation and pending-execution boundaries; a residual discovered after activation must pause the trial before any new paper submission.
 
 **Why:** Resume-time validation cannot protect a trial from a later reconciliation failure, and an already-persisted qualifying decision must not bypass the newly unsafe ledger.
