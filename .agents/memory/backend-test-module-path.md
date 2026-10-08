@@ -14,3 +14,9 @@ Fake-broker recovery tests must also isolate the configured broker-account bindi
 **Why:** These tests can inherit a real account binding from the workspace environment and fail during fake baseline initialization, before reaching the recovery behavior under test.
 
 **How to apply:** Mock the binding for the fixture's lifetime and restore it afterward; continue using isolated test databases and fake gateways.
+
+Authentication test fixtures must explicitly declare whether anonymous viewer access is allowed instead of inheriting the preview setting.
+
+**Why:** Workspace preview permits anonymous read-only access, which can change a fixture's expected unauthenticated response even when its fake role keys are isolated. This is test-environment leakage, not a reason to change deployment authentication or secrets.
+
+**How to apply:** Set the intended anonymous-access policy on each fixture's settings object; leave runtime configuration untouched.

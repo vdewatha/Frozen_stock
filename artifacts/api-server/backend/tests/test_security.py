@@ -29,6 +29,7 @@ class SecurityTests(unittest.TestCase):
             ("POST", "/paper-trading/close/42"): "operator",
             ("POST", "/portfolio/allocation-plan/execute"): "operator",
             ("POST", "/safety/kill-switch/enable"): "operator",
+            ("POST", "/system/strategy-learning/retry-failures"): "operator",
             ("POST", "/risk/settings"): "admin",
             ("PATCH", "/risk/settings"): "admin",
             ("POST", "/safety/kill-switch/disable"): "admin",
@@ -61,6 +62,7 @@ class SecurityTests(unittest.TestCase):
 
     def make_client(self, **overrides):
         config = {f"auth_{role}_key": role.ljust(40, "-") for role in ("viewer", "researcher", "operator", "admin")}
+        config["allow_anonymous_viewer"] = False
         config.update(overrides)
         app = FastAPI()
         app.add_middleware(AuthenticationMiddleware, configuration=Settings(_env_file=None, **config))

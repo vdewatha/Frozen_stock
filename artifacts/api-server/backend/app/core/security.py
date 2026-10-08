@@ -79,6 +79,7 @@ OPERATOR_POSTS = {
     "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal", "/stock-paper/signal-cycle",
     "/stock-paper/venue-qualification",
     "/stock-paper/research-venue/qualification", "/stock-paper/recovery/transport-review",
+    "/system/strategy-learning/retry-failures",
 }
 ADMIN_POSTS = {
     "/system/deployment-monitor/run", "/system/operational-hardening/run", "/system/live-safety/transition", "/notifications/{notification_id}/acknowledge",
@@ -90,7 +91,6 @@ ADMIN_POSTS = {
     "/stock-paper/account-transition",
     "/stock-paper/venue-activation",
     "/stock-paper/research-venue/activation",
-    "/system/strategy-learning/retry-failures",
 }
 
 
