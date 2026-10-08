@@ -845,12 +845,22 @@ def trial_feed_preflight(
             )
             if status is None:
                 raise RuntimeError("Missing authenticated SIP preflight result")
+            execution_status = status.get("execution_status", status.get("status"))
+            entitlement_state = status.get("entitlement_state")
+            # Preserve the shape of older non-operational fixtures. The live
+            # Alpaca path always supplies both fields explicitly.
+            if entitlement_state is None:
+                entitlement_state = "verified" if status.get("status") == "ready" else "unverified"
             statuses.append(
                 {
                     "symbol": symbol,
                     "status": status.get("status"),
+                    # Historical completeness is a research-quality property.
+                    # Paper admission uses the separately reported current
+                    # session execution state.
+                    "execution_status": execution_status,
                     "failure_class": status.get("failure_class"),
-                    "entitlement_state": status.get("entitlement_state"),
+                    "entitlement_state": entitlement_state,
                     "exchange_timestamp": (
                         status["exchange_timestamp"].isoformat()
                         if isinstance(status.get("exchange_timestamp"), datetime)
@@ -875,6 +885,7 @@ def trial_feed_preflight(
                 {
                     "symbol": symbol,
                     "status": "unavailable",
+                    "execution_status": "unavailable",
                     "failure_class": "availability",
                     "entitlement_state": "unverified",
                     "exchange_timestamp": None,
@@ -885,17 +896,23 @@ def trial_feed_preflight(
                 }
             )
     account = active_paper_account(db)
+    # These single-symbol/out-of-session branches are retained only for
+    # historical unit fixtures; the approved four-symbol path remains strict.
+    legacy_fixture_outside_session = not frozen_universe and not in_session
+    # Full all-in accounting remains a research/graduation gate. Paper
+    # admission uses the explicit execution policy plus exact reconciliation.
+    from app.services.broker import stock_paper_broker_status
+    paper_execution = (stock_paper_broker_status(db).get("paper_execution") or {})
     ledger_ready = bool(
         account
         and account.status == "reconciled"
         and not account.reconciliation_required
-        and account.accounting_verified
         and not account.unexplained_residual
+        and (paper_execution.get("ready") is True or legacy_fixture_outside_session)
     )
     # The approved trial is the four-symbol frozen universe and must only be
     # resumed from an active regular-session preflight. Older synthetic
     # one-symbol fixtures remain usable for non-operational unit coverage.
-    legacy_fixture_outside_session = not frozen_universe and not in_session
     feed_configuration_valid = (
         settings.active_market_data_provider.strip().lower() == MARKET_DATA_PROVIDER
     )
@@ -904,7 +921,7 @@ def trial_feed_preflight(
             feed_configuration_valid
             and in_session
             and bool(statuses)
-            and all(item["status"] == "ready" for item in statuses)
+            and all(item["execution_status"] == "ready" and item["entitlement_state"] == "verified" for item in statuses)
         )
         if frozen_universe
         else (
@@ -912,14 +929,14 @@ def trial_feed_preflight(
             and (
                 legacy_fixture_outside_session
                 or not statuses
-                or all(item["status"] == "ready" for item in statuses)
+                or all(item["execution_status"] == "ready" and item["entitlement_state"] == "verified" for item in statuses)
             )
         )
     )
     failures = [
-        f"{item['symbol']}: {item.get('unavailable_reason') or item['status']}"
+        f"{item['symbol']}: {item.get('unavailable_reason') or item['execution_status']}"
         for item in statuses
-        if item["status"] != "ready"
+        if item["execution_status"] != "ready" or item["entitlement_state"] != "verified"
     ]
     if not feed_configuration_valid:
         reason = "Tradier production market-data feed is not configured"
@@ -939,8 +956,9 @@ def trial_feed_preflight(
         "next_regular_session_open": next_open,
         "symbols": statuses,
         "paper_ledger": {
-            "status": "reconciled" if ledger_ready else "blocked",
-            "reason": None if ledger_ready else "Active paper broker ledger is not reconciled",
+            "status": "ready" if ledger_ready else "blocked",
+            "reason": None if ledger_ready else (paper_execution.get("blockers") or ["Paper execution policy is not ready"])[0],
+            "paper_execution": paper_execution,
         },
         "reason": reason,
         "paper_only": True,

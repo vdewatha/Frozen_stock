@@ -928,7 +928,7 @@ class ForwardTrialTests(unittest.TestCase):
                 self.assertEqual(feed_evidence["paper_ledger"]["status"], "blocked")
                 self.assertEqual(
                     feed_evidence["paper_ledger"]["reason"],
-                    "Active paper broker ledger is not reconciled",
+                    "explicit Alpaca paper commission policy is disabled",
                 )
 
                 with patch(

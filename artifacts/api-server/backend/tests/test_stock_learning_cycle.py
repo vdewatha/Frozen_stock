@@ -1925,10 +1925,11 @@ def test_scheduled_handoff_defers_unqualified_broker_without_starting_paper_acti
     assert cycle.trial_id is not None
     assert trial.status == "approved"
     assert trial.status != "running"
-    assert cycle.evidence["preflight"]["paper_ledger"] == {
-        "status": "blocked",
-        "reason": "Active paper broker ledger is not reconciled",
-    }
+    assert cycle.evidence["preflight"]["paper_ledger"]["status"] == "blocked"
+    assert cycle.evidence["preflight"]["paper_ledger"]["reason"] == (
+        "explicit Alpaca paper commission policy is disabled"
+    )
+    assert cycle.evidence["preflight"]["paper_ledger"]["paper_execution"]["ready"] is False
     assert all(
         symbol["status"] == "unavailable"
         for symbol in cycle.evidence["preflight"]["symbols"]
