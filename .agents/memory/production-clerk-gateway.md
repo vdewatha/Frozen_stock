@@ -16,3 +16,16 @@ the first user an elevated role would weaken the paper/live safety boundary.
 **How to apply:** Keep Clerk proxying and cookie validation in the public
 gateway, keep FastAPI inaccessible from the public port, and never derive an
 elevated role from client claims. Signing in must not grant trading authority.
+
+Keep preview-only role-key mode out of published bundles even when shared
+development variables are inherited. Do not assume hosting sets `NODE_ENV`
+for a custom gateway.
+
+**Why:** A shared local-paper auth flag hid the production Clerk sign-in UI,
+while the canonical Clerk proxy requires a production process environment.
+Managed Clerk keys were present; replacing credentials would not address this
+configuration mismatch.
+
+**How to apply:** Enforce the authentication environment at the production
+build/start boundary and test against inherited preview settings. Preserve
+local preview access and require explicit production user-ID role mappings.
