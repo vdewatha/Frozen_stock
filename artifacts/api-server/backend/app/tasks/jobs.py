@@ -324,7 +324,7 @@ def _run_job(job_name: str, work: Callable) -> dict:
 def daily_market_data_import() -> dict:
     def work(db):
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
-        results = [import_market_prices(db, asset.symbol, "2y") for asset in assets]
+        results = [import_market_prices(db, asset.symbol, "5y") for asset in assets]
         corporate_actions = ingest_corporate_actions(db, [asset.symbol for asset in assets])
         journal = refresh_decision_journal_outcomes(db, source="daily_market_data_import", notify=True)
         replay_monitor = run_memory_replay_gate_monitor(db, source="daily_market_data_import", limit=60, top_k=3)

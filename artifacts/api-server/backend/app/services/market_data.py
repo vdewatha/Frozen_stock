@@ -84,7 +84,7 @@ def _price_row_to_dict(row: MarketPrice) -> dict:
     }
 
 
-def fetch_yfinance_prices(symbol: str, period: str = "2y") -> pd.DataFrame:
+def fetch_yfinance_prices(symbol: str, period: str = "5y") -> pd.DataFrame:
     symbol = _provider_symbol(symbol)
     try:
         frame = yf.download(symbol, period=period, auto_adjust=False, progress=False, threads=False)
@@ -104,7 +104,7 @@ def fetch_yfinance_prices(symbol: str, period: str = "2y") -> pd.DataFrame:
 
 
 def _period_to_days(period: str) -> int:
-    normalized = (period or "2y").strip().lower()
+    normalized = (period or "5y").strip().lower()
     if normalized.endswith("y") and normalized[:-1].isdigit():
         return max(1, int(normalized[:-1]) * 365)
     if normalized.endswith("mo") and normalized[:-2].isdigit():
@@ -114,7 +114,7 @@ def _period_to_days(period: str) -> int:
     return 365 * 2
 
 
-def fetch_yahoo_chart_prices(symbol: str, period: str = "2y") -> pd.DataFrame:
+def fetch_yahoo_chart_prices(symbol: str, period: str = "5y") -> pd.DataFrame:
     symbol = _provider_symbol(symbol)
     period2 = int(time.time())
     period1 = period2 - (_period_to_days(period) * 24 * 60 * 60)
@@ -184,7 +184,7 @@ def fetch_yahoo_chart_prices(symbol: str, period: str = "2y") -> pd.DataFrame:
     return _validated_provider_frame(pd.DataFrame(rows))
 
 
-def fetch_alpaca_iex_daily_prices(symbol: str, period: str = "2y") -> pd.DataFrame:
+def fetch_alpaca_iex_daily_prices(symbol: str, period: str = "5y") -> pd.DataFrame:
     """Fetch real daily research bars when Yahoo is unavailable.
 
     This is a read-only Alpaca market-data request using the paper-scoped
@@ -308,7 +308,7 @@ def upsert_prices(db: Session, symbol: str, prices: pd.DataFrame, source: str = 
     return len(rows)
 
 
-def import_market_prices(db: Session, symbol: str, period: str = "2y") -> dict:
+def import_market_prices(db: Session, symbol: str, period: str = "5y") -> dict:
     symbol = _clean_symbol(symbol)
     attempts: list[dict[str, str | None]] = []
     prices = fetch_yfinance_prices(symbol, period)
@@ -369,7 +369,7 @@ def get_price_history(
     )
     source = "database"
     if not rows and auto_seed:
-        import_result = import_market_prices(db, symbol, "2y")
+        import_result = import_market_prices(db, symbol, "5y")
         source = import_result["source"]
         query = db.query(MarketPrice).filter(MarketPrice.symbol == symbol)
         if source_filter:

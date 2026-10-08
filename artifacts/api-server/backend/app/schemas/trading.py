@@ -36,7 +36,7 @@ class WatchlistDiscoveryResponse(BaseModel):
 class WatchlistImportRequest(BaseModel):
     symbols: list[str] = Field(default_factory=list)
     limit: int = Field(default=6, ge=1, le=10)
-    period: str = "2y"
+    period: str = "5y"
     import_prices: bool = True
     import_news: bool = True
     news_provider: str = Field(default="auto", pattern="^(auto|yfinance|nasdaq_rss|mock)$")
@@ -71,7 +71,7 @@ class SignalRequest(BaseModel):
 
 class MarketImportRequest(BaseModel):
     symbol: str = "SPY"
-    period: str = "2y"
+    period: str = "5y"
 
 class IntradayImportRequest(BaseModel):
     symbols: list[str] = Field(default_factory=list)

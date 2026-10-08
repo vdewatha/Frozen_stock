@@ -1868,7 +1868,7 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return handleResponse<T>(response);
 }
 
-export async function importMarketData(symbol: string, period = "2y"): Promise<MarketImportResponse> {
+export async function importMarketData(symbol: string, period = "5y"): Promise<MarketImportResponse> {
   return postJson<MarketImportResponse>("/market-data/import", { symbol, period });
 }
 
@@ -1894,7 +1894,7 @@ export async function importWatchlist(limit = 6, newsProvider: "auto" | "yfinanc
   return postJson<WatchlistImportResponse>("/watchlist/import", {
     symbols: [],
     limit,
-    period: "2y",
+    period: "5y",
     import_prices: true,
     import_news: true,
     news_provider: newsProvider,

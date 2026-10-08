@@ -45,7 +45,7 @@ def import_watchlist_candidates(
     *,
     symbols: list[str] | None = None,
     limit: int = 6,
-    period: str = "2y",
+    period: str = "5y",
     import_prices: bool = True,
     import_news: bool = True,
     news_provider: str = "auto",
