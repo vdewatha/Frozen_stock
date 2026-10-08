@@ -211,7 +211,7 @@ def _freshness_and_provenance(db: Session) -> dict:
     execution_symbols = set(settings.paper_execution_symbols)
     execution_assets = [asset for asset in assets if asset.symbol in execution_symbols]
     research_only_symbols = sorted(asset.symbol for asset in assets if asset.symbol not in execution_symbols)
-    results, failures = {}, {}
+    results, failures, historical_warnings = {}, {}, {}
     for asset in execution_assets:
         try:
             status = feed_status(db, asset.symbol)
@@ -224,20 +224,25 @@ def _freshness_and_provenance(db: Session) -> dict:
                 "missing_intervals": status.get("missing_intervals", []),
                 "unavailable_reason": status.get("unavailable_reason"),
             }
-            if status.get("status") != "ready":
-                failures[asset.symbol] = status.get("status", "unavailable")
+            execution_status = status.get("execution_status") or status.get("status")
+            if execution_status in {"ready", "market_closed"} and status.get("status") == "incomplete":
+                historical_warnings[asset.symbol] = status.get("unavailable_reason") or "Historical repair gaps remain"
+            elif execution_status not in {"ready", "market_closed"}:
+                failures[asset.symbol] = execution_status or status.get("status", "unavailable")
         except Exception as exc:
             failures[asset.symbol] = exc.__class__.__name__
-    status = "breach" if failures else "clear"
+    status = "breach" if failures else "warning" if historical_warnings else "clear"
     return _check(
         "data.freshness_provenance", "data", "data_freshness_and_provenance", status,
          "Fresh trusted execution-feed data is not available for every active stock."
-        if failures else "Freshness and provider provenance are valid for the active stock universe.",
+        if failures else "Current execution-feed data is usable; historical repair gaps remain for research."
+        if historical_warnings else "Freshness and provider provenance are valid for the active stock universe.",
          value={"failed_symbols": sorted(failures), "ready_symbols": sorted(set(results) - set(failures))},
          threshold={"provider": MARKET_DATA_PROVIDER, "feed_class": MARKET_DATA_FEED_CLASS, "timeframe": "1m", "session": "regular"},
         details={
             "symbols": results,
             "failures": failures,
+            "historical_warnings": historical_warnings,
             "execution_symbols": sorted(execution_symbols),
             "research_only_symbols": research_only_symbols,
             "research_only_excluded_from_execution_gate": True,
