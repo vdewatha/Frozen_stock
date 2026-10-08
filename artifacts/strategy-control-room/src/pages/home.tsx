@@ -6,6 +6,7 @@ import { Activity, ArrowRight, Bell, BookOpen, ChartNoAxesCombined, ChevronRight
 import { AccessRoleProvider, RoleGate } from "@/components/access-control";
 import { AuditHistoryPanel } from "@/components/audit-history-panel";
 import { BrokerSafetyLab } from "@/components/broker-safety-lab";
+import { PaperVenueGovernancePanel } from "@/components/paper-venue-governance-panel";
 import { DeploymentMonitorPanel } from "@/components/deployment-monitor-panel";
 import { EconomicContextLab } from "@/components/economic-context-lab";
 import { EquityChart } from "@/components/equity-chart";
@@ -111,7 +112,7 @@ function PageContent({ page, section, dashboard, session }: { page: string; sect
     "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,
     "learning/cycles": <StockLearningCyclePanel />, "learning/training": <StockTrainingLab />, "learning/evaluation": <ForwardPaperEvaluationPanel />, "learning/performance": <ModelPerformanceLab />,
     "research/runs": <ResearchRunsPanel />, "research/experiments": <ExperimentManagerLab />, "research/library": <StrategyLibrary dashboard={dashboard} />, "research/models": <ResearchOnly><ModelLab /></ResearchOnly>, "research/signals": <ResearchOnly><PredictionScanner /><OpportunityRadar /></ResearchOnly>, "research/memory": <ResearchOnly><MemoryReplayPanel /></ResearchOnly>,
-    "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} />, "risk/broker": <BrokerSafetyLab />, "risk/recovery": <StockRecoveryPanel />,
+    "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} />, "risk/broker": <><PaperVenueGovernancePanel /><BrokerSafetyLab /></>, "risk/recovery": <StockRecoveryPanel />,
     "activity/notifications": <NotificationCenter />, "activity/audit": <AuditHistoryPanel />,
     "system/health": <DeploymentMonitorPanel />, "system/monitoring": <StockMonitoringPanel />, "system/hardening": <OperationalHardeningPanel />, "system/live": <><LiveOperationsPanel /><LivePilotPanel /></>, "system/access": <AccessSettings session={session} />,
   };

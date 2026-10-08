@@ -327,6 +327,33 @@ export type StockPaperStatus = {
   equity_snapshots: StockPaperEquitySnapshot[];
 };
 
+export type PaperVenueQualificationStatus = {
+  provider: string;
+  selected_provider: boolean;
+  qualification_status: string;
+  evidence_verified_for_current_account: boolean;
+  qualified: boolean;
+  activation_authorized: boolean;
+  ready_for_paper_admission: boolean;
+  qualification_id: number | null;
+  report_sha256: string | null;
+  reviewed_by: string | null;
+  authorized_by: string | null;
+  reason: string;
+};
+
+export type PaperVenueQualificationRequest = {
+  provider: string;
+  account_id: string;
+  evidence: Record<string, unknown>;
+};
+
+export type PaperVenueActivationRequest = {
+  provider: string;
+  qualification_id: number;
+  reason: string;
+};
+
 export type StockPaperRecoveryStatus = {
   status: "armed" | "paused" | "cooldown" | "revalidation_required" | "resumable" | string;
   flatten_policy: "none" | "positions" | string;
@@ -1896,6 +1923,19 @@ export async function getPaperTrades(): Promise<PaperTrade[]> {
 export async function getStockPaperStatus(): Promise<StockPaperStatus> {
   const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/status`, { cache: "no-store" });
   return handleResponse<StockPaperStatus>(response);
+}
+
+export async function getPaperVenueQualification(): Promise<PaperVenueQualificationStatus> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/venue-qualification`, { cache: "no-store" });
+  return handleResponse<PaperVenueQualificationStatus>(response);
+}
+
+export async function submitPaperVenueQualification(request: PaperVenueQualificationRequest): Promise<PaperVenueQualificationStatus & { status: string; qualification_id: number; report_sha256: string }> {
+  return postJson<PaperVenueQualificationStatus & { status: string; qualification_id: number; report_sha256: string }>("/stock-paper/venue-qualification", request);
+}
+
+export async function activatePaperVenue(request: PaperVenueActivationRequest): Promise<{ authorization_id: number; qualification_id: number; provider: string; paper_only: true; live_authorized: false }> {
+  return postJson<{ authorization_id: number; qualification_id: number; provider: string; paper_only: true; live_authorized: false }>("/stock-paper/venue-activation", request);
 }
 
 export async function initializeStockPaperAccount(activityContract: "legacy-v1" | "alpaca-activities-v2" = "legacy-v1"): Promise<StockPaperStatus> {
