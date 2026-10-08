@@ -59,6 +59,7 @@ from app.services.agent_research import run_agent_research, refresh_agent_resear
 logger = logging.getLogger(__name__)
 
 LEARNING_DISPATCH_LEASE = timedelta(minutes=15)
+LEARNING_FAILURE_RETRY_COOLDOWN = timedelta(minutes=5)
 
 
 def _json_safe(value):
@@ -765,7 +766,7 @@ def retry_failed_strategy_learning_scopes_job() -> dict:
     """Requeue aged transient scope failures without waiting for the next batch."""
     def work(db):
         now = datetime.utcnow()
-        cooldown = now - timedelta(minutes=15)
+        cooldown = now - LEARNING_FAILURE_RETRY_COOLDOWN
         alerts = db.query(Notification).filter(
             Notification.category == "scheduled_job",
             Notification.severity == "critical",
