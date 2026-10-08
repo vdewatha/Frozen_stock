@@ -134,9 +134,12 @@ def readiness_snapshot(db: Session) -> dict:
             "Configured paper execution symbols are not active assets: "
             + ", ".join(missing_execution_symbols)
         )
+    # Research-only symbols need the same completeness checks as execution
+    # symbols. They cannot place orders, but unresolved bars still corrupt
+    # forward evaluation and should be visible through the repair workflow.
     intraday_assets = [
         asset for asset in active_assets
-        if asset.symbol in ALLOWED_SYMBOLS and asset.symbol in execution_symbols
+        if asset.symbol in ALLOWED_SYMBOLS
     ]
     research_only_symbols = sorted(active_symbols - execution_symbols)
     unsupported_intraday_assets = [
