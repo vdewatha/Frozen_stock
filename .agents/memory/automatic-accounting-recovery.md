@@ -17,9 +17,9 @@ When evaluating a halted account's research-policy recovery evidence, residual s
 
 A fresh broker reconciliation can legitimately coexist with a durable monitoring halt. A halted account may pass the reconciliation prerequisite only when its broker evidence is fresh and reconciliation is no longer required; this does not clear the halt or bypass the remaining recovery gates.
 
-**Why:** Successful reconciliation updates evidence without erasing the independent monitoring incident. Requiring the account to be unhalted before explicit recovery creates a circular dependency.
+**Why:** Successful reconciliation updates evidence without erasing the independent monitoring incident. Requiring the account to be unhalted before explicit recovery creates a circular dependency. The halt itself can also cause transitional broker-health and reconciliation monitoring breaches; these must not be mistaken for independent failures once fresh, residual-free reconciliation is proven.
 
-**How to apply:** Evaluate freshness and the reconciliation-required flag independently from the durable halt, rejecting stale, missing, or future-dated evidence and preserving operator revalidation, cooldown, monitoring, and residual checks.
+**How to apply:** Evaluate freshness and the reconciliation-required flag independently from the durable halt, rejecting stale, missing, or future-dated evidence and preserving operator revalidation, cooldown, monitoring, and residual checks. Any monitoring exception is limited to those two transitional broker checks with fresh, residual-free reconciliation and reconciliation-required=false; all other breaches remain blocking.
 
 Active forward trials must re-check accounting safety at observation and pending-execution boundaries; a residual discovered after activation must pause the trial before any new paper submission.
 
