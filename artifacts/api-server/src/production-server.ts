@@ -51,6 +51,7 @@ function boundedConcurrency(name: string, fallback: number, maximum: number): nu
 }
 
 const learningConcurrency = boundedConcurrency("PAPER_LEARNING_CONCURRENCY", 2, 8);
+const learningReplicas = boundedConcurrency("PAPER_LEARNING_REPLICAS", 3, 8);
 
 let stopping = false;
 
@@ -131,7 +132,13 @@ if (paperWorkersEnabled) {
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=intraday@%h", "--queues=intraday_market_data", "--concurrency=1"], "intraday");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=research@%h", "--queues=research_market_data", "--concurrency=1"], "research");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=market@%h", "--queues=default,market_data", "--concurrency=1"], "market");
-  supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", `--concurrency=${learningConcurrency}`], "learning");
+  for (let replica = 1; replica <= learningReplicas; replica += 1) {
+    supervisePaperWorker([
+      "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
+      "--loglevel=INFO", "--hostname=learning-" + replica + "@%h",
+      "--queues=learning", `--concurrency=${learningConcurrency}`,
+    ], `learning-${replica}`);
+  }
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=execution@%h", "--queues=paper_trading", "--concurrency=1"], "execution");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=risk@%h", "--queues=risk", "--concurrency=1"], "risk");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=monitor@%h", "--queues=monitoring", "--concurrency=1"], "monitor");
