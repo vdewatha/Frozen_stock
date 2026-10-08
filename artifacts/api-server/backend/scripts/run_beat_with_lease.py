@@ -270,6 +270,24 @@ def main() -> int:
                 flush=True,
             )
             time.sleep(2)
+            # Beat may have exited while the wrapper was sleeping. Recheck
+            # ownership immediately before respawn so a replacement leader
+            # cannot end up with two schedulers.
+            try:
+                if not refresh(keys=[LEASE_KEY], args=[owner, LEASE_SECONDS]):
+                    print(
+                        "Celery beat lease was lost before restart.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return 1
+            except redis.RedisError as exc:
+                print(
+                    f"Celery beat lease coordination is unavailable before restart: {exc.__class__.__name__}.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return 1
             child = spawn_beat()
         return 0
     finally:

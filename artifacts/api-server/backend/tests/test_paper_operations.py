@@ -174,6 +174,28 @@ def test_beat_child_stops_before_lease_release():
     assert child.wait.call_count == 2
 
 
+def test_beat_does_not_respawn_after_losing_lease_while_restarting():
+    spec = importlib.util.spec_from_file_location("paper_beat_restart_lease_test", BACKEND / "scripts/run_beat_with_lease.py")
+    beat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(beat)
+    client = MagicMock()
+    client.set.return_value = True
+    refresh = MagicMock(return_value=0)
+    release = MagicMock()
+    client.register_script.side_effect = [refresh, release]
+    child = MagicMock()
+    child.poll.return_value = 0
+    with patch.dict("os.environ", {"REDIS_URL": "redis://test"}), patch.object(beat.redis.Redis, "from_url", return_value=client), patch.object(beat.celery_app, "send_task"), patch.object(beat.subprocess, "Popen", return_value=child) as popen, patch.object(beat.signal, "signal"), patch.object(beat.time, "sleep"):
+        assert beat.main() == 1
+    popen.assert_called_once()
+    refresh.assert_called_once()
+    refresh_kwargs = refresh.call_args.kwargs
+    assert refresh_kwargs["keys"] == [beat.LEASE_KEY]
+    assert len(refresh_kwargs["args"][0]) == 32
+    assert refresh_kwargs["args"][1] == beat.LEASE_SECONDS
+    release.assert_called_once()
+
+
 def test_startup_refresh_is_opt_in():
     spec = importlib.util.spec_from_file_location("paper_beat_opt_in_test", BACKEND / "scripts/run_beat_with_lease.py")
     beat = importlib.util.module_from_spec(spec)
