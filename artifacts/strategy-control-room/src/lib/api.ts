@@ -354,6 +354,21 @@ export type PaperVenueActivationRequest = {
   reason: string;
 };
 
+export type PaperResearchVenueStatus = {
+  version: string;
+  scope: string;
+  qualification_status: string;
+  qualification_id: number | null;
+  report_sha256: string | null;
+  qualified_for_observed_start: boolean;
+  activation_authorized: boolean;
+  venue_ready_for_research_start: boolean;
+  costs_verified: boolean;
+  execution_authorized: boolean;
+  live_authorized: boolean;
+  reason: string;
+};
+
 export type StockPaperRecoveryStatus = {
   status: "armed" | "paused" | "cooldown" | "revalidation_required" | "resumable" | string;
   flatten_policy: "none" | "positions" | string;
@@ -1936,6 +1951,19 @@ export async function submitPaperVenueQualification(request: PaperVenueQualifica
 
 export async function activatePaperVenue(request: PaperVenueActivationRequest): Promise<{ authorization_id: number; qualification_id: number; provider: string; paper_only: true; live_authorized: false }> {
   return postJson<{ authorization_id: number; qualification_id: number; provider: string; paper_only: true; live_authorized: false }>("/stock-paper/venue-activation", request);
+}
+
+export async function getPaperResearchVenue(): Promise<PaperResearchVenueStatus> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/research-venue`, { cache: "no-store" });
+  return handleResponse<PaperResearchVenueStatus>(response);
+}
+
+export async function submitPaperResearchVenueQualification(): Promise<{ qualification_id: number; report_sha256: string; paper_only: true; live_authorized: false; execution_authorized: false }> {
+  return postJson<{ qualification_id: number; report_sha256: string; paper_only: true; live_authorized: false; execution_authorized: false }>("/stock-paper/research-venue/qualification", {});
+}
+
+export async function activatePaperResearchVenue(request: { qualification_id: number; reason: string }): Promise<{ authorization_id: number; qualification_id: number; paper_only: true; live_authorized: false; execution_authorized: false }> {
+  return postJson<{ authorization_id: number; qualification_id: number; paper_only: true; live_authorized: false; execution_authorized: false }>("/stock-paper/research-venue/activation", request);
 }
 
 export async function initializeStockPaperAccount(activityContract: "legacy-v1" | "alpaca-activities-v2" = "legacy-v1"): Promise<StockPaperStatus> {

@@ -4,10 +4,14 @@ import { ClipboardCheck, ShieldCheck } from "lucide-react";
 import { RoleGate } from "@/components/access-control";
 import {
   activatePaperVenue,
+  activatePaperResearchVenue,
   getErrorMessage,
+  getPaperResearchVenue,
   getPaperVenueQualification,
   getStockPaperStatus,
+  submitPaperResearchVenueQualification,
   submitPaperVenueQualification,
+  type PaperResearchVenueStatus,
   type PaperVenueQualificationStatus,
   type StockPaperStatus,
 } from "@/lib/api";
@@ -37,18 +41,21 @@ const evidenceTemplate = JSON.stringify({
 export function PaperVenueGovernancePanel() {
   const [paper, setPaper] = useState<StockPaperStatus | null>(null);
   const [qualification, setQualification] = useState<PaperVenueQualificationStatus | null>(null);
+  const [researchVenue, setResearchVenue] = useState<PaperResearchVenueStatus | null>(null);
   const [evidence, setEvidence] = useState(evidenceTemplate);
   const [activationReason, setActivationReason] = useState("");
   const [message, setMessage] = useState("Loading venue evidence");
   const [busy, setBusy] = useState(false);
 
   async function refresh() {
-    const [paperStatus, venueStatus] = await Promise.all([
+    const [paperStatus, venueStatus, researchVenueStatus] = await Promise.all([
       getStockPaperStatus(),
       getPaperVenueQualification(),
+      getPaperResearchVenue(),
     ]);
     setPaper(paperStatus);
     setQualification(venueStatus);
+    setResearchVenue(researchVenueStatus);
     setMessage(venueStatus.reason);
   }
 
@@ -94,6 +101,36 @@ export function PaperVenueGovernancePanel() {
     }
   }
 
+  async function submitResearchQualification() {
+    setBusy(true);
+    try {
+      await submitPaperResearchVenueQualification();
+      setMessage("Research-only venue qualification recorded.");
+      await refresh();
+    } catch (error) {
+      setMessage(getErrorMessage(error, "Research qualification could not be recorded"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitResearchActivation() {
+    if (!researchVenue?.qualification_id) return;
+    setBusy(true);
+    try {
+      await activatePaperResearchVenue({
+        qualification_id: researchVenue.qualification_id,
+        reason: activationReason.trim(),
+      });
+      setMessage("Research-only venue activation recorded. Execution gates still apply.");
+      await refresh();
+    } catch (error) {
+      setMessage(getErrorMessage(error, "Research activation could not be recorded"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="rounded-md border border-line bg-white">
       <div className="flex flex-col gap-3 border-b border-line p-4 lg:flex-row lg:items-end lg:justify-between">
@@ -124,6 +161,20 @@ export function PaperVenueGovernancePanel() {
             <button className="secondary-action w-fit" type="button" onClick={() => void submitActivation()} disabled={busy || !qualification?.qualified || !qualification.qualification_id || !activationReason.trim()}><ShieldCheck size={15} />Submit separate activation</button>
           </div>
         </RoleGate>
+        <div className="grid gap-3 border-t border-line pt-4">
+          <div className="grid gap-2 text-sm md:grid-cols-3">
+            <div><span className="text-slate-500">Research qualification</span><strong className="ml-2">{researchVenue?.qualification_status ?? "loading"}</strong></div>
+            <div><span className="text-slate-500">Research activation</span><strong className="ml-2">{researchVenue?.activation_authorized ? "authorized" : "missing"}</strong></div>
+            <div><span className="text-slate-500">Research start</span><strong className="ml-2">{researchVenue?.venue_ready_for_research_start ? "ready" : "blocked"}</strong></div>
+          </div>
+          <p className="text-xs text-slate-500">This separate package covers observed paper-research accounting only. It never authorizes execution or live trading.</p>
+          <RoleGate requires="operator">
+            <button className="primary-action w-fit" type="button" onClick={() => void submitResearchQualification()} disabled={busy || researchVenue?.qualified_for_observed_start}>Record research qualification</button>
+          </RoleGate>
+          <RoleGate requires="admin">
+            <button className="secondary-action w-fit" type="button" onClick={() => void submitResearchActivation()} disabled={busy || !researchVenue?.qualified_for_observed_start || !researchVenue.qualification_id || !activationReason.trim()}><ShieldCheck size={15} />Activate research-only package</button>
+          </RoleGate>
+        </div>
       </div>
     </section>
   );
