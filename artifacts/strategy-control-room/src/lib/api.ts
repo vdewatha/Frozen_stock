@@ -1743,7 +1743,12 @@ export async function authenticatedFetch(input: RequestInfo | URL, init: Request
   if (!accessToken && !cookieIdentity && import.meta.env.VITE_LOCAL_AUTO_VIEW === "false") throw new Error("Sign in to access the trading service.");
   const headers = new Headers(init.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-  if (cookieIdentity && init.method && init.method !== "GET") {
+  // Send the server's action metadata on every mutation. In production the
+  // Clerk session is cookie-backed, but auth-mode discovery is asynchronous;
+  // gating these headers on the discovered mode creates a race where a valid
+  // operator action is rejected as an unconfirmed request. Local role-key
+  // deployments ignore the metadata because their confirmation gate is off.
+  if (init.method && init.method !== "GET") {
     headers.set("X-Action-Confirmation", "confirm");
     headers.set("X-Idempotency-Key", globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
     try {
