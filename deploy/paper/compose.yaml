@@ -25,7 +25,10 @@ x-runtime: &runtime
     # Admit the supported liquid symbols for paper execution. The order path
     # still requires a complete authenticated current-session IEX feed for the
     # selected symbol, so historical gaps remain visible and fail closed.
-    PAPER_EXECUTION_SYMBOLS: '["AAPL", "MSFT", "QQQ", "SPY"]'
+    # Start the controlled paper campaign with the only symbol currently
+    # showing complete authenticated IEX coverage. Expand only after each
+    # additional symbol has a fresh complete regular-session history.
+    PAPER_EXECUTION_SYMBOLS: '["AAPL"]'
     INTRADAY_BACKFILL_CHUNKS_PER_CYCLE: ${INTRADAY_BACKFILL_CHUNKS_PER_CYCLE:-8}
     ALPACA_PAPER_ZERO_COMMISSION_CONTRACT: ${ALPACA_PAPER_ZERO_COMMISSION_CONTRACT:-true}
     IEX_RESEARCH_ENABLED: "true"
