@@ -9,6 +9,7 @@ import {
   createStockLearningCycleApproval,
   getErrorMessage,
   getLaunchPrerequisites,
+  getLearningWorkerStatus,
   type LaunchPrerequisites,
   getStockLearningCycles,
   getStockLearningScheduleControl,
@@ -67,6 +68,7 @@ export function StockLearningCyclePanel() {
   const [workerSymbol, setWorkerSymbol] = useState("AAPL");
   const [workerStrategy, setWorkerStrategy] = useState("moving_average_crossover");
   const [workerStatus, setWorkerStatus] = useState("No learning worker launched from this control room yet.");
+  const [workerTaskId, setWorkerTaskId] = useState<string | null>(null);
 
   async function refresh() {
     setRefreshing(true);
@@ -129,6 +131,29 @@ export function StockLearningCyclePanel() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (!workerTaskId) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const result = await getLearningWorkerStatus(workerTaskId);
+        if (!active) return;
+        const suffix = result.ready
+          ? result.successful ? "completed successfully" : "finished with a failure"
+          : "still running";
+        setWorkerStatus(`Task ${result.task_id}: ${suffix} (${result.status}).`);
+      } catch (error) {
+        if (active) setWorkerStatus(getErrorMessage(error, "Learning worker status is unavailable."));
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [workerTaskId]);
+
   async function review(cycle: StockLearningCycle) {
     if (!reason.trim()) return;
     setBusy(true);
@@ -186,6 +211,7 @@ export function StockLearningCyclePanel() {
     setBusy(true);
     try {
       const result = await launchLearningWorkerBatch(4, 8, 3);
+      setWorkerTaskId(result.task_id || null);
       setWorkerStatus(`${result.message} Task ${result.task_id || "unavailable"}.`);
     } catch (error) {
       setWorkerStatus(getErrorMessage(error, "Learning worker batch could not be queued."));
@@ -199,6 +225,7 @@ export function StockLearningCyclePanel() {
     setBusy(true);
     try {
       const result = await launchLearningWorkerScope(workerSymbol, workerStrategy, 3);
+      setWorkerTaskId(result.task_id || null);
       setWorkerStatus(`${result.message} Task ${result.task_id || "unavailable"}.`);
     } catch (error) {
       setWorkerStatus(getErrorMessage(error, "Learning worker scope could not be queued."));
