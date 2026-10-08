@@ -21,8 +21,8 @@ Current provider-adjusted daily history is an extraction-time dataset, not a poi
 
 **How to apply:** Keep historical-cutoff runs research-only unless true price/universe vintages are added. Disclose extraction-time limitations even for current-cutoff paper research.
 
-Provider coexistence in storage does not authorize combining providers for research or training. Select an explicit provider at those boundaries; do not relax mixed-provenance rejection to accommodate coexisting rows.
+Provider coexistence in storage does not authorize combining providers for research or training. Default market reads may select one freshest provider, but immutable training snapshots still require a named provider. Do not relax mixed-provenance rejection to accommodate coexisting rows.
 
-**Why:** Provider-specific snapshots can be valid while older scheduled readers reject the same database because they request mixed histories. Weakening validation would hide that integration gap rather than preserve provenance.
+**Why:** The user requested freshest-single-provider defaults while preserving all market observations and safety gates. Provider-specific snapshots can be valid while older readers reject the same database because they request mixed histories; weakening validation would hide that integration gap.
 
-**How to apply:** When extending daily imports or scheduled learning, retain separate provider observations and make consumer selection explicit. A successful import or snapshot extraction is not proof that every learning reader is compatible.
+**How to apply:** When extending daily imports or scheduled learning, retain separate provider observations and expose the selected provenance. Keep caller-selected provider contracts fixed even when another provider becomes fresher. A successful import or snapshot extraction is not proof that every learning reader is compatible.

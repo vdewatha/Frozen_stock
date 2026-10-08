@@ -216,6 +216,7 @@ def fetch_alpaca_iex_daily_prices(symbol: str, period: str = "5y") -> pd.DataFra
     start = end - pd.Timedelta(days=_period_to_days(period) + 10).to_pytimedelta()
     bars: list[dict] = []
     page_token: str | None = None
+    seen_tokens: set[str] = set()
     for _ in range(10):
         query = {
             "symbols": symbol,
@@ -245,12 +246,18 @@ def fetch_alpaca_iex_daily_prices(symbol: str, period: str = "5y") -> pd.DataFra
         if not isinstance(payload, dict) or not isinstance(payload.get("bars"), dict):
             return pd.DataFrame()
         page_bars = payload["bars"].get(symbol)
-        if not isinstance(page_bars, list):
+        if not isinstance(page_bars, list) or any(not isinstance(item, dict) for item in page_bars):
             return pd.DataFrame()
-        bars.extend(item for item in page_bars if isinstance(item, dict))
+        bars.extend(page_bars)
         page_token = payload.get("next_page_token")
-        if not isinstance(page_token, str) or not page_token:
+        if page_token is None or page_token == "":
             break
+        if not isinstance(page_token, str) or page_token in seen_tokens:
+            return pd.DataFrame()
+        seen_tokens.add(page_token)
+    else:
+        # Reaching the bound with another page pending is not complete history.
+        return pd.DataFrame()
     if not bars:
         return pd.DataFrame()
     rows = []
@@ -447,6 +454,8 @@ def get_price_history(
     if not rows and auto_seed:
         import_result = import_market_prices(db, symbol, "5y")
         source = import_result["source"]
+        if selected_source is None:
+            selected_source = source
         query = db.query(MarketPrice).filter(MarketPrice.symbol == symbol)
         if selected_source:
             query = query.filter(MarketPrice.source == selected_source)
