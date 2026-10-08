@@ -447,6 +447,11 @@ class StockPaperVenueActivationRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=1000)
 
 
+class StockPaperResearchVenueActivationRequest(BaseModel):
+    qualification_id: int = Field(ge=1)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
 class LiveBrokerOrderRequest(BaseModel):
     symbol: str = Field(min_length=1, max_length=32)
     side: str = Field(pattern="^(buy|sell)$")

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-compose=(docker compose --env-file "$root/deploy/paper/paper.env" -f "$root/deploy/paper/compose.yaml")
+project="${PAPER_COMPOSE_PROJECT:-frozen-stock-fresh}"
+compose=(docker compose -p "$project" --env-file "$root/deploy/paper/paper.env" -f "$root/deploy/paper/compose.yaml")
 
 # Keep the learning pool bounded and reproducible across rebuilds/restarts.
 learning_replicas="${PAPER_LEARNING_REPLICAS:-3}"

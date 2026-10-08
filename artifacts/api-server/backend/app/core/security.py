@@ -78,6 +78,7 @@ OPERATOR_POSTS = {
     "/stock/learning-cycles",
     "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal",
     "/stock-paper/venue-qualification",
+    "/stock-paper/research-venue/qualification", "/stock-paper/recovery/transport-review",
 }
 ADMIN_POSTS = {
     "/system/deployment-monitor/run", "/system/operational-hardening/run", "/system/live-safety/transition", "/notifications/{notification_id}/acknowledge",
@@ -88,6 +89,7 @@ ADMIN_POSTS = {
     "/stock-paper/initialize", "/stock-paper/resume",
     "/stock-paper/account-transition",
     "/stock-paper/venue-activation",
+    "/stock-paper/research-venue/activation",
 }
 
 
@@ -141,6 +143,8 @@ def required_role(method: str, path: str) -> str:
     if method == "GET" and path in READ_PATHS:
         return "viewer"
     if method == "GET" and path == "/stock-paper/recovery":
+        return "viewer"
+    if method == "GET" and path == "/stock-paper/research-venue":
         return "viewer"
     if method == "GET" and path == "/stock-paper/recovery/evidence":
         return "operator"

@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.trading import StockPaperAccountTransitionRequest, StockPaperInitializeRequest
-from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingReviewRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest, StockPaperRevalidationRequest, StockPaperVenueActivationRequest, StockPaperVenueQualificationRequest
+from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingReviewRequest, StockPaperCloseRequest, StockPaperHaltRequest, StockPaperOrderRequest, StockPaperReduceRequest, StockPaperRecoveryRequest, StockPaperRollbackRequest, StockPaperRevalidationRequest, StockPaperResearchVenueActivationRequest, StockPaperVenueActivationRequest, StockPaperVenueQualificationRequest
 from app.services.paper_venue_qualification import authorize_paper_venue_activation, paper_venue_qualification_status, record_paper_venue_qualification
+from app.services.paper_research_venue import authorize as authorize_research_venue, record_qualification as create_research_venue_qualification, status as research_venue_status
+from app.services.paper_transport_recovery import review as review_paper_transport_recovery
 from app.services.stock_paper_ledger import (
     StockPaperError,
     active_paper_broker_name,
@@ -84,6 +86,43 @@ def authorize_venue_activation(payload: StockPaperVenueActivationRequest, reques
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/research-venue")
+def research_venue(db: Session = Depends(get_db)) -> dict:
+    return research_venue_status(db, active_paper_account(db))
+
+
+@router.post("/research-venue/qualification")
+def record_research_venue_qualification(request: Request, db: Session = Depends(get_db)) -> dict:
+    _attribute(db, request)
+    account = active_paper_account(db)
+    if account is None:
+        raise HTTPException(status_code=409, detail="An initialized paper account is required before research qualification")
+    try:
+        row = create_research_venue_qualification(db, account, reviewer=str(request.state.actor))
+        db.commit()
+        return {"qualification_id": row.id, "report_sha256": row.report_sha256,
+                "paper_only": True, "live_authorized": False, "execution_authorized": False}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/research-venue/activation")
+def authorize_research_venue_activation(payload: StockPaperResearchVenueActivationRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    _attribute(db, request)
+    try:
+        row = authorize_research_venue(
+            db, qualification_id=payload.qualification_id,
+            authorizer=str(request.state.actor), reason=payload.reason,
+        )
+        db.commit()
+        return {"authorization_id": row.id, "qualification_id": row.qualification_id,
+                "paper_only": True, "live_authorized": False, "execution_authorized": False}
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/recovery")
 def recovery(db: Session = Depends(get_db)) -> dict:
     return recovery_status(db)
@@ -92,6 +131,20 @@ def recovery(db: Session = Depends(get_db)) -> dict:
 @router.get("/recovery/evidence")
 def recovery_evidence_export(db: Session = Depends(get_db)) -> dict:
     return recovery_evidence(db)
+
+
+@router.post("/recovery/transport-review")
+def transport_recovery_review(request: Request, db: Session = Depends(get_db)) -> dict:
+    _attribute(db, request)
+    try:
+        result = review_paper_transport_recovery(
+            db, actor=str(getattr(request.state, "actor", "operator")), apply=True,
+        )
+        db.commit()
+        return result
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/recovery/cancel")

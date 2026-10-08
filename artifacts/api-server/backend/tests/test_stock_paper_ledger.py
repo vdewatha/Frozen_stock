@@ -1985,6 +1985,10 @@ class StockPaperRoleTests(unittest.TestCase):
         self.assertEqual(required_role("GET", "/stock-paper/venue-qualification"), "viewer")
         self.assertEqual(required_role("POST", "/stock-paper/venue-qualification"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/venue-activation"), "admin")
+        self.assertEqual(required_role("GET", "/stock-paper/research-venue"), "viewer")
+        self.assertEqual(required_role("POST", "/stock-paper/research-venue/qualification"), "operator")
+        self.assertEqual(required_role("POST", "/stock-paper/research-venue/activation"), "admin")
+        self.assertEqual(required_role("POST", "/stock-paper/recovery/transport-review"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/account-transition"), "admin")
         self.assertEqual(required_role("GET", "/stock-paper/recovery/evidence"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/initialize"), "admin")
@@ -2003,6 +2007,12 @@ class StockPaperRoleTests(unittest.TestCase):
         self.assertEqual(self.call("get", "/recovery/evidence", "r").status_code, 403)
         self.assertEqual(self.call("get", "/recovery/evidence", "o").status_code, 200)
         self.assertEqual(self.call("get", "/recovery/evidence", "a").status_code, 200)
+        self.assertEqual(self.call("get", "/research-venue", "v").status_code, 200)
+        self.assertEqual(self.call("post", "/research-venue/qualification", "o").status_code, 409)
+        self.assertEqual(self.call("post", "/research-venue/qualification", "v").status_code, 403)
+        self.assertEqual(self.call("post", "/research-venue/activation", "a", json={"qualification_id": 1, "reason": "test"}).status_code, 409)
+        self.assertEqual(self.call("post", "/recovery/transport-review", "o").status_code, 409)
+        self.assertEqual(self.call("post", "/recovery/transport-review", "v").status_code, 403)
         self.assertEqual(self.call("post", "/orders", "v", json={
             "symbol": "SPY", "side": "buy", "quantity": "1", "reference_price": "1", "idempotency_key": "order-key",
         }).status_code, 403)
