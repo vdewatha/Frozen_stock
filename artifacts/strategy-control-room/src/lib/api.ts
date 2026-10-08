@@ -2246,6 +2246,51 @@ export async function updateStockLearningScheduleControl(
 ): Promise<StockLearningScheduleControl> {
   return postJson<StockLearningScheduleControl>("/stock/learning-cycles/schedule-control", { action, reason });
 }
+
+export type LearningWorkerLaunchResponse = {
+  task_id: string;
+  status: string;
+  queue: string;
+  paper_only: boolean;
+  message: string;
+};
+
+export type LearningWorkerStatusResponse = {
+  task_id: string;
+  status: string;
+  ready: boolean;
+  successful: boolean | null;
+  result: Record<string, unknown> | unknown[] | null;
+};
+
+export async function launchLearningWorkerBatch(
+  limitSymbols = 4,
+  limitStrategies = 8,
+  maxCandidates = 3,
+): Promise<LearningWorkerLaunchResponse> {
+  return postJson<LearningWorkerLaunchResponse>("/learning/workers/batch", {
+    limit_symbols: limitSymbols,
+    limit_strategies: limitStrategies,
+    max_candidates: maxCandidates,
+  });
+}
+
+export async function launchLearningWorkerScope(
+  symbol: string,
+  strategy: string,
+  maxCandidates = 3,
+): Promise<LearningWorkerLaunchResponse> {
+  return postJson<LearningWorkerLaunchResponse>("/learning/workers/scope", {
+    symbol: symbol.trim().toUpperCase(),
+    strategy,
+    max_candidates: maxCandidates,
+  });
+}
+
+export async function getLearningWorkerStatus(taskId: string): Promise<LearningWorkerStatusResponse> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/learning/workers/${encodeURIComponent(taskId)}`, { cache: "no-store" });
+  return handleResponse<LearningWorkerStatusResponse>(response);
+}
 export async function getTradeCandidates(limit = 12, refresh = false): Promise<TradeCandidateResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (refresh) {

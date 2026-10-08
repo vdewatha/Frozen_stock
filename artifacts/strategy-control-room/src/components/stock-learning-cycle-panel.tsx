@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, GitBranch, RefreshCw, ShieldAlert } from "lucide-react";
+import { CheckCircle2, GitBranch, RefreshCw, ShieldAlert, Workflow } from "lucide-react";
 
 import { RoleGate } from "@/components/access-control";
 import { LaunchPrerequisiteResults } from "@/components/launch-prerequisites";
@@ -12,6 +12,8 @@ import {
   type LaunchPrerequisites,
   getStockLearningCycles,
   getStockLearningScheduleControl,
+  launchLearningWorkerBatch,
+  launchLearningWorkerScope,
   reviewStockLearningCycle,
   updateStockLearningScheduleControl,
   type StockLearningScheduleControl,
@@ -62,6 +64,9 @@ export function StockLearningCyclePanel() {
   const [prerequisiteError, setPrerequisiteError] = useState<string>();
   const [refreshing, setRefreshing] = useState(true);
   const [approvalDrafts, setApprovalDrafts] = useState<Record<string, CreatePaperRunApprovalRequest>>({});
+  const [workerSymbol, setWorkerSymbol] = useState("AAPL");
+  const [workerStrategy, setWorkerStrategy] = useState("moving_average_crossover");
+  const [workerStatus, setWorkerStatus] = useState("No learning worker launched from this control room yet.");
 
   async function refresh() {
     setRefreshing(true);
@@ -177,6 +182,31 @@ export function StockLearningCyclePanel() {
     }
   }
 
+  async function launchBatchWorkers() {
+    setBusy(true);
+    try {
+      const result = await launchLearningWorkerBatch(4, 8, 3);
+      setWorkerStatus(`${result.message} Task ${result.task_id || "unavailable"}.`);
+    } catch (error) {
+      setWorkerStatus(getErrorMessage(error, "Learning worker batch could not be queued."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function launchScopeWorker() {
+    if (!workerSymbol.trim()) return;
+    setBusy(true);
+    try {
+      const result = await launchLearningWorkerScope(workerSymbol, workerStrategy, 3);
+      setWorkerStatus(`${result.message} Task ${result.task_id || "unavailable"}.`);
+    } catch (error) {
+      setWorkerStatus(getErrorMessage(error, "Learning worker scope could not be queued."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="rounded-md border border-line bg-white p-4" data-testid="stock-learning-cycle-panel">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -219,6 +249,44 @@ export function StockLearningCyclePanel() {
             )}
             <span className="self-center text-xs text-slate-600">Paper execution safeguards and recovery controls remain independent.</span>
           </div>
+        </div>
+      </RoleGate>
+
+      <RoleGate requires="operator" className="mt-4">
+        <div className="rounded border border-emerald-200 bg-emerald-50 p-3" data-testid="stock-learning-worker-control">
+          <div className="flex items-center gap-2">
+            <Workflow size={16} className="text-mint" />
+            <div>
+              <div className="text-sm font-semibold text-ink">Parallel research workers</div>
+              <div className="text-xs text-slate-600">Fans out bounded symbol and strategy learning jobs. These workers create research evidence only; they never submit broker orders.</div>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-end gap-2">
+            <button className="focus-ring rounded bg-mint px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={busy} onClick={() => void launchBatchWorkers()} type="button">
+              Launch bounded batch
+            </button>
+            <label className="grid gap-1 text-[11px] text-slate-600">
+              Symbol
+              <input className="focus-ring h-8 w-20 rounded border border-emerald-200 bg-white px-2 text-xs" value={workerSymbol} onChange={(event) => setWorkerSymbol(event.target.value)} />
+            </label>
+            <label className="grid gap-1 text-[11px] text-slate-600">
+              Strategy
+              <select className="focus-ring h-8 rounded border border-emerald-200 bg-white px-2 text-xs" value={workerStrategy} onChange={(event) => setWorkerStrategy(event.target.value)}>
+                <option value="moving_average_crossover">Moving average</option>
+                <option value="rsi_reversion">RSI reversion</option>
+                <option value="macd_momentum">MACD momentum</option>
+                <option value="ensemble">Ensemble</option>
+                <option value="model_predictive">Model predictive</option>
+                <option value="bollinger_reversion">Bollinger reversion</option>
+                <option value="channel_breakout">Channel breakout</option>
+                <option value="trend_pullback">Trend pullback</option>
+              </select>
+            </label>
+            <button className="focus-ring h-8 rounded border border-emerald-300 bg-white px-2.5 text-xs font-semibold text-emerald-900 disabled:opacity-50" disabled={busy || !workerSymbol.trim()} onClick={() => void launchScopeWorker()} type="button">
+              Launch one scope
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-slate-600" role="status" data-testid="stock-learning-worker-status">{workerStatus}</p>
         </div>
       </RoleGate>
 
