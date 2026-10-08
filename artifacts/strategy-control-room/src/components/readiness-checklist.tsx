@@ -57,6 +57,15 @@ function marketDataRepairSymbols(snapshot: ReadinessSnapshot | null): string[] {
   return Array.from(new Set([...missing, ...stale].filter((symbol): symbol is string => typeof symbol === "string")));
 }
 
+export function intradayRepairSymbols(snapshot: ReadinessSnapshot | null): string[] {
+  const intraday = snapshot?.checks.find((check) => check.name === "Intraday feed");
+  const symbols = intraday?.details.symbols;
+  if (!symbols || typeof symbols !== "object" || Array.isArray(symbols)) return [];
+  return Object.entries(symbols as Record<string, { status?: unknown; missing_intervals?: unknown }>)
+    .filter(([, details]) => details?.status === "incomplete" || (Array.isArray(details?.missing_intervals) && details.missing_intervals.length > 0))
+    .map(([symbol]) => symbol);
+}
+
 export function ReadinessChecklist() {
   const [snapshot, setSnapshot] = useState<ReadinessSnapshot | null>(null);
   const [status, setStatus] = useState("Loading readiness");
@@ -99,7 +108,7 @@ export function ReadinessChecklist() {
   }
 
   async function refreshIntradayData() {
-    const symbols = marketDataRepairSymbols(snapshot);
+    const symbols = intradayRepairSymbols(snapshot);
     if (!symbols.length) {
       setStatus("No stale or missing active assets to refresh");
       return;
@@ -138,6 +147,7 @@ export function ReadinessChecklist() {
 
   const overall = snapshot?.overall_status ?? "warning";
   const repairSymbols = marketDataRepairSymbols(snapshot);
+  const intradaySymbols = intradayRepairSymbols(snapshot);
 
   return (
     <section className="rounded-md border border-line bg-white">
@@ -154,7 +164,7 @@ export function ReadinessChecklist() {
             <Database size={16} />
             Refresh Data
           </button></RoleGate>
-           <RoleGate requires="researcher"><button data-testid="button-refresh-intraday" className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy || !repairSymbols.length} onClick={refreshIntradayData} type="button">
+           <RoleGate requires="researcher"><button data-testid="button-refresh-intraday" className="focus-ring inline-flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy || !intradaySymbols.length} onClick={refreshIntradayData} type="button">
              <Activity size={16} />
              Refresh intraday
            </button></RoleGate>
