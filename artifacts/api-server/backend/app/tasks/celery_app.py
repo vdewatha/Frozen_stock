@@ -55,6 +55,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.nightly_strategy_learning_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_learning_scope_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_learning_batch_job": {"queue": "learning"},
+    "app.tasks.jobs.recover_unpublished_strategy_learning_scopes_job": {"queue": "learning"},
     "app.tasks.jobs.retry_failed_strategy_learning_scopes_job": {"queue": "learning"},
     "app.tasks.jobs.paper_trading_signal_job": {"queue": "paper_trading"},
     "app.tasks.jobs.paper_trade_reconciliation_job": {"queue": "paper_trading"},
@@ -113,6 +114,10 @@ celery_app.conf.beat_schedule = {
     "nightly-backtest-job": {"task": "app.tasks.jobs.nightly_backtest_job", "schedule": 60 * 60 * 24},
     "nightly-learning-job": {"task": "app.tasks.jobs.nightly_strategy_learning_job", "schedule": 60 * 60 * 24},
     "strategy-learning-batch-job": {"task": "app.tasks.jobs.strategy_learning_batch_job", "schedule": 60 * 60 * 6},
+    "strategy-learning-dispatch-recovery": {
+        "task": "app.tasks.jobs.recover_unpublished_strategy_learning_scopes_job",
+        "schedule": 60,
+    },
     "strategy-learning-failure-retry": {
         "task": "app.tasks.jobs.retry_failed_strategy_learning_scopes_job",
         # The task applies a per-alert 15-minute cooldown, so a minutely

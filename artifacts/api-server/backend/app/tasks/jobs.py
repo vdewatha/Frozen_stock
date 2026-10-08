@@ -6,6 +6,7 @@ from decimal import Decimal
 import logging
 import time
 from typing import Callable
+from uuid import uuid4
 
 import redis
 from sqlalchemy import text
@@ -43,7 +44,7 @@ from app.services.live_broker import LiveBrokerError, reconcile_live_broker_acco
 from app.services.stock_forward_trial import observe_trial, execute_pending_decisions, start_trial, evaluate_trial
 from app.models import StockPaperTrial
 from app.tasks.celery_app import celery_app
-from app.models import Asset, Notification, PaperTrade, Strategy, StockTrainingJob
+from app.models import Asset, Notification, PaperTrade, Strategy, StockLearningWorkerDispatch, StockTrainingJob
 from app.services.stock_learning_cycle import (
     create_learning_cycle,
     run_automatic_paper_promotion_job,
@@ -511,19 +512,55 @@ def nightly_backtest_job() -> dict:
     acks_late=True,
     reject_on_worker_lost=True,
 )
-def strategy_learning_scope_job(symbol: str, strategy_slug: str, max_candidates: int = 3) -> dict:
+def strategy_learning_scope_job(
+    symbol: str,
+    strategy_slug: str,
+    max_candidates: int = 3,
+    dispatch_id: int | None = None,
+) -> dict:
     def work(db):
+        dispatch = db.get(StockLearningWorkerDispatch, dispatch_id) if dispatch_id else None
+        if dispatch_id and dispatch is None:
+            raise RuntimeError("Durable research worker dispatch is missing")
+        if dispatch and dispatch.status == "succeeded":
+            return {
+                "status": "complete",
+                "job": "strategy_learning_scope_job",
+                "symbol": dispatch.symbol,
+                "strategy": dispatch.strategy_slug,
+                "paper_only": True,
+                "deduplicated": True,
+            }
+        if dispatch:
+            dispatch.status = "running"
+            dispatch.attempt_count = int(dispatch.attempt_count or 0) + 1
+            dispatch.task_id = getattr(strategy_learning_scope_job.request, "id", None)
+            db.commit()
         # Keep each scheduled scope bounded, while honoring the caller's
         # candidate budget so recurring fan-out explores more than the first
         # proposal when worker capacity allows it.
         scoped_candidates = max(1, min(int(max_candidates), 3))
-        result = run_strategy_experiments(
-            db,
-            symbol=symbol,
-            strategy_slug=strategy_slug,
-            max_candidates=scoped_candidates,
-            apply_promotions=False,
-        )
+        try:
+            result = run_strategy_experiments(
+                db,
+                symbol=symbol,
+                strategy_slug=strategy_slug,
+                max_candidates=scoped_candidates,
+                apply_promotions=False,
+            )
+        except Exception as exc:
+            if dispatch:
+                dispatch.status = "failed"
+                dispatch.error_type = exc.__class__.__name__
+                dispatch.error_message = str(exc)
+                db.commit()
+            raise
+        if dispatch:
+            dispatch.status = "succeeded"
+            dispatch.completed_at = datetime.utcnow()
+            dispatch.error_type = None
+            dispatch.error_message = None
+            db.commit()
         return {
             "status": "complete",
             "job": "strategy_learning_scope_job",
@@ -551,30 +588,62 @@ def strategy_learning_batch_job(limit_symbols: int = 25, limit_strategies: int =
     def work(db):
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).limit(max(1, min(limit_symbols, 25))).all()
         strategies = db.query(Strategy).order_by(Strategy.name).limit(max(1, min(limit_strategies, 25))).all()
-        queued = []
+        batch_id = str(uuid4())
+        dispatches = []
         for asset in assets:
             for strategy in strategies:
-                try:
-                    task = strategy_learning_scope_job.apply_async(
-                        args=[asset.symbol, strategy.strategy_type, max_candidates],
-                        queue="learning",
-                    )
-                    queued.append({"symbol": asset.symbol, "strategy": strategy.strategy_type, "task_id": task.id, "status": "queued"})
-                except Exception as exc:
-                    queued.append(
-                        {
-                            "symbol": asset.symbol,
-                            "strategy": strategy.strategy_type,
-                            "task_id": "",
-                            "status": "unavailable",
-                            "error_type": exc.__class__.__name__,
-                            "error": str(exc),
-                        }
-                    )
+                dispatch = StockLearningWorkerDispatch(
+                    batch_id=batch_id,
+                    symbol=asset.symbol,
+                    strategy_slug=strategy.strategy_type,
+                    max_candidates=max_candidates,
+                )
+                db.add(dispatch)
+                dispatches.append(dispatch)
+        # Persist the complete plan before publishing any Celery message. A
+        # worker or broker failure can therefore be recovered without losing
+        # scopes that were never reached by the publisher.
+        db.flush()
+        db.commit()
+        queued = []
+        for dispatch in dispatches:
+            try:
+                task = strategy_learning_scope_job.apply_async(
+                    args=[dispatch.symbol, dispatch.strategy_slug, dispatch.max_candidates, dispatch.id],
+                    queue="learning",
+                )
+                # The worker may begin before the publisher commits its row.
+                # Never overwrite a running or completed state with the
+                # publisher's intermediate state.
+                db.refresh(dispatch)
+                if dispatch.status in {"planned", "failed"}:
+                    dispatch.task_id = task.id
+                    dispatch.status = "published"
+                elif not dispatch.task_id:
+                    dispatch.task_id = task.id
+                db.commit()
+                queued.append({"symbol": dispatch.symbol, "strategy": dispatch.strategy_slug, "task_id": task.id, "status": "queued", "dispatch_id": dispatch.id})
+            except Exception as exc:
+                dispatch.status = "failed"
+                dispatch.error_type = exc.__class__.__name__
+                dispatch.error_message = str(exc)
+                db.commit()
+                queued.append(
+                    {
+                        "symbol": dispatch.symbol,
+                        "strategy": dispatch.strategy_slug,
+                        "task_id": "",
+                        "status": "unavailable",
+                        "dispatch_id": dispatch.id,
+                        "error_type": exc.__class__.__name__,
+                        "error": str(exc),
+                    }
+                )
         unavailable = sum(1 for item in queued if item["status"] == "unavailable")
         return {
             "status": "queued" if unavailable == 0 else "partially_queued" if unavailable < len(queued) else "unavailable",
             "job": "strategy_learning_batch_job",
+            "batch_id": batch_id,
             "queued_scopes": len(queued) - unavailable,
             "unavailable_scopes": unavailable,
             "symbols": [asset.symbol for asset in assets],
@@ -585,6 +654,47 @@ def strategy_learning_batch_job(limit_symbols: int = 25, limit_strategies: int =
         }
 
     return _run_job("strategy_learning_batch_job", work)
+
+
+@celery_app.task
+def recover_unpublished_strategy_learning_scopes_job() -> dict:
+    """Publish planned/failed research scopes left by a partial fan-out."""
+    def work(db):
+        rows = db.query(StockLearningWorkerDispatch).filter(
+            StockLearningWorkerDispatch.status.in_(("planned", "failed")),
+        ).order_by(StockLearningWorkerDispatch.created_at, StockLearningWorkerDispatch.id).limit(128).all()
+        queued = []
+        for row in rows:
+            try:
+                task = strategy_learning_scope_job.apply_async(
+                    args=[row.symbol, row.strategy_slug, row.max_candidates, row.id],
+                    queue="learning",
+                )
+                db.refresh(row)
+                if row.status in {"planned", "failed"}:
+                    row.task_id = task.id
+                    row.status = "published"
+                    row.error_type = None
+                    row.error_message = None
+                elif not row.task_id:
+                    row.task_id = task.id
+                db.commit()
+                queued.append({"dispatch_id": row.id, "task_id": task.id, "status": "queued"})
+            except Exception as exc:
+                row.status = "failed"
+                row.error_type = exc.__class__.__name__
+                row.error_message = str(exc)
+                db.commit()
+        return {
+            "status": "complete",
+            "job": "recover_unpublished_strategy_learning_scopes_job",
+            "queued": queued,
+            "examined": len(rows),
+            "paper_only": True,
+            "live_authorized": False,
+        }
+
+    return _run_job("recover_unpublished_strategy_learning_scopes_job", work)
 
 
 @celery_app.task

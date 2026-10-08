@@ -244,6 +244,30 @@ class StrategyExperiment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class StockLearningWorkerDispatch(Base):
+    """Durable publication state for one symbol/strategy research scope."""
+
+    __tablename__ = "stock_learning_worker_dispatches"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "symbol", "strategy_slug", name="uq_stock_learning_worker_scope"),
+        Index("ix_stock_learning_worker_dispatches_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[str] = mapped_column(String(36), index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    strategy_slug: Mapped[str] = mapped_column(String(64), index=True)
+    max_candidates: Mapped[int] = mapped_column(Integer, default=3)
+    status: Mapped[str] = mapped_column(String(24), default="planned")
+    task_id: Mapped[Optional[str]] = mapped_column(String(100))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_type: Mapped[Optional[str]] = mapped_column(String(128))
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 class CandidateDecisionJournal(Base):
     __tablename__ = "candidate_decision_journal"
 
