@@ -22,6 +22,10 @@ def _decimal(value: float) -> Decimal:
 def run_and_persist_model_predictions(db: Session, symbol: str) -> dict:
     symbol = symbol.upper()
     prices, source = trusted_history(db, symbol, 420, minimum=140)
+    # Historical reads can be followed by several minutes of CPU-bound model
+    # fitting. End that read transaction before fitting so PostgreSQL cannot
+    # terminate an idle-in-transaction session while the model is computing.
+    db.commit()
     result = predict_probabilities(symbol, prices, source)
     # The only current macro source is synthetic fallback data. Keep it display-only.
     macro_context = {"status": "excluded", "reason": "Synthetic macro context is not model evidence."}

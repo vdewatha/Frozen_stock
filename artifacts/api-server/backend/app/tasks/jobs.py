@@ -583,7 +583,12 @@ def strategy_learning_scope_job(
         # Keep each scheduled scope bounded, while honoring the caller's
         # candidate budget so recurring fan-out explores more than the first
         # proposal when worker capacity allows it.
-        scoped_candidates = max(1, min(int(max_candidates), 3))
+        # Model-predictive scopes are materially more expensive than the
+        # indicator strategies. Keep their recurring fan-out bounded to one
+        # candidate so one slow research lane cannot starve the whole learning
+        # queue; explicit single-scope launches can still request more.
+        candidate_cap = 1 if strategy_slug == "model_predictive_long" else 3
+        scoped_candidates = max(1, min(int(max_candidates), candidate_cap))
         try:
             result = run_strategy_experiments(
                 db,
