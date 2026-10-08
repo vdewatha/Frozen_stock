@@ -40,3 +40,47 @@ def test_identical_boundary_overlap_is_deduplicated():
     with patch.object(client, "_request_response", side_effect=[([a, b], {}), ([b, c], {}), ([], {})]) as request:
         assert client._activity_pages({"page_size": "2"}) == [a, b, c]
     assert [call.kwargs["params"].get("page_token") for call in request.call_args_list] == [None, "b", "c"]
+
+
+def test_activity_sse_enriches_legacy_rows_without_replacing_stable_ids(monkeypatch):
+    client = AlpacaPaperClient()
+    monkeypatch.setattr(
+        "app.services.stock_paper_ledger.settings.alpaca_activity_sse_enabled",
+        True,
+    )
+    legacy = [{
+        "id": "20261002184336597::fill-ref",
+        "activity_type": "FILL",
+        "symbol": "MSFT",
+        "side": "buy",
+        "qty": "0.019",
+        "price": "515.08",
+        "order_id": "order-ref",
+        "transaction_time": "2026-10-02T18:43:36.597Z",
+        "commission": None,
+    }]
+    event = {
+        "activity_type": "TRD",
+        "ref_id": "fill-ref",
+        "event_id": "event-ref",
+        "at": "2026-10-02T18:43:36.597Z",
+        "executed_at": "2026-10-02T18:43:36.597Z",
+        "qty": "0.019",
+        "price": "515.08",
+        "net_amount": "-9.74",
+        "details": {
+            "order_id": "order-ref",
+            "symbol": "MSFT",
+            "side": "buy",
+            "commission": None,
+        },
+    }
+    with patch.object(client, "_activity_pages", return_value=legacy), patch.object(
+        client, "_activity_sse", return_value=[event]
+    ):
+        result = client.fills()
+    assert len(result) == 1
+    assert result[0]["id"] == legacy[0]["id"]
+    assert result[0]["net_amount"] == "-9.74"
+    assert result[0]["activity_source"] == "alpaca_activity_sse"
+    assert result[0]["commission"] is None

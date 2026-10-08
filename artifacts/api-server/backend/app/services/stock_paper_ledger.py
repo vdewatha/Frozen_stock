@@ -177,6 +177,140 @@ class AlpacaPaperClient:
             token = next_token
         raise StockPaperUnavailable("Alpaca paper pagination exceeded safe page limit")
 
+    def _activity_sse(self) -> list[dict]:
+        """Replay bounded paper-account Activity SSE evidence.
+
+        The stream is used to enrich the legacy activity rows with the newer
+        structured cash-impact fields. Missing commissions remain missing; this
+        method never infers or manufactures a fee.
+        """
+        params = {
+            "since": "1970-01-01T00:00:00Z",
+            "until": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
+        try:
+            with httpx.stream(
+                "GET",
+                f"{self.base_url}/v2beta1/events/activities",
+                params=params,
+                headers=self._headers() | {"Accept": "text/event-stream"},
+                timeout=30.0,
+            ) as response:
+                if response.status_code >= 400:
+                    raise StockPaperUnavailable(
+                        f"Alpaca paper activity stream failed with HTTP {response.status_code}",
+                        status_code=response.status_code,
+                    )
+                rows: list[dict] = []
+                data_lines: list[str] = []
+                for line in response.iter_lines():
+                    if line == "":
+                        if data_lines:
+                            try:
+                                event = json.loads("\n".join(data_lines))
+                            except (TypeError, ValueError) as exc:
+                                raise StockPaperUnavailable(
+                                    "Alpaca paper activity stream returned invalid JSON"
+                                ) from exc
+                            if isinstance(event, dict):
+                                rows.append(event)
+                            data_lines = []
+                        continue
+                    if line.startswith("data:"):
+                        data_lines.append(line[5:].lstrip())
+                if data_lines:
+                    event = json.loads("\n".join(data_lines))
+                    if isinstance(event, dict):
+                        rows.append(event)
+                return rows
+        except StockPaperUnavailable:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise StockPaperUnavailable(
+                "Alpaca paper activity stream is unavailable or invalid"
+            ) from exc
+
+    @staticmethod
+    def _sse_activity_to_legacy(row: dict) -> dict | None:
+        """Map Activity SSE events to the ledger's immutable activity shape."""
+        ref_id = str(row.get("ref_id") or "").strip()
+        if not ref_id:
+            raise StockPaperUnavailable("Alpaca activity stream event lacks ref_id")
+        details = row.get("details") if isinstance(row.get("details"), dict) else {}
+        activity_type = str(row.get("activity_type") or "").upper()
+        effective_date = row.get("settle_date") or str(row.get("at") or "")[:10]
+        common = {
+            "id": ref_id,
+            "activity_source": "alpaca_activity_sse",
+            "activity_event_id": row.get("event_id"),
+            "net_amount": row.get("net_amount"),
+        }
+        if activity_type == "TRD":
+            return {
+                **common,
+                "activity_type": "FILL",
+                "symbol": details.get("symbol"),
+                "side": details.get("side"),
+                "qty": row.get("qty"),
+                "price": row.get("price"),
+                "order_id": details.get("order_id"),
+                "transaction_time": row.get("executed_at") or row.get("at"),
+                "commission": details.get("commission"),
+            }
+        if activity_type in alpaca_activity_v2.CASH_TYPES:
+            return {
+                **common,
+                "activity_type": activity_type,
+                "activity_sub_type": row.get("activity_subtype"),
+                "date": effective_date,
+            }
+        # Preserve unsupported activity types so the existing ledger can fail
+        # closed and request accounting review instead of dropping cash events.
+        return {
+            **common,
+            "activity_type": activity_type,
+            "activity_sub_type": row.get("activity_subtype"),
+            "date": effective_date,
+        }
+
+    def _activity_history(self) -> list[dict]:
+        """Merge SSE fields into REST rows without changing stable IDs."""
+        legacy = self._activity_pages({"direction": "desc", "page_size": "100"})
+        if not settings.alpaca_activity_sse_enabled:
+            return legacy
+        try:
+            stream_rows = [self._sse_activity_to_legacy(row) for row in self._activity_sse()]
+        except StockPaperUnavailable:
+            # REST remains the compatibility evidence path; the caller still
+            # fails closed on missing cost fields and no authority is granted.
+            return legacy
+        stream_rows = [row for row in stream_rows if row is not None]
+        by_ref = {
+            str(row.get("id") or "").split("::")[-1]: index
+            for index, row in enumerate(legacy)
+            if row.get("id")
+        }
+        merged = list(legacy)
+        for row in stream_rows:
+            ref = str(row.get("id") or "")
+            index = by_ref.get(ref)
+            if index is None:
+                merged.append(row)
+                continue
+            stable = merged[index].get("id")
+            existing = dict(merged[index])
+            # Activity SSE is intentionally sparse. Preserve the REST row's
+            # immutable trade fields and add only newer evidence fields; a
+            # sparse replay must never look like a broker-side mutation.
+            for key in ("activity_source", "activity_event_id", "net_amount"):
+                if row.get(key) is not None:
+                    existing[key] = row[key]
+            if row.get("commission") is not None and existing.get("commission") is None:
+                existing["commission"] = row["commission"]
+            existing["id"] = stable
+            merged[index] = existing
+        return merged
+
     def orders(self, after: datetime | None = None) -> list[dict]:
         from app.services.alpaca_order_history import collect_orders
         return collect_orders(self._request, StockPaperUnavailable,
@@ -186,10 +320,9 @@ class AlpacaPaperClient:
         # Fetch all reported account activities for the audit trail.  Fill rows
         # are extracted below; non-fill activity remains durable evidence rather
         # than being silently discarded.
-        params: dict[str, str] = {"direction": "desc", "page_size": "100"}
         # Activities are fully backfilled each reconciliation. This prevents a
         # delayed broker activity from being lost behind a short lookback window.
-        return self._activity_pages(params)
+        return self._activity_history()
 
     def submit_order(self, payload: dict) -> dict:
         # Kept out of all routes; callers must use dispatch_reserved_order.
@@ -785,15 +918,26 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
             incoming_payload = dict(raw)
             previous_commission = previous_payload.pop("commission", None)
             incoming_commission = incoming_payload.pop("commission", None)
+            enrichment_keys = {"activity_source", "activity_event_id", "net_amount"}
+            for key in enrichment_keys:
+                previous_payload.pop(key, None)
+                incoming_payload.pop(key, None)
             commission_enrichment = (
                 activity_type.upper() == "FILL"
                 and previous_commission is None
                 and incoming_commission is not None
                 and previous_payload == incoming_payload
             )
-            if (activity.activity_type, activity.raw_payload) != (activity_type, raw) and not commission_enrichment:
+            sse_enrichment = (
+                activity_type.upper() == "FILL"
+                and str(raw.get("activity_source") or "") == "alpaca_activity_sse"
+                and previous_payload == incoming_payload
+            )
+            if (activity.activity_type, activity.raw_payload) != (activity_type, raw) and not (
+                commission_enrichment or sse_enrichment
+            ):
                 raise StockPaperError("Broker activity immutable fields changed; refusing corrupted evidence")
-            if commission_enrichment:
+            if commission_enrichment or sse_enrichment:
                 activity.raw_payload = raw
             # occurred_at is derived metadata. Correct an old observation-time
             # fallback once the broker supplies a stable created_at value, while
@@ -833,6 +977,10 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
             candidate_payload = dict(raw)
             existing_commission = existing_payload.pop("commission", None)
             candidate_commission = candidate_payload.pop("commission", None)
+            enrichment_keys = {"activity_source", "activity_event_id", "net_amount"}
+            for key in enrichment_keys:
+                existing_payload.pop(key, None)
+                candidate_payload.pop(key, None)
             immutable_match = (
                 existing_fill.broker_order_id, existing_fill.symbol, existing_fill.side, existing_fill.quantity,
                 existing_fill.price, _utc(existing_fill.filled_at)
@@ -846,11 +994,20 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
                 and existing_commission is None
                 and existing_payload == candidate_payload
             )
-            if is_cost_enrichment:
-                existing_fill.fee = candidate[5]
-                existing_fill.cost_known = True
+            is_sse_enrichment = (
+                str(raw.get("activity_source") or "") == "alpaca_activity_sse"
+                and immutable_match
+                and existing_payload == candidate_payload
+            )
+            if is_cost_enrichment or is_sse_enrichment:
+                # SSE enrichment adds broker evidence only. It cannot change
+                # the economic identity of an already persisted fill.
+                if is_cost_enrichment:
+                    existing_fill.fee = candidate[5]
+                    existing_fill.cost_known = True
                 existing_fill.raw_payload = raw
-                enriched_activity_ids.add(activity_id)
+                if is_cost_enrichment:
+                    enriched_activity_ids.add(activity_id)
             elif (existing_fill.broker_order_id, existing_fill.symbol, existing_fill.side, existing_fill.quantity,
                     existing_fill.price, existing_fill.fee, _utc(existing_fill.filled_at)) != candidate:
                 raise StockPaperError("Broker fill immutable fields changed; refusing corrupted evidence")

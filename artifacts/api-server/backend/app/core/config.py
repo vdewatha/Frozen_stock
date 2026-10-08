@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # explicit provider-contract choice. It never authorizes live trading and
     # does not suppress separately reported account-level cash activities.
     alpaca_paper_zero_commission_contract: bool = False
+    # The paper Activity SSE provides bounded historical replay and structured
+    # cash-impact evidence. It does not turn missing commissions into zero.
+    alpaca_activity_sse_enabled: bool = False
     tradier_market_data_api_key: SecretStr = SecretStr("")
     tradier_api_key: SecretStr = SecretStr("")
     tradier_account_id: str = ""

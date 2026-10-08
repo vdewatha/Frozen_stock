@@ -57,6 +57,25 @@ def test_late_order_links_existing_fill_without_changing_evidence(db, commission
         assert fill.raw_payload == raw
 
 
+def test_activity_sse_metadata_enriches_existing_fill_without_changing_identity(db):
+    account = db.scalar(select(StockPaperAccount))
+    _upsert_fills(db, account, [FILL], NOW)
+    db.commit()
+    enriched = {
+        **FILL,
+        "activity_source": "alpaca_activity_sse",
+        "activity_event_id": "event-1",
+        "net_amount": "-9.99",
+    }
+    _upsert_fills(db, account, [enriched], NOW)
+    db.commit()
+    fill = db.scalar(select(StockPaperFill))
+    assert fill.broker_activity_id == "fill-1"
+    assert fill.cost_known is False
+    assert fill.fee is None
+    assert fill.raw_payload["net_amount"] == "-9.99"
+
+
 @pytest.mark.parametrize("changes", [{"symbol": "QQQ"}, {"side": "sell"}])
 def test_conflicting_order_identity_rejected(db, changes):
     account = db.scalar(select(StockPaperAccount))
