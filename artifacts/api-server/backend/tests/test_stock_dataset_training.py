@@ -236,3 +236,28 @@ def test_database_snapshot_is_provenance_bound_and_references_file_not_blob():
     finally:
         db.close()
         engine.dispose()
+
+
+def test_database_snapshot_selects_only_the_requested_provider():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        db.add(Asset(symbol="AAA", name="AAA", asset_type="stock", is_active=True))
+        for offset, day in enumerate(pd.bdate_range("2024-01-01", periods=80)):
+            price = Decimal(str(100 + offset))
+            db.add(MarketPrice(
+                symbol="AAA", price_date=day.date(), open=price, high=price + 1,
+                low=price - 1, close=price, adjusted_close=price, volume=1000,
+                source="yfinance" if offset < 40 else "alpaca_iex_daily",
+                imported_at=datetime.now(timezone.utc),
+            ))
+        db.commit()
+        dataset = create_stock_dataset(
+            db, cutoff=date(2024, 5, 1), universe=["AAA"], horizon_days=5, provider="alpaca_iex_daily"
+        )
+        assert set(dataset.observations["provider"]) == {"alpaca_iex_daily"}
+        assert len(dataset.observations) == 40
+    finally:
+        db.close()
+        engine.dispose()

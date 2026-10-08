@@ -2,9 +2,10 @@
 
 This module deliberately reads ``MarketPrice`` rows instead of accepting a
 caller supplied DataFrame. A training set is consequently bound to the
-provider provenance that was actually ingested, an explicit universe, a
-cutoff, and the feature contract. Synthetic, fixture and mixed-provider
-histories are not a valid input to this boundary. This is a *captured-current
+provider provenance selected by the caller, an explicit universe, a cutoff,
+and the feature contract. The query selects only that provider's persisted
+rows, while synthetic, fixture and mixed-provider observations within the
+snapshot are not valid input to this boundary. This is a *captured-current
 database extraction*, however, not a point-in-time reconstruction: current
 adjustments and asset membership cannot prove what was known historically.
 
@@ -310,6 +311,10 @@ def create_stock_dataset(
             .where(
                 MarketPrice.symbol.in_(symbols),
                 MarketPrice.price_date <= cutoff_day,
+                # The requested provider is a provenance boundary. Other
+                # provider rows may remain in the database for research, but
+                # must not contaminate this immutable snapshot.
+                MarketPrice.source == provider,
             )
             .order_by(MarketPrice.symbol.asc(), MarketPrice.price_date.asc())
         ).scalars()
