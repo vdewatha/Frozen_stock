@@ -4,8 +4,12 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import unittest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from app.services import market_data, paper_trading, model_tracking, portfolio_risk
+from app.db.base import Base
+from app.models import MarketPrice
 from app.services.trusted_data import UntrustedMarketData, trusted_history, validate_history
 
 
@@ -132,6 +136,29 @@ def test_market_import_is_explicitly_unavailable_when_trusted_sources_fail():
     assert result["synthetic_fallback_used"] is False
     assert result["unavailable_reason"]
     assert all(attempt["status"] == "unavailable" for attempt in result["provider_attempts"])
+
+
+def test_market_import_does_not_replace_a_date_with_a_different_provider():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    prices = pd.DataFrame([{
+        "date": date(2026, 10, 6), "open": 100, "high": 102,
+        "low": 99, "close": 101, "adjusted_close": 101, "volume": 100,
+    }])
+    with Session(engine) as db:
+        market_data.upsert_prices(db, "AAPL", prices, "yfinance")
+        replacement = prices.copy()
+        replacement.loc[0, "close"] = 999
+        market_data.upsert_prices(db, "AAPL", replacement, "yahoo_chart")
+        row = db.query(MarketPrice).filter_by(symbol="AAPL").one()
+        assert row.source == "yfinance"
+        assert row.close == 101
+
+        replacement.loc[0, "close"] = 102
+        market_data.upsert_prices(db, "AAPL", replacement, "yfinance")
+        row = db.query(MarketPrice).filter_by(symbol="AAPL").one()
+        assert row.source == "yfinance"
+        assert row.close == 102
 
 
 def test_research_persistence_rejects_missing_prices():
