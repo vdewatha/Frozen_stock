@@ -214,32 +214,44 @@ def fetch_alpaca_iex_daily_prices(symbol: str, period: str = "5y") -> pd.DataFra
         return pd.DataFrame()
     end = datetime.now(timezone.utc)
     start = end - pd.Timedelta(days=_period_to_days(period) + 10).to_pytimedelta()
-    params = urlencode({
-        "symbols": symbol,
-        "timeframe": "1Day",
-        "start": start.isoformat().replace("+00:00", "Z"),
-        "end": end.isoformat().replace("+00:00", "Z"),
-        "adjustment": "all",
-        "feed": "iex",
-        "limit": "1000",
-    })
-    request = Request(
-        f"https://data.alpaca.markets/v2/stocks/bars?{params}",
-        headers={
-            "APCA-API-KEY-ID": key,
-            "APCA-API-SECRET-KEY": secret,
-            "Accept": "application/json",
-        },
-    )
-    try:
-        with urlopen(request, timeout=20) as response:
-            payload = json.load(response)
-    except Exception:
-        return pd.DataFrame()
-    if not isinstance(payload, dict) or not isinstance(payload.get("bars"), dict):
-        return pd.DataFrame()
-    bars = payload["bars"].get(symbol)
-    if not isinstance(bars, list) or not bars:
+    bars: list[dict] = []
+    page_token: str | None = None
+    for _ in range(10):
+        query = {
+            "symbols": symbol,
+            "timeframe": "1Day",
+            "start": start.isoformat().replace("+00:00", "Z"),
+            "end": end.isoformat().replace("+00:00", "Z"),
+            "adjustment": "all",
+            "feed": "iex",
+            "limit": "1000",
+        }
+        if page_token:
+            query["page_token"] = page_token
+        params = urlencode(query)
+        request = Request(
+            f"https://data.alpaca.markets/v2/stocks/bars?{params}",
+            headers={
+                "APCA-API-KEY-ID": key,
+                "APCA-API-SECRET-KEY": secret,
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=20) as response:
+                payload = json.load(response)
+        except Exception:
+            return pd.DataFrame()
+        if not isinstance(payload, dict) or not isinstance(payload.get("bars"), dict):
+            return pd.DataFrame()
+        page_bars = payload["bars"].get(symbol)
+        if not isinstance(page_bars, list):
+            return pd.DataFrame()
+        bars.extend(item for item in page_bars if isinstance(item, dict))
+        page_token = payload.get("next_page_token")
+        if not isinstance(page_token, str) or not page_token:
+            break
+    if not bars:
         return pd.DataFrame()
     rows = []
     for bar in bars:
@@ -409,9 +421,22 @@ def get_price_history(
     source_filter: str | None = None,
 ) -> tuple[pd.DataFrame, str]:
     symbol = _clean_symbol(symbol)
+    selected_source = source_filter
+    if selected_source is None:
+        # A provider-keyed table can contain overlapping observations. Default
+        # readers must still receive one internally consistent history; choose
+        # the freshest trusted provider, then the one with the most coverage.
+        candidates = (
+            db.query(MarketPrice.source, func.max(MarketPrice.price_date), func.count(MarketPrice.id))
+            .filter(MarketPrice.symbol == symbol)
+            .group_by(MarketPrice.source)
+            .all()
+        )
+        if candidates:
+            selected_source = max(candidates, key=lambda row: (row[1], row[2], row[0] or ""))[0]
     query = db.query(MarketPrice).filter(MarketPrice.symbol == symbol)
-    if source_filter:
-        query = query.filter(MarketPrice.source == source_filter)
+    if selected_source:
+        query = query.filter(MarketPrice.source == selected_source)
     rows = (
         query
         .order_by(MarketPrice.price_date.desc())
@@ -423,8 +448,8 @@ def get_price_history(
         import_result = import_market_prices(db, symbol, "5y")
         source = import_result["source"]
         query = db.query(MarketPrice).filter(MarketPrice.symbol == symbol)
-        if source_filter:
-            query = query.filter(MarketPrice.source == source_filter)
+        if selected_source:
+            query = query.filter(MarketPrice.source == selected_source)
         rows = (
             query
             .order_by(MarketPrice.price_date.desc())

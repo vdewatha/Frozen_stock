@@ -189,6 +189,42 @@ def test_market_import_keeps_same_date_for_each_provider():
         assert [(row.source, row.close) for row in rows] == [("yahoo_chart", 999), ("yfinance", 102)]
 
 
+def test_default_history_selects_one_freshest_provider():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    older = pd.DataFrame([{
+        "date": date(2025, 1, 2), "open": 100, "high": 102,
+        "low": 99, "close": 101, "adjusted_close": 101, "volume": 100,
+    }])
+    newer = older.copy()
+    newer.loc[0, "date"] = date(2026, 10, 7)
+    with Session(engine) as db:
+        market_data.upsert_prices(db, "AAPL", older, "alpaca_iex_daily")
+        market_data.upsert_prices(db, "AAPL", newer, "yfinance")
+        frame, source = market_data.get_price_history(db, "AAPL", limit=10, auto_seed=False)
+    assert source == "database:yfinance"
+    assert frame["source"].tolist() == ["yfinance"]
+
+
+def test_alpaca_daily_fetch_follows_next_page_token():
+    import json
+
+    first = {"bars": {"SPY": [{"t": "2025-01-02T00:00:00Z", "o": 100, "h": 102, "l": 99, "c": 101, "v": 10}]}, "next_page_token": "next"}
+    second = {"bars": {"SPY": [{"t": "2025-01-03T00:00:00Z", "o": 101, "h": 103, "l": 100, "c": 102, "v": 11}]}}
+
+    class Response:
+        def __init__(self, payload): self.payload = payload
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def read(self): return json.dumps(self.payload).encode()
+
+    with patch.object(type(market_data.settings), "research_alpaca_credentials", return_value=("key", "secret")), \
+         patch.object(market_data, "urlopen", side_effect=[Response(first), Response(second)]) as fetch:
+        frame = market_data.fetch_alpaca_iex_daily_prices("SPY")
+    assert len(frame) == 2
+    assert fetch.call_count == 2
+
+
 def test_research_persistence_rejects_missing_prices():
     from app.services import candidate_evidence, experiments, market_regime
     for module, invoke in [
