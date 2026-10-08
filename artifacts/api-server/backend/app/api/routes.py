@@ -758,6 +758,15 @@ def resolve_notification_route(notification_id: int, db: Session = Depends(get_d
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.post("/system/strategy-learning/retry-failures", status_code=202)
+def retry_strategy_learning_failures() -> dict:
+    """Queue the existing bounded retry task for aged learning-scope failures."""
+    from app.tasks.jobs import retry_failed_strategy_learning_scopes_job
+
+    task = retry_failed_strategy_learning_scopes_job.apply_async(queue="learning", expires=15 * 60)
+    return {"status": "queued", "task_id": task.id, "paper_only": True, "live_authorized": False}
+
+
 @router.post("/strategies/evaluate", response_model=StrategyGovernanceResponse)
 def evaluate_strategies(db: Session = Depends(get_db)) -> dict:
     raise HTTPException(status_code=409, detail=LEGACY_STOCK_EVIDENCE_QUARANTINE)

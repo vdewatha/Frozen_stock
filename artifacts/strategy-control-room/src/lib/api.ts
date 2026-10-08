@@ -2368,6 +2368,10 @@ export async function resolveNotification(notificationId: number): Promise<Notif
   return postJson<NotificationItem>(`/notifications/${notificationId}/resolve`, {});
 }
 
+export async function retryStrategyLearningFailures(): Promise<{ status: string; task_id: string; paper_only: boolean; live_authorized: boolean }> {
+  return postJson<{ status: string; task_id: string; paper_only: boolean; live_authorized: boolean }>("/system/strategy-learning/retry-failures", {});
+}
+
 export async function runAndPersistModel(symbol: string): Promise<PersistedModelRunResponse> {
   return postJson<PersistedModelRunResponse>("/models/run", { symbol });
 }

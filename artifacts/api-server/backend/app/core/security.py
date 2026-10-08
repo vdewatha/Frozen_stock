@@ -90,6 +90,7 @@ ADMIN_POSTS = {
     "/stock-paper/account-transition",
     "/stock-paper/venue-activation",
     "/stock-paper/research-venue/activation",
+    "/system/strategy-learning/retry-failures",
 }
 
 

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bell, CheckCheck, ExternalLink, RefreshCw, ShieldAlert } from "lucide-react";
 
-import { NotificationItem, acknowledgeNotification, getNotifications, resolveNotification } from "@/lib/api";
+import { NotificationItem, acknowledgeNotification, getNotifications, resolveNotification, retryStrategyLearningFailures } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
 
 function tone(severity: string): string {
@@ -177,6 +177,11 @@ export function NotificationCenter() {
                   {item.status !== "resolved" ? (
                     <RoleGate requires="admin"><button className="focus-ring inline-flex h-8 items-center gap-2 rounded-md bg-mint px-2 text-xs font-semibold text-white" disabled={isBusy} onClick={() => runAction(() => resolveNotification(item.id))} type="button">
                       Resolve
+                    </button></RoleGate>
+                  ) : null}
+                  {item.status !== "resolved" && item.category === "scheduled_job" && item.source.startsWith("strategy_learning_scope_job:") ? (
+                    <RoleGate requires="operator"><button className="focus-ring inline-flex h-8 items-center gap-2 rounded-md border border-line px-2 text-xs font-medium" disabled={isBusy} onClick={() => runAction(async () => { await retryStrategyLearningFailures(); return item; })} type="button">
+                      Retry learning job
                     </button></RoleGate>
                   ) : null}
                 </div>
