@@ -2221,6 +2221,7 @@ def stock_paper_status(db: Session) -> dict:
     from app.services.stock_paper_performance import observed_paper_performance
     from app.services.paper_research_accounting import assess as assess_research_accounting
     from app.services.paper_research_venue import status as research_venue_status
+    from app.services.broker import stock_paper_broker_status
 
     broker = active_paper_broker_name()
     account = active_paper_account(db)
@@ -2249,6 +2250,7 @@ def stock_paper_status(db: Session) -> dict:
     activity_report = db.query(StockPaperLedgerEvent).filter_by(
         account_id=account.id, event_type="activity_reconciliation",
     ).order_by(StockPaperLedgerEvent.id.desc()).first()
+    broker_projection = stock_paper_broker_status(db)
     return base | {
         "status": account.status, "reason": account.halt_reason or (UNKNOWN_COSTS_REASON if not account.costs_known else "Reconciled broker paper account"),
         "costs_known": account.costs_known,
@@ -2257,6 +2259,7 @@ def stock_paper_status(db: Session) -> dict:
         "observed_performance": observed_paper_performance(db, account),
         "paper_research_accounting": assess_research_accounting(db, account),
         "paper_research_venue": research_venue_status(db, account),
+        "paper_execution": broker_projection.get("paper_execution"),
         "last_activity_reconciliation": ({"observed_at": activity_report.created_at.isoformat(),
                                            **(activity_report.payload or {})} if activity_report else None),
         "account": {"broker": account.broker, "account_id": account.broker_account_id, "currency": account.currency, "cash": money(account.cash),
