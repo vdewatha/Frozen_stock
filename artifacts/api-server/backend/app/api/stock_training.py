@@ -34,7 +34,7 @@ class StartJobBody(StrictBody):
     symbols: list[str] = Field(min_length=1, max_length=25)
     cutoff_at: date
     horizon_bars: int = Field(default=5, ge=1, le=252)
-    provider: Literal["yfinance", "yahoo_chart"] = "yfinance"
+    provider: Literal["yfinance", "yahoo_chart", "alpaca_iex_daily"] = "yfinance"
     trigger: Literal["manual", "scheduled"] = "manual"
     seed: int = Field(default=42, ge=0, le=2_147_483_647)
 

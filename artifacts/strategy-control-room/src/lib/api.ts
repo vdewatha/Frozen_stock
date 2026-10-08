@@ -2807,7 +2807,7 @@ export type StartStockTrainingRequest = {
   symbols: string[];
   cutoff_at: string;
   horizon_bars: number;
-  provider?: "yfinance" | "yahoo_chart";
+  provider?: "yfinance" | "yahoo_chart" | "alpaca_iex_daily";
   trigger?: "manual" | "scheduled";
   seed?: number;
 };

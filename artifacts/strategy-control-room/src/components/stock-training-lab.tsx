@@ -311,6 +311,7 @@ export function StockTrainingLab() {
   const [universe, setUniverse] = useState("SPY");
   const [cutoff, setCutoff] = useState(new Date().toISOString().slice(0, 10));
   const [horizon, setHorizon] = useState("5");
+  const [provider, setProvider] = useState<"yfinance" | "yahoo_chart" | "alpaca_iex_daily">("yfinance");
   const [trigger, setTrigger] = useState<"manual" | "scheduled">("manual");
   const [jobs, setJobs] = useState<StockTrainingJob[]>([]);
   const [selectedJob, setSelectedJob] = useState<StockTrainingJobDetail | null>(null);
@@ -416,7 +417,7 @@ export function StockTrainingLab() {
         symbols: parsed.symbols,
         cutoff_at: cutoff,
         horizon_bars: Number(horizon),
-        provider: "yfinance",
+        provider,
         trigger,
         seed: 42,
       });
@@ -505,6 +506,7 @@ export function StockTrainingLab() {
             <div className="grid gap-3 text-sm">
               <label className="grid gap-1"><span className="font-medium">Stock universe</span><input className="focus-ring h-9 rounded border border-line bg-white px-2 uppercase" value={universe} onChange={event => setUniverse(event.target.value)} placeholder="SPY, QQQ, IWM" /><span className="text-xs text-slate-500">Tickers only. Crypto and experimental symbols are rejected.</span></label>
               <label className="grid gap-1"><span className="font-medium">Dataset cutoff</span><input className="focus-ring h-9 rounded border border-line bg-white px-2" type="date" value={cutoff} onChange={event => setCutoff(event.target.value)} /></label>
+              <label className="grid gap-1"><span className="font-medium">Verified data provider</span><select className="focus-ring h-9 rounded border border-line bg-white px-2" value={provider} onChange={event => setProvider(event.target.value as typeof provider)}><option value="yfinance">Yahoo Finance</option><option value="yahoo_chart">Yahoo Chart</option><option value="alpaca_iex_daily">Alpaca IEX daily</option></select><span className="text-xs text-slate-500">The snapshot must contain complete rows from this single verified provider. Alpaca IEX daily is research data, not an intraday execution feed.</span></label>
               <label className="grid gap-1"><span className="font-medium">Prediction horizon (bars)</span><select className="focus-ring h-9 rounded border border-line bg-white px-2" value={horizon} onChange={event => setHorizon(event.target.value)}><option value="1">1 bar</option><option value="5">5 bars</option><option value="20">20 bars</option></select><span className="text-xs text-slate-500">The server owns purge, embargo and cost assumptions.</span></label>
               <label className="grid gap-1"><span className="font-medium">Run trigger</span><select className="focus-ring h-9 rounded border border-line bg-white px-2" value={trigger} onChange={event => setTrigger(event.target.value as "manual" | "scheduled")}><option value="manual">Manual verified run</option><option value="scheduled">Scheduled challenger</option></select></label>
               {trigger === "scheduled" ? <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">Scheduled runs are challengers only. They never replace or promote the frozen paper model automatically.</div> : null}

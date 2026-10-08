@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import app.api.stock_training as stock_training_api
-from app.api.stock_training import active_binding, model_report, router
+from app.api.stock_training import StartJobBody, active_binding, model_report, router
 from app.core.config import Settings
 from app.core.security import AuthenticationMiddleware, required_role
 from app.db.base import Base
@@ -82,6 +82,14 @@ def test_stock_training_route_roles_are_explicit():
     assert required_role("POST", "/stock/training/jobs/recover") == "admin"
     assert required_role("GET", f"/stock/training/models/{'a' * 64}/lifecycle") == "viewer"
     assert required_role("POST", f"/stock/training/models/{'a' * 64}/lifecycle") == "operator"
+
+
+def test_stock_training_accepts_authenticated_alpaca_daily_provider():
+    body = StartJobBody(
+        symbols=["AAPL", "SPY"], cutoff_at=date.today(), horizon_bars=5,
+        provider="alpaca_iex_daily",
+    )
+    assert body.provider == "alpaca_iex_daily"
 
 
 def test_stock_training_post_rejects_viewer_before_database_work():
