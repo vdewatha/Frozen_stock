@@ -2213,11 +2213,15 @@ export async function getOperationalHardening(): Promise<OperationalHardeningRep
 }
 
 export async function runOperationalHardening(): Promise<OperationalHardeningReport> {
-  return postJson<OperationalHardeningReport>("/system/operational-hardening/run", {});
+  return postJson<OperationalHardeningReport>("/system/operational-hardening/run", {
+    reason: "Admin reviewed current paper-only runtime health and requested a fresh hardening check",
+  });
 }
 
 export async function runStockMonitoring(): Promise<StockMonitoringSnapshot> {
-  return postJson<StockMonitoringSnapshot>("/system/stock-monitoring/run", {});
+  return postJson<StockMonitoringSnapshot>("/system/stock-monitoring/run", {
+    reason: "Operator reviewed current paper-only data and requested fresh monitoring evidence",
+  });
 }
 
 export async function getStockLearningCycles(limit = 25): Promise<StockLearningCycle[]> {
