@@ -19,6 +19,17 @@ Checked on 2026-10-07:
   documents fill identity, order ID, quantity, price and execution time, but its
   TradeActivity properties do not promise a commission field. Non-trade cash
   events have a date and net amount; FEE and CFEE are distinct activity types.
+- [Alpaca Regulatory Fees](https://docs.alpaca.markets/us/docs/regulatory-fees)
+  states that equity TAF and CAT charges are posted as FEE activities, accrued
+  intraday, charged at end of day, and rounded to currency precision. The
+  current [Broker Fee Schedule](https://files.alpaca.markets/disclosures/library/BrokFeeSched.pdf)
+  further states that each fee type is aggregated at the daily account level
+  and that Alpaca must be contacted for an exact transaction-level breakdown.
+- [Alpaca commission disclosure](https://alpaca.markets/support/commission-clearing-fees)
+  confirms that commission-free self-directed U.S. API equity trading can have
+  no commission charges, while regulatory fees may still apply. This supports a
+  documented zero-commission provider policy, not a claim that all-in costs or
+  per-fill fee allocation are observed.
 - [Paper Trading](https://docs.alpaca.markets/us/docs/paper-trading)
   explicitly excludes regulatory fees and latency-related slippage from the
   simulation. Missing charges cannot establish observed zero costs or live-cost realism.
@@ -161,3 +172,16 @@ tested with the same credentials and returned HTTP `401 unauthorized`; that
 does not prove the paper account has no documents. A Broker API entitlement or
 an authenticated broker-provided confirmation export is still required for the
 missing cost evidence.
+
+The authenticated paper account was rechecked against the order-filtered
+activities endpoint introduced in the current API documentation. For each of
+the six fill order IDs, `GET /v2/account/activities?order_id=<id>` returned
+exactly one `FILL` and no `FEE`; every fill still had a null `commission`.
+The seven account-level fee entries totaled `$0.07`: CAT `$0.04`, REG `$0.02`,
+and TAF `$0.01`, across September 29, September 30, and October 2. These
+amounts are verified account-level debits and are retained as such. They are
+not assignable to individual fills because the entries have no order ID or
+symbol and Alpaca documents daily aggregation and rounding. The correct
+classification is therefore: **provider commission policy documented; daily
+account fees observed; per-fill commission and all-in execution cost
+unverified**. No execution gate is changed by this evidence.
