@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models import StockPaperAccount, StockPaperVenueAuthorization, StockPaperVenueQualification
 
 QUALIFICATION_VERSION = "paper-venue-v1"
@@ -41,6 +42,30 @@ _REQUIRED_BOOLEAN_PATHS = (
 _REPLAY_ALTERNATIVES = (
     ("session_expiry_replay", "credential_replay"),
 )
+
+
+def _commission_evidence_is_sufficient(provider: str, evidence: dict[str, Any]) -> bool:
+    """Accept Alpaca's documented zero-commission policy without fabricating fills.
+
+    Alpaca activity payloads can omit a per-fill commission while reporting
+    account-level regulatory fees separately. That is usable for paper-order
+    admission only when the explicit research-only policy is enabled and the
+    package clearly keeps all-in costs unverified.
+    """
+    commissions = evidence.get("commissions")
+    if not isinstance(commissions, dict):
+        return False
+    if commissions.get("complete") is True:
+        return True
+    return bool(
+        provider == SELECTED_PAPER_PROVIDER
+        and settings.alpaca_paper_zero_commission_contract
+        and commissions.get("policy_name") == "alpaca_paper_commission_free_plus_regulatory_fees"
+        and commissions.get("policy_acknowledged") is True
+        and commissions.get("reported_per_fill") is False
+        and commissions.get("all_in_costs_verified") is False
+        and commissions.get("account_level_fees_recorded") is True
+    )
 
 
 def _digest(value: Any) -> str:
@@ -111,6 +136,8 @@ def assess_paper_venue_evidence(
     for section, field in _REQUIRED_BOOLEAN_PATHS:
         section_value = safe.get(section)
         value = section_value.get(field) if isinstance(section_value, dict) else None
+        if section == "commissions" and field == "complete" and _commission_evidence_is_sufficient(provider, safe):
+            continue
         if value is not True:
             blockers.append(f"{section}.{field} is not affirmatively proven")
     for alternatives in _REPLAY_ALTERNATIVES:

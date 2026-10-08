@@ -286,6 +286,38 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(result["status"], "incomplete")
         self.assertEqual(result["execution_status"], "ready")
         self.assertTrue(result["missing_intervals"])
+        with patch("app.services.trusted_data.feed_status", return_value={
+            "status": "incomplete",
+            "execution_status": "ready",
+            "entitlement_state": "verified",
+            "exchange_timestamp": current_bar,
+            "missing_intervals": result["missing_intervals"],
+        }):
+            validated = validate_intraday_readiness(self.db, "SPY", now=observed)
+        self.assertEqual(validated["status"], "incomplete")
+        self.assertEqual(validated["execution_status"], "ready")
+
+    def test_alpaca_iex_market_closed_current_observation_can_have_research_gap(self):
+        observed = datetime(2026, 9, 12, 16, 0, tzinfo=UTC)
+        friday_open = datetime(2026, 9, 11, 13, 30, tzinfo=UTC)
+        bars = [bar(friday_open + timedelta(minutes=index)) for index in range(390)]
+        bars.pop(100)
+        with patch.object(settings, "active_market_data_provider", "alpaca_iex"), patch.object(
+            intraday_data, "MARKET_DATA_PROVIDER", "alpaca_iex"
+        ), patch.object(intraday_data, "MARKET_DATA_FEED_CLASS", "iex"), patch.object(
+            settings, "paper_alpaca_api_key", type(settings.paper_alpaca_api_key)("key")
+        ), patch.object(
+            settings, "paper_alpaca_api_secret", type(settings.paper_alpaca_api_secret)("secret")
+        ):
+            intraday_data.upsert_intraday_bars(
+                self.db, "SPY", bars, ingested_at=observed,
+                provider="alpaca_iex", feed_class="iex",
+            )
+            status = intraday_data.feed_status(self.db, "SPY", now=observed)
+            validated = validate_intraday_readiness(self.db, "SPY", now=observed)
+        self.assertEqual(status["status"], "incomplete")
+        self.assertEqual(status["execution_status"], "market_closed")
+        self.assertEqual(validated["status"], "incomplete")
 
     def test_market_closed_requires_complete_previous_session(self):
         friday_open = datetime(2026, 9, 11, 13, 30, tzinfo=UTC)

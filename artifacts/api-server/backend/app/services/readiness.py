@@ -124,6 +124,7 @@ def readiness_snapshot(db: Session) -> dict:
         )
     )
     intraday_failures = {}
+    intraday_historical_warnings = {}
     intraday_status = {}
     active_symbols = {asset.symbol for asset in active_assets}
     execution_symbols = set(settings.paper_execution_symbols)
@@ -144,6 +145,12 @@ def readiness_snapshot(db: Session) -> dict:
     for asset in intraday_assets:
         try:
             intraday_status[asset.symbol] = validate_intraday_readiness(db, asset.symbol)
+            status = intraday_status[asset.symbol]
+            if status.get("status") == "incomplete":
+                intraday_historical_warnings[asset.symbol] = (
+                    status.get("unavailable_reason")
+                    or "Historical regular-session intervals remain unresolved"
+                )
         except UntrustedMarketData as exc:
             intraday_failures[asset.symbol] = str(exc)
             try:
@@ -153,11 +160,20 @@ def readiness_snapshot(db: Session) -> dict:
                     "status": "unavailable",
                     "unavailable_reason": str(status_exc),
                 }
+    intraday_check_status = _status_from_count(
+        len(intraday_failures), len(intraday_historical_warnings)
+    )
     representative = next(iter(intraday_status.values()), {})
     checks.append(_check(
         "Intraday feed",
-        "blocked" if intraday_failures else "ready",
-         "Completed authenticated intraday bars are fresh." if not intraday_failures else "Fresh complete intraday data is required for paper decisions.",
+        intraday_check_status,
+         (
+             "Completed authenticated intraday bars are fresh."
+             if intraday_check_status == "ready"
+             else "Current authenticated execution bars are usable; historical repair gaps remain for research."
+             if intraday_check_status == "warning"
+             else "Fresh complete intraday data is required for paper decisions."
+         ),
         {
             "data_mode": "real-time",
              "provider": MARKET_DATA_PROVIDER,
@@ -181,6 +197,7 @@ def readiness_snapshot(db: Session) -> dict:
              },
             "unavailable_reason": representative.get("unavailable_reason"),
             "failures": intraday_failures,
+            "historical_warnings": intraday_historical_warnings,
             "symbols": intraday_status,
             "execution_symbols": sorted(execution_symbols),
             "research_only_symbols": research_only_symbols,

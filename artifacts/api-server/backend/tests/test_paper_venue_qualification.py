@@ -60,6 +60,27 @@ def test_missing_or_unknown_evidence_is_fail_closed_and_redacted():
     assert report["live_authorized"] is False
 
 
+def test_alpaca_zero_commission_policy_qualifies_paper_only_without_claiming_all_in_costs(monkeypatch):
+    monkeypatch.setattr("app.services.paper_venue_qualification.settings.alpaca_paper_zero_commission_contract", True)
+    evidence = _evidence(commissions={
+        "complete": False,
+        "policy_name": "alpaca_paper_commission_free_plus_regulatory_fees",
+        "policy_acknowledged": True,
+        "reported_per_fill": False,
+        "all_in_costs_verified": False,
+        "account_level_fees_recorded": True,
+    })
+    report = assess_paper_venue_evidence(
+        provider=SELECTED_PAPER_PROVIDER,
+        account_id="private-account",
+        evidence=evidence,
+    )
+    assert report["status"] == "qualified"
+    assert report["paper_only"] is True
+    assert report["live_authorized"] is False
+    assert report["evidence"]["commissions"]["all_in_costs_verified"] is False
+
+
 def test_replaying_identical_qualification_evidence_is_idempotent():
     engine = _db()
     with Session(engine) as db:
