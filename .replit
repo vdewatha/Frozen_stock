@@ -60,7 +60,7 @@ PAPER_WORKERS_ENABLED = "true"
 PAPER_LEARNING_REPLICAS = "3"
 PAPER_LEARNING_CONCURRENCY = "1"
 # Keep incomplete QQQ intraday history research-only until the feed gap is repaired.
-PAPER_EXECUTION_SYMBOLS = '["AAPL","MSFT","SPY"]'
+PAPER_EXECUTION_SYMBOLS = "[\"AAPL\", \"MSFT\", \"SPY\"]"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 DELAYED_SIP_RESEARCH_ENABLED = "true"
