@@ -95,7 +95,9 @@ def start_agent_research(
         )
         db.commit()
         if not duplicate:
-            agent_research_job.apply_async(args=[row.run_id], queue="learning")
+            # Keep bounded agent research on the dedicated research worker so
+            # a learning backlog cannot leave user-requested research queued.
+            agent_research_job.apply_async(args=[row.run_id])
         db.refresh(row)
         return project_agent_research(row) | {"deduplicated": duplicate}
     except AgentResearchError as exc:

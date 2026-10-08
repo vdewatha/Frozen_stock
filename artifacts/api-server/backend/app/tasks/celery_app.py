@@ -43,6 +43,7 @@ celery_app.conf.worker_prefetch_multiplier = 1
 celery_app.conf.task_routes = {
     "app.tasks.jobs.delayed_sip_collection_job": {"queue": RESEARCH_MARKET_DATA_QUEUE},
     "app.tasks.jobs.iex_research_collection_job": {"queue": RESEARCH_MARKET_DATA_QUEUE},
+    "app.tasks.jobs.agent_research_job": {"queue": RESEARCH_MARKET_DATA_QUEUE},
     "app.tasks.jobs.daily_market_data_import": {"queue": "market_data"},
     "app.tasks.jobs.intraday_market_data_import": {"queue": INTRADAY_MARKET_DATA_QUEUE},
     "app.tasks.jobs.daily_economic_data_import": {"queue": "market_data"},

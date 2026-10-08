@@ -86,6 +86,10 @@ class CeleryConfigurationTests(unittest.TestCase):
             celery_app.conf.task_routes["app.tasks.jobs.iex_research_collection_job"],
             {"queue": "research_market_data"},
         )
+        self.assertEqual(
+            celery_app.conf.task_routes["app.tasks.jobs.agent_research_job"],
+            {"queue": "research_market_data"},
+        )
 
     def test_jobs_module_is_registered_for_standalone_workers(self):
         self.assertIn("app.tasks.jobs.strategy_learning_scope_job", celery_app.tasks)

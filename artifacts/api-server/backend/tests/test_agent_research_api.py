@@ -136,7 +136,7 @@ def test_researcher_start_is_queued_and_duplicate_dispatches_once(research_api):
     assert first["result"] is None
     assert first["eligible_for_trading"] is False
     assert first["deduplicated"] is False
-    dispatch.assert_called_once_with(args=[first["run_id"]], queue="learning")
+    dispatch.assert_called_once_with(args=[first["run_id"]])
     audit.assert_called_once()
 
     duplicate_response = client.post(
@@ -150,7 +150,7 @@ def test_researcher_start_is_queued_and_duplicate_dispatches_once(research_api):
     assert duplicate["status"] == "queued"
     assert duplicate["deduplicated"] is True
     assert run_count(engine) == 1
-    dispatch.assert_called_once_with(args=[first["run_id"]], queue="learning")
+    dispatch.assert_called_once_with(args=[first["run_id"]])
     assert audit.call_count == 2
 
 
