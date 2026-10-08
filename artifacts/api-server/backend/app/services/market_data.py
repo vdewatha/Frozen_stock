@@ -114,6 +114,22 @@ def _period_to_days(period: str) -> int:
     return 365 * 2
 
 
+def _coverage_days(frame: pd.DataFrame) -> int:
+    if frame.empty or "date" not in frame:
+        return 0
+    dates = pd.to_datetime(frame["date"], errors="coerce").dropna()
+    if dates.empty:
+        return 0
+    return max(0, int((dates.max() - dates.min()).days))
+
+
+def _needs_longer_history(frame: pd.DataFrame, period: str) -> bool:
+    requested_days = _period_to_days(period)
+    # Allow a small amount of provider/session variation while rejecting a
+    # nominally successful response that covers only a much shorter window.
+    return not frame.empty and _coverage_days(frame) < int(requested_days * 0.75)
+
+
 def fetch_yahoo_chart_prices(symbol: str, period: str = "5y") -> pd.DataFrame:
     symbol = _provider_symbol(symbol)
     period2 = int(time.time())
@@ -313,18 +329,29 @@ def import_market_prices(db: Session, symbol: str, period: str = "5y") -> dict:
     attempts: list[dict[str, str | None]] = []
     prices = fetch_yfinance_prices(symbol, period)
     source = "yfinance"
+    yfinance_insufficient = _needs_longer_history(prices, period)
     attempts.append({
         "provider": "yfinance",
-        "status": "ready" if not prices.empty else "unavailable",
-        "reason": None if not prices.empty else "empty_or_invalid_response",
+        "status": "insufficient_coverage" if yfinance_insufficient else "ready" if not prices.empty else "unavailable",
+        "reason": "insufficient_date_coverage" if yfinance_insufficient else None if not prices.empty else "empty_or_invalid_response",
     })
-    if prices.empty:
-        prices = fetch_yahoo_chart_prices(symbol, period)
-        source = "yahoo_chart" if not prices.empty else "unavailable"
+    if prices.empty or yfinance_insufficient:
+        chart_prices = fetch_yahoo_chart_prices(symbol, period)
+        if not chart_prices.empty and (prices.empty or _coverage_days(chart_prices) > _coverage_days(prices)):
+            prices = chart_prices
+            source = "yahoo_chart"
+        elif prices.empty:
+            prices = chart_prices
+            source = "yahoo_chart" if not prices.empty else "unavailable"
+        elif yfinance_insufficient:
+            # Do not silently keep a short response when the requested
+            # trusted window could not be obtained from either provider.
+            prices = pd.DataFrame()
+            source = "unavailable"
         attempts.append({
             "provider": "yahoo_chart",
-            "status": "ready" if not prices.empty else "unavailable",
-            "reason": None if not prices.empty else "empty_or_invalid_response",
+            "status": "ready" if not chart_prices.empty else "unavailable",
+            "reason": None if not chart_prices.empty else "empty_or_invalid_response",
         })
     if prices.empty:
         key, secret = settings.research_alpaca_credentials()

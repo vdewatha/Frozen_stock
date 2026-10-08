@@ -124,6 +124,22 @@ def test_market_import_reports_trusted_fallback_without_synthetic_data():
     assert result["provider_attempts"][1]["status"] == "ready"
 
 
+def test_market_import_replaces_short_nominal_success_with_longer_trusted_history():
+    db = MagicMock()
+    short = history().iloc[:80].copy()
+    short["date"] = pd.date_range("2024-01-01", periods=len(short), freq="D").date
+    long = history().iloc[:120].copy()
+    long["date"] = pd.date_range("2021-01-01", periods=len(long), freq="15D").date
+    with patch.object(market_data, "fetch_yfinance_prices", return_value=short), \
+         patch.object(market_data, "fetch_yahoo_chart_prices", return_value=long), \
+         patch.object(market_data, "upsert_prices", return_value=len(long)):
+        result = market_data.import_market_prices(db, "SPY", period="5y")
+    assert result["source"] == "yahoo_chart"
+    assert result["rows_imported"] == len(long)
+    assert result["provider_attempts"][0]["status"] == "insufficient_coverage"
+    assert result["provider_attempts"][1]["status"] == "ready"
+
+
 def test_market_import_is_explicitly_unavailable_when_trusted_sources_fail():
     db = MagicMock()
     with patch.object(market_data, "fetch_yfinance_prices", return_value=pd.DataFrame()), \
