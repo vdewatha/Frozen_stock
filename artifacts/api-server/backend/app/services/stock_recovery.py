@@ -500,7 +500,14 @@ def resume_stock_paper_after_revalidation(
     if state.cooldown_until and _utc(state.cooldown_until) > now:
         raise StockPaperError(f"Recovery cooldown remains active until {_utc(state.cooldown_until).isoformat()}")
     account = active_paper_account(db, for_update=True)
-    if not account or account.status != "reconciled" or account.reconciliation_required:
+    reconciliation_issue = _heartbeat_issue(
+        account.last_reconciled_at if account else None,
+        now,
+        "broker reconciliation heartbeat",
+    )
+    if not account or account.reconciliation_required or (
+        account.status != "reconciled" and reconciliation_issue
+    ):
         raise StockPaperError("A successful broker reconciliation after recovery is required")
     research_policy_ready = _paper_research_policy_ready(db)
     if account.activity_contract == "alpaca-activities-v2" and (
