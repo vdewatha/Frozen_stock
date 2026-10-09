@@ -21,6 +21,7 @@ from app.services.stock_paper_ledger import (
     StockPaperError,
     active_paper_account,
     create_stock_paper_signal,
+    create_stock_paper_research_signal,
     dispatch_reserved_order,
     reserve_stock_paper_order,
 )
@@ -68,7 +69,10 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
 
     all_strategies = (
         db.query(Strategy)
-        .filter(Strategy.is_active.is_(True), Strategy.current_status == "paper_trading_active")
+        .filter(
+            Strategy.is_active.is_(True),
+            Strategy.current_status.in_({"paper_trading_active", "paper_trading_candidate", "research"}),
+        )
         .order_by(Strategy.id)
         .all()
     )
@@ -90,12 +94,23 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
         for strategy in strategies:
             result = {"symbol": symbol, "strategy": strategy.strategy_type}
             try:
-                signal = create_stock_paper_signal(db, symbol, strategy.strategy_type)
+                # Test doubles and older rows may omit the status field; the
+                # existing cycle contract treated those rows as active.
+                research_only = getattr(strategy, "current_status", "paper_trading_active") != "paper_trading_active"
+                signal = (
+                    create_stock_paper_research_signal(db, symbol, strategy.strategy_type)
+                    if research_only
+                    else create_stock_paper_signal(db, symbol, strategy.strategy_type)
+                )
                 result.update({
                     "signal_id": signal["signal_id"],
                     "signal_action": signal["signal_action"],
                     "reference_price": signal["reference_price"],
                 })
+                if research_only:
+                    result.update({"status": "observed", "reason": "research-only strategy; no order path"})
+                    results.append(result)
+                    continue
                 action = signal["signal_action"]
                 reference_price = Decimal(signal["reference_price"])
                 if action == "BUY":

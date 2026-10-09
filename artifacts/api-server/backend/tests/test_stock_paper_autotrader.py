@@ -106,3 +106,23 @@ def test_cycle_dispatches_only_after_modern_reservation():
     assert result["submitted_count"] == 1
     reserve.assert_called_once()
     dispatch.assert_called_once_with(db, 42)
+
+
+def test_candidate_strategies_are_observed_without_order_path():
+    strategy = SimpleNamespace(id=2, strategy_type="rsi_mean_reversion", current_status="research")
+    db = _Db([strategy])
+    with patch.object(settings, "paper_execution_symbols", ["AAPL"]), \
+         patch("app.services.stock_paper_autotrader.active_paper_account", return_value=_account()), \
+         patch("app.services.stock_paper_autotrader._is_regular_session", return_value=True), \
+         patch("app.services.stock_paper_autotrader.create_stock_paper_research_signal", return_value={
+             "signal_id": 8, "signal_action": "BUY", "reference_price": "100",
+         }) as observe, \
+         patch("app.services.stock_paper_autotrader.reserve_stock_paper_order") as reserve:
+        result = run_stock_paper_signal_cycle(db)
+
+    assert result["signal_count"] == 1
+    assert result["submitted_count"] == 0
+    assert result["blocked_count"] == 0
+    assert result["results"][0]["status"] == "observed"
+    observe.assert_called_once_with(db, "AAPL", "rsi_mean_reversion")
+    reserve.assert_not_called()
