@@ -38,6 +38,7 @@ from app.services.stock_paper_ledger import (
     _approval_digest,
     TradierPaperClient,
     dispatch_reserved_order,
+    create_stock_paper_signal,
     initialize_stock_paper_account,
     reconcile_stock_paper_account,
     reserve_stock_paper_order,
@@ -1053,6 +1054,56 @@ class StockPaperLedgerTests(unittest.TestCase):
                     reserve_stock_paper_order(db, symbol="QQQ", side="buy", quantity=Decimal("0.1"),
                         reference_price=Decimal("100"), idempotency_key="unknown-attribution",
                         source="manual_control_room", signal_id=signal.id)
+
+    def test_generated_signal_ignores_stale_duplicate_strategy_rows(self):
+        with Session(self.engine) as db:
+            from app.models import Strategy, StrategySignal
+
+            stale = Strategy(
+                name="Stale duplicate strategy",
+                strategy_type="moving_average_crossover",
+                parameters={"window": 20},
+                is_active=False,
+                current_status="retired",
+            )
+            active = Strategy(
+                name="Active duplicate strategy",
+                strategy_type="moving_average_crossover",
+                parameters={"window": 10},
+                is_active=True,
+                current_status="paper_trading_active",
+            )
+            db.add_all([stale, active])
+            db.commit()
+
+            generated = type(
+                "GeneratedSignal",
+                (),
+                {
+                    "action": "HOLD",
+                    "probability_up": 0.5,
+                    "probability_down": 0.5,
+                    "confidence": 0.5,
+                    "reason": "test",
+                    "features": {},
+                },
+            )()
+            observation_time = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+            with patch(
+                "app.services.stock_paper_ledger.trusted_history",
+                return_value=(object(), "test"),
+            ), patch(
+                "app.services.stock_paper_ledger.trusted_intraday_observation",
+                return_value={"close": 100, "exchange_timestamp": observation_time},
+            ), patch(
+                "app.services.stock_paper_ledger.get_strategy",
+                return_value=type("StrategyStub", (), {"generate_signal": lambda *_: generated})(),
+            ), patch("app.services.stock_paper_ledger._event"):
+                result = create_stock_paper_signal(db, "SPY", "moving_average_crossover")
+
+            signal = db.query(StrategySignal).one()
+            self.assertEqual(result["signal_id"], signal.id)
+            self.assertEqual(signal.strategy_id, active.id)
 
     def test_signal_bound_buy_requires_active_evidence_and_deterministic_policy(self):
         with Session(self.engine) as db:

@@ -124,6 +124,29 @@ def run_backtest(symbol: str, strategy_slug: str, prices: pd.DataFrame, config: 
         marked_value = cash + (position["quantity"] * mark_price if position else 0)
         equity_curve.append({"date": current_date, "value": round(marked_value, 2)})
 
+    # Realize any position still open at the end of the available history.
+    # The equity curve is already marked to the final close, but leaving the
+    # position out of the trade ledger understates trade count, win rate, and
+    # profit factor for symbols whose final signal remains open.
+    if position:
+        final_bar = prices.iloc[-1]
+        exit_price = float(final_bar["close"]) * (1 - config.slippage_bps / 10_000)
+        proceeds = position["quantity"] * exit_price
+        fee = proceeds * config.fees_bps / 10_000
+        pnl = proceeds - fee - position["cost"]
+        trades.append(
+            {
+                "entry_date": position["entry_date"],
+                "exit_date": str(final_bar["date"]),
+                "entry_price": round(position["entry_price"], 2),
+                "exit_price": round(exit_price, 2),
+                "quantity": round(position["quantity"], 4),
+                "profit_loss": round(pnl, 2),
+                "profit_loss_pct": round(pnl / position["cost"], 4),
+                "exit_reason": "end_of_history",
+            }
+        )
+
     # Anchor risk statistics to capital before the first fill. Otherwise the
     # first evaluated bar's P&L disappears from returns and its loss becomes
     # the initial high-water mark, understating drawdown.

@@ -70,6 +70,27 @@ def test_risk_metrics_include_initial_capital(closes):
         assert result["sharpe_ratio"] == 0
 
 
+def test_backtest_realizes_position_at_end_of_history():
+    prices = pd.DataFrame({
+        "date": pd.date_range("2025-01-01", periods=62),
+        "open": 100.0,
+        "close": [100.0] * 61 + [110.0],
+    })
+    strategy = MagicMock()
+    strategy.generate_signal.return_value = SimpleNamespace(action="BUY", confidence=0.9)
+
+    with patch("app.services.backtester.get_strategy", return_value=strategy):
+        result = run_backtest("MSFT", "test", prices, BacktestConfig(
+            risk_per_trade=0.5, stop_loss_pct=0.5, fees_bps=0, slippage_bps=0,
+        ))
+
+    assert len(result["trades"]) == 1
+    assert result["trades"][0]["exit_reason"] == "end_of_history"
+    assert result["trades"][0]["exit_date"].startswith("2025-03-03")
+    assert result["trades"][0]["profit_loss"] > 0
+    assert result["win_rate"] == 1
+
+
 def test_sortino_uses_downside_rms_over_all_periods():
     returns = pd.Series([-0.10, 0.02, 0.03])
     expected_downside = math.sqrt((0.10 ** 2) / 3)

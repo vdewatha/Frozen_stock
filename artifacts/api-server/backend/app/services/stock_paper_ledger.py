@@ -1892,11 +1892,16 @@ def create_stock_paper_signal(db: Session, symbol: str, strategy_slug: str) -> d
     """Persist a real generated signal only; it creates no reservation or order."""
     symbol = symbol.strip().upper()
     # Strategy type is the public registry key.  A historical database can
-    # contain more than one row for a type, so choose the oldest active row
-    # deterministically instead of turning a scheduled cycle into a failure.
+    # contain more than one row for a type, so choose the oldest currently
+    # paper-approved row deterministically instead of binding the signal to a
+    # stale historical strategy.
     strategy = (
         db.query(Strategy)
-        .filter_by(strategy_type=strategy_slug)
+        .filter_by(
+            strategy_type=strategy_slug,
+            is_active=True,
+            current_status="paper_trading_active",
+        )
         .order_by(Strategy.id)
         .first()
     )
