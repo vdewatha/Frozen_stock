@@ -22,7 +22,7 @@ import { NotificationCenter } from "@/components/notification-center";
 import { OpportunityRadar } from "@/components/opportunity-radar";
 import { ForwardPaperEvaluationPanel } from "@/components/forward-paper-evaluation-panel";
 import { PredictionScanner } from "@/components/prediction-scanner";
-import { ResearchRunsPanel } from "@/components/research-runs-panel";
+import { ResearchControlRoom } from "@/components/research-control-room";
 import { ReadinessChecklist } from "@/components/readiness-checklist";
 import { RegimeMonitorLab } from "@/components/regime-monitor-lab";
 import { RiskSettingsPanel } from "@/components/risk-settings-panel";
@@ -111,7 +111,7 @@ function PageContent({ page, section, dashboard, session }: { page: string; sect
     "markets/iex": <IexResearchPanel />, "markets/consolidated": <DelayedSipPanel />, "markets/history": <MarketLab />, "markets/context": <><RegimeMonitorLab /><EconomicContextLab /><NewsSentimentLab /></>,
     "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,
     "learning/cycles": <StockLearningCyclePanel />, "learning/training": <StockTrainingLab />, "learning/evaluation": <ForwardPaperEvaluationPanel />, "learning/performance": <ModelPerformanceLab />,
-    "research/runs": <ResearchRunsPanel />, "research/experiments": <ExperimentManagerLab />, "research/library": <StrategyLibrary dashboard={dashboard} />, "research/models": <ResearchOnly><ModelLab /></ResearchOnly>, "research/signals": <ResearchOnly><PredictionScanner /><OpportunityRadar /></ResearchOnly>, "research/memory": <ResearchOnly><MemoryReplayPanel /></ResearchOnly>,
+    "research/runs": <ResearchControlRoom />, "research/experiments": <ExperimentManagerLab />, "research/library": <StrategyLibrary dashboard={dashboard} />, "research/models": <ResearchOnly><ModelLab /></ResearchOnly>, "research/signals": <ResearchOnly><PredictionScanner /><OpportunityRadar /></ResearchOnly>, "research/memory": <ResearchOnly><MemoryReplayPanel /></ResearchOnly>,
     "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} />, "risk/broker": <><PaperVenueGovernancePanel /><BrokerSafetyLab /></>, "risk/recovery": <StockRecoveryPanel />,
     "activity/notifications": <NotificationCenter />, "activity/audit": <AuditHistoryPanel />,
     "system/health": <DeploymentMonitorPanel />, "system/monitoring": <StockMonitoringPanel />, "system/hardening": <OperationalHardeningPanel />, "system/live": <><LiveOperationsPanel /><LivePilotPanel /></>, "system/access": <AccessSettings session={session} />,
