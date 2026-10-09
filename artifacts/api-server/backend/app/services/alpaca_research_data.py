@@ -9,6 +9,7 @@ from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -57,6 +58,33 @@ def collection_window(now: datetime) -> tuple[datetime, datetime]:
             return bounds[0], end
         day -= timedelta(days=1)
     raise RuntimeError("No recent exchange session found")
+
+
+def incremental_collection_window(
+    db: Session,
+    now: datetime,
+    *,
+    provider: str = PROVIDER,
+    feed_class: str = FEED,
+    overlap: timedelta = timedelta(minutes=5),
+) -> tuple[datetime, datetime]:
+    """Resume scheduled research polling near the last stored bar."""
+    start, end = collection_window(now)
+    latest = (
+        db.query(IntradayBar)
+        .filter(
+            IntradayBar.provider == provider,
+            IntradayBar.feed_class == feed_class,
+            IntradayBar.timeframe == "1m",
+            IntradayBar.opened_at >= start,
+            IntradayBar.opened_at < end,
+        )
+        .order_by(desc(IntradayBar.opened_at))
+        .first()
+    )
+    if latest is not None:
+        start = max(start, _aware_utc(latest.opened_at) - overlap)
+    return start, end
 
 
 def fetch_iex_bars(symbols: list[str], start: datetime, end: datetime, *, client=None) -> dict[str, list[dict]]:
@@ -121,7 +149,7 @@ def _fetch_research_bars(symbols: list[str], start: datetime, end: datetime, *, 
 
 def collect_iex_research(db: Session, *, now: datetime | None = None) -> dict:
     observed = now or datetime.now(UTC)
-    start, end = collection_window(observed)
+    start, end = incremental_collection_window(db, observed)
     symbols = sorted(ALLOWED_SYMBOLS)
     base = {
         "provider": PROVIDER, "feed_class": FEED, "research_only": True,

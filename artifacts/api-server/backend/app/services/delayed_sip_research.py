@@ -27,6 +27,31 @@ def delayed_window(now: datetime) -> tuple[datetime, datetime]:
     return collection_window(now - timedelta(minutes=DELAY_MINUTES - 1))
 
 
+def incremental_delayed_window(
+    db: Session,
+    now: datetime,
+    *,
+    overlap: timedelta = timedelta(minutes=5),
+) -> tuple[datetime, datetime]:
+    """Resume delayed research polling near the last stored SIP bar."""
+    start, end = delayed_window(now)
+    latest = (
+        db.query(IntradayBar)
+        .filter(
+            IntradayBar.provider == PROVIDER,
+            IntradayBar.feed_class == FEED,
+            IntradayBar.timeframe == "1m",
+            IntradayBar.opened_at >= start,
+            IntradayBar.opened_at < end,
+        )
+        .order_by(IntradayBar.opened_at.desc())
+        .first()
+    )
+    if latest is not None:
+        start = max(start, _aware_utc(latest.opened_at) - overlap)
+    return start, end
+
+
 def fetch_delayed_sip_bars(symbols, start, end, *, now=None, client=None):
     observed = now or datetime.now(UTC)
     if (observed.tzinfo is None or observed.utcoffset() is None
@@ -96,7 +121,7 @@ def collect_delayed_sip_history(db: Session, session_day: date, *, symbols=None,
 
 def collect_delayed_sip(db: Session, *, now=None):
     observed = now or datetime.now(UTC)
-    start, end = delayed_window(observed)
+    start, end = incremental_delayed_window(db, observed)
     symbols = sorted(ALLOWED_SYMBOLS)
     base = {"provider": PROVIDER, "feed_class": FEED, "upstream_feed": "sip",
             "research_only": True, "execution_eligible": False, "synthetic": False,

@@ -148,6 +148,16 @@ def test_idempotent_provenance_comparison_and_execution_isolation(db):
     assert not sip.delayed_sip_status(db, now=NOW + timedelta(minutes=11))["poll_fresh"]
 
 
+def test_scheduled_collection_resumes_near_latest_bar(db):
+    rows = {symbol: [bar(START + timedelta(minutes=offset)) for offset in range(8)] for symbol in sip.ALLOWED_SYMBOLS}
+    with patch.object(sip, "fetch_delayed_sip_bars", return_value=rows):
+        sip.collect_delayed_sip(db, now=NOW)
+        db.commit()
+    start, end = sip.incremental_delayed_window(db, NOW)
+    assert start == START + timedelta(minutes=2)
+    assert end == END
+
+
 def test_storage_boundary_also_rejects_recent_delayed_rows(db):
     with pytest.raises(ValueError, match="cutoff"):
         upsert_intraday_bars(db, "SPY", [bar(END)], ingested_at=NOW, provider=sip.PROVIDER, feed_class=sip.FEED)

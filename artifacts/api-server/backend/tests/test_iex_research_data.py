@@ -52,6 +52,17 @@ def test_window_withholds_unfinished_and_late_correctable_minutes():
         iex.collection_window(NOW.replace(tzinfo=None))
 
 
+def test_scheduled_collection_resumes_near_latest_bar(db):
+    rows = [bar(START + timedelta(minutes=offset)) for offset in range(8)]
+    response = {symbol: rows for symbol in iex.ALLOWED_SYMBOLS}
+    with patch.object(iex, "fetch_iex_bars", return_value=response):
+        iex.collect_iex_research(db, now=NOW)
+        db.commit()
+    start, end = iex.incremental_collection_window(db, NOW)
+    assert start == START + timedelta(minutes=2)
+    assert end == END
+
+
 def test_sdk_requests_iex_raw_and_follows_pages():
     client = Mock()
     client.get.side_effect = [
