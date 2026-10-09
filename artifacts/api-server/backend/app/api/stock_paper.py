@@ -27,6 +27,7 @@ from app.services.stock_paper_ledger import (
 )
 from app.services.stock_recovery import acknowledge_stock_paper_accounting_review, cancel_open_stock_orders, recovery_evidence, recovery_status, rollback_to_last_known_good
 from app.services.stock_training_jobs import StockTrainingError
+from app.tasks.jobs import paper_trading_signal_job
 
 router = APIRouter(prefix="/stock-paper", tags=["stock-paper"])
 
@@ -238,6 +239,37 @@ def resume(payload: StockPaperRevalidationRequest, request: Request, db: Session
         return resume_stock_paper_account(db, reason=payload.reason)
     except StockPaperError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/signal-cycle")
+def dispatch_signal_cycle(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Queue one normal paper signal cycle; never submits an order directly."""
+    _attribute(db, request)
+    from app.services.readiness import readiness_snapshot
+
+    readiness = readiness_snapshot(db)
+    if not readiness["paper_trading_allowed"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Paper signal cycle is blocked by readiness gates",
+                "paper_only": True,
+                "live_trading": False,
+                "readiness": readiness,
+            },
+        )
+    try:
+        task = paper_trading_signal_job.apply_async(queue="paper_trading")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Paper signal queue is unavailable") from exc
+    return {
+        "task_id": task.id,
+        "status": "queued",
+        "queue": "paper_trading",
+        "paper_only": True,
+        "live_trading": False,
+        "message": "Queued one governed paper signal cycle; no direct order was submitted.",
+    }
 
 
 def _order_response(order) -> dict:

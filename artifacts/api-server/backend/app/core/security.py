@@ -76,7 +76,7 @@ OPERATOR_POSTS = {
     "/portfolio/allocation-plan/execute", "/portfolio/risk/actions",
     "/stock/training/binding",
     "/stock/learning-cycles",
-    "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal",
+    "/stock-paper/reconcile", "/stock-paper/halt", "/stock-paper/orders", "/stock-paper/signal", "/stock-paper/signal-cycle",
     "/stock-paper/venue-qualification",
     "/stock-paper/research-venue/qualification", "/stock-paper/recovery/transport-review",
 }

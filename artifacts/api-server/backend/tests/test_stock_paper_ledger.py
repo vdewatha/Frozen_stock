@@ -2082,6 +2082,7 @@ class StockPaperRoleTests(unittest.TestCase):
         self.assertEqual(required_role("POST", "/stock-paper/reconcile"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/halt"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/resume"), "admin")
+        self.assertEqual(required_role("POST", "/stock-paper/signal-cycle"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/orders"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/orders/1/dispatch"), "operator")
         self.assertEqual(required_role("POST", "/stock-paper/positions/SPY/close"), "operator")
