@@ -21,6 +21,7 @@ from app.models import AgentResearchRun, MarketPrice, ModelPrediction, NewsArtic
 UPSTREAM_FRAMEWORK_VERSION = "tradingagents-v0.4.0"
 PROMPT_VERSION = "shadow-research-v1"
 MODEL_NAME = "gpt-5.6-terra"
+ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-4-5"
 ALLOWED_SYMBOLS = frozenset({"AAPL", "MSFT", "QQQ", "SPY"})
 MAX_NEWS_ITEMS = 8
 MAX_NEWS_CHARS = 700
@@ -83,6 +84,23 @@ def _positive_number(value: Any) -> bool:
         return math.isfinite(float(value)) and float(value) > 0
     except (TypeError, ValueError):
         return False
+
+
+def _validate_provider_result(result: Any) -> dict:
+    if (
+        not isinstance(result, dict)
+        or result.get("recommendation") not in {"BUY", "SELL", "HOLD"}
+        or not isinstance(result.get("rationale"), str)
+        or len(result["rationale"].strip()) > 1000
+        or type(result.get("confidence")) not in {int, float}
+        or not 0 <= float(result["confidence"]) <= 1
+        or not isinstance(result.get("limitations"), list)
+        or len(result["limitations"]) > 8
+    ):
+        raise AgentResearchError("LLM provider returned malformed structured research output")
+    result["rationale"] = result["rationale"].strip()
+    result["limitations"] = [_text(item, 240) for item in result["limitations"] if _text(item, 240)]
+    return result
 
 
 def _safe_source_snapshot(db: Session, symbol: str) -> list[dict]:
@@ -177,10 +195,7 @@ def create_agent_research_run(db: Session, *, symbol: str, actor: str) -> tuple[
 
 
 def _provider_request(symbol: str, sources: list[dict]) -> tuple[dict, dict]:
-    base_url = os.getenv("AI_INTEGRATIONS_OPENAI_BASE_URL", "").strip().rstrip("/")
-    api_key = os.getenv("AI_INTEGRATIONS_OPENAI_API_KEY", "").strip()
-    if not base_url or not api_key:
-        raise AgentResearchError("LLM provider is unavailable; configure the supported AI integration")
+    provider = os.getenv("AGENT_RESEARCH_PROVIDER", "openai").strip().lower()
     prompt = (
         "You are the research-only shadow lane based on TradingAgents v0.4.0. "
         "Analyze the bounded, timestamped context below for one symbol. "
@@ -191,6 +206,15 @@ def _provider_request(symbol: str, sources: list[dict]) -> tuple[dict, dict]:
         "limitations (array of strings). Do not use a probability or profit claim. "
         f"Symbol: {symbol}. Context: {json.dumps(sources, ensure_ascii=True, separators=(',', ':'))}"
     )
+    if provider == "anthropic":
+        return _anthropic_provider_request(prompt)
+    if provider not in {"openai", "openai_compatible"}:
+        raise AgentResearchError("Unsupported LLM provider; use openai or anthropic")
+
+    base_url = os.getenv("AI_INTEGRATIONS_OPENAI_BASE_URL", "").strip().rstrip("/")
+    api_key = os.getenv("AI_INTEGRATIONS_OPENAI_API_KEY", "").strip()
+    if not base_url or not api_key:
+        raise AgentResearchError("LLM provider is unavailable; configure the supported AI integration")
     body = {
         "model": MODEL_NAME,
         "max_completion_tokens": 8192,
@@ -215,25 +239,55 @@ def _provider_request(symbol: str, sources: list[dict]) -> tuple[dict, dict]:
         result = json.loads(content)
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
         raise AgentResearchError("LLM provider returned malformed structured research output") from exc
-    if (
-        not isinstance(result, dict)
-        or result.get("recommendation") not in {"BUY", "SELL", "HOLD"}
-        or not isinstance(result.get("rationale"), str)
-        or len(result["rationale"].strip()) > 1000
-        or type(result.get("confidence")) not in {int, float}
-        or not 0 <= float(result["confidence"]) <= 1
-        or not isinstance(result.get("limitations"), list)
-        or len(result["limitations"]) > 8
-    ):
-        raise AgentResearchError("LLM provider returned malformed structured research output")
-    result["rationale"] = result["rationale"].strip()
-    result["limitations"] = [_text(item, 240) for item in result["limitations"] if _text(item, 240)]
+    result = _validate_provider_result(result)
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
     return result, {
         "prompt_tokens": usage.get("prompt_tokens"),
         "completion_tokens": usage.get("completion_tokens"),
         "total_tokens": usage.get("total_tokens"),
         "model": _text(payload.get("model"), 128) or MODEL_NAME,
+    }
+
+
+def _anthropic_provider_request(prompt: str) -> tuple[dict, dict]:
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    base_url = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com").strip().rstrip("/")
+    model = os.getenv("ANTHROPIC_MODEL", ANTHROPIC_DEFAULT_MODEL).strip()
+    if not api_key or not model:
+        raise AgentResearchError("Anthropic provider is unavailable; configure its deployment secrets")
+    body = {
+        "model": model,
+        "max_tokens": 2048,
+        "system": "Output only the requested JSON object.",
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    request = UrlRequest(
+        f"{base_url}/v1/messages",
+        data=json.dumps(body).encode(),
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read(256 * 1024))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        raise AgentResearchError(f"Anthropic provider request failed: {exc.__class__.__name__}") from exc
+    try:
+        content = payload["content"][0]["text"]
+        result = json.loads(content)
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise AgentResearchError("Anthropic provider returned malformed structured research output") from exc
+    result = _validate_provider_result(result)
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    return result, {
+        "prompt_tokens": usage.get("input_tokens"),
+        "completion_tokens": usage.get("output_tokens"),
+        "total_tokens": None,
+        "model": _text(payload.get("model"), 128) or model,
     }
 
 

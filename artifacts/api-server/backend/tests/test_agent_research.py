@@ -183,6 +183,46 @@ class AgentResearchTests(unittest.TestCase):
             with self.assertRaisesRegex(AgentResearchError, "malformed"):
                 _provider_request("AAPL", [{"kind": "daily_price", "close": "1"}])
 
+    def test_anthropic_provider_uses_messages_api_and_validates_output(self):
+        payload = {
+            "model": "claude-sonnet-test",
+            "content": [{
+                "type": "text",
+                "text": json.dumps({
+                    "recommendation": "HOLD",
+                    "rationale": "Insufficient evidence.",
+                    "confidence": 0.5,
+                    "limitations": ["Research-only output"],
+                }),
+            }],
+            "usage": {"input_tokens": 20, "output_tokens": 12},
+        }
+
+        def fake_urlopen(request, timeout):
+            body = json.loads(request.data)
+            self.assertEqual(timeout, 30)
+            self.assertEqual(request.full_url, "https://anthropic.test/v1/messages")
+            self.assertEqual(request.get_header("X-api-key"), "anthropic-test-key")
+            self.assertEqual(request.get_header("Anthropic-version"), "2023-06-01")
+            self.assertEqual(body["model"], "claude-sonnet-test")
+            self.assertNotIn("tools", body)
+            return FakeResponse(payload)
+
+        with patch.dict(
+            "os.environ",
+            {
+                "AGENT_RESEARCH_PROVIDER": "anthropic",
+                "ANTHROPIC_API_KEY": "anthropic-test-key",
+                "ANTHROPIC_BASE_URL": "https://anthropic.test",
+                "ANTHROPIC_MODEL": "claude-sonnet-test",
+            },
+            clear=True,
+        ), patch("app.services.agent_research.urlopen", fake_urlopen):
+            result, usage = _provider_request("AAPL", [{"kind": "daily_price", "close": "1"}])
+        self.assertEqual(result["recommendation"], "HOLD")
+        self.assertEqual(usage["prompt_tokens"], 20)
+        self.assertEqual(usage["completion_tokens"], 12)
+
     def test_unsupported_symbol_is_rejected(self):
         with Session(self.engine) as db:
             with self.assertRaisesRegex(AgentResearchError, "approved four-symbol"):
