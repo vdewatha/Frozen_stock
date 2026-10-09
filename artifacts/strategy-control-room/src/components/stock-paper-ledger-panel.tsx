@@ -14,6 +14,7 @@ import {
   initializeStockPaperAccount,
   closeStockPaperPosition,
   dispatchStockPaperOrder,
+  dispatchStockPaperSignalCycle,
   reduceStockPaperPosition,
   reconcileStockPaperAccount,
   reserveStockPaperOrder,
@@ -287,6 +288,19 @@ export function StockPaperLedgerPanel() {
     }
   }
 
+  async function runSignalCycle() {
+    setIsBusy(true);
+    setStatusMessage("Checking readiness and queueing governed paper signal cycle");
+    try {
+      const result = await dispatchStockPaperSignalCycle();
+      setStatusMessage(`Paper signal cycle queued (${result.task_id})`);
+    } catch (error) {
+      setStatusMessage(getErrorMessage(error, "Paper signal cycle was not queued."));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function submitHalt({ reason }: HaltFormValues) {
     const trimmedReason = reason.trim();
     const completed = await runAction(
@@ -510,6 +524,16 @@ export function StockPaperLedgerPanel() {
               >
                 <RefreshCw size={15} />
                 Reconcile
+              </button>
+              <button
+                className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-mint disabled:opacity-60"
+                data-testid="button-run-stock-paper-signal-cycle"
+                disabled={isBusy}
+                onClick={() => void runSignalCycle()}
+                type="button"
+              >
+                <Play size={15} />
+                Run paper cycle
               </button>
             </RoleGate>
           ) : null}

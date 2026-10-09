@@ -1979,6 +1979,19 @@ export async function reconcileStockPaperAccount(): Promise<StockPaperStatus> {
   return postJson<StockPaperStatus>("/stock-paper/reconcile", {});
 }
 
+export type StockPaperSignalCycleResponse = {
+  task_id: string;
+  status: string;
+  queue: string;
+  paper_only: true;
+  live_trading: false;
+  message: string;
+};
+
+export async function dispatchStockPaperSignalCycle(): Promise<StockPaperSignalCycleResponse> {
+  return postJson<StockPaperSignalCycleResponse>("/stock-paper/signal-cycle", {});
+}
+
 export async function haltStockPaperAccount(reason: string): Promise<StockPaperStatus> {
   return postJson<StockPaperStatus>("/stock-paper/halt", { reason });
 }
