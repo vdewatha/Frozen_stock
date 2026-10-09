@@ -55,6 +55,7 @@ from app.services.stock_learning_cycle import (
     sync_cycle_observability,
 )
 from app.services.agent_research import run_agent_research, refresh_agent_research_evaluations
+from app.services.scalp_research import run_scalp_research
 
 logger = logging.getLogger(__name__)
 
@@ -1001,6 +1002,12 @@ def agent_research_job(run_id: str) -> dict:
         f"agent_research_job:{run_id}",
         lambda db: run_agent_research(db, run_id),
     )
+
+
+@celery_app.task(soft_time_limit=45, time_limit=55)
+def scalp_research_job(run_id: str) -> dict:
+    """Run isolated 1-minute paper research without broker access."""
+    return _run_job(f"scalp_research_job:{run_id}", lambda db: run_scalp_research(db, run_id))
 
 @celery_app.task
 def recover_stock_training_jobs_job() -> dict:

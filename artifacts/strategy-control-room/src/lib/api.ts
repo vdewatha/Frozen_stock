@@ -1850,6 +1850,22 @@ export async function startAgentResearch(symbol: string): Promise<AgentResearchR
   return postJson<AgentResearchRun & { deduplicated: boolean }>("/research/agent-runs", { symbol });
 }
 
+export type ScalpResearchRun = {
+  run_id: string; symbols: string[]; timeframe: string; status: string; eligible_for_trading: false;
+  data_snapshot: Record<string, { bars?: number; latest?: string | null }>;
+  metrics: Record<string, unknown>; assumptions: Record<string, unknown>; error: string | null;
+  created_at: string; started_at: string | null; completed_at: string | null;
+};
+
+export async function getScalpResearchRuns(): Promise<{ items: ScalpResearchRun[]; paper_only: true }> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/research/scalp/runs?limit=20`, { cache: "no-store" });
+  return handleResponse<{ items: ScalpResearchRun[]; paper_only: true }>(response);
+}
+
+export async function startScalpResearch(symbols: string[]): Promise<ScalpResearchRun> {
+  return postJson<ScalpResearchRun>("/research/scalp/runs", { symbols });
+}
+
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const response = await authenticatedFetch(`${API_BASE_URL}${path}`, {
     method: "POST",

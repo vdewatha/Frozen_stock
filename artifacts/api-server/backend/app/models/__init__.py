@@ -21,6 +21,7 @@ from app.models.models import (
     RiskRule,
     ResearchModelRun,
     AgentResearchRun,
+    ScalpResearchRun,
     AgentResearchReport,
     StockDatasetSnapshot,
     StockHoldoutConsumption,

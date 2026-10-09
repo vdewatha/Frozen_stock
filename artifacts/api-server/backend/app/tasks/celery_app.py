@@ -10,6 +10,7 @@ from app.core.config import settings
 
 INTRADAY_MARKET_DATA_QUEUE = "intraday_market_data"
 RESEARCH_MARKET_DATA_QUEUE = "research_market_data"
+SCALP_RESEARCH_QUEUE = "scalp_research"
 MONITORING_QUEUE = "monitoring"
 GENERAL_WORKER_QUEUES = frozenset({"default", "market_data", "learning", "paper_trading", "risk"})
 OBSERVATION_TASKS = frozenset({
@@ -33,6 +34,7 @@ celery_app.conf.task_queues = (
     Queue("market_data", Exchange("market_data"), routing_key="market_data"),
     Queue(INTRADAY_MARKET_DATA_QUEUE, Exchange(INTRADAY_MARKET_DATA_QUEUE), routing_key=INTRADAY_MARKET_DATA_QUEUE),
     Queue(RESEARCH_MARKET_DATA_QUEUE, Exchange(RESEARCH_MARKET_DATA_QUEUE), routing_key=RESEARCH_MARKET_DATA_QUEUE),
+    Queue(SCALP_RESEARCH_QUEUE, Exchange(SCALP_RESEARCH_QUEUE), routing_key=SCALP_RESEARCH_QUEUE),
     Queue("learning", Exchange("learning"), routing_key="learning"),
     Queue("paper_trading", Exchange("paper_trading"), routing_key="paper_trading"),
     Queue("risk", Exchange("risk"), routing_key="risk"),
@@ -44,6 +46,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.delayed_sip_collection_job": {"queue": RESEARCH_MARKET_DATA_QUEUE},
     "app.tasks.jobs.iex_research_collection_job": {"queue": RESEARCH_MARKET_DATA_QUEUE},
     "app.tasks.jobs.agent_research_job": {"queue": RESEARCH_MARKET_DATA_QUEUE},
+    "app.tasks.jobs.scalp_research_job": {"queue": SCALP_RESEARCH_QUEUE},
     "app.tasks.jobs.daily_market_data_import": {"queue": "market_data"},
     "app.tasks.jobs.intraday_market_data_import": {"queue": INTRADAY_MARKET_DATA_QUEUE},
     "app.tasks.jobs.daily_economic_data_import": {"queue": "market_data"},

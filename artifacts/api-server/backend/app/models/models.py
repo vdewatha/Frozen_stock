@@ -535,6 +535,35 @@ class AgentResearchRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class ScalpResearchRun(Base):
+    """Independent, paper-only intraday research; never an order authority."""
+
+    __tablename__ = "scalp_research_runs"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_scalp_research_run_id"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed', 'blocked')",
+            name="ck_scalp_research_run_status",
+        ),
+        CheckConstraint("eligible_for_trading = false", name="ck_scalp_research_run_ineligible"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    symbols: Mapped[list] = mapped_column(JSON, nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(8), nullable=False, default="1m")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued", index=True)
+    eligible_for_trading: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    data_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    assumptions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class AgentResearchReport(Base):
     """Immutable, structured snapshots of the comparison research projection."""
 
