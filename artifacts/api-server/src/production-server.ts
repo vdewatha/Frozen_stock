@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 
 import { clerkMiddleware, getAuth } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
@@ -85,6 +85,22 @@ function roleMappings(): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+// The hosted supervisor does not use the local Docker migration service. Apply
+// the checked-in schema before starting FastAPI so a new release cannot boot
+// against a database that is missing one of its required tables.
+const migration = spawnSync(
+  "python3.11",
+  ["-m", "alembic", "upgrade", "head"],
+  {
+    cwd: new URL("../backend", import.meta.url),
+    env: runtimeEnv,
+    stdio: "inherit",
+  },
+);
+if (migration.status !== 0) {
+  throw new Error(`Database migration failed with exit code ${migration.status ?? "unknown"}`);
 }
 
 const python = spawn(
