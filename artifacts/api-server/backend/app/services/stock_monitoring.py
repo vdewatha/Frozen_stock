@@ -225,9 +225,14 @@ def _freshness_and_provenance(db: Session) -> dict:
                 "unavailable_reason": status.get("unavailable_reason"),
             }
             execution_status = status.get("execution_status") or status.get("status")
-            if execution_status in {"ready", "market_closed"} and status.get("status") == "incomplete":
+            execution_feed_usable = (
+                execution_status in {"ready", "market_closed"}
+                and status.get("entitlement_state") == "verified"
+                and status.get("exchange_timestamp") is not None
+            )
+            if execution_feed_usable and status.get("status") == "incomplete":
                 historical_warnings[asset.symbol] = status.get("unavailable_reason") or "Historical repair gaps remain"
-            elif execution_status not in {"ready", "market_closed"}:
+            elif not execution_feed_usable:
                 failures[asset.symbol] = execution_status or status.get("status", "unavailable")
         except Exception as exc:
             failures[asset.symbol] = exc.__class__.__name__
