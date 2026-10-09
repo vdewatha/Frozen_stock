@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import time
 from typing import Optional
 
 import redis
@@ -36,26 +37,51 @@ def _status_from_count(failing: int, warning: int = 0) -> str:
 def _scheduler_health() -> dict:
     """Configuration is informational; health requires worker and beat evidence."""
     job_names = sorted(celery_app.conf.beat_schedule.keys())
-    try:
-        workers = celery_app.control.inspect(timeout=2).ping() or {}
-        worker_names = sorted(workers)
-    except Exception as exc:
-        worker_names = []
-        worker_error = exc.__class__.__name__
-    else:
-        worker_error = None
+    worker_names: list[str] = []
+    worker_error = None
+    # A single inspect ping can time out while a worker is busy or reconnecting.
+    # Retry the bounded probe before declaring the paper path unhealthy; a
+    # sustained failure still remains fail-closed.
+    for attempt in range(3):
+        try:
+            workers = celery_app.control.inspect(timeout=1.5).ping() or {}
+            worker_names = sorted(workers)
+            worker_error = None
+            if worker_names:
+                break
+            worker_error = "empty_worker_ping"
+        except Exception as exc:
+            worker_names = []
+            worker_error = exc.__class__.__name__
+        if attempt < 2:
+            time.sleep(0.25)
+
     evidence: list[str] = []
     beat_error = None
-    try:
-        client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
-        for pattern in ("celery:beat:heartbeat*", "celery:beat:lease*", "celerybeat-heartbeat*"):
-            evidence.extend(
-                key.decode() if isinstance(key, bytes) else key
-                for key in client.scan_iter(match=pattern)
+    for attempt in range(3):
+        try:
+            client = redis.Redis.from_url(
+                settings.redis_url, socket_connect_timeout=2, socket_timeout=2,
             )
-        evidence = sorted(set(evidence))
-    except Exception as exc:
-        beat_error = exc.__class__.__name__
+            try:
+                found: list[str] = []
+                for pattern in ("celery:beat:heartbeat*", "celery:beat:lease*", "celerybeat-heartbeat*"):
+                    found.extend(
+                        key.decode() if isinstance(key, bytes) else key
+                        for key in client.scan_iter(match=pattern)
+                    )
+                evidence = sorted(set(found))
+            finally:
+                client.close()
+            beat_error = None
+            if evidence:
+                break
+            beat_error = "empty_beat_evidence"
+        except Exception as exc:
+            evidence = []
+            beat_error = exc.__class__.__name__
+        if attempt < 2:
+            time.sleep(0.25)
     recent_job_failures = None
     return {
         "configured_jobs": job_names,
