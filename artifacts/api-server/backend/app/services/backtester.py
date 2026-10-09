@@ -44,6 +44,19 @@ def rejection_reasons(metrics: dict) -> list[str]:
     return reasons
 
 
+def downside_deviation(returns: pd.Series) -> float:
+    """Return per-period downside RMS deviation around a zero target.
+
+    Sortino's denominator is conventionally the root mean square of negative
+    returns over *all* periods, not the sample standard deviation of the
+    subset of negative observations.  Including zeroes for non-loss periods
+    also keeps sparse-loss series comparable and avoids a two-observation
+    special case.
+    """
+    negative = returns.clip(upper=0.0)
+    return float((negative.pow(2).mean() ** 0.5)) if len(returns) else 0.0
+
+
 def run_backtest(symbol: str, strategy_slug: str, prices: pd.DataFrame, config: Optional[BacktestConfig] = None, parameters: Optional[dict] = None) -> dict:
     config = config or BacktestConfig()
     strategy = get_strategy(strategy_slug, parameters)
@@ -120,8 +133,8 @@ def run_backtest(symbol: str, strategy_slug: str, prices: pd.DataFrame, config: 
     total_return = ending_value / config.starting_cash - 1
     annualized_return = (1 + total_return) ** (252 / max(len(equity_curve), 1)) - 1
     sharpe = (returns.mean() / returns.std() * math.sqrt(252)) if len(returns) > 1 and returns.std() else 0
-    downside = returns[returns < 0]
-    sortino = (returns.mean() / downside.std() * math.sqrt(252)) if len(downside) > 1 and downside.std() else 0
+    downside = downside_deviation(returns)
+    sortino = (returns.mean() / downside * math.sqrt(252)) if downside else 0
     drawdown = (values / values.cummax() - 1).min() if len(values) else 0
     wins = [trade for trade in trades if trade["profit_loss"] > 0]
     losses = [trade for trade in trades if trade["profit_loss"] <= 0]

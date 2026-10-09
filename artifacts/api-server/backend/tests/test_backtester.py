@@ -5,7 +5,7 @@ import math
 import pandas as pd
 import pytest
 
-from app.services.backtester import BacktestConfig, run_backtest
+from app.services.backtester import BacktestConfig, downside_deviation, run_backtest
 
 
 def test_backtest_uses_prior_bar_signal_and_next_open_fill():
@@ -68,3 +68,9 @@ def test_risk_metrics_include_initial_capital(closes):
         assert result["sharpe_ratio"] == round(mean / sample_std * math.sqrt(252), 4)
     else:
         assert result["sharpe_ratio"] == 0
+
+
+def test_sortino_uses_downside_rms_over_all_periods():
+    returns = pd.Series([-0.10, 0.02, 0.03])
+    expected_downside = math.sqrt((0.10 ** 2) / 3)
+    assert downside_deviation(returns) == pytest.approx(expected_downside)

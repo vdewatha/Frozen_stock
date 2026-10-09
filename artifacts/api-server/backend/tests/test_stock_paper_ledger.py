@@ -120,6 +120,8 @@ class StockPaperLedgerTests(unittest.TestCase):
             "alpaca_paper",
         )
         self.active_broker_patch.start()
+        self.account_binding_patch = patch.object(settings, "paper_broker_account_id", "")
+        self.account_binding_patch.start()
         self.tmp = tempfile.TemporaryDirectory()
         self.engine = create_engine("sqlite:///" + str(Path(self.tmp.name) / "ledger.sqlite"))
         Base.metadata.create_all(self.engine)
@@ -127,6 +129,7 @@ class StockPaperLedgerTests(unittest.TestCase):
     def tearDown(self):
         self.engine.dispose()
         self.tmp.cleanup()
+        self.account_binding_patch.stop()
         self.active_broker_patch.stop()
 
     @staticmethod
@@ -1111,6 +1114,8 @@ class StockPaperRecoveryTests(unittest.TestCase):
             "alpaca_paper",
         )
         self.active_broker_patch.start()
+        self.account_binding_patch = patch.object(settings, "paper_broker_account_id", "")
+        self.account_binding_patch.start()
         self.tmp = tempfile.TemporaryDirectory()
         self.engine = create_engine("sqlite:///" + str(Path(self.tmp.name) / "recovery.sqlite"))
         Base.metadata.create_all(self.engine)
@@ -1118,6 +1123,7 @@ class StockPaperRecoveryTests(unittest.TestCase):
     def tearDown(self):
         self.engine.dispose()
         self.tmp.cleanup()
+        self.account_binding_patch.stop()
         self.active_broker_patch.stop()
 
     def test_recovery_evidence_export_is_identifier_only_and_digest_bound(self):
