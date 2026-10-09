@@ -64,6 +64,20 @@ ONE_SESSION_POLICY = {
     "remaining_position_policy": "hold",
 }
 
+
+def _trial_execution_symbols(trial: StockPaperTrial) -> list[str]:
+    """Return the trial universe currently admitted for paper execution.
+
+    A frozen research universe can contain symbols that are intentionally
+    research-only while their execution feed is repaired. Keep those symbols
+    in evidence, but do not let their research gaps block an otherwise valid
+    paper execution subset.
+    """
+    configured = {str(value).strip().upper() for value in settings.paper_execution_symbols}
+    universe = [str(value).strip().upper() for value in trial.lineage.get("universe", []) if str(value).strip()]
+    selected = [symbol for symbol in universe if symbol in configured]
+    return selected or universe
+
 def _json_safe(value):
     """Keep JSON audit and lineage columns free of database Decimal values."""
     if isinstance(value, Decimal):
@@ -827,6 +841,7 @@ def trial_feed_preflight(
     """Return safe, current-session feed and paper-ledger readiness evidence."""
     observed_at = now or _now()
     symbols = [str(value).upper() for value in trial.lineage.get("universe", [])]
+    execution_symbols = set(_trial_execution_symbols(trial))
     statuses = []
     bounds = session_bounds(observed_at.astimezone(NY).date())
     in_session = bool(bounds and bounds[0] <= observed_at < bounds[1])
@@ -854,6 +869,7 @@ def trial_feed_preflight(
             statuses.append(
                 {
                     "symbol": symbol,
+                    "execution_required": symbol in execution_symbols,
                     "status": status.get("status"),
                     # Historical completeness is a research-quality property.
                     # Paper admission uses the separately reported current
@@ -911,8 +927,8 @@ def trial_feed_preflight(
         and (paper_execution.get("ready") is True or legacy_fixture_outside_session)
     )
     # The approved trial is the four-symbol frozen universe and must only be
-    # resumed from an active regular-session preflight. Older synthetic
-    # one-symbol fixtures remain usable for non-operational unit coverage.
+    # resumed from an active regular-session preflight. Research-only symbols
+    # remain visible above but are excluded from the execution feed gate.
     feed_configuration_valid = (
         settings.active_market_data_provider.strip().lower() == MARKET_DATA_PROVIDER
     )
@@ -921,7 +937,11 @@ def trial_feed_preflight(
             feed_configuration_valid
             and in_session
             and bool(statuses)
-            and all(item["execution_status"] == "ready" and item["entitlement_state"] == "verified" for item in statuses)
+            and all(
+                item["execution_status"] == "ready" and item["entitlement_state"] == "verified"
+                for item in statuses
+                if item["symbol"] in execution_symbols
+            )
         )
         if frozen_universe
         else (
@@ -936,7 +956,8 @@ def trial_feed_preflight(
     failures = [
         f"{item['symbol']}: {item.get('unavailable_reason') or item['execution_status']}"
         for item in statuses
-        if item["execution_status"] != "ready" or item["entitlement_state"] != "verified"
+        if item["symbol"] in execution_symbols
+        and (item["execution_status"] != "ready" or item["entitlement_state"] != "verified")
     ]
     if not feed_configuration_valid:
         reason = "Tradier production market-data feed is not configured"
@@ -955,6 +976,8 @@ def trial_feed_preflight(
         "regular_session": in_session,
         "next_regular_session_open": next_open,
         "symbols": statuses,
+        "execution_symbols": sorted(execution_symbols),
+        "research_only_symbols": sorted(set(symbols) - execution_symbols),
         "paper_ledger": {
             "status": "ready" if ledger_ready else "blocked",
             "reason": None if ledger_ready else (paper_execution.get("blockers") or ["Paper execution policy is not ready"])[0],
@@ -1356,8 +1379,16 @@ def observe_trial(db: Session, trial_id: str) -> dict:
             "reason": "trial_started_mid_session_wait_next_session",
             "paper_only": True,
         }
+    execution_symbols = set(_trial_execution_symbols(trial))
+    open_lot_symbols = {
+        str(lot.symbol).upper()
+        for lot in db.scalars(select(StockPaperTrialLot).where(StockPaperTrialLot.trial_id == trial.id)).all()
+        if lot.exit_status != "closed"
+    }
     feed_checks = {}
     for symbol in trial.lineage.get("universe", []):
+        if str(symbol).upper() not in execution_symbols | open_lot_symbols:
+            continue
         try:
             status = feed_status(db, symbol, now=now)
         except Exception as exc:
@@ -1387,7 +1418,10 @@ def observe_trial(db: Session, trial_id: str) -> dict:
             "reason": accounting_reason,
             "paper_only": True,
         }
-    symbols = trial.lineage.get("universe", [])
+    symbols = [
+        symbol for symbol in trial.lineage.get("universe", [])
+        if str(symbol).upper() in execution_symbols
+    ]
     artifact = Path(getattr(db.get(StockModelRegistry, trial.lineage["model_run_id"]), "artifact_path", ""))
     model_path, calibrator_path = artifact / "selected_model.joblib", artifact / "calibrator.joblib"
     if not model_path.is_file() or not calibrator_path.is_file():

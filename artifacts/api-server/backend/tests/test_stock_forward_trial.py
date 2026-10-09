@@ -957,6 +957,49 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertNotIn("sip-test-key", json.dumps(sip_audit.payload))
             self.assertNotIn("raw_payload", json.dumps(sip_audit.payload))
 
+    def test_research_only_feed_gap_does_not_block_execution_subset(self):
+        now = datetime(2026, 9, 11, 15, 0, tzinfo=timezone.utc)
+        symbols = ("AAPL", "MSFT", "QQQ", "SPY")
+        with Session(self.engine) as db:
+            row = self.trial(db, status="paused", universe=symbols)
+            self.account(db)
+
+            def feed(_db, symbol, now=None):
+                symbol = symbol.upper()
+                if symbol in {"AAPL", "SPY"}:
+                    return {
+                        "symbol": symbol,
+                        "status": "ready",
+                        "execution_status": "ready",
+                        "entitlement_state": "verified",
+                        "missing_intervals": [],
+                    }
+                return {
+                    "symbol": symbol,
+                    "status": "incomplete",
+                    "execution_status": "incomplete",
+                    "entitlement_state": "verified",
+                    "missing_intervals": ["2026-09-11T14:00:00+00:00"],
+                    "unavailable_reason": "Missing completed regular-session intervals",
+                }
+
+            with patch.object(settings, "paper_execution_symbols", ["AAPL", "SPY"]), \
+                 patch.object(settings, "active_market_data_provider", "alpaca_iex"), \
+                 patch("app.services.stock_forward_trial.MARKET_DATA_PROVIDER", "alpaca_iex"), \
+                 patch("app.services.stock_forward_trial.feed_status", side_effect=feed), \
+                 patch("app.services.broker.stock_paper_broker_status", return_value={
+                     "paper_execution": {"ready": True, "blockers": []},
+                 }):
+                evidence = trial_feed_preflight(db, row, now=now)
+
+            self.assertTrue(evidence["ready"])
+            self.assertEqual(evidence["execution_symbols"], ["AAPL", "SPY"])
+            self.assertEqual(evidence["research_only_symbols"], ["MSFT", "QQQ"])
+            self.assertEqual(
+                [item["symbol"] for item in evidence["symbols"] if item["execution_required"]],
+                ["AAPL", "SPY"],
+            )
+
     def test_successful_resume_audits_operator_and_preflight_without_rebinding(self):
         with Session(self.engine) as db:
             row = self.trial(db, status="paused")
