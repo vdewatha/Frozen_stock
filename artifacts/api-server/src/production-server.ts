@@ -147,6 +147,9 @@ function supervisePaperWorker(args: string[], label: string): ChildProcess {
 if (paperWorkersEnabled) {
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=intraday@%h", "--queues=intraday_market_data", "--concurrency=1"], "intraday");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=research@%h", "--queues=research_market_data", "--concurrency=1"], "research");
+  // Keep the isolated scalp lane independent so its research jobs cannot sit
+  // behind the broader market-data queue.
+  supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=scalp-research@%h", "--queues=scalp_research", "--concurrency=1"], "scalp-research");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=market@%h", "--queues=default,market_data", "--concurrency=1"], "market");
   for (let replica = 1; replica <= learningReplicas; replica += 1) {
     supervisePaperWorker([
