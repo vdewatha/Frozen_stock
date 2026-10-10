@@ -14,7 +14,7 @@ router = APIRouter(prefix="/research/scalp", tags=["scalp research"])
 
 class StartScalpResearchBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    symbols: list[str] = Field(default=["AAPL", "MSFT", "SPY"], min_length=1, max_length=4)
+    symbols: list[str] = Field(default=["AAPL", "MSFT", "SPY", "QQQ"], min_length=1, max_length=4)
 
 
 @router.post("/runs", status_code=202)
