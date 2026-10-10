@@ -124,6 +124,10 @@ services:
     <<: *runtime
     command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=research@%h", "--queues=research_market_data", "--concurrency=1"]
 
+  scalp-research:
+    <<: *runtime
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=scalp-research@%h", "--queues=scalp_research", "--concurrency=1"]
+
   monitoring:
     <<: *runtime
     command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=monitor@%h", "--queues=monitoring", "--concurrency=1"]

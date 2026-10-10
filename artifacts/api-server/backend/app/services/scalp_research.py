@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, pstdev
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import IntradayBar, ScalpResearchRun
@@ -183,11 +183,18 @@ def create_scalp_research_run(db: Session, *, symbols: list[str], actor: str) ->
 
 
 def run_scalp_research(db: Session, run_id: str) -> dict:
+    claimed_at = _now()
+    claimed = db.execute(
+        update(ScalpResearchRun)
+        .where(ScalpResearchRun.run_id == run_id, ScalpResearchRun.status == "queued")
+        .values(status="running", started_at=claimed_at)
+    ).rowcount
+    db.commit()
     row = db.scalar(select(ScalpResearchRun).where(ScalpResearchRun.run_id == run_id))
     if row is None:
         return {"status": "missing", "run_id": run_id}
-    row.status, row.started_at = "running", _now()
-    db.commit()
+    if not claimed:
+        return {"status": row.status, "run_id": run_id}
     try:
         metrics, snapshot = {}, {}
         for symbol in row.symbols:
@@ -197,10 +204,11 @@ def run_scalp_research(db: Session, run_id: str) -> dict:
                 metrics[symbol] = {"status": "blocked", "reason": "at least 60 trusted 1-minute bars are required"}
                 continue
             closes = [float(bar.close) for bar in bars]
+            validation = _validation_metrics(closes)
             metrics[symbol] = {
-                "status": "complete",
+                "status": "complete" if validation["status"] == "complete" else "blocked",
                 "strategies": _metrics(closes),
-                "validation": _validation_metrics(closes),
+                "validation": validation,
             }
         row.data_snapshot, row.metrics = snapshot, metrics
         row.status = "completed" if any(item.get("status") == "complete" for item in metrics.values()) else "blocked"
