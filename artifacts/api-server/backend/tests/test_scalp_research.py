@@ -1,4 +1,11 @@
-from app.services.scalp_research import _metrics, _validation_metrics, create_scalp_research_run
+from datetime import datetime, timedelta, timezone
+
+from app.services.scalp_research import (
+    _metrics,
+    _validation_metrics,
+    create_scalp_research_run,
+    expire_stale_scalp_research_runs,
+)
 
 
 def test_scalp_metrics_are_separate_and_cost_adjusted():
@@ -40,3 +47,25 @@ def test_scalp_run_rejects_unapproved_symbols():
             assert "supports only" in str(exc)
         else:
             raise AssertionError("unapproved symbol was accepted")
+
+
+def test_stale_scalp_queue_rows_are_blocked_without_replay():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from app.models import ScalpResearchRun
+
+    engine = create_engine("sqlite://")
+    ScalpResearchRun.__table__.create(engine)
+    with Session(engine) as db:
+        row = ScalpResearchRun(
+            run_id="stale-run", requested_by="test", symbols=["AAPL"],
+            timeframe="1m", status="queued", data_snapshot={}, metrics={}, assumptions={},
+            created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        )
+        db.add(row)
+        db.commit()
+        result = expire_stale_scalp_research_runs(db)
+        db.refresh(row)
+        assert result["expired_run_ids"] == ["stale-run"]
+        assert row.status == "blocked"
+        assert "expired" in row.error
