@@ -86,11 +86,13 @@ class MonitorSecurityTests(unittest.TestCase):
             "intraday@host": {"ok": "pong"},
             "general@host": {"ok": "pong"},
             "research@host": {"ok": "pong"},
+            "scalp@host": {"ok": "pong"},
         }
         inspector.active_queues.return_value = {
             "intraday@host": [{"name": "intraday_market_data"}],
             "general@host": [{"name": name} for name in deployment_monitor.GENERAL_WORKER_QUEUES],
             "research@host": [{"name": "research_market_data"}],
+            "scalp@host": [{"name": "scalp_research"}],
         }
         with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector), patch.object(
             deployment_monitor.celery_app, "send_task"
@@ -102,6 +104,7 @@ class MonitorSecurityTests(unittest.TestCase):
         self.assertEqual(result["details"]["dedicated_intraday_workers"], ["intraday@host"])
         self.assertEqual(result["details"]["general_workers"], ["general@host"])
         self.assertEqual(result["details"]["dedicated_research_workers"], ["research@host"])
+        self.assertEqual(result["details"]["dedicated_scalp_research_workers"], ["scalp@host"])
         self.assertEqual(result["details"]["worker_queues"]["intraday@host"], ["intraday_market_data"])
         self.assertEqual(result["details"]["worker_queues"]["general@host"], sorted(deployment_monitor.GENERAL_WORKER_QUEUES))
         inspector.ping.assert_called_once_with()
@@ -114,11 +117,13 @@ class MonitorSecurityTests(unittest.TestCase):
             "intraday@host": {"ok": "pong"},
             "general@host": {"ok": "pong"},
             "research@host": {"ok": "pong"},
+            "scalp@host": {"ok": "pong"},
         }
         inspector.active_queues.return_value = {
             "intraday@host": [{"name": "intraday_market_data"}],
             "general@host": [{"name": name} for name in deployment_monitor.GENERAL_WORKER_QUEUES],
             "research@host": [{"name": "research_market_data"}],
+            "scalp@host": [{"name": "scalp_research"}],
         }
         inspector.registered.return_value = {
             "intraday@host": ["app.tasks.jobs.intraday_market_data_import"],
@@ -133,7 +138,7 @@ class MonitorSecurityTests(unittest.TestCase):
 
     def test_worker_evidence_requires_every_queue_and_allows_separate_pools(self):
         inspector = MagicMock()
-        queues = deployment_monitor.GENERAL_WORKER_QUEUES | {"intraday_market_data", "research_market_data"}
+        queues = deployment_monitor.GENERAL_WORKER_QUEUES | {"intraday_market_data", "research_market_data", "scalp_research"}
         inspector.ping.return_value = {name: {"ok": "pong"} for name in queues}
         inspector.active_queues.return_value = {name: [{"name": name}] for name in queues}
         with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):

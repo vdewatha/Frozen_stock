@@ -18,6 +18,7 @@ from app.tasks.celery_app import (
     GENERAL_WORKER_QUEUES,
     INTRADAY_MARKET_DATA_QUEUE,
     RESEARCH_MARKET_DATA_QUEUE,
+    SCALP_RESEARCH_QUEUE,
     celery_app,
 )
 
@@ -28,6 +29,7 @@ REQUIRED_REGISTERED_TASKS = frozenset(
         "app.tasks.jobs.intraday_market_data_import",
         "app.tasks.jobs.model_realization_scoring_job",
         "app.tasks.jobs.paper_trading_signal_job",
+        "app.tasks.jobs.scalp_research_job",
     }
 )
 
@@ -164,10 +166,16 @@ def _check_celery_workers() -> dict:
                 "research_worker_count": 0,
                 "dedicated_research_workers": [],
                 "dedicated_research_worker_count": 0,
+                "scalp_research_workers": [],
+                "scalp_research_worker_count": 0,
+                "dedicated_scalp_research_workers": [],
+                "dedicated_scalp_research_worker_count": 0,
                 "worker_queues": {},
                 "missing_general_queues": sorted(GENERAL_WORKER_QUEUES),
                 "required_research_queue": RESEARCH_MARKET_DATA_QUEUE,
                 "missing_research_queue": True,
+                "required_scalp_research_queue": SCALP_RESEARCH_QUEUE,
+                "missing_scalp_research_queue": True,
                 "registered_tasks": {},
                 "missing_registered_tasks": sorted(REQUIRED_REGISTERED_TASKS),
                 "error_type": exc.__class__.__name__,
@@ -203,6 +211,16 @@ def _check_celery_workers() -> dict:
         for worker, queues in worker_queues.items()
         if queues == [RESEARCH_MARKET_DATA_QUEUE]
     )
+    scalp_research_workers = sorted(
+        worker
+        for worker, queues in worker_queues.items()
+        if SCALP_RESEARCH_QUEUE in queues
+    )
+    dedicated_scalp_research_workers = sorted(
+        worker
+        for worker, queues in worker_queues.items()
+        if queues == [SCALP_RESEARCH_QUEUE]
+    )
     general_workers = sorted(
         worker
         for worker, queues in worker_queues.items()
@@ -211,6 +229,7 @@ def _check_celery_workers() -> dict:
     served_queues = {queue for queues in worker_queues.values() for queue in queues}
     missing_general_queues = sorted(GENERAL_WORKER_QUEUES - served_queues)
     missing_research_queue = not dedicated_research_workers
+    missing_scalp_research_queue = not dedicated_scalp_research_workers
     registered_tasks = {
         worker: sorted(set(tasks or []))
         for worker, tasks in registered_responses.items()
@@ -236,6 +255,11 @@ def _check_celery_workers() -> dict:
             "No dedicated Celery worker is listening exclusively to the research "
             "market-data queue; delayed observations are blocked."
         )
+    elif missing_scalp_research_queue:
+        message = (
+            "No dedicated Celery worker is listening exclusively to the scalp "
+            "research queue; scalp research is blocked."
+        )
     elif missing_general_queues:
         message = (
             "Required Celery queues have no responding consumer: "
@@ -255,6 +279,7 @@ def _check_celery_workers() -> dict:
             bool(workers)
             and bool(dedicated_intraday_workers)
             and not missing_research_queue
+            and not missing_scalp_research_queue
             and not missing_general_queues
             and not missing_registered_tasks
         ),
@@ -272,12 +297,18 @@ def _check_celery_workers() -> dict:
             "research_worker_count": len(research_workers),
             "dedicated_research_workers": dedicated_research_workers,
             "dedicated_research_worker_count": len(dedicated_research_workers),
+            "scalp_research_workers": scalp_research_workers,
+            "scalp_research_worker_count": len(scalp_research_workers),
+            "dedicated_scalp_research_workers": dedicated_scalp_research_workers,
+            "dedicated_scalp_research_worker_count": len(dedicated_scalp_research_workers),
             "worker_queues": worker_queues,
             "required_intraday_queue": INTRADAY_MARKET_DATA_QUEUE,
             "required_general_queues": sorted(GENERAL_WORKER_QUEUES),
             "missing_general_queues": missing_general_queues,
             "required_research_queue": RESEARCH_MARKET_DATA_QUEUE,
             "missing_research_queue": missing_research_queue,
+            "required_scalp_research_queue": SCALP_RESEARCH_QUEUE,
+            "missing_scalp_research_queue": missing_scalp_research_queue,
             "registered_tasks": registered_tasks,
             "missing_registered_tasks": missing_registered_tasks,
         },
