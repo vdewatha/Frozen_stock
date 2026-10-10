@@ -1,7 +1,7 @@
 """Independent 1-minute paper research; this module has no broker/order imports."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from statistics import mean, pstdev
 from uuid import uuid4
 
@@ -17,6 +17,7 @@ TIMEFRAME = "1m"
 ESTIMATED_SLIPPAGE_BPS = 5.0
 ESTIMATED_FEE_BPS = 0.5
 MAX_LOOKBACK_BARS = 390 * 5
+STALE_QUEUED_AFTER = timedelta(minutes=30)
 
 
 def _now():
@@ -208,6 +209,23 @@ def run_scalp_research(db: Session, run_id: str) -> dict:
     row.completed_at = _now()
     db.commit()
     return {"status": row.status, "run_id": row.run_id}
+
+
+def expire_stale_scalp_research_runs(db: Session) -> dict:
+    """Close orphaned queue records without retrying work that may already ran."""
+    cutoff = _now() - STALE_QUEUED_AFTER
+    rows = db.scalars(
+        select(ScalpResearchRun).where(
+            ScalpResearchRun.status == "queued",
+            ScalpResearchRun.created_at < cutoff,
+        )
+    ).all()
+    for row in rows:
+        row.status = "blocked"
+        row.error = "queued research task expired before a worker claimed it"
+        row.completed_at = _now()
+    db.commit()
+    return {"status": "complete", "expired_run_ids": [row.run_id for row in rows], "paper_only": True}
 
 
 def project_scalp_research(row: ScalpResearchRun) -> dict:

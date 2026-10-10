@@ -30,6 +30,7 @@ REQUIRED_REGISTERED_TASKS = frozenset(
         "app.tasks.jobs.model_realization_scoring_job",
         "app.tasks.jobs.paper_trading_signal_job",
         "app.tasks.jobs.scalp_research_job",
+        "app.tasks.jobs.expire_stale_scalp_research_runs_job",
     }
 )
 
