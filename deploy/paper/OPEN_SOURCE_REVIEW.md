@@ -1,10 +1,48 @@
 # Open-source integration review
 
-Reviewed 2026-09-28. This is a targeted repository/documentation survey and an
+Reviewed 2026-10-10. This is a targeted repository/documentation survey and an
 implementation review of the two adopted adapters, not a security audit of every
 project. Stars, README backtests, and agent debates are not evidence of profit.
 No external agent was given our credentials and no repository's setup scripts
 were executed. Adopted Python packages are version-pinned in requirements.txt.
+
+## 2026-10-10 intraday/backtest follow-up
+
+The current backtester was compared with the upstream workflows in [Microsoft
+Qlib](https://github.com/microsoft/qlib), its [high-frequency workflow
+example](https://github.com/microsoft/qlib/blob/main/examples/highfreq/workflow.py),
+and [QuantConnect LEAN's custom transaction-model
+example](https://github.com/QuantConnect/Lean/blob/master/Algorithm.CSharp/CustomModelsAlgorithm.cs).
+Qlib's workflow keeps dataset fitting, test periods, signal analysis and
+portfolio backtest as separate recorded stages, while its high-frequency example
+keeps a distinct backtest dataset handler. LEAN models fees, slippage, fills and
+buying power as explicit components. These are useful design references, not
+drop-in dependencies for this repository.
+
+Two concrete, research-only improvements are recommended:
+
+1. **Expose a matched passive benchmark from `backtester.run_backtest`.** Return
+   cash and buy-and-hold results using the same evaluated dates, next-open start,
+   fees and slippage, plus strategy excess return. The separate
+   `research_simulator` already does this; making the primary backtest response
+   carry the same comparison would prevent a positive raw return from being
+   mistaken for market outperformance. This should be additive and diagnostic:
+   it must not alter the score, promotion decision, or live-trading settings
+   until its contract has dedicated tests and a schema review.
+
+2. **Add an opt-in intraday reference-fill mode behind the offline research
+   simulator.** Preserve the current deterministic next-open mode, but allow a
+   research-only configuration to model explicit spread, volume participation,
+   partial fills, and high/low stop-trigger ordering. This follows LEAN's
+   separation of fee, slippage, fill and buying-power models while keeping the
+   existing primary backtester stable. Any intraday mode must label ambiguous
+   OHLC trigger ordering as unknown or use a documented conservative rule; it
+   must never be used as evidence that a broker would have filled an order.
+
+Do not install Qlib or LEAN as part of this follow-up. Qlib's high-frequency
+example requires a separate data format/handler, and LEAN brings a .NET engine,
+data normalization and brokerage-model surface. Both would enlarge the trusted
+research surface before the two smaller improvements are validated locally.
 
 ## Decisions
 
