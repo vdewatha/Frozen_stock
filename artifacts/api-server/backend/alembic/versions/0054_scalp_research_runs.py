@@ -2,7 +2,7 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0059_scalp_research_runs"
+revision = "0059_scalp_research"
 down_revision = "0058_market_price_provider_key"
 branch_labels = None
 depends_on = None

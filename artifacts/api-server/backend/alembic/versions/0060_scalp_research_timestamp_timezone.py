@@ -2,8 +2,8 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0060_scalp_research_timestamp_timezone"
-down_revision = "0059_scalp_research_runs"
+revision = "0060_scalp_research_tz"
+down_revision = "0059_scalp_research"
 branch_labels = None
 depends_on = None
 
