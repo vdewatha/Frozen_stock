@@ -16,6 +16,7 @@ FEED_CLASS = "iex"
 TIMEFRAME = "1m"
 ESTIMATED_SLIPPAGE_BPS = 5.0
 ESTIMATED_FEE_BPS = 0.5
+MAX_LOOKBACK_BARS = 390 * 5
 
 
 def _now():
@@ -32,7 +33,7 @@ def _bars(db: Session, symbol: str):
             IntradayBar.feed_class == FEED_CLASS,
         )
         .order_by(IntradayBar.opened_at.desc())
-        .limit(390),
+        .limit(MAX_LOOKBACK_BARS),
     ).all()))
 
 
@@ -171,6 +172,7 @@ def create_scalp_research_run(db: Session, *, symbols: list[str], actor: str) ->
             "provider": PROVIDER, "feed_class": FEED_CLASS,
             "estimated_slippage_bps": ESTIMATED_SLIPPAGE_BPS,
             "estimated_fee_bps": ESTIMATED_FEE_BPS,
+            "max_lookback_bars": MAX_LOOKBACK_BARS,
             "paper_only": True, "eligible_for_trading": False,
         },
     )
