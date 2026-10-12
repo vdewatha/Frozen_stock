@@ -10,26 +10,24 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "stock_paper_recovery_state",
-        sa.Column("accounting_review_required", sa.Boolean(), nullable=False, server_default=sa.false()),
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {column["name"] for column in inspector.get_columns("stock_paper_recovery_state")}
+    additions = (
+        ("accounting_review_required", sa.Boolean(), False),
+        ("accounting_reviewed_at", sa.DateTime(timezone=True), None),
+        ("accounting_reviewed_by", sa.String(length=128), None),
+        ("accounting_review_reason", sa.Text(), None),
+        ("accounting_review_digest", sa.String(length=64), None),
     )
-    op.add_column(
-        "stock_paper_recovery_state",
-        sa.Column("accounting_reviewed_at", sa.DateTime(timezone=True)),
-    )
-    op.add_column(
-        "stock_paper_recovery_state",
-        sa.Column("accounting_reviewed_by", sa.String(length=128)),
-    )
-    op.add_column(
-        "stock_paper_recovery_state",
-        sa.Column("accounting_review_reason", sa.Text()),
-    )
-    op.add_column(
-        "stock_paper_recovery_state",
-        sa.Column("accounting_review_digest", sa.String(length=64)),
-    )
+    for name, column_type, default in additions:
+        if name in columns:
+            continue
+        kwargs = {"nullable": False, "server_default": sa.false()} if default is False else {}
+        op.add_column(
+            "stock_paper_recovery_state",
+            sa.Column(name, column_type, **kwargs),
+        )
     op.execute(
         sa.text(
             "UPDATE stock_paper_recovery_state "
