@@ -38,6 +38,15 @@ class CeleryConfigurationTests(unittest.TestCase):
         self.assertTrue(due.is_due)
         self.assertEqual(due.next, 60)
 
+    def test_scalp_research_has_a_dedicated_scheduled_batch(self):
+        entry = celery_app.conf.beat_schedule["scalp-research-batch"]
+        self.assertEqual(entry["task"], "app.tasks.jobs.scheduled_scalp_research_job")
+        self.assertEqual(entry["options"], {"expires": 600})
+        self.assertEqual(
+            celery_app.conf.task_routes["app.tasks.jobs.scheduled_scalp_research_job"]["queue"],
+            "scalp_research",
+        )
+
     def test_iex_feature_refresh_is_throttled(self):
         class FakeRedis:
             def __init__(self, acquired):

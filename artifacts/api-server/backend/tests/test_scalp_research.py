@@ -69,3 +69,48 @@ def test_stale_scalp_queue_rows_are_blocked_without_replay():
         assert result["expired_run_ids"] == ["stale-run"]
         assert row.status == "blocked"
         assert "expired" in row.error
+
+
+def test_scheduled_scalp_research_queues_one_paper_batch_when_idle():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from unittest.mock import Mock, patch
+    from app.models import ScalpResearchRun
+    from app.tasks import jobs
+
+    engine = create_engine("sqlite://")
+    ScalpResearchRun.__table__.create(engine)
+    with Session(engine) as db, patch.object(jobs, "_run_job", side_effect=lambda _name, work: work(db)):
+        queued = Mock(id="task-1")
+        with patch.object(jobs.scalp_research_job, "apply_async", return_value=queued) as apply_async:
+            result = jobs.scheduled_scalp_research_job()
+
+        assert result["status"] == "queued"
+        assert result["paper_only"] is True
+        assert result["eligible_for_trading"] is False
+        assert result["symbols"] == ["AAPL", "MSFT", "QQQ", "SPY"]
+        apply_async.assert_called_once()
+        assert apply_async.call_args.kwargs["queue"] == "scalp_research"
+
+
+def test_scheduled_scalp_research_does_not_overlap_active_run():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from unittest.mock import patch
+    from app.models import ScalpResearchRun
+    from app.tasks import jobs
+
+    engine = create_engine("sqlite://")
+    ScalpResearchRun.__table__.create(engine)
+    with Session(engine) as db:
+        db.add(ScalpResearchRun(
+            run_id="active-run", requested_by="scheduler", symbols=["AAPL"],
+            timeframe="1m", status="running", data_snapshot={}, metrics={}, assumptions={},
+        ))
+        db.commit()
+        with patch.object(jobs, "_run_job", side_effect=lambda _name, work: work(db)):
+            result = jobs.scheduled_scalp_research_job()
+
+        assert result["status"] == "skipped"
+        assert result["run_id"] == "active-run"
+        assert result["eligible_for_trading"] is False

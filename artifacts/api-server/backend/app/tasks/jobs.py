@@ -42,8 +42,8 @@ from app.services.stock_monitoring import run_stock_monitoring
 from app.services.stock_recovery import reconcile_inflight_stock_orders_on_restart
 from app.services.live_broker import LiveBrokerError, reconcile_live_broker_account
 from app.services.stock_forward_trial import observe_trial, execute_pending_decisions, start_trial, evaluate_trial
-from app.models import StockPaperTrial
-from app.tasks.celery_app import celery_app
+from app.models import ScalpResearchRun, StockPaperTrial
+from app.tasks.celery_app import SCALP_RESEARCH_QUEUE, celery_app
 from app.models import Asset, Notification, PaperTrade, Strategy, StockLearningWorkerDispatch, StockTrainingJob
 from app.services.stock_learning_cycle import (
     create_learning_cycle,
@@ -55,7 +55,7 @@ from app.services.stock_learning_cycle import (
     sync_cycle_observability,
 )
 from app.services.agent_research import run_agent_research, refresh_agent_research_evaluations
-from app.services.scalp_research import expire_stale_scalp_research_runs, run_scalp_research
+from app.services.scalp_research import create_scalp_research_run, expire_stale_scalp_research_runs, run_scalp_research
 
 logger = logging.getLogger(__name__)
 
@@ -1008,6 +1008,46 @@ def agent_research_job(run_id: str) -> dict:
 def scalp_research_job(run_id: str) -> dict:
     """Run isolated 1-minute paper research without broker access."""
     return _run_job(f"scalp_research_job:{run_id}", lambda db: run_scalp_research(db, run_id))
+
+
+@celery_app.task
+def scheduled_scalp_research_job() -> dict:
+    """Queue one serialized, paper-only scalp research batch when idle."""
+    def work(db):
+        active = db.scalar(
+            select(ScalpResearchRun.run_id)
+            .where(ScalpResearchRun.status.in_(("queued", "running")))
+            .limit(1)
+        )
+        if active:
+            return {
+                "status": "skipped",
+                "reason": "an existing scalp research run is still active",
+                "run_id": active,
+                "paper_only": True,
+                "eligible_for_trading": False,
+            }
+        row = create_scalp_research_run(
+            db,
+            symbols=["AAPL", "MSFT", "SPY", "QQQ"],
+            actor="scheduler",
+        )
+        db.commit()
+        task = scalp_research_job.apply_async(
+            args=[row.run_id],
+            queue=SCALP_RESEARCH_QUEUE,
+            expires=10 * 60,
+        )
+        return {
+            "status": "queued",
+            "run_id": row.run_id,
+            "task_id": task.id,
+            "symbols": row.symbols,
+            "paper_only": True,
+            "eligible_for_trading": False,
+        }
+
+    return _run_job("scheduled_scalp_research_job", work)
 
 
 @celery_app.task
