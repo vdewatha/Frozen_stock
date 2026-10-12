@@ -24,37 +24,38 @@ def upgrade() -> None:
     event_column_added = "event_sha256" not in columns
     if event_column_added:
         op.add_column("audit_logs", sa.Column("event_sha256", sa.String(length=64)))
-    rows = bind.execute(
-        sa.text(
-            "SELECT id, event_type, entity_type, entity_id, action, status, message, payload "
-            "FROM audit_logs ORDER BY id"
-        )
-    ).mappings().all()
-    previous = None
-    for row in rows:
-        payload = row["payload"] or {}
-        digest_payload = {
-            "event_type": row["event_type"],
-            "entity_type": row["entity_type"],
-            "entity_id": row["entity_id"],
-            "action": row["action"],
-            "status": row["status"],
-            "message": row["message"],
-            "payload": payload,
-            "previous_event_sha256": previous,
-        }
-        digest = sha256(
-            json.dumps(digest_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
-        ).hexdigest()
-        existing = bind.execute(
+    needs_backfill = event_column_added
+    if not needs_backfill:
+        missing_hashes = bind.execute(sa.text(
+            "SELECT COUNT(*) FROM audit_logs WHERE event_sha256 IS NULL"
+        )).scalar_one()
+        needs_backfill = bool(missing_hashes)
+    if needs_backfill:
+        rows = bind.execute(
             sa.text(
-                "SELECT previous_event_sha256, event_sha256 FROM audit_logs WHERE id = :id"
-            ),
-            {"id": row["id"]},
-        ).mappings().one()
-        if existing["event_sha256"]:
-            previous = existing["event_sha256"]
-        else:
+                "SELECT id, event_type, entity_type, entity_id, action, status, message, payload, "
+                "previous_event_sha256, event_sha256 FROM audit_logs ORDER BY id"
+            )
+        ).mappings().all()
+        previous = None
+        for row in rows:
+            if row["event_sha256"]:
+                previous = row["event_sha256"]
+                continue
+            payload = row["payload"] or {}
+            digest_payload = {
+                "event_type": row["event_type"],
+                "entity_type": row["entity_type"],
+                "entity_id": row["entity_id"],
+                "action": row["action"],
+                "status": row["status"],
+                "message": row["message"],
+                "payload": payload,
+                "previous_event_sha256": previous,
+            }
+            digest = sha256(
+                json.dumps(digest_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+            ).hexdigest()
             bind.execute(
                 sa.text(
                     "UPDATE audit_logs SET previous_event_sha256 = :previous, event_sha256 = :digest "
