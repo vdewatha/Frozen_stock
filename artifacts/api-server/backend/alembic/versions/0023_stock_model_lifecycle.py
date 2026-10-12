@@ -19,79 +19,67 @@ INITIAL_CANARY_EVENT_HASH = hashlib.sha256(
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+
+    def has_table(name: str) -> bool:
+        return sa.inspect(bind).has_table(name)
+
+    def index_names(name: str) -> set[str]:
+        return {item["name"] for item in sa.inspect(bind).get_indexes(name)}
+
+    registry_columns = {
+        item["name"] for item in sa.inspect(bind).get_columns("stock_model_registry")
+    }
+    registry_checks = {
+        item.get("name") for item in sa.inspect(bind).get_check_constraints("stock_model_registry")
+    }
     with op.batch_alter_table("stock_model_registry") as batch:
-        batch.add_column(
-            sa.Column(
-                "lifecycle_state",
-                sa.String(length=24),
-                nullable=False,
-                server_default="challenger",
+        if "lifecycle_state" not in registry_columns:
+            batch.add_column(
+                sa.Column("lifecycle_state", sa.String(length=24), nullable=False, server_default="challenger")
             )
+        if "ck_stock_model_lifecycle_state" not in registry_checks:
+            batch.create_check_constraint("ck_stock_model_lifecycle_state", LIFECYCLE_CHECK)
+
+    if "ix_stock_model_registry_lifecycle_state" not in index_names("stock_model_registry"):
+        op.create_index("ix_stock_model_registry_lifecycle_state", "stock_model_registry", ["lifecycle_state"])
+
+    if not has_table("stock_model_lifecycle_events"):
+        op.create_table(
+            "stock_model_lifecycle_events",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("model_run_id", sa.String(length=64), sa.ForeignKey("stock_model_registry.run_id"), nullable=False),
+            sa.Column("binding_id", sa.Integer(), sa.ForeignKey("stock_paper_model_bindings.id"), nullable=True),
+            sa.Column("from_state", sa.String(length=24), nullable=True),
+            sa.Column("to_state", sa.String(length=24), nullable=False),
+            sa.Column("action", sa.String(length=32), nullable=False),
+            sa.Column("actor", sa.String(length=128), nullable=False),
+            sa.Column("reason", sa.Text(), nullable=False),
+            sa.Column("event_sha256", sa.String(length=64), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.CheckConstraint(LIFECYCLE_CHECK.replace("lifecycle_state", "to_state"), name="ck_stock_model_lifecycle_event_to_state"),
+            sa.CheckConstraint("from_state IS NULL OR " + LIFECYCLE_CHECK.replace("lifecycle_state", "from_state"), name="ck_stock_model_lifecycle_event_from_state"),
+            sa.UniqueConstraint("event_sha256", name="uq_stock_model_lifecycle_event_digest"),
         )
-        batch.create_check_constraint("ck_stock_model_lifecycle_state", LIFECYCLE_CHECK)
+    if "ix_stock_model_lifecycle_events_model_run_id" not in index_names("stock_model_lifecycle_events"):
+        op.create_index("ix_stock_model_lifecycle_events_model_run_id", "stock_model_lifecycle_events", ["model_run_id"])
+    if "ix_stock_model_lifecycle_events_binding_id" not in index_names("stock_model_lifecycle_events"):
+        op.create_index("ix_stock_model_lifecycle_events_binding_id", "stock_model_lifecycle_events", ["binding_id"])
 
-    op.create_index(
-        "ix_stock_model_registry_lifecycle_state",
-        "stock_model_registry",
-        ["lifecycle_state"],
-    )
-    op.create_table(
-        "stock_model_lifecycle_events",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("model_run_id", sa.String(length=64), sa.ForeignKey("stock_model_registry.run_id"), nullable=False),
-        sa.Column("binding_id", sa.Integer(), sa.ForeignKey("stock_paper_model_bindings.id"), nullable=True),
-        sa.Column("from_state", sa.String(length=24), nullable=True),
-        sa.Column("to_state", sa.String(length=24), nullable=False),
-        sa.Column("action", sa.String(length=32), nullable=False),
-        sa.Column("actor", sa.String(length=128), nullable=False),
-        sa.Column("reason", sa.Text(), nullable=False),
-        sa.Column("event_sha256", sa.String(length=64), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.CheckConstraint(LIFECYCLE_CHECK.replace("lifecycle_state", "to_state"), name="ck_stock_model_lifecycle_event_to_state"),
-        sa.CheckConstraint(
-            "from_state IS NULL OR " + LIFECYCLE_CHECK.replace("lifecycle_state", "from_state"),
-            name="ck_stock_model_lifecycle_event_from_state",
-        ),
-        sa.UniqueConstraint("event_sha256", name="uq_stock_model_lifecycle_event_digest"),
-    )
-    op.create_index(
-        "ix_stock_model_lifecycle_events_model_run_id",
-        "stock_model_lifecycle_events",
-        ["model_run_id"],
-    )
-    op.create_index(
-        "ix_stock_model_lifecycle_events_binding_id",
-        "stock_model_lifecycle_events",
-        ["binding_id"],
-    )
-
-    op.create_table(
-        "stock_model_lifecycle_state",
-        sa.Column(
-            "model_run_id",
-            sa.String(length=64),
-            sa.ForeignKey("stock_model_registry.run_id"),
-            primary_key=True,
-        ),
-        sa.Column("lifecycle_state", sa.String(length=24), nullable=False),
-        sa.Column("updated_by", sa.String(length=128), nullable=False),
-        sa.Column("reason", sa.Text(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.CheckConstraint(LIFECYCLE_CHECK, name="ck_stock_model_current_lifecycle_state"),
-    )
-    op.create_index(
-        "ix_stock_model_lifecycle_state_lifecycle_state",
-        "stock_model_lifecycle_state",
-        ["lifecycle_state"],
-    )
-    op.create_index(
-        "uq_stock_model_one_champion",
-        "stock_model_lifecycle_state",
-        ["lifecycle_state"],
-        unique=True,
-        sqlite_where=sa.text("lifecycle_state = 'champion'"),
-        postgresql_where=sa.text("lifecycle_state = 'champion'"),
-    )
+    if not has_table("stock_model_lifecycle_state"):
+        op.create_table(
+            "stock_model_lifecycle_state",
+            sa.Column("model_run_id", sa.String(length=64), sa.ForeignKey("stock_model_registry.run_id"), primary_key=True),
+            sa.Column("lifecycle_state", sa.String(length=24), nullable=False),
+            sa.Column("updated_by", sa.String(length=128), nullable=False),
+            sa.Column("reason", sa.Text(), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.CheckConstraint(LIFECYCLE_CHECK, name="ck_stock_model_current_lifecycle_state"),
+        )
+    if "ix_stock_model_lifecycle_state_lifecycle_state" not in index_names("stock_model_lifecycle_state"):
+        op.create_index("ix_stock_model_lifecycle_state_lifecycle_state", "stock_model_lifecycle_state", ["lifecycle_state"])
+    if "uq_stock_model_one_champion" not in index_names("stock_model_lifecycle_state"):
+        op.create_index("uq_stock_model_one_champion", "stock_model_lifecycle_state", ["lifecycle_state"], unique=True, sqlite_where=sa.text("lifecycle_state = 'champion'"), postgresql_where=sa.text("lifecycle_state = 'champion'"))
     op.execute(
         sa.text(
             """
@@ -100,25 +88,24 @@ def upgrade() -> None:
             SELECT run_id, 'challenger', 'migration',
                 'Initialized from immutable stock model registry'
             FROM stock_model_registry
+            WHERE NOT EXISTS (
+                SELECT 1 FROM stock_model_lifecycle_state AS existing
+                WHERE existing.model_run_id = stock_model_registry.run_id
+            )
             """
         )
     )
 
-    op.create_table(
-        "stock_paper_binding_state",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column(
-            "active_binding_id",
-            sa.Integer(),
-            sa.ForeignKey("stock_paper_model_bindings.id"),
-            nullable=False,
-            unique=True,
-        ),
-        sa.Column("changed_by", sa.String(length=32), nullable=False),
-        sa.Column("reason", sa.Text(), nullable=False),
-        sa.Column("changed_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.CheckConstraint("id = 1", name="ck_stock_paper_binding_state_singleton"),
-    )
+    if not has_table("stock_paper_binding_state"):
+        op.create_table(
+            "stock_paper_binding_state",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("active_binding_id", sa.Integer(), sa.ForeignKey("stock_paper_model_bindings.id"), nullable=False, unique=True),
+            sa.Column("changed_by", sa.String(length=32), nullable=False),
+            sa.Column("reason", sa.Text(), nullable=False),
+            sa.Column("changed_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.CheckConstraint("id = 1", name="ck_stock_paper_binding_state_singleton"),
+        )
 
     # Preserve the existing latest-event read policy as the initial explicit
     # pointer. Existing paper models become canaries rather than champions:
@@ -132,6 +119,7 @@ def upgrade() -> None:
             SELECT 1, id, 'migration',
                 'Initialized from the pre-lifecycle latest paper binding'
             FROM stock_paper_model_bindings
+            WHERE NOT EXISTS (SELECT 1 FROM stock_paper_binding_state WHERE id = 1)
             ORDER BY id DESC
             LIMIT 1
             """
@@ -170,6 +158,10 @@ def upgrade() -> None:
             JOIN stock_model_lifecycle_state AS current
               ON current.model_run_id = binding.model_run_id
             WHERE state.id = 1 AND current.lifecycle_state = 'paper_canary'
+              AND NOT EXISTS (
+                SELECT 1 FROM stock_model_lifecycle_events AS existing
+                WHERE existing.event_sha256 = '{INITIAL_CANARY_EVENT_HASH}'
+              )
             """
         )
     )
