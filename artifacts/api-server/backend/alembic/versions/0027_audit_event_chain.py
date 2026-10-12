@@ -12,13 +12,18 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    if "audit_logs" not in sa.inspect(bind).get_table_names():
+    inspector = sa.inspect(bind)
+    if "audit_logs" not in inspector.get_table_names():
         # A stock-only interim namespace may intentionally omit the shared
         # application audit table. There is no audit history to backfill in
         # that namespace; leave this cross-cutting upgrade a no-op.
         return
-    op.add_column("audit_logs", sa.Column("previous_event_sha256", sa.String(length=64)))
-    op.add_column("audit_logs", sa.Column("event_sha256", sa.String(length=64)))
+    columns = {column["name"] for column in inspector.get_columns("audit_logs")}
+    if "previous_event_sha256" not in columns:
+        op.add_column("audit_logs", sa.Column("previous_event_sha256", sa.String(length=64)))
+    event_column_added = "event_sha256" not in columns
+    if event_column_added:
+        op.add_column("audit_logs", sa.Column("event_sha256", sa.String(length=64)))
     rows = bind.execute(
         sa.text(
             "SELECT id, event_type, entity_type, entity_id, action, status, message, payload "
@@ -41,36 +46,54 @@ def upgrade() -> None:
         digest = sha256(
             json.dumps(digest_payload, sort_keys=True, separators=(",", ":"), default=str).encode()
         ).hexdigest()
-        bind.execute(
+        existing = bind.execute(
             sa.text(
-                "UPDATE audit_logs SET previous_event_sha256 = :previous, event_sha256 = :digest "
-                "WHERE id = :id"
+                "SELECT previous_event_sha256, event_sha256 FROM audit_logs WHERE id = :id"
             ),
-            {"previous": previous, "digest": digest, "id": row["id"]},
-        )
-        previous = digest
-    with op.batch_alter_table("audit_logs") as batch:
-        batch.alter_column("event_sha256", existing_type=sa.String(length=64), nullable=False)
-    op.create_index("ix_audit_logs_previous_event_sha256", "audit_logs", ["previous_event_sha256"])
-    op.create_index("ix_audit_logs_event_sha256", "audit_logs", ["event_sha256"], unique=True)
+            {"id": row["id"]},
+        ).mappings().one()
+        if existing["event_sha256"]:
+            previous = existing["event_sha256"]
+        else:
+            bind.execute(
+                sa.text(
+                    "UPDATE audit_logs SET previous_event_sha256 = :previous, event_sha256 = :digest "
+                    "WHERE id = :id"
+                ),
+                {"previous": previous, "digest": digest, "id": row["id"]},
+            )
+            previous = digest
+    if event_column_added:
+        with op.batch_alter_table("audit_logs") as batch:
+            batch.alter_column("event_sha256", existing_type=sa.String(length=64), nullable=False)
+    indexes = {index["name"] for index in inspector.get_indexes("audit_logs")}
+    if "ix_audit_logs_previous_event_sha256" not in indexes:
+        op.create_index("ix_audit_logs_previous_event_sha256", "audit_logs", ["previous_event_sha256"])
+    if "ix_audit_logs_event_sha256" not in indexes:
+        op.create_index("ix_audit_logs_event_sha256", "audit_logs", ["event_sha256"], unique=True)
     if bind.dialect.name == "postgresql":
-        op.execute(
-            "CREATE OR REPLACE FUNCTION audit_logs_immutable_row() "
-            "RETURNS trigger AS $$ BEGIN RAISE EXCEPTION "
-            "'audit_logs is append-only'; END; $$ LANGUAGE plpgsql"
-        )
-        op.execute(
-            "CREATE TRIGGER audit_logs_immutable "
-            "BEFORE UPDATE OR DELETE ON audit_logs FOR EACH ROW "
-            "EXECUTE FUNCTION audit_logs_immutable_row()"
-        )
+        exists = bind.execute(sa.text(
+            "SELECT 1 FROM pg_trigger WHERE tgrelid = to_regclass('audit_logs') "
+            "AND tgname = 'audit_logs_immutable' AND NOT tgisinternal"
+        )).scalar()
+        if not exists:
+            op.execute(
+                "CREATE OR REPLACE FUNCTION audit_logs_immutable_row() "
+                "RETURNS trigger AS $$ BEGIN RAISE EXCEPTION "
+                "'audit_logs is append-only'; END; $$ LANGUAGE plpgsql"
+            )
+            op.execute(
+                "CREATE TRIGGER audit_logs_immutable "
+                "BEFORE UPDATE OR DELETE ON audit_logs FOR EACH ROW "
+                "EXECUTE FUNCTION audit_logs_immutable_row()"
+            )
     elif bind.dialect.name == "sqlite":
         op.execute(
-            "CREATE TRIGGER audit_logs_immutable_update BEFORE UPDATE ON audit_logs "
+            "CREATE TRIGGER IF NOT EXISTS audit_logs_immutable_update BEFORE UPDATE ON audit_logs "
             "BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END"
         )
         op.execute(
-            "CREATE TRIGGER audit_logs_immutable_delete BEFORE DELETE ON audit_logs "
+            "CREATE TRIGGER IF NOT EXISTS audit_logs_immutable_delete BEFORE DELETE ON audit_logs "
             "BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END"
         )
 
