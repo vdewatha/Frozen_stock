@@ -10,16 +10,29 @@ branch_labels = None
 depends_on = None
 
 def upgrade() -> None:
-    with op.batch_alter_table("stock_paper_orders") as batch:
-        batch.add_column(sa.Column("trial_lot_id", sa.Integer(), nullable=True))
-        batch.create_foreign_key(
-            "fk_stock_paper_orders_trial_lot",
-            "stock_paper_trial_lots",
-            ["trial_lot_id"],
-            ["id"],
-        )
-        batch.create_index("ix_stock_paper_orders_trial_lot_id", ["trial_lot_id"])
     bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    order_columns = {column["name"] for column in inspector.get_columns("stock_paper_orders")}
+    foreign_keys = {
+        constraint.get("name") for constraint in inspector.get_foreign_keys("stock_paper_orders")
+    }
+    indexes = {index.get("name") for index in inspector.get_indexes("stock_paper_orders")}
+
+    with op.batch_alter_table("stock_paper_orders") as batch:
+        # Replit's hosted database can contain this column from a partially
+        # applied release while its Alembic marker still points earlier.
+        if "trial_lot_id" not in order_columns:
+            batch.add_column(sa.Column("trial_lot_id", sa.Integer(), nullable=True))
+        if "fk_stock_paper_orders_trial_lot" not in foreign_keys:
+            batch.create_foreign_key(
+                "fk_stock_paper_orders_trial_lot",
+                "stock_paper_trial_lots",
+                ["trial_lot_id"],
+                ["id"],
+            )
+        if "ix_stock_paper_orders_trial_lot_id" not in indexes:
+            batch.create_index("ix_stock_paper_orders_trial_lot_id", ["trial_lot_id"])
+
     lots = bind.execute(sa.text("SELECT id FROM stock_paper_trial_lots")).mappings().all()
     orders = bind.execute(sa.text(
         "SELECT id, client_order_id FROM stock_paper_orders "
