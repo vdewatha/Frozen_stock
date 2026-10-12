@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 import { clerkMiddleware, getAuth } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
@@ -87,39 +87,25 @@ function roleMappings(): Record<string, string> {
   }
 }
 
+const app = express();
+app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
+
+// Bind the public paper-only gateway before database migration or worker
+// startup. Hosting probes must get an immediate response during boot.
+app.get(["/", "/api"], (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "frozen-stock-paper-gateway",
+    paper_only: true,
+    live_trading: false,
+  });
+});
+
 // The hosted supervisor does not use the local Docker migration service. Apply
 // the checked-in schema before starting FastAPI so a new release cannot boot
-// against a database that is missing one of its required tables.
-const migration = spawnSync(
-  "python3.11",
-  ["-m", "alembic", "upgrade", "head"],
-  {
-    cwd: new URL("../backend", import.meta.url),
-    env: runtimeEnv,
-    stdio: "inherit",
-  },
-);
-if (migration.status !== 0) {
-  throw new Error(`Database migration failed with exit code ${migration.status ?? "unknown"}`);
-}
-
-const python = spawn(
-  "python3.11",
-  [
-    "-m",
-    "uvicorn",
-    "app.main:app",
-    "--host",
-    "127.0.0.1",
-    "--port",
-    String(internalPort),
-  ],
-  {
-    cwd: new URL("../backend", import.meta.url),
-    env: runtimeEnv,
-    stdio: "inherit",
-  },
-);
+// against a database that is missing one of its required tables. The migration
+// runs asynchronously after the gateway has bound its public port.
+let python: ChildProcess | undefined;
 
 function spawnPaperWorker(args: string[]): ChildProcess {
   return spawn("python3.11", args, {
@@ -144,7 +130,27 @@ function supervisePaperWorker(args: string[], label: string): ChildProcess {
   return child;
 }
 
-if (paperWorkersEnabled) {
+function startBackendAfterMigration(): void {
+  python = spawn(
+    "python3.11",
+    [
+      "-m",
+      "uvicorn",
+      "app.main:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(internalPort),
+    ],
+    {
+      cwd: new URL("../backend", import.meta.url),
+      env: runtimeEnv,
+      stdio: "inherit",
+    },
+  );
+  observePythonExit(python);
+
+  if (!paperWorkersEnabled) return;
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=intraday@%h", "--queues=intraday_market_data", "--concurrency=1"], "intraday");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=research@%h", "--queues=research_market_data", "--concurrency=1"], "research");
   // Keep the isolated scalp lane independent so its research jobs cannot sit
@@ -165,21 +171,6 @@ if (paperWorkersEnabled) {
   supervisePaperWorker(["scripts/run_stock_watchdog.py"], "watchdog");
   supervisePaperWorker(["scripts/run_beat_with_lease.py"], "beat");
 }
-
-const app = express();
-app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
-
-// Replit probes both the deployment root and this artifact's `/api` mount.
-// Keep both responses dependency-free and immediate; detailed readiness checks
-// remain under `/api/health` and `/api/ready`.
-app.get(["/", "/api"], (_req, res) => {
-  res.status(200).json({
-    status: "ok",
-    service: "frozen-stock-paper-gateway",
-    paper_only: true,
-    live_trading: false,
-  });
-});
 
 app.use(
   clerkMiddleware((req) => ({
@@ -230,6 +221,23 @@ const server = app.listen(publicPort, "0.0.0.0", () => {
   console.log(`Production authentication gateway listening on ${publicPort}`);
 });
 
+const migration = spawn(
+  "python3.11",
+  ["-m", "alembic", "upgrade", "head"],
+  {
+    cwd: new URL("../backend", import.meta.url),
+    env: runtimeEnv,
+    stdio: "inherit",
+  },
+);
+migration.on("exit", (code, signal) => {
+  if (code !== 0) {
+    console.error(`Database migration failed; backend startup withheld: code=${code} signal=${signal}`);
+    return;
+  }
+  startBackendAfterMigration();
+});
+
 function stop(signal: NodeJS.Signals, exitCode?: number) {
   if (stopping) return;
   stopping = true;
@@ -238,17 +246,19 @@ function stop(signal: NodeJS.Signals, exitCode?: number) {
       if (!worker.killed) worker.kill(signal);
     }
     if (redisProcess && !redisProcess.killed) redisProcess.kill(signal);
-    if (!python.killed) python.kill(signal);
+    if (python && !python.killed) python.kill(signal);
     if (exitCode !== undefined) process.exit(exitCode);
   });
 }
 
 process.on("SIGINT", () => stop("SIGINT"));
 process.on("SIGTERM", () => stop("SIGTERM"));
-python.on("exit", (code, signal) => {
-  console.error(`FastAPI exited before gateway shutdown: code=${code} signal=${signal}`);
-  stop("SIGTERM", code ?? 1);
-});
+function observePythonExit(child: ChildProcess): void {
+  child.on("exit", (code, signal) => {
+    console.error(`FastAPI exited before gateway shutdown: code=${code} signal=${signal}`);
+    stop("SIGTERM", code ?? 1);
+  });
+}
 
 redisProcess?.on("error", (error) => {
   console.error(`Embedded Redis failed to start: ${error.message}`);
