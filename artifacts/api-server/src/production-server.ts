@@ -92,7 +92,7 @@ app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
 // Bind the public paper-only gateway before database migration or worker
 // startup. Hosting probes must get an immediate response during boot.
-app.get(["/", "/api"], (_req, res) => {
+app.get(["/", "/api", "/api/health"], (_req, res) => {
   res.status(200).json({
     status: "ok",
     service: "frozen-stock-paper-gateway",
