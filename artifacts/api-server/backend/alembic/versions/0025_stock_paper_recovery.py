@@ -9,46 +9,60 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "stock_paper_recovery_state",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("status", sa.String(length=32), nullable=False, server_default="armed"),
-        sa.Column("flatten_policy", sa.String(length=16), nullable=False, server_default="none"),
-        sa.Column("cooldown_until", sa.DateTime(timezone=True)),
-        sa.Column("pause_reason", sa.Text()),
-        sa.Column("last_known_good_model_run_id", sa.String(length=64)),
-        sa.Column("last_known_good_binding_id", sa.Integer()),
-        sa.Column("last_monitor_heartbeat_at", sa.DateTime(timezone=True)),
-        sa.Column("last_watchdog_heartbeat_at", sa.DateTime(timezone=True)),
-        sa.Column("last_revalidation_at", sa.DateTime(timezone=True)),
-        sa.Column("updated_by", sa.String(length=128), nullable=False, server_default="system"),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.CheckConstraint("id = 1", name="ck_stock_paper_recovery_state_singleton"),
-        sa.CheckConstraint(
-            "status IN ('armed', 'paused', 'cooldown', 'revalidation_required', 'resumable')",
-            name="ck_stock_paper_recovery_status",
-        ),
-        sa.CheckConstraint(
-            "flatten_policy IN ('none', 'positions')",
-            name="ck_stock_paper_recovery_flatten_policy",
-        ),
-    )
-    op.create_index("ix_stock_paper_recovery_state_status", "stock_paper_recovery_state", ["status"])
-    op.create_table(
-        "stock_paper_recovery_events",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("action", sa.String(length=48), nullable=False),
-        sa.Column("status", sa.String(length=32), nullable=False),
-        sa.Column("actor", sa.String(length=128), nullable=False),
-        sa.Column("reason", sa.Text(), nullable=False),
-        sa.Column("event_sha256", sa.String(length=64), nullable=False),
-        sa.Column("payload", sa.JSON(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint("event_sha256", name="uq_stock_paper_recovery_event_digest"),
-    )
-    op.create_index("ix_stock_paper_recovery_events_action", "stock_paper_recovery_events", ["action"])
-    op.create_index("ix_stock_paper_recovery_events_status", "stock_paper_recovery_events", ["status"])
-    op.create_index("ix_stock_paper_recovery_events_created_at", "stock_paper_recovery_events", ["created_at"])
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    tables = set(inspector.get_table_names())
+
+    if "stock_paper_recovery_state" not in tables:
+        op.create_table(
+            "stock_paper_recovery_state",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("status", sa.String(length=32), nullable=False, server_default="armed"),
+            sa.Column("flatten_policy", sa.String(length=16), nullable=False, server_default="none"),
+            sa.Column("cooldown_until", sa.DateTime(timezone=True)),
+            sa.Column("pause_reason", sa.Text()),
+            sa.Column("last_known_good_model_run_id", sa.String(length=64)),
+            sa.Column("last_known_good_binding_id", sa.Integer()),
+            sa.Column("last_monitor_heartbeat_at", sa.DateTime(timezone=True)),
+            sa.Column("last_watchdog_heartbeat_at", sa.DateTime(timezone=True)),
+            sa.Column("last_revalidation_at", sa.DateTime(timezone=True)),
+            sa.Column("updated_by", sa.String(length=128), nullable=False, server_default="system"),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.CheckConstraint("id = 1", name="ck_stock_paper_recovery_state_singleton"),
+            sa.CheckConstraint(
+                "status IN ('armed', 'paused', 'cooldown', 'revalidation_required', 'resumable')",
+                name="ck_stock_paper_recovery_status",
+            ),
+            sa.CheckConstraint(
+                "flatten_policy IN ('none', 'positions')",
+                name="ck_stock_paper_recovery_flatten_policy",
+            ),
+        )
+    state_indexes = {index["name"] for index in inspector.get_indexes("stock_paper_recovery_state")} if "stock_paper_recovery_state" in tables else set()
+    if "ix_stock_paper_recovery_state_status" not in state_indexes:
+        op.create_index("ix_stock_paper_recovery_state_status", "stock_paper_recovery_state", ["status"])
+
+    if "stock_paper_recovery_events" not in tables:
+        op.create_table(
+            "stock_paper_recovery_events",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("action", sa.String(length=48), nullable=False),
+            sa.Column("status", sa.String(length=32), nullable=False),
+            sa.Column("actor", sa.String(length=128), nullable=False),
+            sa.Column("reason", sa.Text(), nullable=False),
+            sa.Column("event_sha256", sa.String(length=64), nullable=False),
+            sa.Column("payload", sa.JSON(), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.UniqueConstraint("event_sha256", name="uq_stock_paper_recovery_event_digest"),
+        )
+    event_indexes = {index["name"] for index in inspector.get_indexes("stock_paper_recovery_events")} if "stock_paper_recovery_events" in tables else set()
+    for name, column in (
+        ("ix_stock_paper_recovery_events_action", "action"),
+        ("ix_stock_paper_recovery_events_status", "status"),
+        ("ix_stock_paper_recovery_events_created_at", "created_at"),
+    ):
+        if name not in event_indexes:
+            op.create_index(name, "stock_paper_recovery_events", [column])
 
 
 def downgrade() -> None:
