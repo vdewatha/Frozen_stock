@@ -9,46 +9,62 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "stock_monitoring_snapshots",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("monitor_key", sa.String(length=64), nullable=False),
-        sa.Column("status", sa.String(length=24), nullable=False),
-        sa.Column("generated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("checks", sa.JSON(), nullable=False),
-        sa.Column("actions", sa.JSON(), nullable=False),
-        sa.Column("source", sa.String(length=128), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-    )
-    op.create_index("ix_stock_monitoring_snapshots_monitor_key", "stock_monitoring_snapshots", ["monitor_key"])
-    op.create_index("ix_stock_monitoring_snapshots_status", "stock_monitoring_snapshots", ["status"])
-    op.create_index("ix_stock_monitoring_snapshots_generated_at", "stock_monitoring_snapshots", ["generated_at"])
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    tables = set(inspector.get_table_names())
 
-    op.create_table(
-        "stock_monitoring_breaches",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("breach_key", sa.String(length=128), nullable=False),
-        sa.Column("category", sa.String(length=64), nullable=False),
-        sa.Column("metric", sa.String(length=96), nullable=False),
-        sa.Column("status", sa.String(length=24), nullable=False),
-        sa.Column("severity", sa.String(length=24), nullable=False),
-        sa.Column("observed_value", sa.JSON()),
-        sa.Column("threshold", sa.JSON()),
-        sa.Column("consecutive_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("first_observed_at", sa.DateTime(timezone=True)),
-        sa.Column("last_observed_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("resolved_at", sa.DateTime(timezone=True)),
-        sa.Column("details", sa.JSON(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.CheckConstraint(
-            "status IN ('unknown', 'observed', 'persistent', 'cleared')",
-            name="ck_stock_monitoring_breach_status",
-        ),
-        sa.UniqueConstraint("breach_key", name="uq_stock_monitoring_breach_key"),
-    )
-    op.create_index("ix_stock_monitoring_breaches_category", "stock_monitoring_breaches", ["category"])
-    op.create_index("ix_stock_monitoring_breaches_metric", "stock_monitoring_breaches", ["metric"])
-    op.create_index("ix_stock_monitoring_breaches_status", "stock_monitoring_breaches", ["status"])
+    if "stock_monitoring_snapshots" not in tables:
+        op.create_table(
+            "stock_monitoring_snapshots",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("monitor_key", sa.String(length=64), nullable=False),
+            sa.Column("status", sa.String(length=24), nullable=False),
+            sa.Column("generated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("checks", sa.JSON(), nullable=False),
+            sa.Column("actions", sa.JSON(), nullable=False),
+            sa.Column("source", sa.String(length=128), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        )
+    snapshot_indexes = {index["name"] for index in inspector.get_indexes("stock_monitoring_snapshots")} if "stock_monitoring_snapshots" in tables else set()
+    for name, column in (
+        ("ix_stock_monitoring_snapshots_monitor_key", "monitor_key"),
+        ("ix_stock_monitoring_snapshots_status", "status"),
+        ("ix_stock_monitoring_snapshots_generated_at", "generated_at"),
+    ):
+        if name not in snapshot_indexes:
+            op.create_index(name, "stock_monitoring_snapshots", [column])
+
+    if "stock_monitoring_breaches" not in tables:
+        op.create_table(
+            "stock_monitoring_breaches",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("breach_key", sa.String(length=128), nullable=False),
+            sa.Column("category", sa.String(length=64), nullable=False),
+            sa.Column("metric", sa.String(length=96), nullable=False),
+            sa.Column("status", sa.String(length=24), nullable=False),
+            sa.Column("severity", sa.String(length=24), nullable=False),
+            sa.Column("observed_value", sa.JSON()),
+            sa.Column("threshold", sa.JSON()),
+            sa.Column("consecutive_count", sa.Integer(), nullable=False, server_default="0"),
+            sa.Column("first_observed_at", sa.DateTime(timezone=True)),
+            sa.Column("last_observed_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("resolved_at", sa.DateTime(timezone=True)),
+            sa.Column("details", sa.JSON(), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.CheckConstraint(
+                "status IN ('unknown', 'observed', 'persistent', 'cleared')",
+                name="ck_stock_monitoring_breach_status",
+            ),
+            sa.UniqueConstraint("breach_key", name="uq_stock_monitoring_breach_key"),
+        )
+    breach_indexes = {index["name"] for index in inspector.get_indexes("stock_monitoring_breaches")} if "stock_monitoring_breaches" in tables else set()
+    for name, column in (
+        ("ix_stock_monitoring_breaches_category", "category"),
+        ("ix_stock_monitoring_breaches_metric", "metric"),
+        ("ix_stock_monitoring_breaches_status", "status"),
+    ):
+        if name not in breach_indexes:
+            op.create_index(name, "stock_monitoring_breaches", [column])
 
 
 def downgrade() -> None:
