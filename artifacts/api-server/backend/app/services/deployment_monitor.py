@@ -30,6 +30,7 @@ REQUIRED_REGISTERED_TASKS = frozenset(
         "app.tasks.jobs.model_realization_scoring_job",
         "app.tasks.jobs.paper_trading_signal_job",
         "app.tasks.jobs.scalp_research_job",
+        "app.tasks.jobs.scheduled_scalp_research_job",
         "app.tasks.jobs.expire_stale_scalp_research_runs_job",
     }
 )
@@ -120,6 +121,7 @@ def _check_celery_schedule() -> dict:
         "scheduled-stock-paper-promotion",
         "stock-forward-trial-observe",
         "stock-forward-trial-reconcile",
+        "scalp-research-batch",
     }
     direct_monitor = os.environ.get("PAPER_DIRECT_MONITOR_LOOP", "false").strip().lower() == "true"
     if not direct_monitor:
