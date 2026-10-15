@@ -60,6 +60,8 @@ let backendReady = false;
 let startupState: "migrating" | "starting" | "ready" | "failed" = "migrating";
 let startupError: string | undefined;
 let migrationProcess: ChildProcess | undefined;
+let lastBackendProbeError: string | undefined;
+const backendHealthMaxAttempts = 120;
 
 const runtimeEnv = {
   ...process.env,
@@ -170,6 +172,7 @@ function supervisePaperWorker(args: string[], label: string): ChildProcess {
 function startBackendAfterMigration(): void {
   startupState = "starting";
   startupError = undefined;
+  lastBackendProbeError = undefined;
   python = spawn(
     "python3.11",
     [
@@ -311,26 +314,40 @@ function waitForBackendHealth(attempt = 1): void {
     `${internalTarget}/api/health`,
     { method: "GET", timeout: 1000 },
     (response) => {
-      response.resume();
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => {
+        if (body.length < 512) body += chunk;
+      });
+      response.on("end", () => {
       if (response.statusCode === 200) {
         backendReady = true;
         startupState = "ready";
         startupError = undefined;
         return;
       }
+        lastBackendProbeError = `status=${response.statusCode} body=${body.trim() || "<empty>"}`;
+        console.error(`Internal FastAPI health probe failed: ${lastBackendProbeError}`);
       retryBackendHealth(attempt);
+      });
     },
   );
-  probe.on("error", () => retryBackendHealth(attempt));
+  probe.on("error", (error) => {
+    lastBackendProbeError = `request=${error.message}`;
+    console.error(`Internal FastAPI health probe errored: ${lastBackendProbeError}`);
+    retryBackendHealth(attempt);
+  });
   probe.on("timeout", () => probe.destroy());
   probe.end();
 }
 
 function retryBackendHealth(attempt: number): void {
   if (stopping || backendReady || !python) return;
-  if (attempt >= 30) {
+  if (attempt >= backendHealthMaxAttempts) {
     startupState = "failed";
-    startupError = "paper API did not become healthy after startup";
+    startupError = `paper API did not become healthy after startup${
+      lastBackendProbeError ? ` (${lastBackendProbeError})` : ""
+    }`;
     python.kill("SIGTERM");
     return;
   }
