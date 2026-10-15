@@ -213,6 +213,7 @@ def upsert_intraday_bars(
     ingested_at: datetime | None = None,
     provider: str | None = None,
     feed_class: str | None = None,
+    verify_entitlement: bool = False,
 ) -> dict:
     # Resolve provenance at call time so a configured provider change cannot
     # leave persisted bars tagged with the provider active at import time.
@@ -262,11 +263,11 @@ def upsert_intraday_bars(
             "feed_class": feed_class,
             "exchange_timestamp": opened_at,
             "ingested_at": observed_at,
-            # A successful authenticated refresh is evidence even when the
-            # provider returns the same OHLCV values. Keep it separate from
-            # ingested_at so research observation timestamps remain immutable.
-            "last_verified_at": observed_at,
         }
+        if verify_entitlement:
+            # Only a successful authenticated provider request may refresh
+            # entitlement evidence. Fixtures and direct imports cannot do so.
+            provenance["last_verified_at"] = observed_at
         row = existing_by_timestamp.get(opened_at)
         if row:
             # Re-fetching identical research data must not erase when it became
@@ -583,7 +584,9 @@ def ingest_intraday(
                     break
                 window_start, window_end = windows[window_index]
                 rows, duplicates, out_of_order = _fetch_bars(symbol, window_start, window_end)
-                persisted = upsert_intraday_bars(db, symbol, rows, ingested_at=observed_at)
+                persisted = upsert_intraday_bars(
+                    db, symbol, rows, ingested_at=observed_at, verify_entitlement=True
+                )
                 saved["rows_imported"] += persisted["rows_imported"]
                 saved["duplicate_bars"] += persisted["duplicate_bars"]
                 saved["out_of_order"] = saved["out_of_order"] or persisted["out_of_order"]
@@ -1056,11 +1059,9 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         if configured_provider == "tradier"
         else settings.research_alpaca_credentials()[0]
     )
-    verification_timestamp = (
-        latest.last_verified_at
-        if latest is not None and latest.last_verified_at is not None
-        else latest.ingested_at if latest is not None else None
-    )
+    # Ingestion time proves only that bytes were stored. Entitlement evidence
+    # must come from a successful authenticated provider refresh.
+    verification_timestamp = latest.last_verified_at if latest is not None else None
     verification_age = (
         observed_at - _aware_utc(verification_timestamp)
         if verification_timestamp is not None

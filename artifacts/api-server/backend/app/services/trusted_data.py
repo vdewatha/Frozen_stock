@@ -21,23 +21,18 @@ class UntrustedMarketData(ValueError):
 def validate_intraday_readiness(db, symbol: str, *, now: datetime | None = None, max_age_seconds: int = 120) -> dict:
     """Require an authenticated, current execution observation.
 
-    Historical repair gaps remain visible to research and readiness callers, but
-    they do not invalidate a current-session observation when the broker feed is
-    entitled and the execution status is ready (or the market is closed). This
-    keeps the live decision boundary fail-closed while allowing bounded research
-    backfill to continue independently.
+    Historical repair gaps remain visible to research callers, but an incomplete
+    decision session never becomes paper-decision evidence merely because its
+    newest bar is current. Bounded backfill continues independently while this
+    boundary remains fail-closed.
     """
     now = now or datetime.now(timezone.utc)
     try:
         status = feed_status(db, symbol, now=now)
     except ValueError as exc:
         raise UntrustedMarketData(str(exc)) from exc
-    current_execution_ok = (
-        status.get("execution_status") in {"ready", "market_closed"}
-        and status.get("entitlement_state") == "verified"
-        and status.get("exchange_timestamp") is not None
-    )
-    if status["status"] not in {"ready", "market_closed"} and not current_execution_ok:
+    # A current bar cannot mask a gap in the same decision session.
+    if status["status"] not in {"ready", "market_closed"}:
         reason = status.get("unavailable_reason") or "Intraday feed is not ready."
         raise UntrustedMarketData(f"{reason}; paper decisions are blocked.")
     return status

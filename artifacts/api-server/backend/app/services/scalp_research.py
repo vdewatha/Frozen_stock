@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 from statistics import mean, pstdev
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import IntradayBar, ScalpResearchRun
+from app.services.exchange_sessions import session_bounds
 
 ALLOWED_SYMBOLS = frozenset({"AAPL", "MSFT", "SPY", "QQQ"})
 PROVIDER = "alpaca_iex"
@@ -18,6 +22,13 @@ ESTIMATED_SLIPPAGE_BPS = 5.0
 ESTIMATED_FEE_BPS = 0.5
 MAX_LOOKBACK_BARS = 390 * 5
 STALE_QUEUED_AFTER = timedelta(minutes=30)
+# The Celery task has a 55 second hard limit. A ten-minute bound is long
+# enough for a slow database transaction, but short enough that one crashed
+# worker cannot permanently block the scheduled research lane.
+STALE_RUNNING_AFTER = timedelta(minutes=10)
+MAX_INTRADAY_GAP = timedelta(minutes=5)
+SCALP_LATE_DATA_ALLOWANCE = timedelta(minutes=2)
+NY = ZoneInfo("America/New_York")
 
 
 def _now():
@@ -36,6 +47,140 @@ def _bars(db: Session, symbol: str):
         .order_by(IntradayBar.opened_at.desc())
         .limit(MAX_LOOKBACK_BARS),
     ).all()))
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _expected_research_session(observed: datetime):
+    """Return the NYSE session that should be the newest research session."""
+    local = observed.astimezone(NY)
+    candidate = local.date()
+    bounds = session_bounds(candidate)
+    if bounds and local >= bounds[0].astimezone(NY):
+        return candidate
+    for _ in range(10):
+        candidate -= timedelta(days=1)
+        if session_bounds(candidate):
+            return candidate
+    return None
+
+
+def _session_quality(bars: list[IntradayBar], *, now: datetime) -> dict:
+    """Reject stale or gapped bars before they can produce scalp labels."""
+    if not bars:
+        return {"status": "blocked", "reason": "no trusted intraday bars", "missing_intervals": []}
+    if any(
+        bar.provider != PROVIDER or bar.feed_class != FEED_CLASS or bar.timeframe != TIMEFRAME
+        for bar in bars
+    ):
+        return {
+            "status": "blocked",
+            "reason": "intraday provenance is not authenticated Alpaca IEX 1m data",
+            "missing_intervals": [],
+        }
+    timestamps = [_aware(bar.exchange_timestamp) for bar in bars]
+    latest = timestamps[-1]
+    latest_day = latest.astimezone(NY).date()
+    bounds = session_bounds(latest_day)
+    expected_day = _expected_research_session(now)
+    if not bounds or latest < bounds[0] or latest >= bounds[1]:
+        return {"status": "blocked", "reason": "latest observation is outside an NYSE regular session", "missing_intervals": []}
+    if expected_day != latest_day:
+        return {"status": "blocked", "reason": "latest trusted session is stale", "missing_intervals": []}
+    observed = now.astimezone(timezone.utc)
+    expected_end = bounds[1]
+    if expected_day == observed.astimezone(NY).date() and observed < bounds[1] + SCALP_LATE_DATA_ALLOWANCE:
+        expected_end = min(
+            bounds[1],
+            (observed - SCALP_LATE_DATA_ALLOWANCE).replace(second=0, microsecond=0) + timedelta(minutes=1),
+        )
+    expected = []
+    cursor = bounds[0]
+    while cursor < expected_end:
+        expected.append(cursor)
+        cursor += timedelta(minutes=1)
+    present = {stamp for stamp in timestamps if bounds[0] <= stamp < bounds[1]}
+    missing = [stamp.isoformat() for stamp in expected if stamp not in present]
+    if missing:
+        return {
+            "status": "blocked",
+            "reason": "trusted intraday session is incomplete; missing minutes remain unknown",
+            "missing_intervals": missing[:120],
+            "missing_count": len(missing),
+            "session_day": latest_day.isoformat(),
+            "latest": latest.isoformat(),
+        }
+    return {
+        "status": "ready",
+        "reason": None,
+        "missing_intervals": [],
+        "missing_count": 0,
+        "session_day": latest_day.isoformat(),
+        "latest": latest.isoformat(),
+        "expected_bars": len(expected),
+    }
+
+
+def _bar_lineage(bars: list[IntradayBar], *, now: datetime | None = None) -> dict:
+    """Describe and fingerprint the exact trusted bars used by a run.
+
+    Overnight/weekend gaps are expected. A large gap inside one regular NYSE
+    session is not silently treated as continuous history, because that can
+    make a scalp backtest look better than the executable feed.
+    """
+    canonical = []
+    intraday_gaps = []
+    for bar in bars:
+        opened_at = _aware(bar.opened_at)
+        exchange_at = _aware(bar.exchange_timestamp)
+        canonical.append({
+            "opened_at": opened_at.isoformat(),
+            "exchange_timestamp": exchange_at.isoformat(),
+            "open": str(bar.open),
+            "high": str(bar.high),
+            "low": str(bar.low),
+            "close": str(bar.close),
+            "volume": int(bar.volume),
+            "provider": bar.provider,
+            "feed_class": bar.feed_class,
+        })
+
+    for previous, current in zip(bars, bars[1:]):
+        previous_at = _aware(previous.exchange_timestamp)
+        current_at = _aware(current.exchange_timestamp)
+        bounds = session_bounds(previous_at.astimezone(NY).date())
+        if not bounds:
+            continue
+        start, end = bounds
+        if start <= previous_at <= end and start <= current_at <= end:
+            gap = current_at - previous_at
+            if gap > MAX_INTRADAY_GAP:
+                intraday_gaps.append({
+                    "from": previous_at.isoformat(),
+                    "to": current_at.isoformat(),
+                    "gap_seconds": int(gap.total_seconds()),
+                })
+
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+    data_quality = _session_quality(bars, now=(now or _now()))
+    return {
+        "bar_count": len(bars),
+        "observed_start": canonical[0]["exchange_timestamp"] if canonical else None,
+        "observed_end": canonical[-1]["exchange_timestamp"] if canonical else None,
+        "intraday_gap_count": len(intraday_gaps),
+        "intraday_gaps": intraday_gaps[:20],
+        "bars_sha256": hashlib.sha256(encoded).hexdigest(),
+        "provider": PROVIDER,
+        "feed_class": FEED_CLASS,
+        "timeframe": TIMEFRAME,
+        "synthetic": False,
+        "execution_eligible": False,
+        "data_quality": data_quality,
+    }
 
 
 def _strategy_metrics(closes: list[float], signal_fn, *, start: int = 50) -> dict:
@@ -199,9 +344,17 @@ def run_scalp_research(db: Session, run_id: str) -> dict:
         metrics, snapshot = {}, {}
         for symbol in row.symbols:
             bars = _bars(db, symbol)
-            snapshot[symbol] = {"bars": len(bars), "latest": bars[-1].exchange_timestamp.isoformat() if bars else None}
+            lineage = _bar_lineage(bars, now=claimed_at)
+            snapshot[symbol] = lineage
             if len(bars) < 60:
                 metrics[symbol] = {"status": "blocked", "reason": "at least 60 trusted 1-minute bars are required"}
+                continue
+            if lineage["data_quality"]["status"] != "ready" or lineage["intraday_gap_count"]:
+                metrics[symbol] = {
+                    "status": "blocked",
+                    "reason": lineage["data_quality"]["reason"] or "trusted intraday history contains a material in-session gap",
+                    "lineage": lineage,
+                }
                 continue
             closes = [float(bar.close) for bar in bars]
             validation = _validation_metrics(closes)
@@ -220,20 +373,37 @@ def run_scalp_research(db: Session, run_id: str) -> dict:
 
 
 def expire_stale_scalp_research_runs(db: Session) -> dict:
-    """Close orphaned queue records without retrying work that may already ran."""
-    cutoff = _now() - STALE_QUEUED_AFTER
+    """Close orphaned queue/worker records without replaying unknown work."""
+    now = _now()
+    cutoff = now - STALE_QUEUED_AFTER
+    running_cutoff = now - STALE_RUNNING_AFTER
     rows = db.scalars(
         select(ScalpResearchRun).where(
-            ScalpResearchRun.status == "queued",
-            ScalpResearchRun.created_at < cutoff,
+            (
+                (ScalpResearchRun.status == "queued") & (ScalpResearchRun.created_at < cutoff)
+            )
+            | (
+                (ScalpResearchRun.status == "running")
+                & (ScalpResearchRun.started_at.is_not(None))
+                & (ScalpResearchRun.started_at < running_cutoff)
+            ),
         )
     ).all()
     for row in rows:
         row.status = "blocked"
-        row.error = "queued research task expired before a worker claimed it"
-        row.completed_at = _now()
+        row.error = (
+            "queued research task expired before a worker claimed it"
+            if row.started_at is None
+            else "running research task exceeded its worker liveness bound"
+        )
+        row.completed_at = now
     db.commit()
-    return {"status": "complete", "expired_run_ids": [row.run_id for row in rows], "paper_only": True}
+    return {
+        "status": "complete",
+        "expired_run_ids": [row.run_id for row in rows],
+        "expired_running_count": sum(1 for row in rows if row.started_at is not None),
+        "paper_only": True,
+    }
 
 
 def project_scalp_research(row: ScalpResearchRun) -> dict:

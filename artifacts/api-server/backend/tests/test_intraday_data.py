@@ -160,16 +160,34 @@ class IntradayDataTests(unittest.TestCase):
             intraday_data.upsert_intraday_bars(
                 self.db, "SPY", [bar(first_observed - timedelta(minutes=2))],
                 ingested_at=first_observed, provider="alpaca_iex", feed_class="iex",
+                verify_entitlement=True,
             )
             intraday_data.upsert_intraday_bars(
                 self.db, "SPY", [bar(first_observed - timedelta(minutes=2))],
                 ingested_at=refreshed_at, provider="alpaca_iex", feed_class="iex",
+                verify_entitlement=True,
             )
             row = self.db.query(IntradayBar).one()
             result = intraday_data.feed_status(self.db, "SPY", now=refreshed_at)
         self.assertEqual(_aware_utc(row.ingested_at), first_observed)
         self.assertEqual(_aware_utc(row.last_verified_at), refreshed_at)
         self.assertEqual(result["entitlement_state"], "verified")
+
+    def test_direct_fixture_import_cannot_create_entitlement_evidence(self):
+        observed = datetime(2026, 9, 29, 18, 0, tzinfo=UTC)
+        with patch.object(settings, "active_market_data_provider", "alpaca_iex"), patch.object(
+            intraday_data, "MARKET_DATA_PROVIDER", "alpaca_iex"
+        ), patch.object(intraday_data, "MARKET_DATA_FEED_CLASS", "iex"), patch.object(
+            settings, "paper_alpaca_api_key", type(settings.paper_alpaca_api_key)("key")
+        ), patch.object(
+            settings, "paper_alpaca_api_secret", type(settings.paper_alpaca_api_secret)("secret")
+        ):
+            intraday_data.upsert_intraday_bars(
+                self.db, "SPY", [bar(observed - timedelta(minutes=2))],
+                ingested_at=observed, provider="alpaca_iex", feed_class="iex",
+            )
+            result = intraday_data.feed_status(self.db, "SPY", now=observed)
+        self.assertEqual(result["entitlement_state"], "unverified")
 
     def test_next_regular_session_open_skips_weekends_and_holidays(self):
         before_open = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
@@ -251,7 +269,8 @@ class IntradayDataTests(unittest.TestCase):
         observed = datetime(2026, 9, 11, 13, 34, tzinfo=UTC)
         session_open = datetime(2026, 9, 11, 13, 30, tzinfo=UTC)
         intraday_data.upsert_intraday_bars(
-            self.db, "SPY", [bar(session_open)], ingested_at=observed
+            self.db, "SPY", [bar(session_open)], ingested_at=observed,
+            verify_entitlement=True,
         )
         with patch.object(settings, "paper_execution_symbols", ["AAPL", "MSFT", "QQQ", "SPY"]), patch.object(
             settings,
@@ -281,6 +300,7 @@ class IntradayDataTests(unittest.TestCase):
             intraday_data.upsert_intraday_bars(
                 self.db, "SPY", [bar(current_bar)], ingested_at=observed,
                 provider="alpaca_iex", feed_class="iex",
+                verify_entitlement=True,
             )
             result = intraday_data.feed_status(self.db, "SPY", now=observed)
         self.assertEqual(result["status"], "incomplete")
@@ -293,9 +313,8 @@ class IntradayDataTests(unittest.TestCase):
             "exchange_timestamp": current_bar,
             "missing_intervals": result["missing_intervals"],
         }):
-            validated = validate_intraday_readiness(self.db, "SPY", now=observed)
-        self.assertEqual(validated["status"], "incomplete")
-        self.assertEqual(validated["execution_status"], "ready")
+            with self.assertRaises(UntrustedMarketData):
+                validate_intraday_readiness(self.db, "SPY", now=observed)
 
     def test_alpaca_iex_market_closed_current_observation_can_have_research_gap(self):
         observed = datetime(2026, 9, 12, 16, 0, tzinfo=UTC)
@@ -312,18 +331,21 @@ class IntradayDataTests(unittest.TestCase):
             intraday_data.upsert_intraday_bars(
                 self.db, "SPY", bars, ingested_at=observed,
                 provider="alpaca_iex", feed_class="iex",
+                verify_entitlement=True,
             )
             status = intraday_data.feed_status(self.db, "SPY", now=observed)
-            validated = validate_intraday_readiness(self.db, "SPY", now=observed)
+            with self.assertRaises(UntrustedMarketData):
+                validate_intraday_readiness(self.db, "SPY", now=observed)
         self.assertEqual(status["status"], "incomplete")
         self.assertEqual(status["execution_status"], "market_closed")
-        self.assertEqual(validated["status"], "incomplete")
 
     def test_market_closed_requires_complete_previous_session(self):
         friday_open = datetime(2026, 9, 11, 13, 30, tzinfo=UTC)
         bars = [bar(friday_open + timedelta(minutes=index)) for index in range(390)]
         saturday = datetime(2026, 9, 12, 16, 0, tzinfo=UTC)
-        intraday_data.upsert_intraday_bars(self.db, "SPY", bars, ingested_at=saturday)
+        intraday_data.upsert_intraday_bars(
+            self.db, "SPY", bars, ingested_at=saturday, verify_entitlement=True
+        )
         with patch.object(settings, "paper_execution_symbols", ["AAPL", "MSFT", "QQQ", "SPY"]), patch.object(
             settings,
             "tradier_market_data_api_key",
@@ -411,6 +433,7 @@ class IntradayDataTests(unittest.TestCase):
             feed_class="sip",
             exchange_timestamp=now,
             ingested_at=now,
+            last_verified_at=now,
         )
         self.db.add(future)
         self.db.commit()
@@ -440,6 +463,7 @@ class IntradayDataTests(unittest.TestCase):
                 symbol,
                 completed_bars,
                 ingested_at=now,
+                verify_entitlement=True,
             )
             self.assertEqual(result["rows_imported"], len(completed_bars))
         self.assertEqual(self.db.query(IntradayBar).count(), len(symbols) * len(completed_bars))
