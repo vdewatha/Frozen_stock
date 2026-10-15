@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
+import { request as httpRequest } from "node:http";
 
 import { clerkMiddleware, getAuth } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
@@ -21,6 +22,7 @@ const internalPort = 8090;
 const internalSecret = randomBytes(32).toString("hex");
 const internalTarget = `http://127.0.0.1:${internalPort}`;
 const allowedRoles = new Set(["viewer", "researcher", "operator", "admin"]);
+const clerkConfigured = Boolean(process.env.CLERK_SECRET_KEY?.trim());
 // This entrypoint is only used for the paper deployment. Keep the worker stack
 // on by default so a missing deployment variable cannot silently publish an API
 // with no scheduler or learning workers.
@@ -54,6 +56,10 @@ const learningConcurrency = boundedConcurrency("PAPER_LEARNING_CONCURRENCY", 2, 
 const learningReplicas = boundedConcurrency("PAPER_LEARNING_REPLICAS", 3, 8);
 
 let stopping = false;
+let backendReady = false;
+let startupState: "migrating" | "starting" | "ready" | "failed" = "migrating";
+let startupError: string | undefined;
+let migrationProcess: ChildProcess | undefined;
 
 const runtimeEnv = {
   ...process.env,
@@ -101,6 +107,35 @@ app.get(["/", "/api", "/api/health"], (_req, res) => {
   });
 });
 
+// Keep deployment diagnostics separate from liveness. Replit can reach this
+// process while migrations or FastAPI startup are still in progress, but it
+// must not receive a proxy timeout that hides the actual startup state.
+app.get("/api/startup", (_req, res) => {
+  res.status(backendReady ? 200 : 503).json({
+    status: backendReady ? "ready" : startupState,
+    paper_only: true,
+    live_trading: false,
+    ...(startupError ? { error: startupError } : {}),
+  });
+});
+
+app.use("/api", (req, res, next) => {
+  if (req.path === "/health" || req.path === "/startup") {
+    next();
+    return;
+  }
+  if (!backendReady) {
+    res.status(503).json({
+      status: startupState,
+      detail: "Paper API is not ready; inspect /api/startup",
+      paper_only: true,
+      live_trading: false,
+    });
+    return;
+  }
+  next();
+});
+
 // The hosted supervisor does not use the local Docker migration service. Apply
 // the checked-in schema before starting FastAPI so a new release cannot boot
 // against a database that is missing one of its required tables. The migration
@@ -131,6 +166,8 @@ function supervisePaperWorker(args: string[], label: string): ChildProcess {
 }
 
 function startBackendAfterMigration(): void {
+  startupState = "starting";
+  startupError = undefined;
   python = spawn(
     "python3.11",
     [
@@ -149,6 +186,7 @@ function startBackendAfterMigration(): void {
     },
   );
   observePythonExit(python);
+  waitForBackendHealth();
 
   if (!paperWorkersEnabled) return;
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=intraday@%h", "--queues=intraday_market_data", "--concurrency=1"], "intraday");
@@ -172,14 +210,22 @@ function startBackendAfterMigration(): void {
   supervisePaperWorker(["scripts/run_beat_with_lease.py"], "beat");
 }
 
-app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY,
-    ),
-  })),
-);
+if (clerkConfigured) {
+  app.use(
+    clerkMiddleware((req) => ({
+      publishableKey: publishableKeyFromHost(
+        getClerkProxyHost(req) ?? "",
+        process.env.CLERK_PUBLISHABLE_KEY,
+      ),
+    })),
+  );
+} else {
+  // Do not let an incomplete Clerk deployment crash the gateway. The backend
+  // still receives no internal identity headers and therefore rejects every
+  // protected request; operators get a normal 401 plus /api/startup remains
+  // useful for diagnosing the missing deployment secret.
+  console.error("Clerk secret is not configured; protected requests remain unauthenticated");
+}
 
 const apiProxy = createProxyMiddleware({
   target: internalTarget,
@@ -199,7 +245,7 @@ app.use(
       delete req.headers[name];
     }
 
-    const auth = getAuth(req);
+    const auth = clerkConfigured ? getAuth(req) : { userId: null };
     if (auth.userId) {
       const role = roleMappings()[auth.userId] || "viewer";
       const timestamp = String(Math.floor(Date.now() / 1000));
@@ -221,22 +267,75 @@ const server = app.listen(publicPort, "0.0.0.0", () => {
   console.log(`Production authentication gateway listening on ${publicPort}`);
 });
 
-const migration = spawn(
-  "python3.11",
-  ["-m", "alembic", "upgrade", "head"],
-  {
-    cwd: new URL("../backend", import.meta.url),
-    env: runtimeEnv,
-    stdio: "inherit",
-  },
-);
-migration.on("exit", (code, signal) => {
-  if (code !== 0) {
-    console.error(`Database migration failed; backend startup withheld: code=${code} signal=${signal}`);
+function runMigration(attempt = 1): void {
+  startupState = "migrating";
+  migrationProcess = spawn(
+    "python3.11",
+    ["-m", "alembic", "upgrade", "head"],
+    {
+      cwd: new URL("../backend", import.meta.url),
+      env: runtimeEnv,
+      stdio: "inherit",
+    },
+  );
+  migrationProcess.on("error", (error) => {
+    console.error(`Database migration process failed: ${error.message}`);
+  });
+  migrationProcess.on("exit", (code, signal) => {
+    migrationProcess = undefined;
+    if (code === 0) {
+      startBackendAfterMigration();
+      return;
+    }
+    const maxAttempts = 5;
+    if (!stopping && attempt < maxAttempts) {
+      const delayMs = 2 ** (attempt - 1) * 1000;
+      console.error(
+        `Database migration failed; retrying in ${delayMs}ms ` +
+        `(attempt ${attempt}/${maxAttempts}): code=${code} signal=${signal}`,
+      );
+      setTimeout(() => runMigration(attempt + 1), delayMs);
+      return;
+    }
+    startupState = "failed";
+    startupError = `database migration failed after ${attempt} attempt(s)`;
+    console.error(`${startupError}: code=${code} signal=${signal}`);
+  });
+}
+
+function waitForBackendHealth(attempt = 1): void {
+  if (stopping || backendReady || !python) return;
+  const probe = httpRequest(
+    `${internalTarget}/api/health`,
+    { method: "GET", timeout: 1000 },
+    (response) => {
+      response.resume();
+      if (response.statusCode === 200) {
+        backendReady = true;
+        startupState = "ready";
+        startupError = undefined;
+        return;
+      }
+      retryBackendHealth(attempt);
+    },
+  );
+  probe.on("error", () => retryBackendHealth(attempt));
+  probe.on("timeout", () => probe.destroy());
+  probe.end();
+}
+
+function retryBackendHealth(attempt: number): void {
+  if (stopping || backendReady || !python) return;
+  if (attempt >= 30) {
+    startupState = "failed";
+    startupError = "paper API did not become healthy after startup";
+    python.kill("SIGTERM");
     return;
   }
-  startBackendAfterMigration();
-});
+  setTimeout(() => waitForBackendHealth(attempt + 1), 500);
+}
+
+runMigration();
 
 function stop(signal: NodeJS.Signals, exitCode?: number) {
   if (stopping) return;
@@ -246,6 +345,7 @@ function stop(signal: NodeJS.Signals, exitCode?: number) {
       if (!worker.killed) worker.kill(signal);
     }
     if (redisProcess && !redisProcess.killed) redisProcess.kill(signal);
+    if (migrationProcess && !migrationProcess.killed) migrationProcess.kill(signal);
     if (python && !python.killed) python.kill(signal);
     if (exitCode !== undefined) process.exit(exitCode);
   });
@@ -256,6 +356,9 @@ process.on("SIGTERM", () => stop("SIGTERM"));
 function observePythonExit(child: ChildProcess): void {
   child.on("exit", (code, signal) => {
     console.error(`FastAPI exited before gateway shutdown: code=${code} signal=${signal}`);
+    backendReady = false;
+    startupState = "failed";
+    startupError = "paper API exited before gateway shutdown";
     stop("SIGTERM", code ?? 1);
   });
 }
