@@ -186,6 +186,41 @@ class MigrationTests(unittest.TestCase):
         self.assertIn("stock_paper_graduation_packages_immutable_update", trigger_names)
         self.assertIn("stock_paper_graduation_packages_immutable_delete", trigger_names)
 
+    def test_intraday_provider_migration_accepts_missing_legacy_constraint(self):
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(
+                """
+                CREATE TABLE intraday_bars (
+                    id INTEGER PRIMARY KEY,
+                    symbol VARCHAR(16) NOT NULL,
+                    timeframe VARCHAR(8) NOT NULL,
+                    opened_at DATETIME NOT NULL,
+                    open NUMERIC NOT NULL,
+                    high NUMERIC NOT NULL,
+                    low NUMERIC NOT NULL,
+                    close NUMERIC NOT NULL,
+                    volume BIGINT NOT NULL,
+                    provider VARCHAR(32) NOT NULL,
+                    feed_class VARCHAR(32) NOT NULL,
+                    exchange_timestamp DATETIME NOT NULL,
+                    ingested_at DATETIME NOT NULL
+                )
+                """
+            )
+            connection.exec_driver_sql(
+                "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO alembic_version (version_num) VALUES ('0041_paper_graduation_packages')"
+            )
+
+        command.upgrade(self.config, "0042_intraday_provider")
+        inspector = inspect(self.engine)
+        self.assertIn(
+            "uq_intraday_bar_provider",
+            {item["name"] for item in inspector.get_unique_constraints("intraday_bars")},
+        )
+
     def test_publish_managed_schema_allows_stale_revision_marker(self):
         command.upgrade(self.config, "head")
         with self.engine.begin() as connection:
