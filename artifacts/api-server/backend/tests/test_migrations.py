@@ -284,6 +284,32 @@ class MigrationTests(unittest.TestCase):
             {index["name"] for index in inspector.get_indexes("stock_paper_orders")},
         )
 
+    def test_agent_research_runs_migration_accepts_publish_precreated_table(self):
+        command.upgrade(self.config, "0044_exact_paper_session_bounds")
+        from app.db.base import Base
+
+        research_table = Base.metadata.tables["agent_research_runs"]
+        Base.metadata.create_all(self.engine, tables=[research_table])
+
+        command.upgrade(self.config, "0045_agent_research_runs")
+        command.stamp(self.config, "0044_exact_paper_session_bounds")
+        command.upgrade(self.config, "0045_agent_research_runs")
+
+        inspector = inspect(self.engine)
+        self.assertIn("agent_research_runs", inspector.get_table_names())
+        self.assertEqual(
+            {
+                "ix_agent_research_runs_status",
+                "ix_agent_research_runs_symbol",
+                "ix_agent_research_runs_created_at",
+            },
+            {
+                index["name"]
+                for index in inspector.get_indexes("agent_research_runs")
+                if index["name"].startswith("ix_agent_research_runs_")
+            },
+        )
+
     def test_publish_managed_schema_allows_stale_revision_marker(self):
         command.upgrade(self.config, "head")
         with self.engine.begin() as connection:
