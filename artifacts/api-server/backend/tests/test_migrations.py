@@ -154,6 +154,38 @@ class MigrationTests(unittest.TestCase):
                 1,
             )
 
+    def test_paper_graduation_migration_accepts_publish_precreated_tables(self):
+        command.upgrade(self.config, "0040_controlled_live_pilot")
+        from app.db.base import Base
+
+        graduation_table = Base.metadata.tables["stock_paper_graduation_packages"]
+        Base.metadata.create_all(self.engine, tables=[graduation_table])
+
+        command.upgrade(self.config, "0041_paper_graduation_packages")
+        command.stamp(self.config, "0040_controlled_live_pilot")
+        command.upgrade(self.config, "0041_paper_graduation_packages")
+
+        inspector = inspect(self.engine)
+        self.assertIn("stock_paper_graduation_packages", inspector.get_table_names())
+        self.assertIn(
+            "ix_stock_paper_graduation_packages_decision",
+            {
+                index["name"]
+                for index in inspector.get_indexes("stock_paper_graduation_packages")
+            },
+        )
+        with self.engine.connect() as connection:
+            trigger_names = {
+                row[0]
+                for row in connection.execute(text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'trigger' AND tbl_name = "
+                    "'stock_paper_graduation_packages'"
+                ))
+            }
+        self.assertIn("stock_paper_graduation_packages_immutable_update", trigger_names)
+        self.assertIn("stock_paper_graduation_packages_immutable_delete", trigger_names)
+
     def test_publish_managed_schema_allows_stale_revision_marker(self):
         command.upgrade(self.config, "head")
         with self.engine.begin() as connection:
