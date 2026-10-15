@@ -111,10 +111,12 @@ app.get(["/", "/api", "/api/health"], (_req, res) => {
 // process while migrations or FastAPI startup are still in progress, but it
 // must not receive a proxy timeout that hides the actual startup state.
 app.get("/api/startup", (_req, res) => {
-  res.status(backendReady ? 200 : 503).json({
-    status: backendReady ? "ready" : startupState,
+  const ready = backendReady && clerkConfigured;
+  res.status(ready ? 200 : 503).json({
+    status: backendReady && !clerkConfigured ? "auth_missing" : startupState,
     paper_only: true,
     live_trading: false,
+    auth_configured: clerkConfigured,
     ...(startupError ? { error: startupError } : {}),
   });
 });
