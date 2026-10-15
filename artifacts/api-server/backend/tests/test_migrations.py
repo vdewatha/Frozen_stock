@@ -54,6 +54,57 @@ class MigrationTests(unittest.TestCase):
             trigger_names,
         )
 
+    def test_scheduled_trial_handoff_accepts_publish_preapplied_schema(self):
+        command.upgrade(self.config, "0033_promotion_decision_retries")
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE stock_learning_cycles ADD COLUMN binding_id INTEGER "
+                "REFERENCES stock_paper_model_bindings(id)"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX uq_stock_learning_cycle_binding "
+                "ON stock_learning_cycles(binding_id)"
+            ))
+            connection.execute(text(
+                "ALTER TABLE stock_paper_model_bindings ADD COLUMN source_cycle_id VARCHAR(64)"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX uq_stock_binding_source_cycle "
+                "ON stock_paper_model_bindings(source_cycle_id)"
+            ))
+            connection.execute(text(
+                "ALTER TABLE stock_paper_trials ADD COLUMN source_cycle_id VARCHAR(64)"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX uq_stock_trial_source_cycle "
+                "ON stock_paper_trials(source_cycle_id)"
+            ))
+
+        command.upgrade(self.config, "0034_scheduled_trial_handoff")
+        with self.engine.connect() as connection:
+            self.assertIn(
+                "binding_id",
+                {column["name"] for column in inspect(connection).get_columns("stock_learning_cycles")},
+            )
+            self.assertIn(
+                "source_cycle_id",
+                {column["name"] for column in inspect(connection).get_columns("stock_paper_model_bindings")},
+            )
+            self.assertIn(
+                "source_cycle_id",
+                {column["name"] for column in inspect(connection).get_columns("stock_paper_trials")},
+            )
+            check = next(
+                item
+                for item in inspect(connection).get_check_constraints("stock_learning_cycles")
+                if item["name"] == "ck_stock_learning_cycle_status"
+            )
+            self.assertIn("awaiting_admission", check["sqltext"])
+
+        # A retry after a stale revision marker must tolerate the already-applied shape.
+        command.stamp(self.config, "0033_promotion_decision_retries")
+        command.upgrade(self.config, "0034_scheduled_trial_handoff")
+
     def test_publish_managed_schema_allows_stale_revision_marker(self):
         command.upgrade(self.config, "head")
         with self.engine.begin() as connection:
