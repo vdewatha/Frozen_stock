@@ -105,6 +105,28 @@ class MigrationTests(unittest.TestCase):
         command.stamp(self.config, "0033_promotion_decision_retries")
         command.upgrade(self.config, "0034_scheduled_trial_handoff")
 
+    def test_isolated_live_broker_migration_accepts_publish_precreated_tables(self):
+        command.upgrade(self.config, "0038_stock_accuracy")
+        from app.db.base import Base
+
+        live_tables = [
+            table
+            for table in Base.metadata.sorted_tables
+            if table.name.startswith("live_broker_")
+        ]
+        self.assertEqual(len(live_tables), 7)
+        Base.metadata.create_all(self.engine, tables=live_tables)
+
+        command.upgrade(self.config, "0039_isolated_live_broker")
+
+        inspector = inspect(self.engine)
+        for table in live_tables:
+            self.assertIn(table.name, inspector.get_table_names())
+        self.assertIn(
+            "ix_live_broker_accounts_status",
+            {index["name"] for index in inspector.get_indexes("live_broker_accounts")},
+        )
+
     def test_publish_managed_schema_allows_stale_revision_marker(self):
         command.upgrade(self.config, "head")
         with self.engine.begin() as connection:
