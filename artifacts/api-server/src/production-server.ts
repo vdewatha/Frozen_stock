@@ -219,7 +219,9 @@ function startBackendAfterMigration(): void {
   observeChildOutput(python, "fastapi");
   observePythonExit(python);
   waitForBackendHealth();
+}
 
+function startPaperWorkers(): void {
   if (!paperWorkersEnabled) return;
   if (compactPaperWorker) {
     supervisePaperWorker([
@@ -361,6 +363,7 @@ function waitForBackendHealth(attempt = 1): void {
         backendReady = true;
         startupState = "ready";
         startupError = undefined;
+        startPaperWorkers();
         return;
       }
         lastBackendProbeError = `status=${response.statusCode} body=${body.trim() || "<empty>"}`;
