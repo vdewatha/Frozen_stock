@@ -11,6 +11,30 @@ depends_on = None
 
 def upgrade():
     bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        # Multiple published workers can start together. PostgreSQL's atomic
+        # IF NOT EXISTS clauses prevent concurrent migration attempts from
+        # racing between inspection and DDL execution.
+        op.execute(
+            sa.text(
+                "ALTER TABLE stock_learning_worker_dispatches "
+                "ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMP WITH TIME ZONE"
+            )
+        )
+        op.execute(
+            sa.text(
+                "ALTER TABLE stock_learning_worker_dispatches "
+                "ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMP WITH TIME ZONE"
+            )
+        )
+        op.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_stock_learning_worker_dispatches_lease_expires_at "
+                "ON stock_learning_worker_dispatches (lease_expires_at)"
+            )
+        )
+        return
     inspector = sa.inspect(bind)
     columns = {
         column["name"]

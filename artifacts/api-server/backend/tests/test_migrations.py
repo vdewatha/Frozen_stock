@@ -1,8 +1,10 @@
 import hashlib
+import importlib.util
 import tempfile
 import logging
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from alembic import command
 from sqlalchemy import create_engine, inspect, text
@@ -258,6 +260,30 @@ class MigrationTests(unittest.TestCase):
         command.upgrade(self.config, "0057_learning_worker_leases")
         command.stamp(self.config, "0056_learning_worker_dispatch")
         command.upgrade(self.config, "0057_learning_worker_leases")
+
+    def test_worker_lease_postgres_path_uses_atomic_ddl(self):
+        migration_path = (
+            Path(__file__).parents[1]
+            / "alembic"
+            / "versions"
+            / "0057_learning_worker_leases.py"
+        )
+        spec = importlib.util.spec_from_file_location("migration_0057", migration_path)
+        migration = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(migration)
+        bind = unittest.mock.Mock()
+        bind.dialect.name = "postgresql"
+        with patch.object(migration.op, "get_bind", return_value=bind), patch.object(
+            migration.op, "execute"
+        ) as execute:
+            migration.upgrade()
+
+        statements = [str(call.args[0]) for call in execute.call_args_list]
+        self.assertEqual(len(statements), 3)
+        self.assertIn("ADD COLUMN IF NOT EXISTS claimed_at", statements[0])
+        self.assertIn("ADD COLUMN IF NOT EXISTS lease_expires_at", statements[1])
+        self.assertIn("CREATE INDEX IF NOT EXISTS", statements[2])
 
     def test_market_price_provider_migration_accepts_publish_preapplied_key(self):
         command.upgrade(self.config, "0057_learning_worker_leases")
