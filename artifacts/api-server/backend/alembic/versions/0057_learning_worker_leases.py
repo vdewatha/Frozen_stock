@@ -10,13 +10,30 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("stock_learning_worker_dispatches", sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("stock_learning_worker_dispatches", sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True))
-    op.create_index(
-        "ix_stock_learning_worker_dispatches_lease_expires_at",
-        "stock_learning_worker_dispatches",
-        ["lease_expires_at"],
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {
+        column["name"]
+        for column in inspector.get_columns("stock_learning_worker_dispatches")
+    }
+    if "claimed_at" not in columns:
+        op.add_column(
+            "stock_learning_worker_dispatches",
+            sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
+        )
+    if "lease_expires_at" not in columns:
+        op.add_column(
+            "stock_learning_worker_dispatches",
+            sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True),
+        )
+    if "ix_stock_learning_worker_dispatches_lease_expires_at" not in {
+        index["name"] for index in sa.inspect(bind).get_indexes("stock_learning_worker_dispatches")
+    }:
+        op.create_index(
+            "ix_stock_learning_worker_dispatches_lease_expires_at",
+            "stock_learning_worker_dispatches",
+            ["lease_expires_at"],
+        )
 
 
 def downgrade():

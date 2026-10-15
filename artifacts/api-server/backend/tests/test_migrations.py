@@ -239,6 +239,45 @@ class MigrationTests(unittest.TestCase):
         command.stamp(self.config, "0054_paper_account_transition")
         command.upgrade(self.config, "0055_intraday_verify")
 
+    def test_worker_lease_migration_accepts_publish_preapplied_columns(self):
+        command.upgrade(self.config, "0056_learning_worker_dispatch")
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE stock_learning_worker_dispatches "
+                "ADD COLUMN claimed_at DATETIME"
+            )
+            connection.exec_driver_sql(
+                "ALTER TABLE stock_learning_worker_dispatches "
+                "ADD COLUMN lease_expires_at DATETIME"
+            )
+            connection.exec_driver_sql(
+                "CREATE INDEX ix_stock_learning_worker_dispatches_lease_expires_at "
+                "ON stock_learning_worker_dispatches(lease_expires_at)"
+            )
+
+        command.upgrade(self.config, "0057_learning_worker_leases")
+        command.stamp(self.config, "0056_learning_worker_dispatch")
+        command.upgrade(self.config, "0057_learning_worker_leases")
+
+    def test_market_price_provider_migration_accepts_publish_preapplied_key(self):
+        command.upgrade(self.config, "0057_learning_worker_leases")
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE market_prices RENAME TO market_prices_legacy"
+            )
+            connection.exec_driver_sql(
+                "CREATE TABLE market_prices ("
+                "id INTEGER PRIMARY KEY, symbol VARCHAR(16) NOT NULL, "
+                "price_date DATE NOT NULL, close NUMERIC NOT NULL, "
+                "source VARCHAR(64) NOT NULL, imported_at DATETIME NOT NULL, "
+                "CONSTRAINT uq_market_prices_symbol_date_source "
+                "UNIQUE(symbol, price_date, source))"
+            )
+
+        command.upgrade(self.config, "0058_market_price_provider_key")
+        command.stamp(self.config, "0057_learning_worker_leases")
+        command.upgrade(self.config, "0058_market_price_provider_key")
+
     def test_paper_run_approval_migration_accepts_publish_precreated_table(self):
         command.upgrade(self.config, "0042_intraday_provider")
         from app.db.base import Base
