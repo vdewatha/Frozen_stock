@@ -28,14 +28,21 @@ def upgrade() -> None:
             "stock_paper_promotion_readiness_reports",
             sa.Column("evidence", sa.JSON()),
         )
-    indexes = {index["name"] for index in inspector.get_indexes("stock_paper_promotion_readiness_reports")}
-    if "uq_stock_readiness_report_trial_version" not in indexes:
-        op.create_index(
-            "uq_stock_readiness_report_trial_version",
-            "stock_paper_promotion_readiness_reports",
-            ["trial_id", "report_version"],
-            unique=True,
-        )
+    # PostgreSQL's inspector does not consistently expose an index that was
+    # created by an existing ORM index/constraint.  Use native idempotency so
+    # a publish-time schema pre-creation cannot block the migration.
+    if bind.dialect.name == "postgresql":
+        op.execute(sa.text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "uq_stock_readiness_report_trial_version "
+            "ON stock_paper_promotion_readiness_reports (trial_id, report_version)"
+        ))
+    else:
+        op.execute(sa.text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "uq_stock_readiness_report_trial_version "
+            "ON stock_paper_promotion_readiness_reports (trial_id, report_version)"
+        ))
 
 
 def downgrade() -> None:
