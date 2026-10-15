@@ -102,3 +102,27 @@ def test_upgrade_accepts_publish_preapplied_activity_columns(tmp_path):
         assert "normalized_payload" in activity_columns
     finally:
         engine.dispose()
+
+
+def test_upgrade_accepts_publish_preapplied_model_prediction_identity(tmp_path):
+    engine = create_engine("sqlite:///" + str(tmp_path / "preapplied-prediction-identity.sqlite"))
+    config = migration_config()
+    config.set_main_option("sqlalchemy.url", str(engine.url))
+    try:
+        command.upgrade(config, "0052_paper_research_qual")
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX uq_model_prediction_identity "
+                "ON model_predictions(symbol, prediction_date, horizon_days, source)"
+            )
+
+        command.upgrade(config, "head")
+        command.upgrade(config, "head")
+        indexes = {item["name"] for item in inspect(engine).get_indexes("model_predictions")}
+        constraints = {
+            item.get("name")
+            for item in inspect(engine).get_unique_constraints("model_predictions")
+        }
+        assert "uq_model_prediction_identity" in indexes | constraints
+    finally:
+        engine.dispose()

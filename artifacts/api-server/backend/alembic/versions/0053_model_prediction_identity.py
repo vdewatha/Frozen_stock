@@ -1,5 +1,6 @@
 """Deduplicate and constrain persisted model prediction identities."""
 from alembic import op
+import sqlalchemy as sa
 
 
 revision = "0053_model_prediction_identity"
@@ -21,12 +22,30 @@ def upgrade():
         )
         """
     )
+    # Replit's managed schema may have pre-applied this identity as either a
+    # named constraint or a unique index while the Alembic revision marker is
+    # still behind. Treat both shapes as equivalent and avoid recreating the
+    # already-existing relation.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    constraint_names = {
+        item.get("name")
+        for item in inspector.get_unique_constraints("model_predictions")
+    }
+    index_names = {
+        item.get("name")
+        for item in inspector.get_indexes("model_predictions")
+    }
+    identity_name = "uq_model_prediction_identity"
+    if identity_name in constraint_names or identity_name in index_names:
+        return
+
     # SQLite cannot ALTER a table to add a constraint. Alembic's batch mode
     # rebuilds that table on SQLite and uses a normal ALTER on databases that
     # support it.
     with op.batch_alter_table("model_predictions", recreate="auto") as batch_op:
         batch_op.create_unique_constraint(
-            "uq_model_prediction_identity",
+            identity_name,
             ["symbol", "prediction_date", "horizon_days", "source"],
         )
 
