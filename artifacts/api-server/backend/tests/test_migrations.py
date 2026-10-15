@@ -221,6 +221,35 @@ class MigrationTests(unittest.TestCase):
             {item["name"] for item in inspector.get_unique_constraints("intraday_bars")},
         )
 
+    def test_paper_run_approval_migration_accepts_publish_precreated_table(self):
+        command.upgrade(self.config, "0042_intraday_provider")
+        from app.db.base import Base
+
+        approval_table = Base.metadata.tables["stock_paper_run_approvals"]
+        Base.metadata.create_all(self.engine, tables=[approval_table])
+
+        command.upgrade(self.config, "0043_paper_run_approval")
+        command.stamp(self.config, "0042_intraday_provider")
+        command.upgrade(self.config, "0043_paper_run_approval")
+
+        inspector = inspect(self.engine)
+        self.assertIn("stock_paper_run_approvals", inspector.get_table_names())
+        self.assertIn(
+            "ix_stock_paper_run_approvals_cycle_id",
+            {index["name"] for index in inspector.get_indexes("stock_paper_run_approvals")},
+        )
+        with self.engine.connect() as connection:
+            trigger_names = {
+                row[0]
+                for row in connection.execute(text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'trigger' AND tbl_name = "
+                    "'stock_paper_run_approvals'"
+                ))
+            }
+        self.assertIn("stock_paper_run_approvals_immutable_update", trigger_names)
+        self.assertIn("stock_paper_run_approvals_immutable_delete", trigger_names)
+
     def test_publish_managed_schema_allows_stale_revision_marker(self):
         command.upgrade(self.config, "head")
         with self.engine.begin() as connection:

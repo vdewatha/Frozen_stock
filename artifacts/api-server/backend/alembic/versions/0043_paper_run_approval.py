@@ -9,8 +9,33 @@ branch_labels = None
 depends_on = None
 
 
+def _create_table_if_missing(bind, table_name: str, *elements) -> None:
+    if not sa.inspect(bind).has_table(table_name):
+        op.create_table(table_name, *elements)
+
+
+def _create_index_if_missing(bind, name: str, table_name: str, columns: list[str]) -> None:
+    indexes = {index["name"] for index in sa.inspect(bind).get_indexes(table_name)}
+    if name not in indexes:
+        op.create_index(name, table_name, columns)
+
+
+def _trigger_exists(bind, name: str) -> bool:
+    if bind.dialect.name == "postgresql":
+        return bool(bind.execute(sa.text(
+            "SELECT 1 FROM pg_trigger WHERE tgname = :name"
+        ), {"name": name}).first())
+    if bind.dialect.name == "sqlite":
+        return bool(bind.execute(sa.text(
+            "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = :name"
+        ), {"name": name}).first())
+    return False
+
+
 def upgrade() -> None:
-    op.create_table(
+    bind = op.get_bind()
+    _create_table_if_missing(
+        bind,
         "stock_paper_run_approvals",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column(
@@ -37,18 +62,19 @@ def upgrade() -> None:
         sa.CheckConstraint("live_authorized = false", name="ck_stock_paper_approval_live_disabled"),
         sa.UniqueConstraint("approval_sha256", name="uq_stock_paper_run_approval_digest"),
     )
-    op.create_index(
+    _create_index_if_missing(
+        bind,
         "ix_stock_paper_run_approvals_cycle_id",
         "stock_paper_run_approvals",
         ["cycle_id"],
     )
-    op.create_index(
+    _create_index_if_missing(
+        bind,
         "ix_stock_paper_run_approvals_created_at",
         "stock_paper_run_approvals",
         ["created_at"],
     )
 
-    bind = op.get_bind()
     if bind.dialect.name == "postgresql":
         op.execute(sa.text(
             """
@@ -60,32 +86,35 @@ def upgrade() -> None:
             $$ LANGUAGE plpgsql
             """
         ))
-        op.execute(sa.text(
-            """
-            CREATE TRIGGER stock_paper_run_approvals_immutable
-            BEFORE UPDATE OR DELETE ON stock_paper_run_approvals
-            FOR EACH ROW EXECUTE FUNCTION reject_stock_paper_run_approval_mutation()
-            """
-        ))
+        if not _trigger_exists(bind, "stock_paper_run_approvals_immutable"):
+            op.execute(sa.text(
+                """
+                CREATE TRIGGER stock_paper_run_approvals_immutable
+                BEFORE UPDATE OR DELETE ON stock_paper_run_approvals
+                FOR EACH ROW EXECUTE FUNCTION reject_stock_paper_run_approval_mutation()
+                """
+            ))
     elif bind.dialect.name == "sqlite":
-        op.execute(sa.text(
-            """
-            CREATE TRIGGER stock_paper_run_approvals_immutable_update
-            BEFORE UPDATE ON stock_paper_run_approvals
-            BEGIN
-              SELECT RAISE(ABORT, 'stock paper run approvals are immutable');
-            END
-            """
-        ))
-        op.execute(sa.text(
-            """
-            CREATE TRIGGER stock_paper_run_approvals_immutable_delete
-            BEFORE DELETE ON stock_paper_run_approvals
-            BEGIN
-              SELECT RAISE(ABORT, 'stock paper run approvals are immutable');
-            END
-            """
-        ))
+        if not _trigger_exists(bind, "stock_paper_run_approvals_immutable_update"):
+            op.execute(sa.text(
+                """
+                CREATE TRIGGER stock_paper_run_approvals_immutable_update
+                BEFORE UPDATE ON stock_paper_run_approvals
+                BEGIN
+                  SELECT RAISE(ABORT, 'stock paper run approvals are immutable');
+                END
+                """
+            ))
+        if not _trigger_exists(bind, "stock_paper_run_approvals_immutable_delete"):
+            op.execute(sa.text(
+                """
+                CREATE TRIGGER stock_paper_run_approvals_immutable_delete
+                BEFORE DELETE ON stock_paper_run_approvals
+                BEGIN
+                  SELECT RAISE(ABORT, 'stock paper run approvals are immutable');
+                END
+                """
+            ))
 
 
 def downgrade() -> None:
