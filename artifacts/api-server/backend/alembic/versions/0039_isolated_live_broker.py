@@ -9,8 +9,26 @@ branch_labels = None
 depends_on = None
 
 
+def _table_exists(name: str) -> bool:
+    return name in sa.inspect(op.get_bind()).get_table_names()
+
+
+def _index_exists(table: str, name: str) -> bool:
+    return any(index["name"] == name for index in sa.inspect(op.get_bind()).get_indexes(table))
+
+
+def _create_table(name: str, *args, **kwargs) -> None:
+    if not _table_exists(name):
+        op.create_table(name, *args, **kwargs)
+
+
+def _create_index(name: str, table: str, columns) -> None:
+    if not _index_exists(table, name):
+        op.create_index(name, table, columns)
+
+
 def upgrade() -> None:
-    op.create_table(
+    _create_table(
         "live_broker_accounts",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("broker", sa.String(length=32), nullable=False),
@@ -30,9 +48,9 @@ def upgrade() -> None:
         sa.Column("raw_payload", sa.JSON(), nullable=False),
         sa.UniqueConstraint("broker", name="uq_live_broker_account_broker"),
     )
-    op.create_index("ix_live_broker_accounts_status", "live_broker_accounts", ["status"])
+    _create_index("ix_live_broker_accounts_status", "live_broker_accounts", ["status"])
 
-    op.create_table(
+    _create_table(
         "live_broker_positions",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("account_id", sa.Integer(), sa.ForeignKey("live_broker_accounts.id"), nullable=False),
@@ -45,10 +63,10 @@ def upgrade() -> None:
         sa.UniqueConstraint("account_id", "symbol", name="uq_live_broker_position"),
         sa.CheckConstraint("quantity >= 0", name="ck_live_broker_position_no_short"),
     )
-    op.create_index("ix_live_broker_positions_account_id", "live_broker_positions", ["account_id"])
-    op.create_index("ix_live_broker_positions_symbol", "live_broker_positions", ["symbol"])
+    _create_index("ix_live_broker_positions_account_id", "live_broker_positions", ["account_id"])
+    _create_index("ix_live_broker_positions_symbol", "live_broker_positions", ["symbol"])
 
-    op.create_table(
+    _create_table(
         "live_broker_account_snapshots",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("account_id", sa.Integer(), sa.ForeignKey("live_broker_accounts.id"), nullable=False),
@@ -60,10 +78,10 @@ def upgrade() -> None:
         sa.Column("raw_payload", sa.JSON(), nullable=False),
         sa.UniqueConstraint("account_id", "observed_at", name="uq_live_broker_snapshot_time"),
     )
-    op.create_index("ix_live_broker_account_snapshots_account_id", "live_broker_account_snapshots", ["account_id"])
-    op.create_index("ix_live_broker_account_snapshots_observed_at", "live_broker_account_snapshots", ["observed_at"])
+    _create_index("ix_live_broker_account_snapshots_account_id", "live_broker_account_snapshots", ["account_id"])
+    _create_index("ix_live_broker_account_snapshots_observed_at", "live_broker_account_snapshots", ["observed_at"])
 
-    op.create_table(
+    _create_table(
         "live_broker_orders",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("account_id", sa.Integer(), sa.ForeignKey("live_broker_accounts.id"), nullable=False),
@@ -105,9 +123,9 @@ def upgrade() -> None:
         ("model_run_id", "model_run_id"), ("signal_id", "signal_id"),
         ("risk_decision_id", "risk_decision_id"), ("symbol", "symbol"), ("status", "status"),
     ):
-        op.create_index(f"ix_live_broker_orders_{name}", "live_broker_orders", [column])
+        _create_index(f"ix_live_broker_orders_{name}", "live_broker_orders", [column])
 
-    op.create_table(
+    _create_table(
         "live_broker_fills",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("account_id", sa.Integer(), sa.ForeignKey("live_broker_accounts.id"), nullable=False),
@@ -125,13 +143,13 @@ def upgrade() -> None:
         sa.CheckConstraint("side IN ('buy', 'sell')", name="ck_live_broker_fill_side"),
         sa.CheckConstraint("quantity > 0", name="ck_live_broker_fill_quantity"),
     )
-    op.create_index("ix_live_broker_fills_account_id", "live_broker_fills", ["account_id"])
-    op.create_index("ix_live_broker_fills_order_id", "live_broker_fills", ["order_id"])
-    op.create_index("ix_live_broker_fills_broker_order_id", "live_broker_fills", ["broker_order_id"])
-    op.create_index("ix_live_broker_fills_symbol", "live_broker_fills", ["symbol"])
-    op.create_index("ix_live_broker_fills_filled_at", "live_broker_fills", ["filled_at"])
+    _create_index("ix_live_broker_fills_account_id", "live_broker_fills", ["account_id"])
+    _create_index("ix_live_broker_fills_order_id", "live_broker_fills", ["order_id"])
+    _create_index("ix_live_broker_fills_broker_order_id", "live_broker_fills", ["broker_order_id"])
+    _create_index("ix_live_broker_fills_symbol", "live_broker_fills", ["symbol"])
+    _create_index("ix_live_broker_fills_filled_at", "live_broker_fills", ["filled_at"])
 
-    op.create_table(
+    _create_table(
         "live_broker_activities",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("account_id", sa.Integer(), sa.ForeignKey("live_broker_accounts.id"), nullable=False),
@@ -141,11 +159,11 @@ def upgrade() -> None:
         sa.Column("raw_payload", sa.JSON(), nullable=False),
         sa.UniqueConstraint("broker_activity_id", name="uq_live_broker_activity_id"),
     )
-    op.create_index("ix_live_broker_activities_account_id", "live_broker_activities", ["account_id"])
-    op.create_index("ix_live_broker_activities_activity_type", "live_broker_activities", ["activity_type"])
-    op.create_index("ix_live_broker_activities_occurred_at", "live_broker_activities", ["occurred_at"])
+    _create_index("ix_live_broker_activities_account_id", "live_broker_activities", ["account_id"])
+    _create_index("ix_live_broker_activities_activity_type", "live_broker_activities", ["activity_type"])
+    _create_index("ix_live_broker_activities_occurred_at", "live_broker_activities", ["occurred_at"])
 
-    op.create_table(
+    _create_table(
         "live_broker_ledger_events",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("account_id", sa.Integer(), sa.ForeignKey("live_broker_accounts.id")),
@@ -156,9 +174,9 @@ def upgrade() -> None:
         sa.Column("payload", sa.JSON()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
-    op.create_index("ix_live_broker_ledger_events_account_id", "live_broker_ledger_events", ["account_id"])
-    op.create_index("ix_live_broker_ledger_events_event_type", "live_broker_ledger_events", ["event_type"])
-    op.create_index("ix_live_broker_ledger_events_status", "live_broker_ledger_events", ["status"])
+    _create_index("ix_live_broker_ledger_events_account_id", "live_broker_ledger_events", ["account_id"])
+    _create_index("ix_live_broker_ledger_events_event_type", "live_broker_ledger_events", ["event_type"])
+    _create_index("ix_live_broker_ledger_events_status", "live_broker_ledger_events", ["status"])
 
 
 def downgrade() -> None:
