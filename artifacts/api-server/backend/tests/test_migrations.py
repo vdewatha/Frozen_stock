@@ -250,6 +250,40 @@ class MigrationTests(unittest.TestCase):
         self.assertIn("stock_paper_run_approvals_immutable_update", trigger_names)
         self.assertIn("stock_paper_run_approvals_immutable_delete", trigger_names)
 
+    def test_exact_paper_session_bounds_accepts_publish_preapplied_columns(self):
+        command.upgrade(self.config, "0043_paper_run_approval")
+        with self.engine.begin() as connection:
+            for statement in (
+                "ALTER TABLE stock_paper_run_approvals ADD COLUMN loss_limits JSON NOT NULL DEFAULT '{}'",
+                "ALTER TABLE stock_paper_run_approvals ADD COLUMN stop_authority VARCHAR(64) NOT NULL DEFAULT 'operator_and_system'",
+                "ALTER TABLE stock_paper_run_approvals ADD COLUMN pending_order_treatment VARCHAR(32) NOT NULL DEFAULT 'cancel'",
+                "ALTER TABLE stock_paper_run_approvals ADD COLUMN remaining_position_policy VARCHAR(32) NOT NULL DEFAULT 'hold'",
+                "ALTER TABLE stock_paper_orders ADD COLUMN trial_id VARCHAR(36)",
+                "CREATE INDEX ix_stock_paper_orders_trial_id ON stock_paper_orders(trial_id)",
+            ):
+                connection.exec_driver_sql(statement)
+
+        command.upgrade(self.config, "0044_exact_paper_session_bounds")
+        command.stamp(self.config, "0043_paper_run_approval")
+        command.upgrade(self.config, "0044_exact_paper_session_bounds")
+
+        inspector = inspect(self.engine)
+        approval_columns = {
+            column["name"] for column in inspector.get_columns("stock_paper_run_approvals")
+        }
+        self.assertTrue(
+            {
+                "loss_limits",
+                "stop_authority",
+                "pending_order_treatment",
+                "remaining_position_policy",
+            }.issubset(approval_columns)
+        )
+        self.assertIn(
+            "ix_stock_paper_orders_trial_id",
+            {index["name"] for index in inspector.get_indexes("stock_paper_orders")},
+        )
+
     def test_publish_managed_schema_allows_stale_revision_marker(self):
         command.upgrade(self.config, "head")
         with self.engine.begin() as connection:
