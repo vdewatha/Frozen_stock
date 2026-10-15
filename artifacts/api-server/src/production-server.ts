@@ -27,6 +27,11 @@ const clerkConfigured = Boolean(process.env.CLERK_SECRET_KEY?.trim());
 // on by default so a missing deployment variable cannot silently publish an API
 // with no scheduler or learning workers.
 const paperWorkersEnabled = process.env.PAPER_WORKERS_ENABLED !== "false";
+// Replit Autoscale has a small per-instance memory budget.  A dozen separate
+// prefork workers can evict the API before its health probe succeeds, so the
+// hosted paper deployment uses one bounded, thread-based worker pool.  Local
+// Docker deployments keep their queue-isolated services unchanged.
+const compactPaperWorker = process.env.PAPER_COMPACT_WORKER === "true";
 const embeddedRedisPort = 6380;
 const configuredRedisUrl = process.env.REDIS_URL?.trim();
 const useEmbeddedRedis =
@@ -194,6 +199,16 @@ function startBackendAfterMigration(): void {
   waitForBackendHealth();
 
   if (!paperWorkersEnabled) return;
+  if (compactPaperWorker) {
+    supervisePaperWorker([
+      "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
+      "--loglevel=INFO", "--hostname=paper-core@%h",
+      "--queues=default,market_data,intraday_market_data,research_market_data,scalp_research,learning,paper_trading,risk,monitoring",
+      "--pool=threads", "--concurrency=2",
+    ], "paper-core");
+    supervisePaperWorker(["scripts/run_beat_with_lease.py"], "beat");
+    return;
+  }
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=intraday@%h", "--queues=intraday_market_data", "--concurrency=1"], "intraday");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=research@%h", "--queues=research_market_data", "--concurrency=1"], "research");
   // Keep the isolated scalp lane independent so its research jobs cannot sit

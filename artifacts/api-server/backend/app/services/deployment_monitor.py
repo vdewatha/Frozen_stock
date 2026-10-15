@@ -17,6 +17,7 @@ from app.services.readiness import readiness_snapshot
 from app.tasks.celery_app import (
     GENERAL_WORKER_QUEUES,
     INTRADAY_MARKET_DATA_QUEUE,
+    MONITORING_QUEUE,
     RESEARCH_MARKET_DATA_QUEUE,
     SCALP_RESEARCH_QUEUE,
     celery_app,
@@ -194,6 +195,16 @@ def _check_celery_workers() -> dict:
         }
         worker_queues[worker] = sorted(queue_names)
 
+    compact_required_queues = (
+        set(GENERAL_WORKER_QUEUES)
+        | {INTRADAY_MARKET_DATA_QUEUE, RESEARCH_MARKET_DATA_QUEUE,
+           SCALP_RESEARCH_QUEUE, MONITORING_QUEUE}
+    )
+    compact_workers = sorted(
+        worker for worker, queues in worker_queues.items()
+        if compact_required_queues.issubset(set(queues))
+    )
+
     intraday_workers = sorted(
         worker
         for worker, queues in worker_queues.items()
@@ -231,8 +242,9 @@ def _check_celery_workers() -> dict:
     )
     served_queues = {queue for queues in worker_queues.values() for queue in queues}
     missing_general_queues = sorted(GENERAL_WORKER_QUEUES - served_queues)
-    missing_research_queue = not dedicated_research_workers
-    missing_scalp_research_queue = not dedicated_scalp_research_workers
+    missing_research_queue = not dedicated_research_workers and not compact_workers
+    missing_scalp_research_queue = not dedicated_scalp_research_workers and not compact_workers
+    compact_queue_coverage = bool(compact_workers)
     registered_tasks = {
         worker: sorted(set(tasks or []))
         for worker, tasks in registered_responses.items()
@@ -247,7 +259,7 @@ def _check_celery_workers() -> dict:
     missing_registered_tasks = sorted(
         REQUIRED_REGISTERED_TASKS - registered_union
     ) if registration_evidence_available else []
-    if not dedicated_intraday_workers:
+    if not dedicated_intraday_workers and not compact_queue_coverage:
         message = (
             "No dedicated Celery worker is listening exclusively to the intraday "
             "market-data queue; "
@@ -274,13 +286,17 @@ def _check_celery_workers() -> dict:
             + ", ".join(missing_registered_tasks)
         )
     else:
-        message = "Dedicated intraday and general Celery workers are listening to their queues."
+        message = (
+            "One bounded compact Celery worker is listening to all required paper queues."
+            if compact_queue_coverage else
+            "Dedicated intraday and general Celery workers are listening to their queues."
+        )
 
     return {
         "name": "Celery workers",
         "status": _status(
             bool(workers)
-            and bool(dedicated_intraday_workers)
+            and bool(dedicated_intraday_workers or compact_queue_coverage)
             and not missing_research_queue
             and not missing_scalp_research_queue
             and not missing_general_queues
@@ -304,6 +320,9 @@ def _check_celery_workers() -> dict:
             "scalp_research_worker_count": len(scalp_research_workers),
             "dedicated_scalp_research_workers": dedicated_scalp_research_workers,
             "dedicated_scalp_research_worker_count": len(dedicated_scalp_research_workers),
+            "compact_workers": compact_workers,
+            "compact_worker_count": len(compact_workers),
+            "compact_queue_coverage": compact_queue_coverage,
             "worker_queues": worker_queues,
             "required_intraday_queue": INTRADAY_MARKET_DATA_QUEUE,
             "required_general_queues": sorted(GENERAL_WORKER_QUEUES),

@@ -150,6 +150,25 @@ class MonitorSecurityTests(unittest.TestCase):
                     self.assertEqual(result["status"], "blocked")
                     self.assertEqual(result["details"]["missing_general_queues"], [missing])
 
+    def test_worker_evidence_accepts_bounded_compact_paper_pool(self):
+        inspector = MagicMock()
+        queues = deployment_monitor.GENERAL_WORKER_QUEUES | {
+            "intraday_market_data",
+            "research_market_data",
+            "scalp_research",
+            "monitoring",
+        }
+        inspector.ping.return_value = {"paper-core@host": {"ok": "pong"}}
+        inspector.active_queues.return_value = {
+            "paper-core@host": [{"name": name} for name in queues]
+        }
+        with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):
+            result = deployment_monitor._check_celery_workers()
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["details"]["compact_workers"], ["paper-core@host"])
+        self.assertTrue(result["details"]["compact_queue_coverage"])
+
     def test_schedule_requires_governed_learning_jobs_not_only_legacy_jobs(self):
         schedule = dict(deployment_monitor.celery_app.conf.beat_schedule)
         del schedule["scheduled-stock-challenger-retraining"]

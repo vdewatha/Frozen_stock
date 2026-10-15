@@ -22,4 +22,4 @@ export LEARNING_CONCURRENCY="$learning_concurrency"
 
 exec "${compose[@]}" up -d --build \
   --scale "learning=${learning_replicas}" \
-  backend learning execution intraday market-data monitoring research risk scheduler watchdog web
+  backend learning execution intraday market-data monitoring research scalp-research risk scheduler watchdog web
