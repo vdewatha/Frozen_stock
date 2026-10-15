@@ -3,6 +3,8 @@ from uuid import uuid4
 
 import pytest
 from alembic import command
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
 from sqlalchemy import MetaData, Table, create_engine, inspect, select, text
 from sqlalchemy.engine import make_url
 
@@ -124,5 +126,32 @@ def test_upgrade_accepts_publish_preapplied_model_prediction_identity(tmp_path):
             for item in inspect(engine).get_unique_constraints("model_predictions")
         }
         assert "uq_model_prediction_identity" in indexes | constraints
+    finally:
+        engine.dispose()
+
+
+def test_account_transition_accepts_publish_missing_legacy_constraint(tmp_path):
+    engine = create_engine("sqlite:///" + str(tmp_path / "preapplied-account-transition.sqlite"))
+    config = migration_config()
+    config.set_main_option("sqlalchemy.url", str(engine.url))
+    try:
+        command.upgrade(config, "0053_model_prediction_identity")
+        with engine.begin() as connection:
+            operations = Operations(MigrationContext.configure(connection))
+            with operations.batch_alter_table("stock_paper_accounts", recreate="auto") as batch:
+                batch.drop_constraint("uq_stock_paper_account_broker", type_="unique")
+
+        command.upgrade(config, "0054_paper_account_transition")
+        command.upgrade(config, "0054_paper_account_transition")
+        inspector = inspect(engine)
+        columns = {column["name"] for column in inspector.get_columns("stock_paper_accounts")}
+        indexes = {item["name"] for item in inspector.get_indexes("stock_paper_accounts")}
+        constraints = {
+            item.get("name")
+            for item in inspector.get_unique_constraints("stock_paper_accounts")
+        }
+        assert {"archived_at", "archive_reason"}.issubset(columns)
+        assert "uq_stock_paper_account_broker" not in indexes | constraints
+        assert "ix_stock_paper_accounts_archived_at" in indexes
     finally:
         engine.dispose()
