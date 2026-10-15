@@ -9,8 +9,21 @@ branch_labels = None
 depends_on = None
 
 
+def _create_table_if_missing(bind, table_name: str, *elements) -> None:
+    if not sa.inspect(bind).has_table(table_name):
+        op.create_table(table_name, *elements)
+
+
+def _create_index_if_missing(bind, name: str, table_name: str, columns: list[str]) -> None:
+    indexes = {index["name"] for index in sa.inspect(bind).get_indexes(table_name)}
+    if name not in indexes:
+        op.create_index(name, table_name, columns)
+
+
 def upgrade() -> None:
-    op.create_table(
+    bind = op.get_bind()
+    _create_table_if_missing(
+        bind,
         "live_pilot",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("status", sa.String(length=24), nullable=False, server_default="inactive"),
@@ -40,17 +53,19 @@ def upgrade() -> None:
         sa.CheckConstraint("max_notional > 0", name="ck_live_pilot_max_notional_positive"),
         sa.CheckConstraint("max_order_notional > 0", name="ck_live_pilot_max_order_notional_positive"),
     )
-    op.create_index("ix_live_pilot_status", "live_pilot", ["status"])
+    _create_index_if_missing(bind, "ix_live_pilot_status", "live_pilot", ["status"])
     op.execute(
         sa.text(
             "INSERT INTO live_pilot "
             "(id, status, symbols, max_notional, max_order_notional, allowed_order_types, "
             "time_in_force, session_policy, observation_window_sessions, rollback_target, "
             "paper_expectations, launch_checklist, updated_by) "
-            "VALUES (1, 'inactive', '[]', 10000, 1000, '[\"limit\"]', 'day', 'regular', 5, 'paper', '{}', '{}', 'system')"
+            "SELECT 1, 'inactive', '[]', 10000, 1000, '[\"limit\"]', 'day', 'regular', 5, 'paper', '{}', '{}', 'system' "
+            "WHERE NOT EXISTS (SELECT 1 FROM live_pilot WHERE id = 1)"
         )
     )
-    op.create_table(
+    _create_table_if_missing(
+        bind,
         "live_pilot_events",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("action", sa.String(length=48), nullable=False),
@@ -63,9 +78,9 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("event_sha256", name="uq_live_pilot_event_digest"),
     )
-    op.create_index("ix_live_pilot_events_action", "live_pilot_events", ["action"])
-    op.create_index("ix_live_pilot_events_status", "live_pilot_events", ["status"])
-    op.create_index("ix_live_pilot_events_created_at", "live_pilot_events", ["created_at"])
+    _create_index_if_missing(bind, "ix_live_pilot_events_action", "live_pilot_events", ["action"])
+    _create_index_if_missing(bind, "ix_live_pilot_events_status", "live_pilot_events", ["status"])
+    _create_index_if_missing(bind, "ix_live_pilot_events_created_at", "live_pilot_events", ["created_at"])
 
 
 def downgrade() -> None:

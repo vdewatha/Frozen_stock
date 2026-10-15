@@ -127,6 +127,33 @@ class MigrationTests(unittest.TestCase):
             {index["name"] for index in inspector.get_indexes("live_broker_accounts")},
         )
 
+    def test_controlled_live_pilot_migration_accepts_publish_precreated_tables(self):
+        command.upgrade(self.config, "0039_isolated_live_broker")
+        from app.db.base import Base
+
+        pilot_tables = [
+            Base.metadata.tables[name]
+            for name in ("live_pilot", "live_pilot_events")
+        ]
+        Base.metadata.create_all(self.engine, tables=pilot_tables)
+
+        command.upgrade(self.config, "0040_controlled_live_pilot")
+        command.stamp(self.config, "0039_isolated_live_broker")
+        command.upgrade(self.config, "0040_controlled_live_pilot")
+
+        inspector = inspect(self.engine)
+        self.assertIn("live_pilot", inspector.get_table_names())
+        self.assertIn("live_pilot_events", inspector.get_table_names())
+        self.assertIn(
+            "ix_live_pilot_status",
+            {index["name"] for index in inspector.get_indexes("live_pilot")},
+        )
+        with self.engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(text("SELECT COUNT(*) FROM live_pilot WHERE id = 1")).scalar(),
+                1,
+            )
+
     def test_publish_managed_schema_allows_stale_revision_marker(self):
         command.upgrade(self.config, "head")
         with self.engine.begin() as connection:
