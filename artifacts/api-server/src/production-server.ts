@@ -66,7 +66,27 @@ let startupState: "migrating" | "starting" | "ready" | "failed" = "migrating";
 let startupError: string | undefined;
 let migrationProcess: ChildProcess | undefined;
 let lastBackendProbeError: string | undefined;
+let backendDiagnostic = "";
 const backendHealthMaxAttempts = 120;
+
+function appendBackendDiagnostic(chunk: Buffer | string): void {
+  const text = String(chunk)
+    .replace(/(?:[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|URL|ACCOUNT_ID)[A-Z0-9_]*\s*[=:]\s*)[^\s,}]+/gi, "$1<redacted>")
+    .replace(/(?:Bearer\s+)[^\s]+/gi, "Bearer <redacted>")
+    .slice(-2000);
+  backendDiagnostic = `${backendDiagnostic}${text}`.slice(-4000);
+}
+
+function observeChildOutput(child: ChildProcess, label: string): void {
+  child.stdout?.on("data", (chunk) => {
+    appendBackendDiagnostic(`[${label}] ${chunk}`);
+    process.stdout.write(chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    appendBackendDiagnostic(`[${label} stderr] ${chunk}`);
+    process.stderr.write(chunk);
+  });
+}
 
 const runtimeEnv = {
   ...process.env,
@@ -177,6 +197,7 @@ function supervisePaperWorker(args: string[], label: string): ChildProcess {
 function startBackendAfterMigration(): void {
   startupState = "starting";
   startupError = undefined;
+  backendDiagnostic = "";
   lastBackendProbeError = undefined;
   python = spawn(
     "python3.11",
@@ -192,9 +213,10 @@ function startBackendAfterMigration(): void {
     {
       cwd: new URL("../backend", import.meta.url),
       env: runtimeEnv,
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
     },
   );
+  observeChildOutput(python, "fastapi");
   observePythonExit(python);
   waitForBackendHealth();
 
@@ -362,7 +384,7 @@ function retryBackendHealth(attempt: number): void {
     startupState = "failed";
     startupError = `paper API did not become healthy after startup${
       lastBackendProbeError ? ` (${lastBackendProbeError})` : ""
-    }`;
+    }${backendDiagnostic.trim() ? `; child_output=${backendDiagnostic.trim()}` : ""}`;
     python.kill("SIGTERM");
     return;
   }
@@ -392,7 +414,9 @@ function observePythonExit(child: ChildProcess): void {
     console.error(`FastAPI exited before gateway shutdown: code=${code} signal=${signal}`);
     backendReady = false;
     startupState = "failed";
-    startupError = "paper API exited before gateway shutdown";
+    startupError = `paper API exited before gateway shutdown: code=${code} signal=${signal}${
+      backendDiagnostic.trim() ? `; child_output=${backendDiagnostic.trim()}` : ""
+    }`;
     stop("SIGTERM", code ?? 1);
   });
 }
