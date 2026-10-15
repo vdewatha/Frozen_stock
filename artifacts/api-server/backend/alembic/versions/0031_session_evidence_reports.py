@@ -10,25 +10,32 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "stock_paper_promotion_readiness_reports",
-        sa.Column("report_version", sa.Integer()),
-    )
-    op.add_column(
-        "stock_paper_promotion_readiness_reports",
-        sa.Column("as_of", sa.DateTime(timezone=True)),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {column["name"] for column in inspector.get_columns("stock_paper_promotion_readiness_reports")}
+    for name, column_type in (
+        ("report_version", sa.Integer()),
+        ("as_of", sa.DateTime(timezone=True)),
+    ):
+        if name not in columns:
+            op.add_column(
+                "stock_paper_promotion_readiness_reports",
+                sa.Column(name, column_type),
+            )
     # Nullable preserves old, immutable report rows exactly as they were.
-    op.add_column(
-        "stock_paper_promotion_readiness_reports",
-        sa.Column("evidence", sa.JSON()),
-    )
-    op.create_index(
-        "uq_stock_readiness_report_trial_version",
-        "stock_paper_promotion_readiness_reports",
-        ["trial_id", "report_version"],
-        unique=True,
-    )
+    if "evidence" not in columns:
+        op.add_column(
+            "stock_paper_promotion_readiness_reports",
+            sa.Column("evidence", sa.JSON()),
+        )
+    indexes = {index["name"] for index in inspector.get_indexes("stock_paper_promotion_readiness_reports")}
+    if "uq_stock_readiness_report_trial_version" not in indexes:
+        op.create_index(
+            "uq_stock_readiness_report_trial_version",
+            "stock_paper_promotion_readiness_reports",
+            ["trial_id", "report_version"],
+            unique=True,
+        )
 
 
 def downgrade() -> None:
