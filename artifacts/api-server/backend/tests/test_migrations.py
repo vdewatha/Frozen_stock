@@ -379,6 +379,40 @@ class MigrationTests(unittest.TestCase):
                 connection.rollback()
         assert_schema_current(self.engine)
 
+    def test_agent_research_reports_migration_accepts_publish_precreated_table(self):
+        command.upgrade(self.config, "0045_agent_research_runs")
+        from app.db.base import Base
+
+        report_table = Base.metadata.tables["agent_research_reports"]
+        Base.metadata.create_all(self.engine, tables=[report_table])
+
+        command.upgrade(self.config, "0046_agent_research_reports")
+        command.stamp(self.config, "0045_agent_research_runs")
+        command.upgrade(self.config, "0046_agent_research_reports")
+
+        inspector = inspect(self.engine)
+        self.assertIn("agent_research_reports", inspector.get_table_names())
+        self.assertEqual(
+            {
+                index["name"]
+                for index in inspector.get_indexes("agent_research_reports")
+            },
+            {
+                "ix_agent_research_reports_content_sha256",
+                "ix_agent_research_reports_created_at",
+            },
+        )
+        with self.engine.connect() as connection:
+            trigger_names = {
+                row[0]
+                for row in connection.execute(text(
+                    "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                    "AND tbl_name = 'agent_research_reports'"
+                ))
+            }
+        self.assertIn("agent_research_reports_immutable_update", trigger_names)
+        self.assertIn("agent_research_reports_immutable_delete", trigger_names)
+
     def test_trial_exit_order_link_backfills_hashed_legacy_attempt(self):
         command.upgrade(self.config, "0020_trial_baseline_equity")
         raw_key = "trial-exit:7:attempt-1"
