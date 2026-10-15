@@ -509,7 +509,14 @@ def nightly_backtest_job() -> dict:
     return _run_job("nightly_backtest_job", work)
 
 
-def _claim_learning_dispatch(db, dispatch_id: int | None, current_task_id: str | None):
+def _claim_learning_dispatch(
+    db,
+    dispatch_id: int | None,
+    current_task_id: str | None,
+    *,
+    expected_symbol: str | None = None,
+    expected_strategy: str | None = None,
+):
     """Atomically claim one scope and fence duplicate Celery deliveries."""
     dispatch = db.scalar(
         select(StockLearningWorkerDispatch)
@@ -520,6 +527,14 @@ def _claim_learning_dispatch(db, dispatch_id: int | None, current_task_id: str |
         raise RuntimeError("Durable research worker dispatch is missing")
     if dispatch is None:
         return None, "claimed"
+    if (
+        expected_symbol is not None
+        and dispatch.symbol.strip().upper() != expected_symbol.strip().upper()
+    ) or (
+        expected_strategy is not None
+        and dispatch.strategy_slug != expected_strategy
+    ):
+        raise RuntimeError("Durable research worker dispatch scope does not match task payload")
     if dispatch.status == "succeeded":
         return dispatch, "complete"
     now = datetime.now(timezone.utc)
@@ -562,6 +577,8 @@ def strategy_learning_scope_job(
             db,
             dispatch_id,
             getattr(strategy_learning_scope_job.request, "id", None),
+            expected_symbol=symbol,
+            expected_strategy=strategy_slug,
         )
         if dispatch and claim_status == "complete":
             return {
@@ -1012,7 +1029,7 @@ def scalp_research_job(run_id: str) -> dict:
 
 @celery_app.task
 def scheduled_scalp_research_job() -> dict:
-    """Queue one serialized, paper-only scalp research batch when idle."""
+    """Queue independent paper-only scalp runs, one per symbol, when idle."""
     def work(db):
         active = db.scalar(
             select(ScalpResearchRun.run_id)
@@ -1027,22 +1044,29 @@ def scheduled_scalp_research_job() -> dict:
                 "paper_only": True,
                 "eligible_for_trading": False,
             }
-        row = create_scalp_research_run(
-            db,
-            symbols=["AAPL", "MSFT", "SPY", "QQQ"],
-            actor="scheduler",
-        )
+        symbols = ["AAPL", "MSFT", "SPY", "QQQ"]
+        rows = [create_scalp_research_run(db, symbols=[symbol], actor="scheduler") for symbol in symbols]
         db.commit()
-        task = scalp_research_job.apply_async(
-            args=[row.run_id],
-            queue=SCALP_RESEARCH_QUEUE,
-            expires=10 * 60,
-        )
+        queued = []
+        for row in rows:
+            try:
+                task = scalp_research_job.apply_async(
+                    args=[row.run_id],
+                    queue=SCALP_RESEARCH_QUEUE,
+                    expires=10 * 60,
+                )
+                queued.append({"run_id": row.run_id, "task_id": task.id, "symbol": row.symbols[0]})
+            except Exception as exc:
+                row.status = "failed"
+                row.error = f"{exc.__class__.__name__}: scalp research task was not published"
+        db.commit()
+        failed = len(rows) - len(queued)
         return {
-            "status": "queued",
-            "run_id": row.run_id,
-            "task_id": task.id,
-            "symbols": row.symbols,
+            "status": "queued" if not failed else "partially_queued" if queued else "unavailable",
+            "run_ids": [item["run_id"] for item in queued],
+            "tasks": queued,
+            "symbols": [item["symbol"] for item in queued],
+            "failed_symbols": [row.symbols[0] for row in rows if row.status == "failed"],
             "paper_only": True,
             "eligible_for_trading": False,
         }

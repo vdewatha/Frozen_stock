@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.models import StockLearningWorkerDispatch
 from app.tasks.jobs import _claim_learning_dispatch
 
@@ -62,3 +64,16 @@ def test_learning_dispatch_different_task_reclaims_expired_lease():
     assert status == "claimed"
     assert db.row.attempt_count == 2
     assert db.row.lease_expires_at > datetime.now(timezone.utc)
+
+
+def test_learning_dispatch_rejects_mismatched_scope_before_claiming():
+    db = FakeDispatchSession()
+
+    with pytest.raises(RuntimeError, match="scope does not match"):
+        _claim_learning_dispatch(
+            db, 1, "task-a", expected_symbol="MSFT", expected_strategy="ensemble"
+        )
+
+    assert db.row.status == "published"
+    assert db.row.attempt_count == 0
+    assert db.commits == 0
