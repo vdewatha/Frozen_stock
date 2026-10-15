@@ -9,7 +9,22 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("stock_paper_accounts", sa.Column("cash_policy", sa.String(48), nullable=False, server_default="exact-v1"))
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        bind.exec_driver_sql(
+            "ALTER TABLE stock_paper_accounts "
+            "ADD COLUMN IF NOT EXISTS cash_policy VARCHAR(48) "
+            "DEFAULT 'exact-v1' NOT NULL"
+        )
+        return
+
+    inspector = sa.inspect(bind)
+    existing = {column["name"] for column in inspector.get_columns("stock_paper_accounts")}
+    if "cash_policy" not in existing:
+        op.add_column(
+            "stock_paper_accounts",
+            sa.Column("cash_policy", sa.String(48), nullable=False, server_default="exact-v1"),
+        )
 
 
 def downgrade():

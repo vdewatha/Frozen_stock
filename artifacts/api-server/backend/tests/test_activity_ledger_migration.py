@@ -83,6 +83,10 @@ def test_upgrade_accepts_publish_preapplied_activity_columns(tmp_path):
                 "ALTER TABLE stock_paper_accounts ADD COLUMN activity_baseline JSON"
             )
             connection.exec_driver_sql(
+                "ALTER TABLE stock_paper_accounts "
+                "ADD COLUMN cash_policy VARCHAR(48) NOT NULL DEFAULT 'exact-v1'"
+            )
+            connection.exec_driver_sql(
                 "ALTER TABLE stock_paper_broker_activities "
                 "ADD COLUMN normalized_payload JSON"
             )
@@ -94,7 +98,7 @@ def test_upgrade_accepts_publish_preapplied_activity_columns(tmp_path):
             column["name"]
             for column in inspect(engine).get_columns("stock_paper_broker_activities")
         }
-        assert {"activity_contract", "activity_baseline"}.issubset(account_columns)
+        assert {"activity_contract", "activity_baseline", "cash_policy"}.issubset(account_columns)
         assert "normalized_payload" in activity_columns
     finally:
         engine.dispose()
