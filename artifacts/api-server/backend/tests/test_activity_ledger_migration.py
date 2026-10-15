@@ -66,3 +66,35 @@ def test_upgrade_preserves_legacy_rows_and_allows_date_only_v2(tmp_path, dialect
             with owner.begin() as connection:
                 connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
             owner.dispose()
+
+
+def test_upgrade_accepts_publish_preapplied_activity_columns(tmp_path):
+    engine = create_engine("sqlite:///" + str(tmp_path / "preapplied-activity.sqlite"))
+    config = migration_config()
+    config.set_main_option("sqlalchemy.url", str(engine.url))
+    try:
+        command.upgrade(config, "0048_online_research")
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE stock_paper_accounts "
+                "ADD COLUMN activity_contract VARCHAR(32) NOT NULL DEFAULT 'legacy-v1'"
+            )
+            connection.exec_driver_sql(
+                "ALTER TABLE stock_paper_accounts ADD COLUMN activity_baseline JSON"
+            )
+            connection.exec_driver_sql(
+                "ALTER TABLE stock_paper_broker_activities "
+                "ADD COLUMN normalized_payload JSON"
+            )
+
+        command.upgrade(config, "head")
+        command.upgrade(config, "head")
+        account_columns = {column["name"] for column in inspect(engine).get_columns("stock_paper_accounts")}
+        activity_columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("stock_paper_broker_activities")
+        }
+        assert {"activity_contract", "activity_baseline"}.issubset(account_columns)
+        assert "normalized_payload" in activity_columns
+    finally:
+        engine.dispose()
