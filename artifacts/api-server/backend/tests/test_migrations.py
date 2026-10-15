@@ -221,6 +221,24 @@ class MigrationTests(unittest.TestCase):
             {item["name"] for item in inspector.get_unique_constraints("intraday_bars")},
         )
 
+    def test_intraday_verification_migration_accepts_publish_preapplied_column(self):
+        command.upgrade(self.config, "0054_paper_account_transition")
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE intraday_bars ADD COLUMN last_verified_at DATETIME"
+            )
+
+        command.upgrade(self.config, "0055_intraday_verify")
+        inspector = inspect(self.engine)
+        self.assertIn(
+            "last_verified_at",
+            {column["name"] for column in inspector.get_columns("intraday_bars")},
+        )
+
+        # A stale revision marker can cause the same migration to be retried.
+        command.stamp(self.config, "0054_paper_account_transition")
+        command.upgrade(self.config, "0055_intraday_verify")
+
     def test_paper_run_approval_migration_accepts_publish_precreated_table(self):
         command.upgrade(self.config, "0042_intraday_provider")
         from app.db.base import Base
