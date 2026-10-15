@@ -11,7 +11,8 @@ depends_on = None
 
 def _create_table_if_missing(bind, table_name: str, *elements) -> None:
     if not sa.inspect(bind).has_table(table_name):
-        op.create_table(table_name, *elements)
+        table = sa.Table(table_name, sa.MetaData(), *elements)
+        bind.execute(sa.schema.CreateTable(table, if_not_exists=True))
 
 
 def _create_index_if_missing(bind, name: str, table_name: str, columns: list[str]) -> None:
