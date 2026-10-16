@@ -420,15 +420,43 @@ def _validation_metrics(closes: list[float]) -> dict:
         name: _strategy_metrics(holdout, signal)
         for name, signal in _strategy_signals().items()
     }
+    # Evaluate several later, non-overlapping windows as a simple
+    # walk-forward consistency check. A single favorable holdout is not
+    # enough evidence for a scalp strategy whose regime can change quickly.
+    fold_size = max(60, len(closes) // 5)
+    walk_forward = []
+    for start in range(fold_size, len(closes), fold_size):
+        fold = closes[start:start + fold_size]
+        if len(fold) < 60:
+            break
+        walk_forward.append({
+            "start_index": start,
+            "bars": len(fold),
+            "strategies": {
+                name: _strategy_metrics(fold, signal)
+                for name, signal in _strategy_signals().items()
+            },
+        })
+        if len(walk_forward) == 3:
+            break
     profitable = [
         name for name, result in results.items()
-        if result["trades"] >= 10 and result["profitable_under_modeled_costs"]
+        if result["trades"] >= 10
+        and result["profitable_under_modeled_costs"]
+        and walk_forward
+        and all(
+            fold["strategies"][name]["trades"] >= 10
+            and fold["strategies"][name]["profitable_under_modeled_costs"]
+            for fold in walk_forward
+            for name in [name]
+        )
     ]
     return {
         "status": "complete",
         "holdout_bars": len(holdout),
         "holdout_fraction": round(len(holdout) / len(closes), 4),
         "strategies": results,
+        "walk_forward": walk_forward,
         "paper_candidate": profitable[0] if len(profitable) == 1 else None,
         "candidate_reason": (
             "exactly one strategy was positive under modeled costs on holdout"

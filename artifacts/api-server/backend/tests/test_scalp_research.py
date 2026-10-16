@@ -115,6 +115,8 @@ def test_scalp_holdout_does_not_promote_a_non_unique_winner():
     result = _validation_metrics(values)
     assert result["status"] == "complete"
     assert result["holdout_bars"] == 55
+    assert len(result["walk_forward"]) == 2
+    assert all(fold["bars"] == 60 for fold in result["walk_forward"])
     assert result["paper_candidate"] is None
     assert "candidate_reason" in result
 
