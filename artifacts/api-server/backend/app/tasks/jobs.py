@@ -1021,7 +1021,12 @@ def agent_research_job(run_id: str) -> dict:
     )
 
 
-@celery_app.task(soft_time_limit=45, time_limit=55)
+@celery_app.task(
+    soft_time_limit=45,
+    time_limit=55,
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def scalp_research_job(run_id: str) -> dict:
     """Run isolated 1-minute paper research without broker access."""
     return _run_job(f"scalp_research_job:{run_id}", lambda db: run_scalp_research(db, run_id))
