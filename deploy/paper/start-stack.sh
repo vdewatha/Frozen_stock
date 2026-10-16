@@ -8,18 +8,23 @@ compose=(docker compose -p "$project" --env-file "$root/deploy/paper/paper.env" 
 # Keep the learning pool bounded and reproducible across rebuilds/restarts.
 learning_replicas="${PAPER_LEARNING_REPLICAS:-1}"
 learning_concurrency="${LEARNING_CONCURRENCY:-1}"
+scalp_research_replicas="${PAPER_SCALP_RESEARCH_REPLICAS:-4}"
 case "$learning_replicas" in
   ''|*[!0-9]*) echo "PAPER_LEARNING_REPLICAS must be a non-negative integer" >&2; exit 2 ;;
 esac
 case "$learning_concurrency" in
   ''|*[!0-9]*) echo "LEARNING_CONCURRENCY must be a non-negative integer" >&2; exit 2 ;;
 esac
-if (( learning_replicas < 1 || learning_concurrency < 1 )); then
-  echo "PAPER_LEARNING_REPLICAS and LEARNING_CONCURRENCY must be at least 1" >&2
+case "$scalp_research_replicas" in
+  ''|*[!0-9]*) echo "PAPER_SCALP_RESEARCH_REPLICAS must be a non-negative integer" >&2; exit 2 ;;
+esac
+if (( learning_replicas < 1 || learning_concurrency < 1 || scalp_research_replicas < 1 )); then
+  echo "PAPER_LEARNING_REPLICAS, LEARNING_CONCURRENCY, and PAPER_SCALP_RESEARCH_REPLICAS must be at least 1" >&2
   exit 2
 fi
 export LEARNING_CONCURRENCY="$learning_concurrency"
 
 exec "${compose[@]}" up -d --build \
   --scale "learning=${learning_replicas}" \
+  --scale "scalp-research=${scalp_research_replicas}" \
   backend learning execution intraday market-data monitoring research scalp-research risk scheduler watchdog web

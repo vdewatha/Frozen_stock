@@ -127,6 +127,8 @@ services:
 
   scalp-research:
     <<: *runtime
+    # This queue is independently scaled by start-stack.sh so symbol-level
+    # scalp research can run in parallel without sharing the learning pool.
     command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=scalp-research@%h", "--queues=scalp_research", "--concurrency=1"]
 
   monitoring:
