@@ -414,11 +414,16 @@ function retryBackendHealth(attempt: number): void {
     startupError = `paper API did not become healthy after startup${
       lastBackendProbeError ? ` (${lastBackendProbeError})` : ""
     }${backendDiagnostic.trim() ? `; child_output=${backendDiagnostic.trim()}` : ""}`;
-    // Do not terminate a child solely because the bounded probe window ended.
-    // Hosted database/import startup can outlive the initial readiness window;
-    // leave the child alive for a late health response while keeping the
-    // gateway fail-closed until backendReady is true.
-    setTimeout(() => waitForBackendHealth(1), 5_000);
+    // A child that remains present but never binds its port is not recoverable
+    // by another probe. Recycle that child and let the supervisor start a
+    // fresh API process; the gateway remains paper-only and fail-closed while
+    // the replacement is coming up.
+    const staleChild = python;
+    python = undefined;
+    if (staleChild && !staleChild.killed) staleChild.kill("SIGTERM");
+    setTimeout(() => {
+      if (!stopping && !python) startBackendAfterMigration();
+    }, 5_000);
     return;
   }
   setTimeout(() => waitForBackendHealth(attempt + 1), 500);

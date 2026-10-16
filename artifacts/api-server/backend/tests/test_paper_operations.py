@@ -133,11 +133,13 @@ def test_three_learning_worker_launcher_uses_compose_scale_and_bounded_values():
     launcher = ROOT / "deploy/paper/start-stack.sh"
     text = launcher.read_text()
     assert launcher.stat().st_mode & stat.S_IXUSR
-    assert 'learning_replicas="${PAPER_LEARNING_REPLICAS:-3}"' in text
-    assert 'learning_concurrency="${LEARNING_CONCURRENCY:-2}"' in text
+    assert 'learning_replicas="${PAPER_LEARNING_REPLICAS:-1}"' in text
+    assert 'learning_concurrency="${LEARNING_CONCURRENCY:-1}"' in text
+    assert 'scalp_research_replicas="${PAPER_SCALP_RESEARCH_REPLICAS:-4}"' in text
     assert '--scale "learning=${learning_replicas}"' in text
+    assert '--scale "scalp-research=${scalp_research_replicas}"' in text
     assert "backend learning execution intraday" in text
-    assert "PAPER_LEARNING_REPLICAS and LEARNING_CONCURRENCY must be at least 1" in text
+    assert "PAPER_LEARNING_REPLICAS, LEARNING_CONCURRENCY, and PAPER_SCALP_RESEARCH_REPLICAS must be at least 1" in text
 
 
 def test_learning_replicas_have_distinct_celery_node_names():
