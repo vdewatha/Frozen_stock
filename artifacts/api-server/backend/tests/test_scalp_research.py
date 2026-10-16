@@ -68,6 +68,9 @@ def test_scalp_metrics_are_separate_and_cost_adjusted():
     assert result["ema_momentum"]["trades"] > 0
     assert result["ema_momentum"]["average_trade"] < 0.01
     assert "profitable_after_costs" in result["ema_momentum"]
+    assert result["ema_momentum"]["execution_model"] == "next_close_single_bar_with_modeled_costs"
+    assert set(result["ema_momentum"]["modeled_cost_sensitivity"]) == {"5.5bps", "10bps", "20bps"}
+    assert "max_drawdown" in result["ema_momentum"]
 
 
 def test_scalp_holdout_does_not_promote_a_non_unique_winner():

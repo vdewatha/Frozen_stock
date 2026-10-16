@@ -185,13 +185,28 @@ def _bar_lineage(bars: list[IntradayBar], *, now: datetime | None = None) -> dic
 
 def _strategy_metrics(closes: list[float], signal_fn, *, start: int = 50) -> dict:
     returns = []
+    gross_returns = []
     for index in range(start, len(closes) - 1):
         signal = signal_fn(closes, index)
         if signal == 0:
             continue
         gross = signal * (closes[index + 1] / closes[index] - 1.0)
         net = gross - (ESTIMATED_SLIPPAGE_BPS + ESTIMATED_FEE_BPS) / 10_000
+        gross_returns.append(gross)
         returns.append(net)
+    gross_total = sum(gross_returns)
+    cumulative = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+    for value in returns:
+        cumulative += value
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+    sensitivity = {
+        f"{bps:g}bps": round(gross_total - len(gross_returns) * bps / 10_000, 6)
+        for bps in (5.5, 10.0, 20.0)
+    }
+    modeled_positive = bool(returns) and sum(returns) > 0
     return {
         "trades": len(returns),
         "wins": sum(value > 0 for value in returns),
@@ -199,7 +214,15 @@ def _strategy_metrics(closes: list[float], signal_fn, *, start: int = 50) -> dic
         "net_return": round(sum(returns), 6),
         "average_trade": round(mean(returns), 6) if returns else None,
         "volatility": round(pstdev(returns), 6) if len(returns) > 1 else None,
-        "profitable_after_costs": bool(returns) and sum(returns) > 0,
+        "max_drawdown": round(max_drawdown, 6),
+        # This is deliberately not called observed profitability: the
+        # simulator has no quote-level spread, latency, or partial-fill data.
+        "execution_model": "next_close_single_bar_with_modeled_costs",
+        "modeled_cost_sensitivity": sensitivity,
+        "profitable_under_modeled_costs": modeled_positive,
+        # Keep the legacy field for existing consumers while making the
+        # stronger semantic field available to new promotion logic.
+        "profitable_after_costs": modeled_positive,
     }
 
 
@@ -292,7 +315,7 @@ def _validation_metrics(closes: list[float]) -> dict:
     }
     profitable = [
         name for name, result in results.items()
-        if result["trades"] >= 10 and result["profitable_after_costs"]
+        if result["trades"] >= 10 and result["profitable_under_modeled_costs"]
     ]
     return {
         "status": "complete",
@@ -301,9 +324,9 @@ def _validation_metrics(closes: list[float]) -> dict:
         "strategies": results,
         "paper_candidate": profitable[0] if len(profitable) == 1 else None,
         "candidate_reason": (
-            "exactly one strategy was profitable after modeled costs on holdout"
+            "exactly one strategy was positive under modeled costs on holdout"
             if len(profitable) == 1 else
-            "no unique cost-positive holdout winner; remain research-only"
+            "no unique modeled-cost-positive holdout winner; remain research-only"
         ),
     }
 
