@@ -28,4 +28,4 @@ PORT = "8080"
 ENVIRONMENT = "production"
 
 [services.production.health.startup]
-path = "/api/health"
+path = "/api/startup"

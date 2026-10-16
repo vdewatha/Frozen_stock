@@ -71,7 +71,7 @@ const backendHealthMaxAttempts = 120;
 
 function appendBackendDiagnostic(chunk: Buffer | string): void {
   const text = String(chunk)
-    .replace(/(?:[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|URL|ACCOUNT_ID)[A-Z0-9_]*\s*[=:]\s*)[^\s,}]+/gi, "$1<redacted>")
+    .replace(/(?:[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|URL|ACCOUNT_ID)[A-Z0-9_]*\s*[=:]\s*)[^\s,}]+/gi, "<redacted>")
     .replace(/(?:Bearer\s+)[^\s]+/gi, "Bearer <redacted>")
     .slice(-2000);
   backendDiagnostic = `${backendDiagnostic}${text}`.slice(-4000);
@@ -100,7 +100,7 @@ const runtimeEnv = {
   PAPER_STARTUP_REFRESH: process.env.PAPER_STARTUP_REFRESH ?? "true",
   // The direct monitor owns the monitoring cadence in this supervisor. Keep
   // Celery beat from running a second copy of the same task.
-  PAPER_DIRECT_MONITOR_LOOP: "true",
+  PAPER_DIRECT_MONITOR_LOOP: process.env.PAPER_DIRECT_MONITOR_LOOP ?? "true",
   PYTHONPATH: ".",
 };
 
@@ -217,6 +217,14 @@ function startBackendAfterMigration(): void {
     },
   );
   observeChildOutput(python, "fastapi");
+  python.on("error", (error) => {
+    backendReady = false;
+    startupState = "failed";
+    startupError = `paper API process error: ${error.message}${
+      backendDiagnostic.trim() ? `; child_output=${backendDiagnostic.trim()}` : ""
+    }`;
+    console.error(startupError);
+  });
   observePythonExit(python);
   waitForBackendHealth();
 }
@@ -420,7 +428,9 @@ function observePythonExit(child: ChildProcess): void {
     startupError = `paper API exited before gateway shutdown: code=${code} signal=${signal}${
       backendDiagnostic.trim() ? `; child_output=${backendDiagnostic.trim()}` : ""
     }`;
-    stop("SIGTERM", code ?? 1);
+    // Keep the gateway alive so hosted operators can read /api/startup and
+    // repair the runtime configuration without receiving a generic 502.
+    python = undefined;
   });
 }
 

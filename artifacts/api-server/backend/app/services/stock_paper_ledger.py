@@ -1985,6 +1985,22 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
         raise StockPaperError("Only positive long buy/sell paper orders are permitted")
     now = datetime.now(UTC)
+    if source == "scheduled_paper_signal":
+        # Scheduled execution is the autonomous path. It must satisfy the
+        # same persisted qualification, recovery, notification, audit, feed,
+        # and risk evidence used by the launch preflight before reserving an
+        # order. Manual and recovery paths retain their separate contracts.
+        from app.services.stock_learning_cycle import (
+            classify_launch_prerequisites,
+            evaluate_launch_admission_prerequisites,
+        )
+
+        launch_gates = evaluate_launch_admission_prerequisites(db, now=now)
+        if not all(item.get("status") == "pass" for item in launch_gates.values()):
+            _status, reason = classify_launch_prerequisites(launch_gates)
+            raise StockPaperError(
+                f"Scheduled paper execution blocked by launch admission: {reason}"
+            )
     approved_context = None
     if trial_id:
         # Resolve the approval before any reservation is committed.  The
