@@ -23,10 +23,10 @@ const internalSecret = randomBytes(32).toString("hex");
 const internalTarget = `http://127.0.0.1:${internalPort}`;
 const allowedRoles = new Set(["viewer", "researcher", "operator", "admin"]);
 const clerkConfigured = Boolean(process.env.CLERK_SECRET_KEY?.trim());
-// This entrypoint is only used for the paper deployment. Keep the worker stack
-// on by default so a missing deployment variable cannot silently publish an API
-// with no scheduler or learning workers.
-const paperWorkersEnabled = process.env.PAPER_WORKERS_ENABLED !== "false";
+// Autoscale is a gateway host, not a durable worker host. Workers must be
+// explicitly enabled on a single-instance deployment with shared Redis;
+// otherwise every scaled instance could create duplicate schedulers.
+const paperWorkersEnabled = process.env.PAPER_WORKERS_ENABLED === "true";
 // Replit Autoscale has a small per-instance memory budget.  A dozen separate
 // prefork workers can evict the API before its health probe succeeds, so the
 // hosted paper deployment uses one bounded, thread-based worker pool.  Local
@@ -187,6 +187,10 @@ const workerProcesses: ChildProcess[] = [];
 function supervisePaperWorker(args: string[], label: string): ChildProcess {
   const child = spawnPaperWorker(args);
   workerProcesses.push(child);
+  child.on("error", (error) => {
+    if (stopping) return;
+    console.error(`Paper worker failed to spawn; restarting ${label}: ${error.message}`);
+  });
   child.on("exit", (code, signal) => {
     if (stopping) return;
     console.error(`Paper worker exited; restarting ${label}: code=${code} signal=${signal}`);
