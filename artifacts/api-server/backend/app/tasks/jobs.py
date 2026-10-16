@@ -1032,10 +1032,55 @@ def scalp_research_job(run_id: str) -> dict:
     return _run_job(f"scalp_research_job:{run_id}", lambda db: run_scalp_research(db, run_id))
 
 
+def _publish_scalp_research_rows(rows: list[ScalpResearchRun]) -> tuple[list[dict], list[ScalpResearchRun]]:
+    """Publish queued research rows and persist a durable dispatch marker."""
+    queued, failed = [], []
+    for row in rows:
+        try:
+            task = scalp_research_job.apply_async(
+                args=[row.run_id],
+                queue=SCALP_RESEARCH_QUEUE,
+                expires=10 * 60,
+            )
+            row.assumptions = {
+                **(row.assumptions or {}),
+                "dispatch_state": "published",
+                "task_id": task.id,
+            }
+            row.error = None
+            queued.append({"run_id": row.run_id, "task_id": task.id, "symbol": row.symbols[0]})
+        except Exception as exc:
+            row.assumptions = {**(row.assumptions or {}), "dispatch_state": "unpublished"}
+            row.error = f"{exc.__class__.__name__}: scalp research task was not published"
+            failed.append(row)
+    return queued, failed
+
+
 @celery_app.task
 def scheduled_scalp_research_job() -> dict:
     """Queue independent paper-only scalp runs, one per symbol, when idle."""
     def work(db):
+        unpublished = db.scalars(
+            select(ScalpResearchRun)
+            .where(ScalpResearchRun.status == "queued")
+            .order_by(ScalpResearchRun.created_at)
+            .limit(16)
+        ).all()
+        unpublished = [
+            row for row in unpublished
+            if (row.assumptions or {}).get("dispatch_state", "unpublished") != "published"
+        ]
+        if unpublished:
+            queued, failed_rows = _publish_scalp_research_rows(unpublished)
+            db.commit()
+            return {
+                "status": "recovered" if queued else "unavailable",
+                "run_ids": [item["run_id"] for item in queued],
+                "tasks": queued,
+                "failed_symbols": [row.symbols[0] for row in failed_rows],
+                "paper_only": True,
+                "eligible_for_trading": False,
+            }
         active = db.scalar(
             select(ScalpResearchRun.run_id)
             .where(ScalpResearchRun.status.in_(("queued", "running")))
@@ -1052,18 +1097,7 @@ def scheduled_scalp_research_job() -> dict:
         symbols = ["AAPL", "MSFT", "SPY", "QQQ"]
         rows = [create_scalp_research_run(db, symbols=[symbol], actor="scheduler") for symbol in symbols]
         db.commit()
-        queued = []
-        for row in rows:
-            try:
-                task = scalp_research_job.apply_async(
-                    args=[row.run_id],
-                    queue=SCALP_RESEARCH_QUEUE,
-                    expires=10 * 60,
-                )
-                queued.append({"run_id": row.run_id, "task_id": task.id, "symbol": row.symbols[0]})
-            except Exception as exc:
-                row.status = "failed"
-                row.error = f"{exc.__class__.__name__}: scalp research task was not published"
+        queued, failed_rows = _publish_scalp_research_rows(rows)
         db.commit()
         failed = len(rows) - len(queued)
         return {
@@ -1071,7 +1105,7 @@ def scheduled_scalp_research_job() -> dict:
             "run_ids": [item["run_id"] for item in queued],
             "tasks": queued,
             "symbols": [item["symbol"] for item in queued],
-            "failed_symbols": [row.symbols[0] for row in rows if row.status == "failed"],
+            "failed_symbols": [row.symbols[0] for row in failed_rows],
             "paper_only": True,
             "eligible_for_trading": False,
         }
@@ -1081,11 +1115,33 @@ def scheduled_scalp_research_job() -> dict:
 
 @celery_app.task
 def expire_stale_scalp_research_runs_job() -> dict:
-    """Bound the lifetime of orphaned paper-research queue records."""
-    return _run_job(
-        "expire_stale_scalp_research_runs_job",
-        lambda db: expire_stale_scalp_research_runs(db),
-    )
+    """Recover unpublished rows, then bound genuinely orphaned deliveries."""
+    def work(db):
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+        rows = db.scalars(
+            select(ScalpResearchRun)
+            .where(
+                ScalpResearchRun.status == "queued",
+                ScalpResearchRun.created_at < cutoff,
+            )
+            .order_by(ScalpResearchRun.created_at)
+            .limit(16)
+        ).all()
+        rows = [
+            row for row in rows
+            if (row.assumptions or {}).get("dispatch_state", "unpublished") != "published"
+        ]
+        queued, failed_rows = _publish_scalp_research_rows(rows)
+        db.commit()
+        expired = expire_stale_scalp_research_runs(db)
+        return {
+            **expired,
+            "recovered_run_ids": [item["run_id"] for item in queued],
+            "failed_symbols": [row.symbols[0] for row in failed_rows],
+            "paper_only": True,
+        }
+
+    return _run_job("expire_stale_scalp_research_runs_job", work)
 
 @celery_app.task
 def recover_stock_training_jobs_job() -> dict:

@@ -270,3 +270,32 @@ def test_scheduled_scalp_research_does_not_overlap_active_run():
         assert result["status"] == "skipped"
         assert result["run_id"] == "active-run"
         assert result["eligible_for_trading"] is False
+
+
+def test_unpublished_scalp_run_is_republished_by_recovery_job():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from unittest.mock import Mock, patch
+    from app.models import ScalpResearchRun
+    from app.tasks import jobs
+
+    engine = create_engine("sqlite://")
+    ScalpResearchRun.__table__.create(engine)
+    with Session(engine) as db:
+        row = ScalpResearchRun(
+            run_id="unpublished-run", requested_by="scheduler", symbols=["AAPL"],
+            timeframe="1m", status="queued", data_snapshot={}, metrics={},
+            assumptions={"dispatch_state": "unpublished"},
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+        db.add(row)
+        db.commit()
+        queued = Mock(id="recovered-task")
+        with patch.object(jobs, "_run_job", side_effect=lambda _name, work: work(db)):
+            with patch.object(jobs.scalp_research_job, "apply_async", return_value=queued):
+                result = jobs.expire_stale_scalp_research_runs_job()
+        db.refresh(row)
+        assert result["recovered_run_ids"] == ["unpublished-run"]
+        assert row.assumptions["dispatch_state"] == "published"
+        assert row.assumptions["task_id"] == "recovered-task"
+        assert row.status == "queued"

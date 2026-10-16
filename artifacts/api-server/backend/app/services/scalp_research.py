@@ -478,6 +478,7 @@ def create_scalp_research_run(db: Session, *, symbols: list[str], actor: str) ->
             "estimated_fee_bps": ESTIMATED_FEE_BPS,
             "max_lookback_bars": MAX_LOOKBACK_BARS,
             "paper_only": True, "eligible_for_trading": False,
+            "dispatch_state": "unpublished",
         },
     )
     db.add(row)
@@ -540,7 +541,7 @@ def expire_stale_scalp_research_runs(db: Session) -> dict:
     now = _now()
     cutoff = now - STALE_QUEUED_AFTER
     running_cutoff = now - STALE_RUNNING_AFTER
-    rows = db.scalars(
+    candidates = db.scalars(
         select(ScalpResearchRun).where(
             (
                 (ScalpResearchRun.status == "queued") & (ScalpResearchRun.created_at < cutoff)
@@ -552,6 +553,11 @@ def expire_stale_scalp_research_runs(db: Session) -> dict:
             ),
         )
     ).all()
+    rows = [
+        row for row in candidates
+        if row.status == "running"
+        or row.assumptions.get("dispatch_state", "published") == "published"
+    ]
     for row in rows:
         row.status = "blocked"
         row.error = (
