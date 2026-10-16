@@ -2,12 +2,12 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-project="${PAPER_COMPOSE_PROJECT:-frozen-stock-fresh}"
+project="${PAPER_COMPOSE_PROJECT:-frozen-stock-paper}"
 compose=(docker compose -p "$project" --env-file "$root/deploy/paper/paper.env" -f "$root/deploy/paper/compose.yaml")
 
 # Keep the learning pool bounded and reproducible across rebuilds/restarts.
-learning_replicas="${PAPER_LEARNING_REPLICAS:-3}"
-learning_concurrency="${LEARNING_CONCURRENCY:-2}"
+learning_replicas="${PAPER_LEARNING_REPLICAS:-1}"
+learning_concurrency="${LEARNING_CONCURRENCY:-1}"
 case "$learning_replicas" in
   ''|*[!0-9]*) echo "PAPER_LEARNING_REPLICAS must be a non-negative integer" >&2; exit 2 ;;
 esac
