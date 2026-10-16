@@ -28,4 +28,7 @@ PORT = "8080"
 ENVIRONMENT = "production"
 
 [services.production.health.startup]
-path = "/api/startup"
+# Replit's startup probe is a liveness check.  The gateway binds before
+# migrations and FastAPI startup complete, so readiness must remain exposed
+# through /api/startup instead of making the platform kill a healthy boot.
+path = "/api"
