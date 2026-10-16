@@ -26,7 +26,6 @@ ENTITLEMENT_VERIFICATION_MAX_AGE = timedelta(minutes=5)
 BAR_CADENCE = timedelta(minutes=1)
 LATE_TRADE_ALLOWANCE = timedelta(seconds=60)
 INTRADAY_BACKFILL_WINDOW = timedelta(minutes=60)
-POST_CLOSE_REPAIR_WINDOW = timedelta(hours=1)
 
 
 MARKET_DATA_PROVIDER = settings.active_market_data_provider.strip().lower()
@@ -55,6 +54,20 @@ def _previous_session(day: date) -> date:
     while not is_nyse_session(candidate):
         candidate -= timedelta(days=1)
     return candidate
+
+
+def _completed_session_bounds(observed_at: datetime):
+    """Return the most recent completed NYSE session during closed hours.
+
+    Historical repair is allowed overnight and on weekends, but never while a
+    regular session is open. This keeps the repair lane useful without letting
+    a maintenance pass stand in for the current-session execution preflight.
+    """
+    local_now = _aware_utc(observed_at).astimezone(NY)
+    today_bounds = session_bounds(local_now.date())
+    if today_bounds and _aware_utc(observed_at) >= today_bounds[1]:
+        return today_bounds
+    return session_bounds(_previous_session(local_now.date()))
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -754,10 +767,11 @@ def _record_preflight_audit(db: Session, result: dict, *, action: str = "sip_pre
 
 
 def collect_scheduled_intraday(db: Session, symbols: list[str] | None = None, *, now: datetime | None = None) -> dict:
-    """Finish session data after the close without granting trading readiness."""
+    """Repair trusted intraday history during closed hours without readiness."""
     observed = _aware_utc(now or datetime.now(UTC))
     bounds = session_bounds(observed.astimezone(NY).date())
-    post_close = bounds is not None and bounds[1] <= observed < bounds[1] + POST_CLOSE_REPAIR_WINDOW
+    regular_session_open = bool(bounds and bounds[0] <= observed < bounds[1])
+    post_close = not regular_session_open and _completed_session_bounds(observed) is not None
     configured_provider = settings.active_market_data_provider.strip().lower()
     configured = configured_provider == MARKET_DATA_PROVIDER and bool(
         settings.tradier_market_data_api_key.get_secret_value()
@@ -766,7 +780,9 @@ def collect_scheduled_intraday(db: Session, symbols: list[str] | None = None, *,
     )
     if not post_close or not configured:
         return preflight_intraday(db, symbols, now=observed)
-    selected = [_symbol(value) for value in (symbols or settings.paper_execution_symbols)]
+    # Historical maintenance also feeds the independent scalp-research lane;
+    # it must not silently omit symbols that are research-only for execution.
+    selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
     result = ingest_intraday(db, selected, now=observed)
     complete = bool(result["results"]) and all(row["status"] == "complete" for row in result["results"])
     return _record_preflight_audit(db, {

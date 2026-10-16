@@ -73,7 +73,7 @@ class IntradayDataTests(unittest.TestCase):
         audit = self.db.query(AuditLog).filter_by(action="sip_post_close_collection").one()
         self.assertFalse(audit.payload["ready"])
 
-    def test_post_close_window_respects_early_close_and_does_not_run_overnight(self):
+    def test_closed_hours_repair_respects_early_close_and_runs_overnight(self):
         early_close = datetime(2026, 11, 27, 18, 2, tzinfo=UTC)
         with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
             settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")
@@ -87,13 +87,26 @@ class IntradayDataTests(unittest.TestCase):
             for now in [datetime(2026, 11, 27, 19, 0, tzinfo=UTC), datetime(2026, 11, 28, 18, 2, tzinfo=UTC)]:
                 result = intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=now)
                 self.assertFalse(result["ready"])
-            ingest.assert_called_once()
+            self.assertEqual(ingest.call_count, 3)
 
     def test_regular_session_scheduler_keeps_authenticated_preflight(self):
         observed = datetime(2026, 9, 29, 18, 0, tzinfo=UTC)
         with patch.object(intraday_data, "preflight_intraday", return_value={"ready": True}) as preflight:
             self.assertEqual(intraday_data.collect_scheduled_intraday(self.db, ["SPY"], now=observed), {"ready": True})
         preflight.assert_called_once_with(self.db, ["SPY"], now=observed)
+
+    def test_closed_hours_repair_covers_research_symbols_by_default(self):
+        observed = datetime(2026, 9, 29, 20, 2, tzinfo=UTC)
+        with patch.object(settings, "active_market_data_provider", "tradier"), patch.object(
+            settings, "tradier_market_data_api_key", type(settings.tradier_market_data_api_key)("key")
+        ), patch.object(intraday_data, "MARKET_DATA_PROVIDER", "tradier"), patch.object(
+            intraday_data, "MARKET_DATA_FEED_CLASS", "sip"
+        ), patch.object(
+            intraday_data, "ingest_intraday", return_value={"results": [{"status": "complete"}]}
+        ) as ingest:
+            intraday_data.collect_scheduled_intraday(self.db, now=observed)
+        selected = ingest.call_args.args[1]
+        self.assertEqual(set(selected), intraday_data.ALLOWED_SYMBOLS)
 
     def test_post_close_provider_failures_do_not_become_success(self):
         observed = datetime(2026, 9, 29, 20, 2, tzinfo=UTC)
