@@ -446,6 +446,14 @@ function observePythonExit(child: ChildProcess): void {
     // Keep the gateway alive so hosted operators can read /api/startup and
     // repair the runtime configuration without receiving a generic 502.
     python = undefined;
+    // A hosted supervisor can terminate only the child during a rolling
+    // restart or resource reclaim. Restart it in place so a transient child
+    // exit cannot leave the public gateway permanently wedged at 503.
+    if (!stopping) {
+      setTimeout(() => {
+        if (!stopping && !python) startBackendAfterMigration();
+      }, 5_000);
+    }
   });
 }
 
