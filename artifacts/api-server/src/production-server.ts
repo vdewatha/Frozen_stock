@@ -59,6 +59,7 @@ function boundedConcurrency(name: string, fallback: number, maximum: number): nu
 
 const learningConcurrency = boundedConcurrency("PAPER_LEARNING_CONCURRENCY", 2, 8);
 const learningReplicas = boundedConcurrency("PAPER_LEARNING_REPLICAS", 3, 8);
+const scalpResearchReplicas = boundedConcurrency("PAPER_SCALP_RESEARCH_REPLICAS", 1, 4);
 
 let stopping = false;
 let backendReady = false;
@@ -256,7 +257,13 @@ function startPaperWorkers(): void {
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=research@%h", "--queues=research_market_data", "--concurrency=1"], "research");
   // Keep the isolated scalp lane independent so its research jobs cannot sit
   // behind the broader market-data queue.
-  supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=scalp-research@%h", "--queues=scalp_research", "--concurrency=1"], "scalp-research");
+  for (let replica = 1; replica <= scalpResearchReplicas; replica += 1) {
+    supervisePaperWorker([
+      "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
+      "--loglevel=INFO", "--hostname=scalp-research-" + replica + "@%h",
+      "--queues=scalp_research", "--concurrency=1",
+    ], `scalp-research-${replica}`);
+  }
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=market@%h", "--queues=default,market_data", "--concurrency=1"], "market");
   for (let replica = 1; replica <= learningReplicas; replica += 1) {
     supervisePaperWorker([
