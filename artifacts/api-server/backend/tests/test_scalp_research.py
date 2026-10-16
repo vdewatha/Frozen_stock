@@ -18,6 +18,7 @@ def _research_bars(start, count, *, provider="alpaca_iex"):
         opened_at=start + timedelta(minutes=index),
         exchange_timestamp=start + timedelta(minutes=index),
         open=100, high=101, low=99, close=100, volume=10,
+        last_verified_at=start + timedelta(minutes=index),
     ) for index in range(count)]
 
 
@@ -53,6 +54,29 @@ def test_scalp_quality_accepts_only_contiguous_current_real_session():
     )
     assert quality["status"] == "ready"
     assert quality["expected_bars"] == 29
+    assert quality["authenticated_verification_at"] == "2026-09-28T13:58:00+00:00"
+
+
+def test_scalp_quality_rejects_unverified_current_session():
+    start = datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc)
+    bars = _research_bars(start, 29)
+    bars[-1].last_verified_at = None
+    quality = _session_quality(bars, now=datetime(2026, 9, 28, 14, 0, tzinfo=timezone.utc))
+    assert quality["status"] == "blocked"
+    assert "authenticated feed verification" in quality["reason"]
+
+
+def test_scalp_quality_rejects_incomplete_older_session():
+    first = _research_bars(datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc), 390)
+    second = _research_bars(datetime(2026, 9, 29, 13, 30, tzinfo=timezone.utc), 390)
+    first.pop(100)
+    quality = _session_quality(
+        first + second,
+        now=datetime(2026, 9, 29, 20, 0, tzinfo=timezone.utc),
+    )
+    assert quality["status"] == "blocked"
+    assert "incomplete regular session" in quality["reason"]
+    assert quality["incomplete_sessions"][0]["session_day"] == "2026-09-28"
 
 
 def test_scalp_metrics_are_separate_and_cost_adjusted():

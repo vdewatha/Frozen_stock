@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import IntradayBar, ScalpResearchRun
-from app.services.exchange_sessions import session_bounds
+from app.services.exchange_sessions import is_nyse_session, session_bounds
 
 ALLOWED_SYMBOLS = frozenset({"AAPL", "MSFT", "SPY", "QQQ"})
 PROVIDER = "alpaca_iex"
@@ -28,6 +28,7 @@ STALE_QUEUED_AFTER = timedelta(minutes=30)
 STALE_RUNNING_AFTER = timedelta(minutes=10)
 MAX_INTRADAY_GAP = timedelta(minutes=5)
 SCALP_LATE_DATA_ALLOWANCE = timedelta(minutes=2)
+FEED_VERIFICATION_MAX_AGE = timedelta(minutes=5)
 NY = ZoneInfo("America/New_York")
 
 
@@ -114,6 +115,67 @@ def _session_quality(bars: list[IntradayBar], *, now: datetime) -> dict:
             "session_day": latest_day.isoformat(),
             "latest": latest.isoformat(),
         }
+    # The evaluation window may include several regular sessions. Require
+    # complete coverage for every session represented by the lookback, not
+    # just the newest one, so an older hole cannot improve a backtest result.
+    first_day = timestamps[0].astimezone(NY).date()
+    session_coverage = []
+    cursor_day = first_day
+    while cursor_day <= latest_day:
+        day_bounds = session_bounds(cursor_day)
+        if day_bounds and is_nyse_session(cursor_day):
+            day_present = {
+                stamp for stamp in timestamps
+                if day_bounds[0] <= stamp < day_bounds[1]
+            }
+            day_expected_end = expected_end if cursor_day == latest_day else day_bounds[1]
+            day_expected = int((day_expected_end - day_bounds[0]).total_seconds() // 60)
+            missing_count = max(0, day_expected - len(day_present))
+            session_coverage.append({
+                "session_day": cursor_day.isoformat(),
+                "expected_bars": day_expected,
+                "observed_bars": len(day_present),
+                "missing_count": missing_count,
+            })
+        cursor_day += timedelta(days=1)
+    incomplete_sessions = [item for item in session_coverage if item["missing_count"]]
+    if incomplete_sessions:
+        return {
+            "status": "blocked",
+            "reason": "trusted intraday lookback contains an incomplete regular session",
+            "missing_intervals": [],
+            "incomplete_sessions": incomplete_sessions,
+            "session_day": latest_day.isoformat(),
+            "latest": latest.isoformat(),
+        }
+    latest_session_bars = [
+        bar for bar in bars
+        if bounds[0] <= _aware(bar.exchange_timestamp) < bounds[1]
+    ]
+    verified_at = [
+        _aware(bar.last_verified_at)
+        for bar in latest_session_bars
+        if bar.last_verified_at is not None
+    ]
+    if len(verified_at) != len(latest_session_bars):
+        return {
+            "status": "blocked",
+            "reason": "latest trusted session lacks authenticated feed verification",
+            "missing_intervals": [],
+            "session_day": latest_day.isoformat(),
+            "latest": latest.isoformat(),
+        }
+    latest_verification = max(verified_at)
+    verification_age = now.astimezone(timezone.utc) - latest_verification
+    if verification_age < timedelta(0) or verification_age > FEED_VERIFICATION_MAX_AGE:
+        return {
+            "status": "blocked",
+            "reason": "authenticated feed verification is stale",
+            "missing_intervals": [],
+            "verification_age_seconds": int(verification_age.total_seconds()),
+            "session_day": latest_day.isoformat(),
+            "latest": latest.isoformat(),
+        }
     return {
         "status": "ready",
         "reason": None,
@@ -122,6 +184,8 @@ def _session_quality(bars: list[IntradayBar], *, now: datetime) -> dict:
         "session_day": latest_day.isoformat(),
         "latest": latest.isoformat(),
         "expected_bars": len(expected),
+        "session_coverage": session_coverage,
+        "authenticated_verification_at": latest_verification.isoformat(),
     }
 
 
