@@ -407,7 +407,10 @@ function retryBackendHealth(attempt: number): void {
     startupError = `paper API did not become healthy after startup${
       lastBackendProbeError ? ` (${lastBackendProbeError})` : ""
     }${backendDiagnostic.trim() ? `; child_output=${backendDiagnostic.trim()}` : ""}`;
-    python.kill("SIGTERM");
+    // Do not terminate a child solely because the bounded probe window ended.
+    // Hosted database/import startup can outlive the initial readiness window;
+    // leave the child alive for a late health response while keeping the
+    // gateway fail-closed until backendReady is true.
     return;
   }
   setTimeout(() => waitForBackendHealth(attempt + 1), 500);
@@ -438,7 +441,7 @@ function observePythonExit(child: ChildProcess): void {
     startupState = "failed";
     startupError = `paper API exited before gateway shutdown: code=${code} signal=${signal}${
       backendDiagnostic.trim() ? `; child_output=${backendDiagnostic.trim()}` : ""
-    }`;
+    }${lastBackendProbeError ? `; last_probe=${lastBackendProbeError}` : ""}`;
     // Keep the gateway alive so hosted operators can read /api/startup and
     // repair the runtime configuration without receiving a generic 502.
     python = undefined;
