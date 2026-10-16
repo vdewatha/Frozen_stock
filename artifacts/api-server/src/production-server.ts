@@ -238,6 +238,10 @@ function startPaperWorkers(): void {
       "--queues=default,market_data,intraday_market_data,research_market_data,scalp_research,learning,paper_trading,risk,monitoring",
       "--pool=threads", "--concurrency=2",
     ], "paper-core");
+    // Recovery admission requires an independent heartbeat. Keep this
+    // process outside the Celery pool so a queue backlog cannot mask a
+    // stalled paper worker.
+    supervisePaperWorker(["scripts/run_stock_watchdog.py"], "watchdog");
     supervisePaperWorker(["scripts/run_beat_with_lease.py"], "beat");
     return;
   }
