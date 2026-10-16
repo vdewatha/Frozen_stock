@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models import IntradayBar, ScalpResearchRun
 from app.services.exchange_sessions import is_nyse_session, session_bounds
+from app.services.research_simulator import SimulationConfig, simulate
 
 ALLOWED_SYMBOLS = frozenset({"AAPL", "MSFT", "SPY", "QQQ"})
 PROVIDER = "alpaca_iex"
@@ -367,6 +368,48 @@ def _metrics(closes: list[float]) -> dict:
     return {name: _strategy_metrics(closes, signal) for name, signal in _strategy_signals().items()}
 
 
+def _long_only_shadow_simulation(bars: list[IntradayBar], signal_fn) -> dict:
+    """Run a conservative execution simulation without broker authority.
+
+    Scalp hypotheses can emit short signals, while the shared simulator is
+    intentionally long/flat only. The adapter explicitly omits short signals
+    instead of treating them as sells, so its result is a conservative shadow
+    comparison rather than a claim of executable short performance.
+    """
+    closes = [float(bar.close) for bar in bars]
+    rows = [
+        {
+            "timestamp": _aware(bar.exchange_timestamp),
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+            "tradable": True,
+        }
+        for bar in bars
+    ]
+    decisions = [
+        1 if index >= 50 and signal_fn(closes, index) == 1 else 0
+        for index in range(len(closes))
+    ]
+    result = simulate(rows, decisions, SimulationConfig())
+    return {
+        "mode": result["mode"],
+        "execution_model": "next_open_volume_limited_long_flat_shadow",
+        "eligible_for_trading": False,
+        "profitability_proven": False,
+        "short_signals_omitted": True,
+        "long_entry_signals": sum(decisions),
+        "fill_count": result["fill_count"],
+        "completed_trades": result["completed_trades"],
+        "total_return": str(result["total_return"]),
+        "max_drawdown": str(result["max_drawdown"]),
+        "total_costs": str(result["total_costs"]),
+        "partial_fill_count": sum(1 for fill in result["fills"] if fill["partial"]),
+    }
+
+
 def _validation_metrics(closes: list[float]) -> dict:
     """Evaluate untouched trailing data so in-sample winners cannot self-promote."""
     if len(closes) < 120:
@@ -445,10 +488,15 @@ def run_scalp_research(db: Session, run_id: str) -> dict:
                 continue
             closes = [float(bar.close) for bar in bars]
             validation = _validation_metrics(closes)
+            strategies = _strategy_signals()
             metrics[symbol] = {
                 "status": "complete" if validation["status"] == "complete" else "blocked",
                 "strategies": _metrics(closes),
                 "validation": validation,
+                "shadow_simulations": {
+                    name: _long_only_shadow_simulation(bars, signal)
+                    for name, signal in strategies.items()
+                },
             }
         row.data_snapshot, row.metrics = snapshot, metrics
         row.status = "completed" if any(item.get("status") == "complete" for item in metrics.values()) else "blocked"

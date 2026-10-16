@@ -5,6 +5,8 @@ from app.services.scalp_research import (
     _session_quality,
     _bar_lineage,
     _validation_metrics,
+    _long_only_shadow_simulation,
+    _strategy_signals,
     create_scalp_research_run,
     expire_stale_scalp_research_runs,
 )
@@ -95,6 +97,17 @@ def test_scalp_metrics_are_separate_and_cost_adjusted():
     assert result["ema_momentum"]["execution_model"] == "next_close_single_bar_with_modeled_costs"
     assert set(result["ema_momentum"]["modeled_cost_sensitivity"]) == {"5.5bps", "10bps", "20bps"}
     assert "max_drawdown" in result["ema_momentum"]
+
+
+def test_long_only_shadow_simulation_is_explicitly_non_executable():
+    bars = _research_bars(datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc), 120)
+    result = _long_only_shadow_simulation(bars, _strategy_signals()["ema_momentum"])
+    assert result["mode"] == "offline_research"
+    assert result["execution_model"] == "next_open_volume_limited_long_flat_shadow"
+    assert result["eligible_for_trading"] is False
+    assert result["profitability_proven"] is False
+    assert result["short_signals_omitted"] is True
+    assert "partial_fill_count" in result
 
 
 def test_scalp_holdout_does_not_promote_a_non_unique_winner():
