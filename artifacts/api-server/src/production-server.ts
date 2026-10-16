@@ -67,7 +67,10 @@ let startupError: string | undefined;
 let migrationProcess: ChildProcess | undefined;
 let lastBackendProbeError: string | undefined;
 let backendDiagnostic = "";
-const backendHealthMaxAttempts = 120;
+// Hosted instances can spend more than a minute importing the paper API and
+// opening the managed database connection. Keep the gateway alive long enough
+// for that startup work to finish instead of terminating a healthy child.
+const backendHealthMaxAttempts = 300;
 
 function appendBackendDiagnostic(chunk: Buffer | string): void {
   const text = String(chunk)
