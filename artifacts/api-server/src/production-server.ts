@@ -411,6 +411,7 @@ function retryBackendHealth(attempt: number): void {
     // Hosted database/import startup can outlive the initial readiness window;
     // leave the child alive for a late health response while keeping the
     // gateway fail-closed until backendReady is true.
+    setTimeout(() => waitForBackendHealth(1), 5_000);
     return;
   }
   setTimeout(() => waitForBackendHealth(attempt + 1), 500);
