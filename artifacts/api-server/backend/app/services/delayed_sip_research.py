@@ -1,6 +1,7 @@
 """Delayed consolidated observations, never a real-time execution entitlement."""
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from alpaca.data.enums import DataFeed
 from sqlalchemy.orm import Session
@@ -20,6 +21,7 @@ PROVIDER = "alpaca_delayed_sip"
 FEED = "sip_delayed"
 DELAY_MINUTES = 16
 UTC = timezone.utc
+NY = ZoneInfo("America/New_York")
 
 
 def delayed_window(now: datetime) -> tuple[datetime, datetime]:
@@ -50,6 +52,39 @@ def incremental_delayed_window(
     if latest is not None:
         start = max(start, _aware_utc(latest.opened_at) - overlap)
     return start, end
+
+
+def _oldest_incomplete_session(db: Session, observed: datetime, *, max_sessions: int = 10):
+    """Find the oldest bounded SIP session gap without inventing bars."""
+    local_now = _aware_utc(observed).astimezone(timezone.utc)
+    local_day = local_now.astimezone(NY).date()
+    current_bounds = session_bounds(local_day)
+    if current_bounds is not None and local_now < current_bounds[1]:
+        local_day -= timedelta(days=1)
+    session_days = []
+    cursor = local_day
+    while len(session_days) < max_sessions:
+        bounds = session_bounds(cursor)
+        if bounds is not None:
+            session_days.append((cursor, bounds))
+        cursor -= timedelta(days=1)
+    oldest, oldest_bounds = session_days[-1]
+    rows = db.query(IntradayBar.symbol, IntradayBar.opened_at).filter(
+        IntradayBar.provider == PROVIDER,
+        IntradayBar.feed_class == FEED,
+        IntradayBar.timeframe == "1m",
+        IntradayBar.opened_at >= oldest_bounds[0],
+        IntradayBar.opened_at < session_days[0][1][1],
+    ).all()
+    counts = {}
+    for symbol, opened_at in rows:
+        day = _aware_utc(opened_at).astimezone(NY).date()
+        counts[(symbol, day)] = counts.get((symbol, day), 0) + 1
+    for day, bounds in reversed(session_days):
+        expected = int((bounds[1] - bounds[0]).total_seconds() // 60)
+        if any(counts.get((symbol, day), 0) < expected for symbol in ALLOWED_SYMBOLS):
+            return day
+    return None
 
 
 def fetch_delayed_sip_bars(symbols, start, end, *, now=None, client=None):
@@ -121,8 +156,14 @@ def collect_delayed_sip_history(db: Session, session_day: date, *, symbols=None,
 
 def collect_delayed_sip(db: Session, *, now=None):
     observed = now or datetime.now(UTC)
-    start, end = incremental_delayed_window(db, observed)
     symbols = sorted(ALLOWED_SYMBOLS)
+    history_repair = None
+    existing = db.query(IntradayBar).filter_by(provider=PROVIDER, feed_class=FEED, timeframe="1m").first()
+    if existing is not None:
+        repair_day = _oldest_incomplete_session(db, observed)
+        if repair_day is not None:
+            history_repair = collect_delayed_sip_history(db, repair_day, symbols=symbols, now=observed)
+    start, end = incremental_delayed_window(db, observed)
     base = {"provider": PROVIDER, "feed_class": FEED, "upstream_feed": "sip",
             "research_only": True, "execution_eligible": False, "synthetic": False,
             "delay_minutes": DELAY_MINUTES, "adjustment": "raw",
@@ -133,13 +174,14 @@ def collect_delayed_sip(db: Session, *, now=None):
     except Exception as exc:
         code = getattr(exc, "status_code", None)
         failure = {401: "authentication", 403: "entitlement", 422: "invalid_request_or_entitlement", 429: "rate_limit"}.get(code, "unavailable_or_invalid")
-        result = {**base, "status": "unavailable", "failure_class": failure, "results": []}
+        result = {**base, "status": "unavailable", "failure_class": failure, "results": [],
+                  "history_repair": history_repair}
     else:
         results = [{"symbol": symbol, **upsert_intraday_bars(
             db, symbol, bars[symbol], ingested_at=observed, provider=PROVIDER, feed_class=FEED,
         )} for symbol in symbols]
         result = {**base, "status": "observed" if all(row["rows_imported"] for row in results) else "sparse_or_empty",
-                  "failure_class": None, "results": results}
+                  "failure_class": None, "results": results, "history_repair": history_repair}
     write_audit_log(db, event_type="market_data", action="delayed_sip_collection", status=result["status"],
                     entity_type="research_feed", message="Delayed SIP research collection; not execution data", payload=result)
     return result

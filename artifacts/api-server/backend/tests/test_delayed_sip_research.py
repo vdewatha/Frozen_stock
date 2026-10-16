@@ -158,6 +158,17 @@ def test_scheduled_collection_resumes_near_latest_bar(db):
     assert end == END
 
 
+def test_collection_repairs_oldest_missing_session_without_changing_provenance(db):
+    upsert_intraday_bars(db, "SPY", [bar()], ingested_at=NOW, provider=sip.PROVIDER, feed_class=sip.FEED)
+    db.commit()
+    with patch.object(sip, "collect_delayed_sip_history", return_value={"status": "observed", "execution_eligible": False}) as repair, patch.object(
+        sip, "fetch_delayed_sip_bars", return_value={symbol: [] for symbol in sip.ALLOWED_SYMBOLS}
+    ):
+        result = sip.collect_delayed_sip(db, now=NOW)
+    repair.assert_called_once()
+    assert result["history_repair"]["execution_eligible"] is False
+
+
 def test_storage_boundary_also_rejects_recent_delayed_rows(db):
     with pytest.raises(ValueError, match="cutoff"):
         upsert_intraday_bars(db, "SPY", [bar(END)], ingested_at=NOW, provider=sip.PROVIDER, feed_class=sip.FEED)
