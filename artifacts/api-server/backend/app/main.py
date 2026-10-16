@@ -47,6 +47,10 @@ def on_startup() -> None:
         # Replit Publish applies the managed production schema before startup.
         # Keep strict Alembic-head enforcement everywhere else.
         require_migration_head=settings.environment != "production",
+        # A full autogenerate comparison is too expensive during hosted boot
+        # against managed Postgres. Migrations and the bounded table/column
+        # checks still run before the API accepts requests.
+        check_drift=settings.environment != "production",
     )
     db = SessionLocal()
     try:

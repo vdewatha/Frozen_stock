@@ -18,7 +18,12 @@ def migration_config() -> Config:
     return config
 
 
-def assert_schema_current(engine, *, require_migration_head: bool = True) -> None:
+def assert_schema_current(
+    engine,
+    *,
+    require_migration_head: bool = True,
+    check_drift: bool = True,
+) -> None:
     """Fail closed on structural drift.
 
     Replit Publish owns managed production schema application, so its database
@@ -32,7 +37,10 @@ def assert_schema_current(engine, *, require_migration_head: bool = True) -> Non
             raise RuntimeError("Database migration required: run alembic upgrade head before startup")
         inspector = inspect(connection)
         tables = set(inspector.get_table_names())
-        for table in Base.metadata.sorted_tables:
+        # Avoid dependency sorting here. The paper schema contains intentional
+        # cycles between audit tables, and sorting emits warnings while adding
+        # no value to a presence/column check.
+        for table in Base.metadata.tables.values():
             if table.name not in tables:
                 raise RuntimeError(f"Database schema missing table: {table.name}")
             columns = {c["name"] for c in inspector.get_columns(table.name)}
@@ -40,9 +48,10 @@ def assert_schema_current(engine, *, require_migration_head: bool = True) -> Non
                 raise RuntimeError(f"Database schema missing columns: {table.name}: {sorted(missing)}")
         # Ignore server defaults: historical migrations use DB defaults while
         # several ORM fields intentionally use application-side defaults.
-        drift = compare_metadata(MigrationContext.configure(connection), Base.metadata)
-        if drift:
-            raise RuntimeError("Database schema differs from ORM metadata; inspect with alembic check")
+        if check_drift:
+            drift = compare_metadata(MigrationContext.configure(connection), Base.metadata)
+            if drift:
+                raise RuntimeError("Database schema differs from ORM metadata; inspect with alembic check")
 
 
 if __name__ == "__main__":
