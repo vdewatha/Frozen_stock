@@ -268,13 +268,6 @@ def _run_direct_scalp_research_once(symbol: str) -> None:
             f"Direct scalp research unavailable: symbol={symbol} error={exc.__class__.__name__}",
             flush=True,
         )
-    finally:
-        if lock is not None:
-            try:
-                lock.release()
-            except Exception:
-                pass
-        client.close()
 
 
 def _direct_scalp_research_loop(symbol: str) -> None:

@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
+
+def test_direct_scalp_research_once_does_not_run_invalid_cleanup(monkeypatch, capsys):
+    from app import main
+
+    with patch(
+        "app.services.scalp_research_runner.run_scalp_research_once",
+        return_value={"status": "outside_market_hours", "execution_eligible": False},
+    ) as run_once:
+        main._run_direct_scalp_research_once("AAPL")
+
+    run_once.assert_called_once()
+    assert "symbol=AAPL status=outside_market_hours" in capsys.readouterr().out
+
 def test_direct_scalp_research_starts_one_loop_per_configured_symbol(monkeypatch):
     from app import main
 
