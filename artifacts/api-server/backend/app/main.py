@@ -40,6 +40,20 @@ _router_error: str | None = None
 _optional_routes_started = False
 
 
+def _seed_defaults_background() -> None:
+    """Seed only after route imports finish configuring SQLAlchemy models."""
+    from app.db.session import SessionLocal
+    from app.services.seed import seed_defaults
+
+    db = SessionLocal()
+    try:
+        seed_defaults(db)
+    except Exception as exc:  # pragma: no cover - hosted operational path
+        print(f"Production default seeding deferred: {exc.__class__.__name__}", flush=True)
+    finally:
+        db.close()
+
+
 @app.middleware("http")
 async def wait_for_application_routes(request: Request, call_next):
     """Keep hosted boot truthful while the large router graph loads."""
@@ -116,6 +130,13 @@ def load_application_routes() -> None:
         app.include_router(router, prefix="/api")
         _routers_ready = True
         print("FastAPI core routes ready", flush=True)
+
+        if settings.environment == "production":
+            threading.Thread(
+                target=_seed_defaults_background,
+                name="seed-defaults",
+                daemon=True,
+            ).start()
 
         if settings.environment == "production" and not _optional_routes_started:
             _optional_routes_started = True
@@ -356,23 +377,6 @@ def on_startup() -> None:
         # production API boot must not block on a second database round trip.
         assert_schema_current(engine)
     if settings.environment == "production":
-        # A managed database can briefly stall while the hosting platform is
-        # waking it. Do not hold Uvicorn health readiness on optional default
-        # rows; the bounded connection timeout and this supervised background
-        # seed let the API become observable and fail closed if seeding fails.
-        def seed_in_background() -> None:
-            from app.db.session import SessionLocal
-            from app.services.seed import seed_defaults
-
-            db = SessionLocal()
-            try:
-                seed_defaults(db)
-            except Exception as exc:  # pragma: no cover - hosted-only recovery path
-                print(f"Production default seeding deferred: {exc.__class__.__name__}", flush=True)
-            finally:
-                db.close()
-
-        threading.Thread(target=seed_in_background, name="seed-defaults", daemon=True).start()
         # Production route loading runs in the post-bind background thread.
         # Calling it here would block Uvicorn's port bind on the full schema
         # graph and defeat the lightweight startup surface.
