@@ -52,7 +52,7 @@ def test_scalp_runner_commits_a_paper_research_batch():
 
 def test_scalp_runner_status_reports_each_symbol_heartbeat():
     client = Mock()
-    client.get.side_effect = [NOW.isoformat().encode()] * 4
+    client.get.side_effect = sum(([NOW.isoformat().encode(), None] for _ in range(4)), [])
     with patch.object(runner.settings, "iex_research_enabled", True), patch(
         "redis.Redis.from_url", return_value=client
     ):
@@ -60,3 +60,4 @@ def test_scalp_runner_status_reports_each_symbol_heartbeat():
     assert status["alive"] is True
     assert set(status["symbols"]) == {"AAPL", "MSFT", "QQQ", "SPY"}
     assert all(item["alive"] for item in status["symbols"].values())
+    assert all(item["last_poll"] is None for item in status["symbols"].values())
