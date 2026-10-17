@@ -6,6 +6,80 @@ project. Stars, README backtests, and agent debates are not evidence of profit.
 No external agent was given our credentials and no repository's setup scripts
 were executed. Adopted Python packages are version-pinned in requirements.txt.
 
+## 2026-10-16 current comparison
+
+This follow-up compared the current repository with the primary repositories for
+[QuantConnect LEAN](https://github.com/QuantConnect/Lean),
+[NautilusTrader](https://github.com/nautechsystems/nautilus_trader),
+[Freqtrade](https://github.com/freqtrade/freqtrade),
+[Qlib](https://github.com/microsoft/qlib),
+[TradingAgents](https://github.com/TauricResearch/TradingAgents), and
+[vectorbt](https://github.com/polakowo/vectorbt). No source was copied, no
+installation scripts were executed, and no broker credentials or order APIs
+were used.
+
+### What this codebase already has
+
+The current design is closer to a guarded research control plane than to a
+single autonomous trading bot:
+
+- `research_simulator.py` makes next-open timing, fees, spread, slippage,
+  participation, partial fills, and drawdown explicit.
+- The IEX research lane stores source-labelled bars and per-symbol forecasts;
+  synthetic data is excluded from trusted execution evidence.
+- Online learning uses predict-before-target-reveal, bounded replay, immutable
+  prediction records, and separate symbol models.
+- Celery jobs and the hosted direct loops use Redis leases, while paper/live
+  eligibility remains behind reconciliation, lineage, risk, and approval gates.
+- `live_broker.py` treats uncertain broker outcomes, missing commissions, stale
+  data, and reconciliation gaps as blocking conditions.
+
+These boundaries are more important than adding more workers. More workers can
+increase throughput, but they also increase duplicate work, API pressure,
+selection bias, and shared-portfolio correlation risk. Worker count should be
+chosen from measured queue latency and provider rate limits, not from the number
+of strategies one hopes to run.
+
+### Reusable ideas and decision matrix
+
+| Project | Safe idea to reuse | Fit here | Decision and risk |
+| --- | --- | --- | --- |
+| LEAN | Separate fee, slippage, fill, and buying-power models; keep the same strategy contract across backtest and paper contexts. The upstream brokerage model is explicitly Apache-2.0 licensed. | High for research simulation and contract tests. | Adopt the design pattern only. Do not replace the Python API with the .NET engine until data normalization, adapter behavior, and operational recovery are independently validated. Apache-2.0 notices and any dependency notices still need to be preserved. |
+| NautilusTrader | One event-driven domain model across backtest, sandbox, and live, plus explicit command/event timing and execution reconciliation. | High for a future isolated event-tape simulator; the current broker state machine already covers part of this. | Do not import now. The project is LGPL-3.0 and has a separate trademark policy requiring careful attribution and non-affiliation language for distributed integrations. A full adoption would also add a Rust/Python runtime boundary. |
+| Freqtrade/FreqAI | Dry-run-first operations and configurable protections such as stoploss guard, max drawdown, cooldown, and low-profit locks. Its lookahead-analysis documentation is also a useful test pattern. | High as research eligibility checks and anti-lookahead tests; low as a stock execution replacement. | Do not copy GPL-3.0 source into this service without a deliberate distribution decision. Keep the existing stock and crypto lanes separate. Reimplement only the documented behavior with tests if needed. |
+| Qlib | Point-in-time data handling, recorded experiment stages, dataset snapshots, signal analysis, and portfolio backtest as separate artifacts. | High for strengthening dataset lineage and experiment reproducibility. | Prefer a small local artifact contract over adding Qlib. Qlib is MIT, but its data providers and downloaded datasets have separate terms, and its data format would add migration and maintenance cost. |
+| TradingAgents | Role-separated research opinions and timestamped evidence before a final synthesis. | Medium for explainable research only. | Keep agents outside signal authority and execution. The repository is Apache-2.0, but LLM calls, tool outputs, prompt injection, stale news, and cost/latency are operational risks. Require structured evidence and deterministic replay before accepting any agent output. |
+| vectorbt | Matrix/vectorized parameter sweeps and portfolio statistics for offline screening. | Medium for a separately packaged research benchmark. | Do not add as a runtime dependency: the upstream community license is Apache-2.0 with Commons Clause, not plain Apache-2.0, and its restriction may conflict with a hosted product. Avoid using large sweeps as proof of generalization. |
+
+### Recommended implementation order
+
+1. Add a versioned research-run artifact contract containing dataset snapshot
+   digest, feature-availability cutoff, train/validation/holdout bounds,
+   strategy version, cost model, and result digest. This captures Qlib's useful
+   reproducibility boundary without importing Qlib.
+2. Add an optional, research-only event-tape mode to the existing simulator:
+   explicit event timestamps, decision latency, venue receipt time, partial
+   fill events, and unknown outcome states. Keep next-open mode as the stable
+   baseline and compare both modes rather than silently changing results.
+3. Add property/regression tests for Freqtrade-style protections and LEAN-style
+   transaction components: cooldown after exit, drawdown lock, max
+   participation, fee/spread/slippage accounting, and no future-data access.
+4. Keep per-symbol/scalp workers as bounded leases over a shared portfolio
+   risk service. Record queue age, provider response age, duplicate skips, and
+   failure class before increasing concurrency.
+5. Use LLM or multi-agent research only to propose hypotheses and explain
+   evidence. A proposal must enter the same immutable backtest, holdout, and
+   paper-evidence path as a human-authored strategy; it must never toggle a
+   kill switch or submit an order.
+
+### Explicit non-goals
+
+This survey does not establish profitability, authorize paper or live orders,
+or make a synthetic/one-venue IEX series equivalent to an executable NBBO
+feed. It also does not recommend copying strategy code from GitHub. The
+current safety gates, kill switch, paper-only deployment flags, reconciliation,
+and separate approval boundary remain in force.
+
 ## 2026-10-10 intraday/backtest follow-up
 
 The current backtester was compared with the upstream workflows in [Microsoft
