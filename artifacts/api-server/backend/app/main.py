@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import threading
 
+print("FastAPI module import started", flush=True)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -36,9 +38,12 @@ from app.api.stock_learning_cycle import router as stock_learning_cycle_router
 from app.api.live_broker import router as live_broker_router
 from app.api.live_pilot import router as live_pilot_router
 
+print("FastAPI module import complete", flush=True)
+
 
 @app.on_event("startup")
 def on_startup() -> None:
+    print("FastAPI startup validation started", flush=True)
     production_blockers = settings.validate_production_configuration()
     if production_blockers:
         # Do not include values from the configuration in the error. The process
@@ -64,6 +69,7 @@ def on_startup() -> None:
                 db.close()
 
         threading.Thread(target=seed_in_background, name="seed-defaults", daemon=True).start()
+        print("FastAPI startup validation complete", flush=True)
         return
 
     db = SessionLocal()
@@ -71,6 +77,7 @@ def on_startup() -> None:
         seed_defaults(db)
     finally:
         db.close()
+    print("FastAPI startup validation complete", flush=True)
 
 
 app.include_router(router, prefix="/api")
