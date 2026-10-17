@@ -157,6 +157,11 @@ app.get("/api/startup", (_req, res) => {
     live_trading: false,
     auth_configured: clerkConfigured,
     ...(startupError ? { error: startupError } : {}),
+    // Keep hosted startup failures diagnosable without exposing credentials.
+    // appendBackendDiagnostic redacts secret-shaped assignments before this
+    // bounded output is retained.
+    ...(!ready && lastBackendProbeError ? { backend_probe: lastBackendProbeError } : {}),
+    ...(!ready && backendDiagnostic.trim() ? { backend_output: backendDiagnostic.trim() } : {}),
   });
 });
 
