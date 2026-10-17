@@ -76,10 +76,12 @@ let startupError: string | undefined;
 let migrationProcess: ChildProcess | undefined;
 let lastBackendProbeError: string | undefined;
 let backendDiagnostic = "";
-// Hosted instances can spend more than a minute importing the paper API and
-// opening the managed database connection. Keep the gateway alive long enough
-// for that startup work to finish instead of terminating a healthy child.
-const backendHealthMaxAttempts = 300;
+// Hosted instances can spend several minutes importing the paper API's large
+// SQLAlchemy/Pydantic route graph. Keep the gateway alive long enough for the
+// child to finish its bounded background import instead of recycling it every
+// 150 seconds and creating an endless cold-start loop. This remains finite so
+// a genuinely failed child is still recycled and reported as failed.
+const backendHealthMaxAttempts = 1200;
 
 function appendBackendDiagnostic(chunk: Buffer | string): void {
   const text = String(chunk)
