@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.models import CandidateDecisionJournal, PaperTrade, Strategy, StrategyMemory
 from app.services.audit import write_audit_log
-from app.services.candidate_evidence import candidate_evidence_drilldown
 from app.services.market_data import get_price_history
 from app.services.notifications import create_notification
 
@@ -41,6 +40,8 @@ def record_candidate_decision(
     evidence_snapshot: Optional[dict] = None,
     paper_trade_id: Optional[int] = None,
 ) -> dict:
+    from app.services.candidate_evidence import candidate_evidence_drilldown
+
     symbol = symbol.strip().upper()
     strategy = db.query(Strategy).filter(Strategy.strategy_type == strategy_type).one_or_none()
     if not strategy:

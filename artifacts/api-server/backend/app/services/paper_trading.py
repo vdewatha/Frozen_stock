@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-import pandas as pd
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
@@ -11,7 +10,6 @@ from app.models import PaperTrade, RiskRule, Strategy, StrategyMemory, StrategyS
 from app.services.audit import write_audit_log
 from app.services.broker import submit_paper_order
 from app.services.economic_data import summarize_macro_context
-from app.services.market_regime import latest_market_regime
 from app.services.news_sentiment import summarize_news_context
 from app.services.probabilistic_model import predict_probabilities
 from app.services.readiness import readiness_snapshot
@@ -147,6 +145,8 @@ def clamp_like(value: float) -> float:
 
 
 def _trusted_regime(db):
+    from app.services.market_regime import latest_market_regime
+
     regime = latest_market_regime(db, auto_detect=False)
     source = (regime or {}).get("features", {}).get("source")
     macro = (regime or {}).get("features", {}).get("macro_context") or {}
