@@ -18,16 +18,8 @@ import tempfile
 import warnings
 from typing import Any, Callable, Iterable
 
-import joblib
 import numpy as np
 import pandas as pd
-import sklearn
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.exceptions import ConvergenceWarning
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import brier_score_loss, log_loss
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
 
 from app.services.feature_pipeline import DEFAULT_FEATURES, feature_config_id, generate_features
 from app.services.stock_dataset import (
@@ -66,6 +58,9 @@ def _training_identity(
     validate and adopt an already-published run before it can fit a candidate
     or evaluate the reserved final holdout again.
     """
+    import joblib
+    import sklearn
+
     return {
         "format": TRAINING_FORMAT,
         "dataset_snapshot_id": dataset.snapshot_id,
@@ -126,6 +121,11 @@ def _holdout_evidence(
 
 
 def _model(name: str, seed: int):
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
     if name == "logistic_regression":
         return make_pipeline(StandardScaler(), LogisticRegression(solver="liblinear", random_state=seed, max_iter=1000))
     if name == "random_forest":
@@ -134,6 +134,8 @@ def _model(name: str, seed: int):
 
 
 def _fit_probability(model, train: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:
+    from sklearn.exceptions import ConvergenceWarning
+
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", RuntimeWarning)
@@ -151,6 +153,8 @@ def _fit_probability(model, train: pd.DataFrame, test: pd.DataFrame) -> np.ndarr
 
 
 def _metrics(target: Iterable[int], probability: Iterable[float]) -> dict[str, float]:
+    from sklearn.metrics import brier_score_loss, log_loss
+
     y = np.asarray(list(target), dtype=int)
     p = np.asarray(list(probability), dtype=float)
     if len(y) == 0 or len(y) != len(p) or not np.isin(y, [0, 1]).all() or not np.isfinite(p).all():
@@ -343,6 +347,9 @@ def _calibration_split(development: pd.DataFrame, *, embargo_days: int) -> tuple
 
 
 def _fit_calibrator(probability: np.ndarray, target: pd.Series, *, seed: int) -> LogisticRegression:
+    from sklearn.exceptions import ConvergenceWarning
+    from sklearn.linear_model import LogisticRegression
+
     clipped = np.clip(probability, 1e-6, 1 - 1e-6)
     x = np.log(clipped / (1 - clipped)).reshape(-1, 1)
     calibrator = LogisticRegression(solver="liblinear", random_state=seed, max_iter=1000)
@@ -578,6 +585,8 @@ def train_stock_model(
     }
     _check_cancelled(cancel_requested)
     with tempfile.TemporaryDirectory(prefix=".stock-training-", dir=output) as temporary:
+        import joblib
+
         stage = Path(temporary)
         (stage / "dataset.csv").write_bytes(_dataset_bytes(dataset.observations))
         joblib.dump(final_model, stage / "selected_model.joblib")

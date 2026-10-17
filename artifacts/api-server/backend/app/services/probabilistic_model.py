@@ -4,11 +4,6 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, brier_score_loss
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
 from app.services.feature_pipeline import DEFAULT_FEATURES, generate_features
 
 
@@ -42,6 +37,15 @@ def _fit_predict_probability(
     *,
     forest_estimators: int = 120,
 ) -> list[TrainedModelResult]:
+    # scikit-learn is intentionally loaded only for research/model endpoints.
+    # Importing it during API route registration makes hosted cold starts exceed
+    # the gateway timeout even though ordinary health/readiness routes do not
+    # need a fitted model.
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
     results: list[TrainedModelResult] = []
     if train_y.nunique() < 2:
         return results
@@ -61,6 +65,11 @@ def _fit_predict_probability(
 
 
 def _walk_forward_for_horizon(model_frame: pd.DataFrame, horizon: int, train_window: int = 126, test_window: int = 21) -> list[dict]:
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import accuracy_score, brier_score_loss
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
     target = f"target_up_{horizon}d"
     label_end = f"label_end_{horizon}d"
     if horizon not in HORIZONS or train_window < 1 or test_window < 1:
