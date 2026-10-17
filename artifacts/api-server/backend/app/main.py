@@ -38,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_routers_ready = threading.Event()
+_routers_ready = False
 _router_error: str | None = None
 
 
@@ -47,7 +47,7 @@ async def wait_for_application_routes(request: Request, call_next):
     """Keep hosted boot truthful while the large router graph loads."""
     if request.url.path == "/api/health":
         return await call_next(request)
-    if request.url.path.startswith("/api/") and not _routers_ready.is_set():
+    if request.url.path.startswith("/api/") and not _routers_ready:
         body = {
             "status": "starting",
             "detail": "Paper API routes are still loading",
@@ -68,14 +68,14 @@ def hosted_health() -> dict:
         "service": "paper-trading-api",
         "paper_only": True,
         "live_trading": False,
-        "routes_ready": _routers_ready.is_set(),
+        "routes_ready": _routers_ready,
         **({"route_error": _router_error} if _router_error else {}),
     }
 
 
 def load_application_routes() -> None:
     """Import and register the full API graph after the process is healthy."""
-    global _router_error
+    global _router_error, _routers_ready
     try:
         from app.api.routes import router
         _import_stage("routes")
@@ -117,7 +117,7 @@ def load_application_routes() -> None:
             live_pilot_router,
         ):
             app.include_router(application_router, prefix="/api")
-        _routers_ready.set()
+        _routers_ready = True
         print("FastAPI application routes ready", flush=True)
     except Exception as exc:  # pragma: no cover - hosted import diagnostics
         _router_error = exc.__class__.__name__
@@ -154,11 +154,11 @@ def on_startup() -> None:
                 db.close()
 
         threading.Thread(target=seed_in_background, name="seed-defaults", daemon=True).start()
-        threading.Thread(
-            target=load_application_routes,
-            name="load-api-routes",
-            daemon=True,
-        ).start()
+        # Register the full API graph before declaring the backend ready. A
+        # background import can leave a healthy process serving a permanent
+        # 503 for every real API route when a hosted worker stalls or fails.
+        # The gateway already allows a generous startup window for this work.
+        load_application_routes()
         print("FastAPI startup validation complete", flush=True)
         return
 
