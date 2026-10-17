@@ -70,6 +70,9 @@ IEX_RESEARCH_ENABLED = "true"
 # Autoscale has no durable Celery worker. This loop is research-only, Redis
 # coordinated, and never creates paper or live orders.
 PAPER_DIRECT_RESEARCH_LOOP = "true"
+# One Redis-leased research loop per symbol. These loops never submit orders.
+PAPER_DIRECT_SCALP_RESEARCH_LOOP = "true"
+PAPER_SCALP_RESEARCH_SYMBOLS = "AAPL,MSFT,SPY,QQQ"
 DELAYED_SIP_RESEARCH_ENABLED = "true"
 PAPER_STARTUP_REFRESH = "false"
 PAPER_DIRECT_MONITOR_LOOP = "false"

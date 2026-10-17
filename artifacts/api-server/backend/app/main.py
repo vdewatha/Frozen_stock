@@ -234,6 +234,68 @@ def _direct_iex_research_loop() -> None:
         time.sleep(60)
 
 
+def _run_direct_scalp_research_once(symbol: str) -> None:
+    """Run one leased, paper-only scalp research job for one symbol."""
+    from zoneinfo import ZoneInfo
+
+    import redis
+
+    from app.core.config import settings
+    from app.db.session import SessionLocal
+    from app.services.scalp_research import create_scalp_research_run, run_scalp_research
+
+    now = datetime.now(timezone.utc)
+    eastern = now.astimezone(ZoneInfo("America/New_York"))
+    if eastern.weekday() >= 5 or not (clock_time(9, 30) <= eastern.time() < clock_time(16, 1)):
+        return
+
+    client = redis.Redis.from_url(
+        settings.redis_url,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+        health_check_interval=15,
+    )
+    lock = None
+    try:
+        client.ping()
+        lock = client.lock(
+            f"trading:scheduled-job:scalp_research:{symbol}",
+            timeout=120,
+            blocking=False,
+        )
+        if not lock.acquire(blocking=False):
+            return
+        db = SessionLocal()
+        try:
+            row = create_scalp_research_run(db, symbols=[symbol], actor="direct-scheduler")
+            db.commit()
+            result = run_scalp_research(db, row.run_id)
+            print(
+                f"Direct scalp research complete: symbol={symbol} status={result.get('status')}",
+                flush=True,
+            )
+        finally:
+            db.close()
+    except Exception as exc:  # pragma: no cover - hosted operational path
+        print(
+            f"Direct scalp research unavailable: symbol={symbol} error={exc.__class__.__name__}",
+            flush=True,
+        )
+    finally:
+        if lock is not None:
+            try:
+                lock.release()
+            except Exception:
+                pass
+        client.close()
+
+
+def _direct_scalp_research_loop(symbol: str) -> None:
+    while True:
+        _run_direct_scalp_research_once(symbol)
+        time.sleep(60)
+
+
 def _start_direct_iex_research_loop() -> None:
     if settings.environment != "production" or not settings.iex_research_enabled:
         return
@@ -245,6 +307,27 @@ def _start_direct_iex_research_loop() -> None:
         daemon=True,
     ).start()
     print("Direct IEX research loop enabled; execution remains disabled", flush=True)
+
+
+def _start_direct_scalp_research_loops() -> None:
+    if settings.environment != "production" or not settings.iex_research_enabled:
+        return
+    if os.environ.get("PAPER_DIRECT_SCALP_RESEARCH_LOOP", "false").strip().lower() != "true":
+        return
+    configured = os.environ.get("PAPER_SCALP_RESEARCH_SYMBOLS", "AAPL,MSFT,SPY,QQQ")
+    symbols = sorted({value.strip().upper() for value in configured.split(",") if value.strip()})
+    for symbol in symbols:
+        threading.Thread(
+            target=_direct_scalp_research_loop,
+            args=(symbol,),
+            name=f"direct-scalp-research-{symbol.lower()}",
+            daemon=True,
+        ).start()
+    print(
+        "Direct scalp research loops enabled; "
+        f"symbols={','.join(symbols)} execution remains disabled",
+        flush=True,
+    )
 
 
 @app.get("/api/research/scalp/runs")
@@ -320,6 +403,7 @@ def on_startup() -> None:
             daemon=True,
         ).start()
         _start_direct_iex_research_loop()
+        _start_direct_scalp_research_loops()
         print("FastAPI startup validation complete", flush=True)
         return
 
