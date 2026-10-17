@@ -67,6 +67,9 @@ PAPER_LEARNING_CONCURRENCY = "1"
 PAPER_EXECUTION_SYMBOLS = "[\"AAPL\", \"SPY\"]"
 PAPER_EMBEDDED_REDIS = "false"
 IEX_RESEARCH_ENABLED = "true"
+# Autoscale has no durable Celery worker. This loop is research-only, Redis
+# coordinated, and never creates paper or live orders.
+PAPER_DIRECT_RESEARCH_LOOP = "true"
 DELAYED_SIP_RESEARCH_ENABLED = "true"
 PAPER_STARTUP_REFRESH = "false"
 PAPER_DIRECT_MONITOR_LOOP = "false"
