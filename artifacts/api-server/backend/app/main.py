@@ -17,14 +17,6 @@ from app.core.config import settings
 _import_stage("config")
 from app.core.security import AuthenticationMiddleware
 _import_stage("security")
-from app.db.schema import assert_schema_current
-_import_stage("schema")
-from app.db.session import SessionLocal, engine
-_import_stage("session")
-from app.models import models, stock_paper  # noqa: F401
-_import_stage("models")
-from app.services.seed import seed_defaults
-_import_stage("seed")
 
 app = FastAPI(title=settings.app_name, docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -158,6 +150,11 @@ def on_startup() -> None:
         # must not start in an ambiguous production security state.
         raise RuntimeError("Production security configuration is incomplete: " + "; ".join(production_blockers))
     if settings.environment != "production":
+        from app.db.schema import assert_schema_current
+        from app.db.session import SessionLocal, engine
+        from app.models import models, stock_paper  # noqa: F401
+        from app.services.seed import seed_defaults
+
         # Local and test environments retain strict schema verification. The
         # hosted supervisor runs and supervises migrations before this process;
         # production API boot must not block on a second database round trip.
@@ -168,6 +165,9 @@ def on_startup() -> None:
         # rows; the bounded connection timeout and this supervised background
         # seed let the API become observable and fail closed if seeding fails.
         def seed_in_background() -> None:
+            from app.db.session import SessionLocal
+            from app.services.seed import seed_defaults
+
             db = SessionLocal()
             try:
                 seed_defaults(db)
@@ -177,11 +177,13 @@ def on_startup() -> None:
                 db.close()
 
         threading.Thread(target=seed_in_background, name="seed-defaults", daemon=True).start()
-        # Register the full API graph before declaring the backend ready. A
-        # background import can leave a healthy process serving a permanent
-        # 503 for every real API route when a hosted worker stalls or fails.
-        # The gateway already allows a generous startup window for this work.
-        load_application_routes()
+        # Let the gateway and lightweight health endpoint become observable
+        # while database/model imports and optional provider routers load.
+        threading.Thread(
+            target=load_application_routes,
+            name="load-api-routes",
+            daemon=True,
+        ).start()
         print("FastAPI startup validation complete", flush=True)
         return
 
