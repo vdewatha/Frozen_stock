@@ -128,6 +128,15 @@ def test_replay_idempotent_sparse_feed_cannot_satisfy_sip(db):
     assert status["symbols"][0]["total_bars"] == 1
 
 
+def test_authenticated_iex_collection_records_verification_without_execution_eligibility(db):
+    response = {symbol: [bar()] for symbol in iex.ALLOWED_SYMBOLS}
+    with patch.object(iex, "fetch_iex_bars", return_value=response):
+        report = iex.collect_iex_research(db, now=NOW)
+    assert report["execution_eligible"] is False
+    assert db.query(IntradayBar).count() == 4
+    assert all(row.last_verified_at is not None for row in db.query(IntradayBar).all())
+
+
 def test_exception_body_is_never_persisted(db):
     with patch.object(iex, "fetch_iex_bars", side_effect=RuntimeError("secret-example")):
         report = iex.collect_iex_research(db, now=NOW)

@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -334,7 +335,11 @@ def upsert_intraday_bars(
                     "volume": excluded.volume,
                     "feed_class": excluded.feed_class,
                     "exchange_timestamp": excluded.exchange_timestamp,
-                    "last_verified_at": excluded.last_verified_at,
+                    # A non-verifying import must never erase evidence from a
+                    # prior authenticated provider request.
+                    "last_verified_at": func.coalesce(
+                        excluded.last_verified_at, IntradayBar.last_verified_at
+                    ),
                 },
             )
             db.execute(statement)

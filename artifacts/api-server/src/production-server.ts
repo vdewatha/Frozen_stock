@@ -203,16 +203,20 @@ const workerProcesses: ChildProcess[] = [];
 function supervisePaperWorker(args: string[], label: string): ChildProcess {
   const child = spawnPaperWorker(args);
   workerProcesses.push(child);
-  child.on("error", (error) => {
-    if (stopping) return;
-    console.error(`Paper worker failed to spawn; restarting ${label}: ${error.message}`);
-  });
-  child.on("exit", (code, signal) => {
-    if (stopping) return;
-    console.error(`Paper worker exited; restarting ${label}: code=${code} signal=${signal}`);
+  let restartScheduled = false;
+  const scheduleRestart = (reason: string): void => {
+    if (stopping || restartScheduled) return;
+    restartScheduled = true;
+    console.error(`Paper worker unavailable; restarting ${label}: ${reason}`);
     setTimeout(() => {
       if (!stopping) supervisePaperWorker(args, label);
     }, 2000);
+  };
+  child.on("error", (error) => {
+    scheduleRestart(`spawn error=${error.message}`);
+  });
+  child.on("exit", (code, signal) => {
+    scheduleRestart(`exit code=${code} signal=${signal}`);
   });
   return child;
 }

@@ -171,6 +171,10 @@ def collect_iex_research(db: Session, *, now: datetime | None = None) -> dict:
             saved = upsert_intraday_bars(
                 db, symbol, bars[symbol], ingested_at=observed,
                 provider=PROVIDER, feed_class=FEED,
+                # This path is reached only after a successful authenticated
+                # Alpaca data request. Persist that evidence separately from
+                # execution eligibility, which remains false for research.
+                verify_entitlement=True,
             )
             results.append({"symbol": symbol, **saved})
         result = {

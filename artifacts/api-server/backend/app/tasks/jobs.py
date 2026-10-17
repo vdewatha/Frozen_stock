@@ -1061,6 +1061,19 @@ def _publish_scalp_research_rows(rows: list[ScalpResearchRun]) -> tuple[list[dic
 @celery_app.task
 def scheduled_scalp_research_job() -> dict:
     """Queue independent paper-only scalp runs, one per symbol, when idle."""
+    # The hosted Reserved VM uses one Redis-leased direct loop per symbol.
+    # Keeping the beat entry registered is useful for local deployments, but
+    # dispatching both paths would create duplicate research rows.
+    import os
+
+    if os.environ.get("PAPER_DIRECT_SCALP_RESEARCH_LOOP", "false").lower() == "true":
+        return {
+            "status": "disabled_direct_runner",
+            "reason": "direct scalp research loops are authoritative",
+            "paper_only": True,
+            "eligible_for_trading": False,
+        }
+
     def work(db):
         unpublished = db.scalars(
             select(ScalpResearchRun)

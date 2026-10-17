@@ -47,6 +47,13 @@ class CeleryConfigurationTests(unittest.TestCase):
             "scalp_research",
         )
 
+    def test_hosted_direct_scalp_runner_does_not_duplicate_beat_batch(self):
+        with patch.dict("os.environ", {"PAPER_DIRECT_SCALP_RESEARCH_LOOP": "true"}):
+            result = jobs.scheduled_scalp_research_job()
+        self.assertEqual(result["status"], "disabled_direct_runner")
+        self.assertTrue(result["paper_only"])
+        self.assertFalse(result["eligible_for_trading"])
+
     def test_iex_feature_refresh_is_throttled(self):
         class FakeRedis:
             def __init__(self, acquired):
