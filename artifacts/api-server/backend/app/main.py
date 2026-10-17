@@ -379,9 +379,9 @@ def on_startup() -> None:
                 db.close()
 
         threading.Thread(target=seed_in_background, name="seed-defaults", daemon=True).start()
-        # Core routes were loaded synchronously during module import. Keep the
-        # startup hook idempotent for test runners and process reloaders.
-        load_application_routes()
+        # Production route loading runs in the post-bind background thread.
+        # Calling it here would block Uvicorn's port bind on the full schema
+        # graph and defeat the lightweight startup surface.
         _start_direct_iex_research_loop()
         _start_direct_delayed_sip_research_loop()
         _start_direct_scalp_research_loops()
