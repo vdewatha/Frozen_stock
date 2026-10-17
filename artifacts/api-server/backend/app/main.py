@@ -74,11 +74,36 @@ def hosted_health() -> dict:
 
 
 def load_application_routes() -> None:
-    """Import and register the full API graph after the process is healthy."""
+    """Register the core API, then load optional research routers separately."""
     global _router_error, _routers_ready
     try:
         from app.api.routes import router
         _import_stage("routes")
+
+        # The core router owns health, readiness, paper controls, and the
+        # activity views. Register it before optional provider integrations so
+        # a slow research import cannot hold the whole API in 503 startup.
+        app.include_router(router, prefix="/api")
+        _routers_ready = True
+        print("FastAPI core routes ready", flush=True)
+
+        if settings.environment == "production":
+            threading.Thread(
+                target=load_optional_application_routes,
+                name="load-optional-api-routes",
+                daemon=True,
+            ).start()
+        else:
+            load_optional_application_routes()
+    except Exception as exc:  # pragma: no cover - hosted import diagnostics
+        _router_error = exc.__class__.__name__
+        print(f"FastAPI core route loading failed: {_router_error}", flush=True)
+
+
+def load_optional_application_routes() -> None:
+    """Load provider-specific and research routers without blocking liveness."""
+    global _router_error
+    try:
         from app.api.research import router as research_router
         _import_stage("research")
         from app.api.agent_research import router as agent_research_router
@@ -103,7 +128,6 @@ def load_application_routes() -> None:
         _import_stage("live_pilot")
 
         for application_router in (
-            router,
             research_router,
             agent_research_router,
             scalp_research_router,
@@ -117,11 +141,10 @@ def load_application_routes() -> None:
             live_pilot_router,
         ):
             app.include_router(application_router, prefix="/api")
-        _routers_ready = True
-        print("FastAPI application routes ready", flush=True)
+        print("FastAPI optional routes ready", flush=True)
     except Exception as exc:  # pragma: no cover - hosted import diagnostics
         _router_error = exc.__class__.__name__
-        print(f"FastAPI application route loading failed: {_router_error}", flush=True)
+        print(f"FastAPI optional route loading failed: {_router_error}", flush=True)
 
 print("FastAPI module import complete", flush=True)
 
