@@ -299,3 +299,49 @@ def test_unpublished_scalp_run_is_republished_by_recovery_job():
         assert row.assumptions["dispatch_state"] == "published"
         assert row.assumptions["task_id"] == "recovered-task"
         assert row.status == "queued"
+
+
+def test_manual_scalp_dispatch_marks_row_published_before_response():
+    """A manually queued run must not be republished by recovery beat."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+    from sqlalchemy.orm import Session
+    from unittest.mock import Mock, patch
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.scalp_research import router
+    from app.db.session import get_db
+    from app.models import ScalpResearchRun
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    ScalpResearchRun.__table__.create(engine)
+    app = FastAPI()
+    app.include_router(router)
+
+    @app.middleware("http")
+    async def set_actor(request, call_next):
+        request.state.actor = "test"
+        return await call_next(request)
+
+    def override_db():
+        with Session(engine) as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_db
+    task = Mock(id="manual-task")
+    with patch("app.tasks.jobs.scalp_research_job", new=Mock()) as job:
+        job.apply_async.return_value = task
+        with TestClient(app) as client:
+            response = client.post("/research/scalp/runs", json={"symbols": ["AAPL"]})
+
+    assert response.status_code == 202
+    with Session(engine) as db:
+        row = db.query(ScalpResearchRun).one()
+        assert row.assumptions["dispatch_state"] == "published"
+        assert row.assumptions["task_id"] == "manual-task"
+    assert job.apply_async.call_args.kwargs["expires"] == 10 * 60

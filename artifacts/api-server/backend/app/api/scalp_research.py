@@ -25,7 +25,20 @@ def start_scalp_research(body: StartScalpResearchBody, request: Request, db: Ses
         # graph during hosted boot. The queue task is needed only on writes.
         from app.tasks.jobs import scalp_research_job
 
-        scalp_research_job.apply_async(args=[row.run_id], queue="scalp_research")
+        task = scalp_research_job.apply_async(
+            args=[row.run_id], queue="scalp_research", expires=10 * 60
+        )
+        # The recovery scheduler uses this durable marker to distinguish a
+        # task that was never published from one already accepted by Celery.
+        # Without it, a manually started run can be published again every
+        # recovery interval even though the run-level claim prevents a second
+        # execution.
+        row.assumptions = {
+            **(row.assumptions or {}),
+            "dispatch_state": "published",
+            "task_id": task.id,
+        }
+        db.commit()
         db.refresh(row)
         return project_scalp_research(row)
     except ValueError as exc:
