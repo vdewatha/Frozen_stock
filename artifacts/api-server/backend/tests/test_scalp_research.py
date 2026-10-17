@@ -99,6 +99,17 @@ def test_scalp_metrics_are_separate_and_cost_adjusted():
     assert "max_drawdown" in result["ema_momentum"]
 
 
+def test_long_only_metrics_ignore_short_signals():
+    values = [100 + index * 0.1 for index in range(80)]
+    short_only = _metrics(values)["ema_momentum"]
+    from app.services.scalp_research import _strategy_metrics
+
+    result = _strategy_metrics(values, lambda _values, _index: -1, long_only=True)
+    assert result["long_only"] is True
+    assert result["trades"] == 0
+    assert short_only["trades"] > 0
+
+
 def test_long_only_shadow_simulation_is_explicitly_non_executable():
     bars = _research_bars(datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc), 120)
     result = _long_only_shadow_simulation(bars, _strategy_signals()["ema_momentum"])
@@ -115,8 +126,11 @@ def test_scalp_holdout_does_not_promote_a_non_unique_winner():
     result = _validation_metrics(values)
     assert result["status"] == "complete"
     assert result["holdout_bars"] == 55
-    assert len(result["walk_forward"]) == 2
-    assert all(fold["bars"] == 60 for fold in result["walk_forward"])
+    assert len(result["walk_forward"]) == 1
+    assert result["walk_forward"][0]["bars"] == 75
+    assert result["walk_forward"][0]["end_index"] == 125
+    assert result["walk_forward"][0]["end_index"] <= 125
+    assert set(result["candidate_strategies"]) == set(result["strategies"])
     assert result["paper_candidate"] is None
     assert "candidate_reason" in result
 

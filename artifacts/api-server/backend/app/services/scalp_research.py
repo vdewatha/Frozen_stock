@@ -248,11 +248,15 @@ def _bar_lineage(bars: list[IntradayBar], *, now: datetime | None = None) -> dic
     }
 
 
-def _strategy_metrics(closes: list[float], signal_fn, *, start: int = 50) -> dict:
+def _strategy_metrics(
+    closes: list[float], signal_fn, *, start: int = 50, long_only: bool = False
+) -> dict:
     returns = []
     gross_returns = []
     for index in range(start, len(closes) - 1):
         signal = signal_fn(closes, index)
+        if long_only and signal < 0:
+            continue
         if signal == 0:
             continue
         gross = signal * (closes[index + 1] / closes[index] - 1.0)
@@ -283,6 +287,7 @@ def _strategy_metrics(closes: list[float], signal_fn, *, start: int = 50) -> dic
         # This is deliberately not called observed profitability: the
         # simulator has no quote-level spread, latency, or partial-fill data.
         "execution_model": "next_close_single_bar_with_modeled_costs",
+        "long_only": long_only,
         "modeled_cost_sensitivity": sensitivity,
         "profitable_under_modeled_costs": modeled_positive,
         # Keep the legacy field for existing consumers while making the
@@ -416,31 +421,39 @@ def _validation_metrics(closes: list[float]) -> dict:
         return {"status": "insufficient_data", "holdout_bars": 0, "strategies": {}, "paper_candidate": None}
     split = max(60, int(len(closes) * 0.7))
     holdout = closes[split:]
-    results = {
+    directional_results = {
         name: _strategy_metrics(holdout, signal)
         for name, signal in _strategy_signals().items()
     }
-    # Evaluate several later, non-overlapping windows as a simple
-    # walk-forward consistency check. A single favorable holdout is not
-    # enough evidence for a scalp strategy whose regime can change quickly.
-    fold_size = max(60, len(closes) // 5)
+    # Candidate qualification uses the same long-only side restriction as the
+    # paper shadow lane. Keep the directional view above for research, but do
+    # not let short signals qualify a long-only paper candidate.
+    candidate_results = {
+        name: _strategy_metrics(holdout, signal, long_only=True)
+        for name, signal in _strategy_signals().items()
+    }
+    # Evaluate later, non-overlapping windows immediately before the untouched
+    # holdout. This avoids overlap and ensures the newest pre-holdout data is
+    # evaluated exactly once.
+    available = max(0, split - 50)
+    fold_count = min(3, available // 60)
+    fold_size = (available // fold_count) if fold_count else 0
+    validation_start = split - fold_size * fold_count if fold_count else split
     walk_forward = []
-    for start in range(fold_size, len(closes), fold_size):
+    for fold_number in range(fold_count):
+        start = validation_start + fold_number * fold_size
         fold = closes[start:start + fold_size]
-        if len(fold) < 60:
-            break
         walk_forward.append({
             "start_index": start,
             "bars": len(fold),
+            "end_index": start + len(fold),
             "strategies": {
-                name: _strategy_metrics(fold, signal)
+                name: _strategy_metrics(fold, signal, long_only=True)
                 for name, signal in _strategy_signals().items()
             },
         })
-        if len(walk_forward) == 3:
-            break
     profitable = [
-        name for name, result in results.items()
+        name for name, result in candidate_results.items()
         if result["trades"] >= 10
         and result["profitable_under_modeled_costs"]
         and walk_forward
@@ -455,13 +468,14 @@ def _validation_metrics(closes: list[float]) -> dict:
         "status": "complete",
         "holdout_bars": len(holdout),
         "holdout_fraction": round(len(holdout) / len(closes), 4),
-        "strategies": results,
+        "strategies": directional_results,
+        "candidate_strategies": candidate_results,
         "walk_forward": walk_forward,
         "paper_candidate": profitable[0] if len(profitable) == 1 else None,
         "candidate_reason": (
-            "exactly one strategy was positive under modeled costs on holdout"
+            "exactly one long-only strategy was positive under modeled costs on holdout"
             if len(profitable) == 1 else
-            "no unique modeled-cost-positive holdout winner; remain research-only"
+            "no unique long-only modeled-cost-positive holdout winner; remain research-only"
         ),
     }
 
