@@ -58,38 +58,42 @@ else
   python3.11 -m alembic upgrade head
 fi
 
-PYTHONPATH=. python3.11 scripts/run_stock_watchdog.py &
-pids+=("$!")
+if [[ "${PAPER_WORKERS_ENABLED:-true}" == "true" ]]; then
+  PYTHONPATH=. python3.11 scripts/run_stock_watchdog.py &
+  pids+=("$!")
 
-# Keep the one-minute poll independent from daily imports and feature jobs.
-# This launcher is used by both the local development workflow and the API
-# artifact's production run command, so both environments use the same queue
-# split and exactly one worker for each path.
-python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
-  --loglevel=INFO \
-  --hostname=intraday@%h \
-  --queues=intraday_market_data \
-  --concurrency=1 &
-pids+=("$!")
+  # Keep the one-minute poll independent from daily imports and feature jobs.
+  # This launcher is used by both the local development workflow and the API
+  # artifact's production run command, so both environments use the same queue
+  # split and exactly one worker for each path.
+  python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
+    --loglevel=INFO \
+    --hostname=intraday@%h \
+    --queues=intraday_market_data \
+    --concurrency=1 &
+  pids+=("$!")
 
-# Keep 1-minute scalp research independent from market-data and learning
-# backlogs so a slow experiment cannot starve its own evidence queue.
-python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
-  --loglevel=INFO \
-  --hostname=scalp-research@%h \
-  --queues=scalp_research \
-  --concurrency=1 &
-pids+=("$!")
+  # Keep 1-minute scalp research independent from market-data and learning
+  # backlogs so a slow experiment cannot starve its own evidence queue.
+  python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
+    --loglevel=INFO \
+    --hostname=scalp-research@%h \
+    --queues=scalp_research \
+    --concurrency=1 &
+  pids+=("$!")
 
-python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
-  --loglevel=INFO \
-  --hostname=general@%h \
-  --queues=default,market_data,learning,paper_trading,risk \
-  --concurrency=2 &
-pids+=("$!")
+  python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
+    --loglevel=INFO \
+    --hostname=general@%h \
+    --queues=default,market_data,learning,paper_trading,risk \
+    --concurrency=2 &
+  pids+=("$!")
 
-PYTHONPATH=. python3.11 scripts/run_beat_with_lease.py &
-pids+=("$!")
+  PYTHONPATH=. python3.11 scripts/run_beat_with_lease.py &
+  pids+=("$!")
+else
+  echo "PAPER_WORKERS_ENABLED=false; skipping watchdog, Celery workers, and beat."
+fi
 
 python3.11 -m uvicorn app.main:app \
   --host 0.0.0.0 \
