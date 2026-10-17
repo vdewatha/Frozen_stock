@@ -98,8 +98,6 @@ from app.schemas.trading import (
 )
 from app.services.broker import block_live_order, broker_status, submit_paper_order
 from app.services.live_safety import LiveSafetyError, live_order_decision, evaluate_live_safety, transition_live_safety
-from app.services.candidate_activation import review_candidate_activation
-from app.services.candidate_evidence import candidate_evidence_drilldown
 from app.services.decision_journal import decision_journal_scorecard, list_candidate_decisions, record_candidate_decision, refresh_decision_journal_outcomes, update_journal_realized_outcomes, update_strategy_memory_from_journal
 from app.services.deployment_monitor import deployment_monitor_snapshot, run_deployment_monitor
 from app.services.operational_hardening import operational_hardening_snapshot, run_operational_hardening
@@ -308,6 +306,8 @@ def trade_candidates(limit: int = 12, refresh: bool = False, db: Session = Depen
 
 @router.get("/trade-candidates/evidence", response_model=TradeCandidateEvidenceResponse)
 def trade_candidate_evidence(symbol: str, strategy: str, db: Session = Depends(get_db)) -> dict:
+    from app.services.candidate_evidence import candidate_evidence_drilldown
+
     try:
         return candidate_evidence_drilldown(db, symbol, strategy)
     except ValueError as exc:
@@ -388,6 +388,8 @@ def opportunity_radar(limit: int = 8, refresh_news: bool = False, news_provider:
 
 @router.post("/trade-candidates/activation-review", response_model=CandidateActivationResponse)
 def activate_trade_candidate(payload: CandidateActivationRequest, db: Session = Depends(get_db)) -> dict:
+    from app.services.candidate_activation import review_candidate_activation
+
     try:
         return review_candidate_activation(db, payload.symbol, payload.strategy, payload.decision, payload.reason)
     except ValueError as exc:
