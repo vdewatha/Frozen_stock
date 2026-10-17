@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.models.crypto_data import CryptoCandle, CollectionRun
 from app.models.online_research import OnlineResearchForecast
-from app.models import shadow, execution, stock_paper  # Register priority-package tables with Base.
+from app.models import shadow, execution  # Register core priority-package tables with Base.
 
 from app.models.models import (
     Asset,
@@ -59,31 +59,51 @@ from app.models.models import (
     StockPaperRecoveryState,
     StockPaperRecoveryEvent,
 )
-from app.models.stock_paper import (
-    StockPaperAccount,
-    StockPaperVenueAuthorization,
-    StockPaperVenueQualification,
-    StockPaperResearchQualification,
-    StockPaperResearchAuthorization,
-    StockPaperBrokerActivity,
-    StockPaperEquitySnapshot,
-    StockPaperFill,
-    StockPaperLedgerEvent,
-    StockPaperOrder,
-    StockPaperPosition,
-    StockPaperStrategyEvidence,
-    StockPaperTrialLot,
-)
-from app.models.live_broker import (
-    LiveBrokerAccount,
-    LiveBrokerPosition,
-    LiveBrokerAccountSnapshot,
-    LiveBrokerOrder,
-    LiveBrokerFill,
-    LiveBrokerActivity,
-    LiveBrokerLedgerEvent,
-)
-from app.models.live_pilot import LivePilot, LivePilotEvent
+_LAZY_MODEL_MODULES = {
+    **{
+        name: "app.models.stock_paper"
+        for name in (
+            "StockPaperAccount",
+            "StockPaperVenueAuthorization",
+            "StockPaperVenueQualification",
+            "StockPaperResearchQualification",
+            "StockPaperResearchAuthorization",
+            "StockPaperBrokerActivity",
+            "StockPaperEquitySnapshot",
+            "StockPaperFill",
+            "StockPaperLedgerEvent",
+            "StockPaperOrder",
+            "StockPaperPosition",
+            "StockPaperStrategyEvidence",
+            "StockPaperTrialLot",
+        )
+    },
+    **{
+        name: "app.models.live_broker"
+        for name in (
+            "LiveBrokerAccount",
+            "LiveBrokerPosition",
+            "LiveBrokerAccountSnapshot",
+            "LiveBrokerOrder",
+            "LiveBrokerFill",
+            "LiveBrokerActivity",
+            "LiveBrokerLedgerEvent",
+        )
+    },
+    "LivePilot": "app.models.live_pilot",
+    "LivePilotEvent": "app.models.live_pilot",
+}
+
+
+def __getattr__(name: str):
+    module_name = _LAZY_MODEL_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    from importlib import import_module
+
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     "Asset",
