@@ -38,6 +38,7 @@ _routers_ready = False
 _scalp_routes_ready = False
 _router_error: str | None = None
 _optional_routes_started = False
+BUILD_ID = os.environ.get("PAPER_BUILD_ID", "unknown").strip() or "unknown"
 
 
 def _seed_defaults_background() -> None:
@@ -82,6 +83,7 @@ def hosted_health() -> dict:
     return {
         "status": "ok",
         "service": "paper-trading-api",
+        "build_id": BUILD_ID,
         "paper_only": True,
         "live_trading": False,
         "scalp_routes_ready": _scalp_routes_ready,

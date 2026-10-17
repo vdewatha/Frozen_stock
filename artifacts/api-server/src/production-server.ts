@@ -21,6 +21,7 @@ if (!Number.isInteger(publicPort) || publicPort <= 0) {
 const internalPort = 8090;
 const internalSecret = randomBytes(32).toString("hex");
 const internalTarget = `http://127.0.0.1:${internalPort}`;
+const buildId = process.env.PAPER_BUILD_ID?.trim() || "unknown";
 const allowedRoles = new Set(["viewer", "researcher", "operator", "admin"]);
 const clerkConfigured = Boolean(process.env.CLERK_SECRET_KEY?.trim());
 // Autoscale is a gateway host, not a durable worker host. Workers must be
@@ -143,6 +144,7 @@ app.get(["/", "/api", "/api/health"], (_req, res) => {
   res.status(200).json({
     status: "ok",
     service: "frozen-stock-paper-gateway",
+    build_id: buildId,
     paper_only: true,
     live_trading: false,
   });
@@ -155,6 +157,7 @@ app.get("/api/startup", (_req, res) => {
   const ready = backendReady && clerkConfigured;
   res.status(ready ? 200 : 503).json({
     status: backendReady && !clerkConfigured ? "auth_missing" : startupState,
+    build_id: buildId,
     paper_only: true,
     live_trading: false,
     auth_configured: clerkConfigured,

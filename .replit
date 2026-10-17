@@ -65,6 +65,8 @@ PAPER_LEARNING_CONCURRENCY = "1"
 # All four supported scalp symbols share the bounded paper-execution gate; each
 # still requires complete, authenticated intraday data before it can qualify.
 PAPER_EXECUTION_SYMBOLS = "[\"AAPL\", \"MSFT\", \"SPY\", \"QQQ\"]"
+# Updated with each deployable commit so hosted readiness can be verified.
+PAPER_BUILD_ID = "8cfdbfd"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 # These direct loops remain research-only and never create live orders.
