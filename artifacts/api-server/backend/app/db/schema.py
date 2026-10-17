@@ -5,7 +5,7 @@ from alembic.config import Config
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from app.db.base import Base
 from app.models import models, stock_paper  # noqa: F401
@@ -52,6 +52,19 @@ def assert_schema_current(
             drift = compare_metadata(MigrationContext.configure(connection), Base.metadata)
             if drift:
                 raise RuntimeError("Database schema differs from ORM metadata; inspect with alembic check")
+
+
+def assert_database_reachable(engine) -> None:
+    """Run the bounded production boot probe after the migration process exits.
+
+    Hosted startup already runs ``alembic upgrade head`` as a supervised child.
+    Repeating a full ORM reflection here can take minutes on managed Postgres
+    and prevents the API health endpoint from becoming ready. The migration
+    exit code is the structural check; this probe verifies the application can
+    open and use its database connection before serving requests.
+    """
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
 
 
 if __name__ == "__main__":

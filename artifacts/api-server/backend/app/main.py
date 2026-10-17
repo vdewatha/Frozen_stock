@@ -12,7 +12,7 @@ from app.api.shadow_evidence import router as shadow_evidence_router
 from app.api.stock_paper import router as stock_paper_router
 from app.core.config import settings
 from app.core.security import AuthenticationMiddleware
-from app.db.schema import assert_schema_current
+from app.db.schema import assert_database_reachable, assert_schema_current
 from app.db.session import SessionLocal, engine
 from app.models import models, stock_paper  # noqa: F401
 from app.services.seed import seed_defaults
@@ -42,16 +42,13 @@ def on_startup() -> None:
         # Do not include values from the configuration in the error. The process
         # must not start in an ambiguous production security state.
         raise RuntimeError("Production security configuration is incomplete: " + "; ".join(production_blockers))
-    assert_schema_current(
-        engine,
-        # Replit Publish applies the managed production schema before startup.
-        # Keep strict Alembic-head enforcement everywhere else.
-        require_migration_head=settings.environment != "production",
-        # A full autogenerate comparison is too expensive during hosted boot
-        # against managed Postgres. Migrations and the bounded table/column
-        # checks still run before the API accepts requests.
-        check_drift=settings.environment != "production",
-    )
+    if settings.environment == "production":
+        # The hosted supervisor has already run and supervised the migration
+        # process. Keep application boot bounded by checking reachability only;
+        # local and test environments retain strict schema verification below.
+        assert_database_reachable(engine)
+    else:
+        assert_schema_current(engine)
     db = SessionLocal()
     try:
         seed_defaults(db)
