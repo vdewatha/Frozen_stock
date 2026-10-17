@@ -385,14 +385,23 @@ function waitForBackendHealth(attempt = 1): void {
         if (body.length < 512) body += chunk;
       });
       response.on("end", () => {
-      if (response.statusCode === 200) {
+      let health: { routes_ready?: boolean; route_error?: string } = {};
+      try {
+        health = JSON.parse(body) as typeof health;
+      } catch {
+        // Keep retrying until the child returns a complete JSON health record.
+      }
+      if (response.statusCode === 200 && health.routes_ready === true) {
         backendReady = true;
         startupState = "ready";
         startupError = undefined;
         startPaperWorkers();
         return;
       }
-        lastBackendProbeError = `status=${response.statusCode} body=${body.trim() || "<empty>"}`;
+        lastBackendProbeError =
+          `status=${response.statusCode} routes_ready=${String(health.routes_ready ?? false)}` +
+          `${health.route_error ? ` route_error=${health.route_error}` : ""}` +
+          ` body=${body.trim() || "<empty>"}`;
         console.error(`Internal FastAPI health probe failed: ${lastBackendProbeError}`);
       retryBackendHealth(attempt);
       });
