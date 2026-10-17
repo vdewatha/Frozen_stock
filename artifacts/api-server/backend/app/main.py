@@ -112,10 +112,19 @@ def hosted_iex_status():
 @app.get("/api/research/scalp/status")
 def hosted_scalp_research_status():
     """Expose paper-only worker heartbeats without touching execution routes."""
-    from app.services.scalp_research_runner import scalp_research_runner_status
+    from app.services.scalp_research_runner import configured_scalp_symbols, scalp_research_runner_status
 
-    configured = os.environ.get("PAPER_SCALP_RESEARCH_SYMBOLS", "AAPL,MSFT,SPY,QQQ")
-    symbols = sorted({value.strip().upper() for value in configured.split(",") if value.strip()})
+    try:
+        symbols = configured_scalp_symbols()
+    except ValueError as exc:
+        return {
+            "enabled": True,
+            "alive": False,
+            "configuration_error": str(exc),
+            "symbols": {},
+            "paper_only": True,
+            "execution_eligible": False,
+        }
     return {**scalp_research_runner_status(symbols=symbols), "paper_only": True, "execution_eligible": False}
 
 
@@ -307,8 +316,13 @@ def _start_direct_scalp_research_loops() -> None:
         return
     if os.environ.get("PAPER_DIRECT_SCALP_RESEARCH_LOOP", "false").strip().lower() != "true":
         return
-    configured = os.environ.get("PAPER_SCALP_RESEARCH_SYMBOLS", "AAPL,MSFT,SPY,QQQ")
-    symbols = sorted({value.strip().upper() for value in configured.split(",") if value.strip()})
+    from app.services.scalp_research_runner import configured_scalp_symbols
+
+    try:
+        symbols = configured_scalp_symbols()
+    except ValueError as exc:
+        print(f"Direct scalp research loops not started: {exc}", flush=True)
+        return
     for symbol in symbols:
         threading.Thread(
             target=_direct_scalp_research_loop,

@@ -17,6 +17,24 @@ UTC = timezone.utc
 ALLOWED_SYMBOLS = frozenset({"AAPL", "MSFT", "SPY", "QQQ"})
 
 
+def configured_scalp_symbols(raw: str | None = None) -> list[str]:
+    """Parse the hosted symbol roster and reject lanes that cannot run."""
+    configured = raw
+    if configured is None:
+        import os
+
+        configured = os.environ.get("PAPER_SCALP_RESEARCH_SYMBOLS", "AAPL,MSFT,SPY,QQQ")
+    symbols = sorted({value.strip().upper() for value in configured.split(",") if value.strip()})
+    if not symbols:
+        raise ValueError("PAPER_SCALP_RESEARCH_SYMBOLS must contain at least one symbol")
+    unsupported = sorted(set(symbols) - ALLOWED_SYMBOLS)
+    if unsupported:
+        raise ValueError(
+            "unsupported scalp research symbols: " + ",".join(unsupported)
+        )
+    return symbols
+
+
 def _status_key(symbol: str) -> str:
     return f"trading:research:scalp:{symbol}:status"
 

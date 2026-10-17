@@ -7,6 +7,20 @@ from app.services import scalp_research_runner as runner
 NOW = datetime(2026, 10, 16, 15, 0, tzinfo=timezone.utc)
 
 
+def test_configured_scalp_symbols_normalizes_and_deduplicates():
+    assert runner.configured_scalp_symbols(" spy, AAPL,SPY ") == ["AAPL", "SPY"]
+
+
+def test_configured_scalp_symbols_rejects_empty_or_unsupported_lanes():
+    for configured in (" , ", "AAPL,TSLA"):
+        try:
+            runner.configured_scalp_symbols(configured)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid symbol configuration accepted: {configured!r}")
+
+
 def test_scalp_runner_rejects_unknown_symbols_before_redis():
     client = Mock()
     result = runner.run_scalp_research_once("TSLA", now=NOW, redis_client=client)

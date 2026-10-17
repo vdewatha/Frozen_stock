@@ -8,7 +8,7 @@ import threading
 
 from app.core.config import settings
 from app.services.iex_research_runner import run_iex_research_loop
-from app.services.scalp_research_runner import run_scalp_research_loop
+from app.services.scalp_research_runner import configured_scalp_symbols, run_scalp_research_loop
 
 
 def main() -> None:
@@ -18,11 +18,10 @@ def main() -> None:
         raise SystemExit("hosted research worker refuses live-enabled configuration")
     if os.environ.get("PAPER_HOSTED_RESEARCH_WORKER", "false").lower() != "true":
         raise SystemExit("set PAPER_HOSTED_RESEARCH_WORKER=true to run the research worker")
-    symbols = sorted({
-        value.strip().upper()
-        for value in os.environ.get("PAPER_SCALP_RESEARCH_SYMBOLS", "AAPL,MSFT,QQQ,SPY").split(",")
-        if value.strip()
-    })
+    try:
+        symbols = configured_scalp_symbols()
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     stop_event = threading.Event()
     threads = [threading.Thread(target=run_iex_research_loop, kwargs={"stop_event": stop_event}, daemon=True)]
