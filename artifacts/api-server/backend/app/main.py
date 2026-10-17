@@ -63,7 +63,11 @@ def hosted_health() -> dict:
         "paper_only": True,
         "live_trading": False,
         "scalp_routes_ready": _scalp_routes_ready,
-        "routes_ready": _routers_ready,
+        # The gateway's readiness contract is satisfied by the independently
+        # loaded paper scalp lane; broad provider routes remain guarded until
+        # their own background load completes.
+        "routes_ready": _scalp_routes_ready,
+        "all_routes_ready": _routers_ready,
         **({"route_error": _router_error} if _router_error else {}),
     }
 
