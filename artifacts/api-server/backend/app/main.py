@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -49,6 +51,23 @@ def on_startup() -> None:
         assert_database_reachable(engine)
     else:
         assert_schema_current(engine)
+    if settings.environment == "production":
+        # A managed database can briefly stall while the hosting platform is
+        # waking it. Do not hold Uvicorn health readiness on optional default
+        # rows; the bounded connection timeout and this supervised background
+        # seed let the API become observable and fail closed if seeding fails.
+        def seed_in_background() -> None:
+            db = SessionLocal()
+            try:
+                seed_defaults(db)
+            except Exception as exc:  # pragma: no cover - hosted-only recovery path
+                print(f"Production default seeding deferred: {exc.__class__.__name__}", flush=True)
+            finally:
+                db.close()
+
+        threading.Thread(target=seed_in_background, name="seed-defaults", daemon=True).start()
+        return
+
     db = SessionLocal()
     try:
         seed_defaults(db)
