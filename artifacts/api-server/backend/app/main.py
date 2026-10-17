@@ -4,22 +4,40 @@ import threading
 
 print("FastAPI module import started", flush=True)
 
+
+def _import_stage(name: str) -> None:
+    print(f"FastAPI import stage complete: {name}", flush=True)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+_import_stage("fastapi")
 
 from app.api.routes import router
+_import_stage("routes")
 from app.api.research import router as research_router
+_import_stage("research")
 from app.api.agent_research import router as agent_research_router
+_import_stage("agent_research")
 from app.api.scalp_research import router as scalp_research_router
+_import_stage("scalp_research")
 from app.api.crypto_research import router as crypto_router
+_import_stage("crypto_research")
 from app.api.shadow_evidence import router as shadow_evidence_router
+_import_stage("shadow_evidence")
 from app.api.stock_paper import router as stock_paper_router
+_import_stage("stock_paper")
 from app.core.config import settings
+_import_stage("config")
 from app.core.security import AuthenticationMiddleware
+_import_stage("security")
 from app.db.schema import assert_schema_current
+_import_stage("schema")
 from app.db.session import SessionLocal, engine
+_import_stage("session")
 from app.models import models, stock_paper  # noqa: F401
+_import_stage("models")
 from app.services.seed import seed_defaults
+_import_stage("seed")
 
 app = FastAPI(title=settings.app_name, docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -33,10 +51,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 from app.api.stock_training import router as stock_training_router
+_import_stage("stock_training")
 from app.api.stock_forward_trial import router as stock_forward_trial_router
+_import_stage("stock_forward_trial")
 from app.api.stock_learning_cycle import router as stock_learning_cycle_router
+_import_stage("stock_learning_cycle")
 from app.api.live_broker import router as live_broker_router
+_import_stage("live_broker")
 from app.api.live_pilot import router as live_pilot_router
+_import_stage("live_pilot")
 
 print("FastAPI module import complete", flush=True)
 
