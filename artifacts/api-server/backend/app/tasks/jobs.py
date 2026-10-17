@@ -92,6 +92,8 @@ REDIS_LOCKED_JOBS = frozenset(
         "intraday_market_data_import",
         "iex_research_collection_job",
         "delayed_sip_collection_job",
+        "scheduled_scalp_research_job",
+        "expire_stale_scalp_research_runs_job",
         "stock_forward_trial_observe_job",
         "stock_forward_trial_reconcile_job",
         "stock_monitoring_job",

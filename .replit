@@ -56,6 +56,8 @@ ALLOW_ANONYMOUS_VIEWER = "true"
 VITE_LOCAL_PAPER_AUTH = "true"
 VITE_LOCAL_AUTO_VIEW = "true"
 AGENT_RESEARCH_RULE_BASED_FALLBACK = "true"
+# Autoscale instances do not share an embedded Redis queue. Keep workers off
+# here; run queue services on a dedicated single-instance paper deployment.
 PAPER_WORKERS_ENABLED = "false"
 PAPER_COMPACT_WORKER = "true"
 PAPER_LEARNING_REPLICAS = "3"

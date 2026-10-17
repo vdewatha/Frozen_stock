@@ -72,6 +72,15 @@ python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
   --concurrency=1 &
 pids+=("$!")
 
+# Keep 1-minute scalp research independent from market-data and learning
+# backlogs so a slow experiment cannot starve its own evidence queue.
+python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
+  --loglevel=INFO \
+  --hostname=scalp-research@%h \
+  --queues=scalp_research \
+  --concurrency=1 &
+pids+=("$!")
+
 python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
   --loglevel=INFO \
   --hostname=general@%h \
