@@ -109,6 +109,16 @@ def hosted_iex_status():
         db.close()
 
 
+@app.get("/api/research/scalp/status")
+def hosted_scalp_research_status():
+    """Expose paper-only worker heartbeats without touching execution routes."""
+    from app.services.scalp_research_runner import scalp_research_runner_status
+
+    configured = os.environ.get("PAPER_SCALP_RESEARCH_SYMBOLS", "AAPL,MSFT,SPY,QQQ")
+    symbols = sorted({value.strip().upper() for value in configured.split(",") if value.strip()})
+    return {**scalp_research_runner_status(symbols=symbols), "paper_only": True, "execution_eligible": False}
+
+
 def load_application_routes() -> None:
     """Register the core API, then load optional research routers separately."""
     global _router_error, _routers_ready, _optional_routes_started
