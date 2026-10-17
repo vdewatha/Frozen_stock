@@ -69,10 +69,12 @@ def hosted_health() -> dict:
         "paper_only": True,
         "live_trading": False,
         "scalp_routes_ready": _scalp_routes_ready,
-        # The gateway's readiness contract is satisfied by the independently
-        # loaded paper scalp lane; broad provider routes remain guarded until
-        # their own background load completes.
-        "routes_ready": _scalp_routes_ready,
+        # Readiness must cover the core router graph as well as the lightweight
+        # scalp lane.  The gateway uses this field to decide whether hosted
+        # paper routes can be served, so reporting scalp-only readiness would
+        # make delayed-SIP and paper endpoints look live while still returning
+        # the route-loader's 503 response.
+        "routes_ready": _routers_ready and _scalp_routes_ready,
         "all_routes_ready": _routers_ready,
         **({"route_error": _router_error} if _router_error else {}),
     }
