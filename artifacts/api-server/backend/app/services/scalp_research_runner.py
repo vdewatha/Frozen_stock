@@ -112,3 +112,42 @@ def run_scalp_research_loop(symbol: str, *, stop_event=None, interval_seconds: i
         except Exception as exc:  # pragma: no cover - process supervisor path
             logger.warning("scalp research poll symbol=%s unavailable: %s", symbol, exc.__class__.__name__)
         stop_event.wait(interval_seconds)
+
+
+def scalp_research_runner_status(*, now: datetime | None = None, symbols=None) -> dict:
+    """Return non-secret heartbeat evidence for each research-only scalp lane."""
+    configured = symbols or sorted(ALLOWED_SYMBOLS)
+    if not settings.iex_research_enabled:
+        return {"enabled": False, "alive": False, "symbols": {symbol: {"alive": False} for symbol in configured}}
+    observed = now or datetime.now(UTC)
+    try:
+        import redis
+
+        client = redis.Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+            health_check_interval=15,
+        )
+        try:
+            result = {}
+            for symbol in configured:
+                raw = client.get(f"trading:research:scalp:{symbol}:heartbeat")
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                heartbeat = datetime.fromisoformat(raw) if isinstance(raw, str) and raw else None
+                age = (observed - heartbeat).total_seconds() if heartbeat else None
+                result[symbol] = {
+                    "alive": age is not None and 0 <= age <= HEARTBEAT_TTL_SECONDS,
+                    "heartbeat_at": heartbeat.isoformat() if heartbeat else None,
+                }
+            return {"enabled": True, "alive": all(item["alive"] for item in result.values()), "symbols": result}
+        finally:
+            client.close()
+    except Exception as exc:  # pragma: no cover - Redis outage path
+        return {
+            "enabled": True,
+            "alive": False,
+            "symbols": {symbol: {"alive": False} for symbol in configured},
+            "error": exc.__class__.__name__,
+        }
