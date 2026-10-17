@@ -73,6 +73,9 @@ PAPER_DIRECT_RESEARCH_LOOP = "true"
 # One Redis-leased research loop per symbol. These loops never submit orders.
 PAPER_DIRECT_SCALP_RESEARCH_LOOP = "true"
 PAPER_SCALP_RESEARCH_SYMBOLS = "AAPL,MSFT,SPY,QQQ"
+# Autoscale has no shared Redis by default. This sidecar is research-only;
+# paper workers remain disabled and a Reserved VM can override REDIS_URL.
+PAPER_RESEARCH_EMBEDDED_REDIS = "true"
 DELAYED_SIP_RESEARCH_ENABLED = "true"
 PAPER_STARTUP_REFRESH = "false"
 PAPER_DIRECT_MONITOR_LOOP = "false"

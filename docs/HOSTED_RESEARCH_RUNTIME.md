@@ -32,3 +32,9 @@ invocation is idempotent and lease-coordinated.
 This does not authorize paper or live execution. It only makes multi-symbol
 research collection durable enough to measure. Execution remains separately
 gated by the existing paper controls, risk checks, and operator authorization.
+
+The published Autoscale configuration may use a private Redis sidecar for
+research-only coordination when no `REDIS_URL` is supplied. That sidecar is
+per-instance and is not a substitute for the shared Redis URL required by a
+durable Reserved VM; it prevents duplicate threads within one instance but
+does not promise 24/7 uptime or cross-instance deduplication.

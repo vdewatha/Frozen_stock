@@ -34,9 +34,17 @@ const paperWorkersEnabled = process.env.PAPER_WORKERS_ENABLED === "true";
 const compactPaperWorker = process.env.PAPER_COMPACT_WORKER === "true";
 const embeddedRedisPort = 6380;
 const configuredRedisUrl = process.env.REDIS_URL?.trim();
+const researchLoopsEnabled =
+  process.env.PAPER_DIRECT_RESEARCH_LOOP === "true" ||
+  process.env.PAPER_DIRECT_SCALP_RESEARCH_LOOP === "true";
+// Research-only Autoscale instances may use a private Redis sidecar when no
+// shared REDIS_URL is configured. This is deliberately separate from the
+// paper-worker Redis switch and cannot start an execution worker.
+const researchEmbeddedRedis =
+  researchLoopsEnabled && process.env.PAPER_RESEARCH_EMBEDDED_REDIS === "true";
 const useEmbeddedRedis =
-  paperWorkersEnabled &&
-  process.env.PAPER_EMBEDDED_REDIS === "true";
+  (paperWorkersEnabled && process.env.PAPER_EMBEDDED_REDIS === "true") ||
+  researchEmbeddedRedis;
 const redisUrl = useEmbeddedRedis
   ? `redis://127.0.0.1:${embeddedRedisPort}/0`
   : configuredRedisUrl;
