@@ -69,6 +69,14 @@ def load_application_routes() -> None:
     """Register the core API, then load optional research routers separately."""
     global _router_error, _routers_ready
     try:
+        # Give the dedicated scalp-research lane an independent startup path.
+        # The broad router graph includes many provider integrations and must
+        # not prevent this paper-only research surface from becoming usable.
+        from app.api.scalp_research import router as scalp_research_router
+        app.include_router(scalp_research_router, prefix="/api")
+        _routers_ready = True
+        print("FastAPI scalp research routes ready", flush=True)
+
         from app.api.routes import router
         _import_stage("routes")
 
@@ -76,8 +84,6 @@ def load_application_routes() -> None:
         # activity views. Register it before optional provider integrations so
         # a slow research import cannot hold the whole API in 503 startup.
         app.include_router(router, prefix="/api")
-        _routers_ready = True
-        print("FastAPI core routes ready", flush=True)
 
         if settings.environment == "production":
             threading.Thread(
@@ -100,7 +106,6 @@ def load_optional_application_routes() -> None:
         _import_stage("research")
         from app.api.agent_research import router as agent_research_router
         _import_stage("agent_research")
-        from app.api.scalp_research import router as scalp_research_router
         _import_stage("scalp_research")
         from app.api.crypto_research import router as crypto_router
         _import_stage("crypto_research")
@@ -122,7 +127,6 @@ def load_optional_application_routes() -> None:
         for application_router in (
             research_router,
             agent_research_router,
-            scalp_research_router,
             crypto_router,
             shadow_evidence_router,
             stock_paper_router,
