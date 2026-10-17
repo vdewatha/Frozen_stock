@@ -50,6 +50,28 @@ def incremental_delayed_window(
         .first()
     )
     if latest is not None:
+        # A late-starting collector can leave a hole at the beginning of an
+        # otherwise completed session. Resuming near the newest row would
+        # preserve that hole forever, so reopen the whole bounded session when
+        # any supported symbol is incomplete. This only re-fetches real SIP
+        # observations; it never creates or fills bars.
+        expected = int((end - start).total_seconds() // 60)
+        rows = db.query(IntradayBar.symbol, IntradayBar.opened_at).filter(
+            IntradayBar.provider == PROVIDER,
+            IntradayBar.feed_class == FEED,
+            IntradayBar.timeframe == "1m",
+            IntradayBar.opened_at >= start,
+            IntradayBar.opened_at < end,
+        ).all()
+        counts = {symbol: 0 for symbol in ALLOWED_SYMBOLS}
+        seen = {symbol: set() for symbol in ALLOWED_SYMBOLS}
+        for symbol, opened_at in rows:
+            if symbol in seen:
+                seen[symbol].add(_aware_utc(opened_at))
+        for symbol in counts:
+            counts[symbol] = len(seen[symbol])
+        if any(counts[symbol] < expected for symbol in counts):
+            return start, end
         start = max(start, _aware_utc(latest.opened_at) - overlap)
     return start, end
 
