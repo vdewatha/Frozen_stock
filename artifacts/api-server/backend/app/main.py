@@ -322,11 +322,18 @@ print("FastAPI scalp research routes ready", flush=True)
 print("FastAPI module import complete", flush=True)
 
 # The production supervisor probes this application's health endpoint while
-# startup is in progress. Loading the core router in a daemon thread created a
-# race where health responded forever with scalp-only readiness even though
-# the paper and delayed-SIP routes were still unavailable. Resolve the core
-# import before the process starts serving requests so readiness is truthful.
+# startup is in progress. The core schema/router graph is large and can take
+# longer than the platform's process-bind window on a cold hosted instance, so
+# bind the lightweight health surface first and load the full graph in the
+# background. Middleware keeps all non-health API calls fail-closed until the
+# graph is ready.
 if settings.environment == "production":
+    threading.Thread(
+        target=load_application_routes,
+        name="load-core-api-routes",
+        daemon=True,
+    ).start()
+else:
     load_application_routes()
 
 
