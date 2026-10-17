@@ -211,6 +211,8 @@ def collect_delayed_sip(db: Session, *, now=None):
 
 def delayed_sip_status(db: Session, *, now=None):
     observed = now or datetime.now(UTC)
+    from app.services.delayed_sip_research_runner import delayed_sip_runner_status
+
     audit = db.query(AuditLog).filter_by(action="delayed_sip_collection").order_by(AuditLog.id.desc()).first()
     latest = audit.payload if audit else None
     start, end = ((datetime.fromisoformat(latest["window_start"]), datetime.fromisoformat(latest["window_end"]))
@@ -233,4 +235,5 @@ def delayed_sip_status(db: Session, *, now=None):
     return {"provider": PROVIDER, "feed_class": FEED, "delay_minutes": DELAY_MINUTES,
             "enabled": settings.delayed_sip_research_enabled, "poll_fresh": age is not None and 0 <= age <= 600,
             "research_only": True, "execution_eligible": False, "last_collection": latest,
+            "runner": delayed_sip_runner_status(now=observed),
             "comparison_window_start": start.isoformat(), "comparison_window_end": end.isoformat(), "symbols": symbols}

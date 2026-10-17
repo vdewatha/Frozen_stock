@@ -199,6 +199,12 @@ def _direct_iex_research_loop() -> None:
     run_iex_research_loop()
 
 
+def _direct_delayed_sip_research_loop() -> None:
+    from app.services.delayed_sip_research_runner import run_delayed_sip_research_loop
+
+    run_delayed_sip_research_loop()
+
+
 def _run_direct_scalp_research_once(symbol: str) -> None:
     """Run one leased, paper-only scalp research job for one symbol."""
     try:
@@ -237,6 +243,19 @@ def _start_direct_iex_research_loop() -> None:
         daemon=True,
     ).start()
     print("Direct IEX research loop enabled; execution remains disabled", flush=True)
+
+
+def _start_direct_delayed_sip_research_loop() -> None:
+    if settings.environment != "production" or not settings.delayed_sip_research_enabled:
+        return
+    if os.environ.get("PAPER_DIRECT_RESEARCH_LOOP", "false").strip().lower() != "true":
+        return
+    threading.Thread(
+        target=_direct_delayed_sip_research_loop,
+        name="direct-delayed-sip-research-loop",
+        daemon=True,
+    ).start()
+    print("Direct delayed SIP research loop enabled; execution remains disabled", flush=True)
 
 
 def _start_direct_scalp_research_loops() -> None:
@@ -333,6 +352,7 @@ def on_startup() -> None:
             daemon=True,
         ).start()
         _start_direct_iex_research_loop()
+        _start_direct_delayed_sip_research_loop()
         _start_direct_scalp_research_loops()
         print("FastAPI startup validation complete", flush=True)
         return
