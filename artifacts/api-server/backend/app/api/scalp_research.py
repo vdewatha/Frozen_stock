@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models import ScalpResearchRun
 from app.services.scalp_research import create_scalp_research_run, project_scalp_research
-from app.tasks.jobs import scalp_research_job
 
 router = APIRouter(prefix="/research/scalp", tags=["scalp research"])
 
@@ -22,6 +21,10 @@ def start_scalp_research(body: StartScalpResearchBody, request: Request, db: Ses
     try:
         row = create_scalp_research_run(db, symbols=body.symbols, actor=request.state.actor)
         db.commit()
+        # Keep the read-only research surface independent from the broad task
+        # graph during hosted boot. The queue task is needed only on writes.
+        from app.tasks.jobs import scalp_research_job
+
         scalp_research_job.apply_async(args=[row.run_id], queue="scalp_research")
         db.refresh(row)
         return project_scalp_research(row)
