@@ -199,46 +199,11 @@ def _direct_iex_research_loop() -> None:
 
 def _run_direct_scalp_research_once(symbol: str) -> None:
     """Run one leased, paper-only scalp research job for one symbol."""
-    from zoneinfo import ZoneInfo
-
-    import redis
-
-    from app.core.config import settings
-    from app.db.session import SessionLocal
-    from app.services.scalp_research import create_scalp_research_run, run_scalp_research
-
-    now = datetime.now(timezone.utc)
-    eastern = now.astimezone(ZoneInfo("America/New_York"))
-    if eastern.weekday() >= 5 or not (clock_time(9, 30) <= eastern.time() < clock_time(16, 1)):
-        return
-
-    client = redis.Redis.from_url(
-        settings.redis_url,
-        socket_connect_timeout=2,
-        socket_timeout=2,
-        health_check_interval=15,
-    )
-    lock = None
     try:
-        client.ping()
-        lock = client.lock(
-            f"trading:scheduled-job:scalp_research:{symbol}",
-            timeout=120,
-            blocking=False,
-        )
-        if not lock.acquire(blocking=False):
-            return
-        db = SessionLocal()
-        try:
-            row = create_scalp_research_run(db, symbols=[symbol], actor="direct-scheduler")
-            db.commit()
-            result = run_scalp_research(db, row.run_id)
-            print(
-                f"Direct scalp research complete: symbol={symbol} status={result.get('status')}",
-                flush=True,
-            )
-        finally:
-            db.close()
+        from app.services.scalp_research_runner import run_scalp_research_once
+
+        result = run_scalp_research_once(symbol, now=datetime.now(timezone.utc))
+        print(f"Direct scalp research complete: symbol={symbol} status={result.get('status')}", flush=True)
     except Exception as exc:  # pragma: no cover - hosted operational path
         print(
             f"Direct scalp research unavailable: symbol={symbol} error={exc.__class__.__name__}",
@@ -254,9 +219,9 @@ def _run_direct_scalp_research_once(symbol: str) -> None:
 
 
 def _direct_scalp_research_loop(symbol: str) -> None:
-    while True:
-        _run_direct_scalp_research_once(symbol)
-        time.sleep(60)
+    from app.services.scalp_research_runner import run_scalp_research_loop
+
+    run_scalp_research_loop(symbol)
 
 
 def _start_direct_iex_research_loop() -> None:

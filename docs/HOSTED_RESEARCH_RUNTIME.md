@@ -9,7 +9,7 @@ keep an instance alive.
 ## Safe deployment shape
 
 Use the existing Autoscale deployment for the read-only UI and API, and run
-`artifacts/api-server/backend/scripts/run_hosted_iex_research.py` as a separate
+`artifacts/api-server/backend/scripts/run_hosted_research.py` as a separate
 Replit Reserved VM background worker. Configure the worker with the same
 production database and Redis URL, the read-only Alpaca data credentials, and:
 
@@ -22,11 +22,12 @@ ACTIVE_MARKET_DATA_PROVIDER=alpaca_iex
 ACTIVE_PAPER_BROKER=alpaca_paper
 ```
 
-The worker acquires the existing Redis lease before every poll, stores only
-authenticated Alpaca IEX observations, advances online research after a real
-observation, and never imports an order task. If a persistent worker is not
-available, a Scheduled deployment can invoke the same command once per minute
-during market hours; each invocation is idempotent and lease-coordinated.
+The worker starts one IEX collector and one leased scalp-research loop per
+configured symbol. It stores only authenticated Alpaca IEX observations,
+advances online research after a real observation, and never imports an order
+task. If a persistent worker is not available, a Scheduled deployment can
+invoke the IEX-only command once per minute during market hours; each
+invocation is idempotent and lease-coordinated.
 
 This does not authorize paper or live execution. It only makes multi-symbol
 research collection durable enough to measure. Execution remains separately
