@@ -177,61 +177,24 @@ def _run_direct_iex_collection_once() -> None:
     Redis coordination prevents duplicate collections across API instances.
     It never imports an execution task or grants trading eligibility.
     """
-    from zoneinfo import ZoneInfo
-
-    import redis
-
-    from app.core.config import settings
-    from app.db.session import SessionLocal
-    from app.services.alpaca_research_data import collect_iex_research
-    from app.services.online_research import advance_online_research
-
-    now = datetime.now(timezone.utc)
-    eastern = now.astimezone(ZoneInfo("America/New_York"))
-    if eastern.weekday() >= 5 or not (clock_time(9, 30) <= eastern.time() < clock_time(16, 1)):
-        return
-
-    client = redis.Redis.from_url(
-        settings.redis_url,
-        socket_connect_timeout=2,
-        socket_timeout=2,
-        health_check_interval=15,
-    )
-    lock = None
     try:
-        client.ping()
-        lock = client.lock("trading:scheduled-job:iex_research_collection_job", timeout=180, blocking=False)
-        if not lock.acquire(blocking=False):
-            return
-        db = SessionLocal()
-        try:
-            result = collect_iex_research(db, now=now)
-            if result.get("status") == "observed":
-                result["learning"] = advance_online_research(db)
-            db.commit()
-            print(
-                "Direct IEX research collection complete: "
-                f"status={result.get('status')} symbols={len(result.get('results', []))}",
-                flush=True,
-            )
-        finally:
-            db.close()
+        from app.services.iex_research_runner import run_iex_collection_once
+
+        result = run_iex_collection_once(now=datetime.now(timezone.utc))
+        print(
+            "Direct IEX research collection complete: "
+            f"status={result.get('status')} symbols={len(result.get('results', []))}",
+            flush=True,
+        )
     except Exception as exc:  # pragma: no cover - hosted operational path
         # Keep the API alive and preserve the fail-closed readiness state.
         print(f"Direct IEX research collection unavailable: {exc.__class__.__name__}", flush=True)
-    finally:
-        if lock is not None:
-            try:
-                lock.release()
-            except Exception:
-                pass
-        client.close()
 
 
 def _direct_iex_research_loop() -> None:
-    while True:
-        _run_direct_iex_collection_once()
-        time.sleep(60)
+    from app.services.iex_research_runner import run_iex_research_loop
+
+    run_iex_research_loop()
 
 
 def _run_direct_scalp_research_once(symbol: str) -> None:

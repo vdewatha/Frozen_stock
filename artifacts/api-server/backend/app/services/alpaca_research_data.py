@@ -187,6 +187,7 @@ def collect_iex_research(db: Session, *, now: datetime | None = None) -> dict:
 
 def iex_research_status(db: Session, *, now: datetime | None = None) -> dict:
     from app.services.online_research import online_research_status
+    from app.services.iex_research_runner import research_runner_status
     observed = now or datetime.now(UTC)
     audit = db.query(AuditLog).filter_by(action="iex_research_collection").order_by(AuditLog.id.desc()).first()
     latest = audit.payload if audit else None
@@ -206,5 +207,6 @@ def iex_research_status(db: Session, *, now: datetime | None = None) -> dict:
         "execution_eligible": False, "enabled": settings.iex_research_enabled,
         "poll_fresh": age is not None and 0 <= age <= 120,
         "last_collection": latest, "symbols": symbols,
+        "runner": research_runner_status(now=observed),
         "learning": online_research_status(db),
     }
