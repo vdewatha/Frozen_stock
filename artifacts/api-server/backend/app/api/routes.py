@@ -465,15 +465,6 @@ def price_history(symbol: str, limit: int = 260, db: Session = Depends(get_db)) 
     return {"symbol": symbol.upper(), "source": source, "rows": rows}
 
 
-@router.get("/market-data/iex/status")
-def iex_status(db: Session = Depends(get_db)):
-    # Load the Alpaca SDK only when this infrequent status endpoint is used.
-    # Hosted cold starts must not wait for the provider's full model graph.
-    from app.services.alpaca_research_data import iex_research_status
-
-    return iex_research_status(db)
-
-
 @router.post("/market-data/iex/collect", status_code=202)
 def collect_iex():
     if not settings.iex_research_enabled:

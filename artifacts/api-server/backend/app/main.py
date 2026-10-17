@@ -44,7 +44,10 @@ async def wait_for_application_routes(request: Request, call_next):
     if request.url.path == "/api/health":
         return await call_next(request)
     scalp_path = request.url.path.startswith("/api/research/scalp")
-    if request.url.path.startswith("/api/") and not _routers_ready and not (scalp_path and _scalp_routes_ready):
+    iex_status_path = request.url.path == "/api/market-data/iex/status"
+    if request.url.path.startswith("/api/") and not _routers_ready and not (
+        (scalp_path and _scalp_routes_ready) or iex_status_path
+    ):
         body = {
             "status": "starting",
             "detail": "Paper API routes are still loading",
@@ -73,6 +76,19 @@ def hosted_health() -> dict:
         "all_routes_ready": _routers_ready,
         **({"route_error": _router_error} if _router_error else {}),
     }
+
+
+@app.get("/api/market-data/iex/status")
+def hosted_iex_status():
+    """Expose the read-only IEX research status during slow hosted startup."""
+    from app.db.session import SessionLocal
+    from app.services.alpaca_research_data import iex_research_status
+
+    db = SessionLocal()
+    try:
+        return iex_research_status(db)
+    finally:
+        db.close()
 
 
 def load_application_routes() -> None:
