@@ -137,6 +137,12 @@ def load_application_routes() -> None:
                 name="seed-defaults",
                 daemon=True,
             ).start()
+            # Research loops import database-backed services. Start them only
+            # after the core router has finished configuring the model graph;
+            # otherwise a cold hosted boot can race SQLAlchemy mapper setup.
+            _start_direct_iex_research_loop()
+            _start_direct_delayed_sip_research_loop()
+            _start_direct_scalp_research_loops()
 
         if settings.environment == "production" and not _optional_routes_started:
             _optional_routes_started = True
@@ -385,9 +391,6 @@ def on_startup() -> None:
             name="load-core-api-routes",
             daemon=True,
         ).start()
-        _start_direct_iex_research_loop()
-        _start_direct_delayed_sip_research_loop()
-        _start_direct_scalp_research_loops()
         print("FastAPI startup validation complete", flush=True)
         return
 
