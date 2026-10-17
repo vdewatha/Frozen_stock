@@ -96,7 +96,6 @@ from app.schemas.trading import (
     WatchlistImportRequest,
     WatchlistImportResponse,
 )
-from app.services.backtester import BacktestConfig, run_backtest
 from app.services.broker import block_live_order, broker_status, submit_paper_order
 from app.services.live_safety import LiveSafetyError, live_order_decision, evaluate_live_safety, transition_live_safety
 from app.services.candidate_activation import review_candidate_activation
@@ -542,6 +541,11 @@ def generate_signal(payload: SignalRequest, db: Session = Depends(get_db)) -> Si
 
 @router.post("/backtests", response_model=BacktestResponse)
 def backtest(payload: BacktestRequest, db: Session = Depends(get_db)) -> dict:
+    # Backtesting imports pandas and the full analytics stack. Keep that
+    # optional work out of hosted API boot so health and paper research routes
+    # can become ready independently.
+    from app.services.backtester import BacktestConfig, run_backtest
+
     prices, source = _research_prices(db, payload.symbol, 320, 80)
     config = BacktestConfig(
         starting_cash=payload.starting_cash,
