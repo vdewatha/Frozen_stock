@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time as clock_time, timezone
+import faulthandler
 import os
 import threading
 import time
@@ -99,6 +100,12 @@ def load_application_routes() -> None:
     global _router_error, _routers_ready, _optional_routes_started
     if _routers_ready:
         return
+    print("FastAPI core route import started", flush=True)
+    if settings.environment == "production":
+        # Hosted startup has previously stalled inside this import without an
+        # exception. A periodic stack snapshot makes that failure diagnosable
+        # while keeping the API fail-closed and paper-only.
+        faulthandler.dump_traceback_later(30, repeat=True)
     try:
         from app.api.routes import router
         _import_stage("routes")
@@ -122,6 +129,9 @@ def load_application_routes() -> None:
     except Exception as exc:  # pragma: no cover - hosted import diagnostics
         _router_error = exc.__class__.__name__
         print(f"FastAPI core route loading failed: {_router_error}", flush=True)
+    finally:
+        if settings.environment == "production":
+            faulthandler.cancel_dump_traceback_later()
 
 
 def load_optional_application_routes() -> None:
