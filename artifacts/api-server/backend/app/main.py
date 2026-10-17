@@ -333,12 +333,6 @@ if settings.environment == "production":
         # large SQLAlchemy/Pydantic route graph on a cold hosted instance.
         time.sleep(2)
         load_application_routes()
-
-    threading.Thread(
-        target=load_core_routes_after_bind,
-        name="load-core-api-routes",
-        daemon=True,
-    ).start()
 else:
     load_application_routes()
 
@@ -382,6 +376,11 @@ def on_startup() -> None:
         # Production route loading runs in the post-bind background thread.
         # Calling it here would block Uvicorn's port bind on the full schema
         # graph and defeat the lightweight startup surface.
+        threading.Thread(
+            target=load_core_routes_after_bind,
+            name="load-core-api-routes",
+            daemon=True,
+        ).start()
         _start_direct_iex_research_loop()
         _start_direct_delayed_sip_research_loop()
         _start_direct_scalp_research_loops()
