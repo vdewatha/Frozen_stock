@@ -113,7 +113,6 @@ from app.services.market_data import get_price_points, import_market_prices
 from app.services.intraday_data import MARKET_DATA_PROVIDER, MARKET_DATA_FEED_CLASS, feed_status, ingest_intraday, preflight_intraday
 from app.models import IntradayBar
 from app.services.trusted_data import trusted_history, UntrustedMarketData
-from app.services.market_regime import detect_and_store_market_regime, latest_market_regime, list_market_regimes
 from app.services.memory_replay import memory_replay_evaluation, run_memory_replay_gate_monitor
 from app.services.model_tracking import model_performance_summary, run_and_persist_model_predictions, score_realized_predictions
 from app.services.news_sentiment import import_company_news, list_news_articles, summarize_news_context
@@ -599,11 +598,15 @@ def economic_context(db: Session = Depends(get_db)) -> dict:
 
 @router.get("/market-regimes", response_model=list[MarketRegimeRead])
 def market_regimes(limit: int = 30, db: Session = Depends(get_db)) -> list[dict]:
+    from app.services.market_regime import list_market_regimes
+
     return list_market_regimes(db, limit)
 
 
 @router.get("/market-regimes/latest", response_model=MarketRegimeRead)
 def latest_regime(db: Session = Depends(get_db)) -> dict:
+    from app.services.market_regime import latest_market_regime
+
     regime = latest_market_regime(db)
     if not regime:
         raise HTTPException(status_code=404, detail="No market regime available.")
@@ -612,6 +615,8 @@ def latest_regime(db: Session = Depends(get_db)) -> dict:
 
 @router.post("/market-regimes/detect", response_model=MarketRegimeRead)
 def detect_regime(payload: MarketRegimeDetectionRequest, db: Session = Depends(get_db)) -> dict:
+    from app.services.market_regime import detect_and_store_market_regime
+
     return detect_and_store_market_regime(db, payload.symbol)
 
 
@@ -993,6 +998,8 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSnapshot:
     recent_trades = []
     stored_experiments = list_strategy_experiments(db, strategy_slug="moving_average_crossover", limit=3)
     proposed_experiments = propose_parameter_experiments("moving_average_crossover", {"short_window": 20, "long_window": 50})
+    from app.services.market_regime import latest_market_regime
+
     current_regime = latest_market_regime(db, auto_detect=False)
     kill_switch_enabled = bool(((risk_rule.value if risk_rule else {}) or {}).get("kill_switch_enabled", False))
     return DashboardSnapshot(
