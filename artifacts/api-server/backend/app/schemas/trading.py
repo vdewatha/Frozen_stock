@@ -4,7 +4,18 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, Field, field_validator
+
+
+class DeferredBaseModel(PydanticBaseModel):
+    """Avoid building every response schema during hosted cold start."""
+
+    model_config = ConfigDict(defer_build=True)
+
+
+# Keep the existing schema declarations concise while deferring their core
+# schemas until FastAPI validates or serializes one of them.
+BaseModel = DeferredBaseModel
 
 
 class AssetCreate(BaseModel):
