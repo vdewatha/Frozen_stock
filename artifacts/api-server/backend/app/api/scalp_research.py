@@ -5,8 +5,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models import ScalpResearchRun
-from app.services.scalp_research import create_scalp_research_run, project_scalp_research
 
 router = APIRouter(prefix="/research/scalp", tags=["scalp research"])
 
@@ -18,6 +16,8 @@ class StartScalpResearchBody(BaseModel):
 
 @router.post("/runs", status_code=202)
 def start_scalp_research(body: StartScalpResearchBody, request: Request, db: Session = Depends(get_db)):
+    from app.services.scalp_research import create_scalp_research_run, project_scalp_research
+
     try:
         row = create_scalp_research_run(db, symbols=body.symbols, actor=request.state.actor)
         db.commit()
@@ -35,12 +35,18 @@ def start_scalp_research(body: StartScalpResearchBody, request: Request, db: Ses
 
 @router.get("/runs")
 def list_scalp_research(limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+    from app.models import ScalpResearchRun
+    from app.services.scalp_research import project_scalp_research
+
     rows = db.scalars(select(ScalpResearchRun).order_by(ScalpResearchRun.created_at.desc()).limit(limit)).all()
     return {"items": [project_scalp_research(row) for row in rows], "paper_only": True}
 
 
 @router.get("/runs/{run_id}")
 def get_scalp_research(run_id: str, db: Session = Depends(get_db)):
+    from app.models import ScalpResearchRun
+    from app.services.scalp_research import project_scalp_research
+
     row = db.scalar(select(ScalpResearchRun).where(ScalpResearchRun.run_id == run_id))
     if row is None:
         raise HTTPException(status_code=404, detail="Scalp research run not found")
