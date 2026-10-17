@@ -8,24 +8,11 @@ print("FastAPI module import started", flush=True)
 def _import_stage(name: str) -> None:
     print(f"FastAPI import stage complete: {name}", flush=True)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 _import_stage("fastapi")
 
-from app.api.routes import router
-_import_stage("routes")
-from app.api.research import router as research_router
-_import_stage("research")
-from app.api.agent_research import router as agent_research_router
-_import_stage("agent_research")
-from app.api.scalp_research import router as scalp_research_router
-_import_stage("scalp_research")
-from app.api.crypto_research import router as crypto_router
-_import_stage("crypto_research")
-from app.api.shadow_evidence import router as shadow_evidence_router
-_import_stage("shadow_evidence")
-from app.api.stock_paper import router as stock_paper_router
-_import_stage("stock_paper")
 from app.core.config import settings
 _import_stage("config")
 from app.core.security import AuthenticationMiddleware
@@ -50,16 +37,91 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-from app.api.stock_training import router as stock_training_router
-_import_stage("stock_training")
-from app.api.stock_forward_trial import router as stock_forward_trial_router
-_import_stage("stock_forward_trial")
-from app.api.stock_learning_cycle import router as stock_learning_cycle_router
-_import_stage("stock_learning_cycle")
-from app.api.live_broker import router as live_broker_router
-_import_stage("live_broker")
-from app.api.live_pilot import router as live_pilot_router
-_import_stage("live_pilot")
+
+_routers_ready = threading.Event()
+_router_error: str | None = None
+
+
+@app.middleware("http")
+async def wait_for_application_routes(request: Request, call_next):
+    """Keep hosted boot truthful while the large router graph loads."""
+    if request.url.path == "/api/health":
+        return await call_next(request)
+    if request.url.path.startswith("/api/") and not _routers_ready.is_set():
+        body = {
+            "status": "starting",
+            "detail": "Paper API routes are still loading",
+            "paper_only": True,
+            "live_trading": False,
+        }
+        if _router_error:
+            body["error"] = _router_error
+        return JSONResponse(status_code=503, content=body)
+    return await call_next(request)
+
+
+@app.get("/api/health")
+def hosted_health() -> dict:
+    """Lightweight liveness endpoint that never waits on research providers."""
+    return {
+        "status": "ok",
+        "service": "paper-trading-api",
+        "paper_only": True,
+        "live_trading": False,
+        "routes_ready": _routers_ready.is_set(),
+        **({"route_error": _router_error} if _router_error else {}),
+    }
+
+
+def load_application_routes() -> None:
+    """Import and register the full API graph after the process is healthy."""
+    global _router_error
+    try:
+        from app.api.routes import router
+        _import_stage("routes")
+        from app.api.research import router as research_router
+        _import_stage("research")
+        from app.api.agent_research import router as agent_research_router
+        _import_stage("agent_research")
+        from app.api.scalp_research import router as scalp_research_router
+        _import_stage("scalp_research")
+        from app.api.crypto_research import router as crypto_router
+        _import_stage("crypto_research")
+        from app.api.shadow_evidence import router as shadow_evidence_router
+        _import_stage("shadow_evidence")
+        from app.api.stock_paper import router as stock_paper_router
+        _import_stage("stock_paper")
+        from app.api.stock_training import router as stock_training_router
+        _import_stage("stock_training")
+        from app.api.stock_forward_trial import router as stock_forward_trial_router
+        _import_stage("stock_forward_trial")
+        from app.api.stock_learning_cycle import router as stock_learning_cycle_router
+        _import_stage("stock_learning_cycle")
+        from app.api.live_broker import router as live_broker_router
+        _import_stage("live_broker")
+        from app.api.live_pilot import router as live_pilot_router
+        _import_stage("live_pilot")
+
+        for application_router in (
+            router,
+            research_router,
+            agent_research_router,
+            scalp_research_router,
+            crypto_router,
+            shadow_evidence_router,
+            stock_paper_router,
+            stock_training_router,
+            stock_forward_trial_router,
+            stock_learning_cycle_router,
+            live_broker_router,
+            live_pilot_router,
+        ):
+            app.include_router(application_router, prefix="/api")
+        _routers_ready.set()
+        print("FastAPI application routes ready", flush=True)
+    except Exception as exc:  # pragma: no cover - hosted import diagnostics
+        _router_error = exc.__class__.__name__
+        print(f"FastAPI application route loading failed: {_router_error}", flush=True)
 
 print("FastAPI module import complete", flush=True)
 
@@ -92,6 +154,11 @@ def on_startup() -> None:
                 db.close()
 
         threading.Thread(target=seed_in_background, name="seed-defaults", daemon=True).start()
+        threading.Thread(
+            target=load_application_routes,
+            name="load-api-routes",
+            daemon=True,
+        ).start()
         print("FastAPI startup validation complete", flush=True)
         return
 
@@ -100,18 +167,5 @@ def on_startup() -> None:
         seed_defaults(db)
     finally:
         db.close()
+    load_application_routes()
     print("FastAPI startup validation complete", flush=True)
-
-
-app.include_router(router, prefix="/api")
-app.include_router(research_router, prefix="/api")
-app.include_router(agent_research_router, prefix="/api")
-app.include_router(scalp_research_router, prefix="/api")
-app.include_router(crypto_router, prefix="/api")
-app.include_router(shadow_evidence_router, prefix="/api")
-app.include_router(stock_paper_router, prefix="/api")
-app.include_router(stock_training_router, prefix="/api")
-app.include_router(stock_forward_trial_router, prefix="/api")
-app.include_router(stock_learning_cycle_router, prefix="/api")
-app.include_router(live_broker_router, prefix="/api")
-app.include_router(live_pilot_router, prefix="/api")

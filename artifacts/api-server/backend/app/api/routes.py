@@ -112,7 +112,6 @@ from app.services.governance import evaluate_strategy_governance, latest_strateg
 from app.services.learning import propose_parameter_experiments
 from app.services.market_data import get_price_points, import_market_prices
 from app.services.intraday_data import MARKET_DATA_PROVIDER, MARKET_DATA_FEED_CLASS, feed_status, ingest_intraday, preflight_intraday
-from app.services.alpaca_research_data import iex_research_status
 from app.models import IntradayBar
 from app.services.trusted_data import trusted_history, UntrustedMarketData
 from app.services.market_regime import detect_and_store_market_regime, latest_market_regime, list_market_regimes
@@ -468,6 +467,10 @@ def price_history(symbol: str, limit: int = 260, db: Session = Depends(get_db)) 
 
 @router.get("/market-data/iex/status")
 def iex_status(db: Session = Depends(get_db)):
+    # Load the Alpaca SDK only when this infrequent status endpoint is used.
+    # Hosted cold starts must not wait for the provider's full model graph.
+    from app.services.alpaca_research_data import iex_research_status
+
     return iex_research_status(db)
 
 
