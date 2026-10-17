@@ -6,7 +6,6 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.models import Strategy
-from app.services.backtester import BacktestConfig, run_backtest
 from app.services.economic_data import summarize_macro_context
 from app.services.market_regime import latest_market_regime
 from app.services.news_sentiment import summarize_news_context
@@ -58,6 +57,8 @@ def _risk_room(db: Session, symbol: str, strategy: str) -> dict:
 
 
 def candidate_evidence_drilldown(db: Session, symbol: str, strategy: str) -> dict:
+    from app.services.backtester import BacktestConfig, run_backtest
+
     symbol = symbol.strip().upper()
     strategy = strategy.strip()
     strategy_row = db.query(Strategy).filter(Strategy.strategy_type == strategy).one_or_none()

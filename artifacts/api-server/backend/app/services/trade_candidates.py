@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.models import Asset, Strategy, StrategyMemory, TradeCandidateSnapshot
 from app.core.config import settings
 from app.services.audit import write_audit_log
-from app.services.backtester import BacktestConfig, run_backtest
 from app.services.economic_data import summarize_macro_context
 from app.services.market_regime import latest_market_regime
 from app.services.news_sentiment import summarize_news_context
@@ -48,6 +47,8 @@ def _journal_feedback_adjustment(db: Session, strategy_row: Strategy | dict, sym
 
 
 def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
+    from app.services.backtester import BacktestConfig, run_backtest
+
     paper_execution_symbols = set(settings.paper_execution_symbols)
     symbols = [
         symbol

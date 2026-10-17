@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.models import Strategy, StrategyBacktest, StrategyExperiment
 from app.services.audit import write_audit_log
-from app.services.backtester import BacktestConfig, run_backtest
 from app.services.learning import propose_parameter_experiments
 from app.services.trusted_data import trusted_history
 
@@ -84,6 +83,8 @@ def run_strategy_experiments(
     max_candidates: int = 3,
     apply_promotions: bool = False,
 ) -> dict:
+    from app.services.backtester import BacktestConfig, run_backtest
+
     symbol = symbol.strip().upper()
     strategy = db.query(Strategy).filter(Strategy.strategy_type == strategy_slug).one_or_none()
     if not strategy:
