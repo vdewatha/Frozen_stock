@@ -36,6 +36,7 @@ app.add_middleware(
 _routers_ready = False
 _scalp_routes_ready = False
 _router_error: str | None = None
+_optional_routes_started = False
 
 
 @app.middleware("http")
@@ -95,7 +96,9 @@ def hosted_iex_status():
 
 def load_application_routes() -> None:
     """Register the core API, then load optional research routers separately."""
-    global _router_error, _routers_ready
+    global _router_error, _routers_ready, _optional_routes_started
+    if _routers_ready:
+        return
     try:
         from app.api.routes import router
         _import_stage("routes")
@@ -107,7 +110,8 @@ def load_application_routes() -> None:
         _routers_ready = True
         print("FastAPI core routes ready", flush=True)
 
-        if settings.environment == "production":
+        if settings.environment == "production" and not _optional_routes_started:
+            _optional_routes_started = True
             threading.Thread(
                 target=load_optional_application_routes,
                 name="load-optional-api-routes",
@@ -307,6 +311,14 @@ print("FastAPI scalp research routes ready", flush=True)
 
 print("FastAPI module import complete", flush=True)
 
+# The production supervisor probes this application's health endpoint while
+# startup is in progress. Loading the core router in a daemon thread created a
+# race where health responded forever with scalp-only readiness even though
+# the paper and delayed-SIP routes were still unavailable. Resolve the core
+# import before the process starts serving requests so readiness is truthful.
+if settings.environment == "production":
+    load_application_routes()
+
 
 @app.on_event("startup")
 def on_startup() -> None:
@@ -344,13 +356,9 @@ def on_startup() -> None:
                 db.close()
 
         threading.Thread(target=seed_in_background, name="seed-defaults", daemon=True).start()
-        # Let the gateway and lightweight health endpoint become observable
-        # while database/model imports and optional provider routers load.
-        threading.Thread(
-            target=load_application_routes,
-            name="load-api-routes",
-            daemon=True,
-        ).start()
+        # Core routes were loaded synchronously during module import. Keep the
+        # startup hook idempotent for test runners and process reloaders.
+        load_application_routes()
         _start_direct_iex_research_loop()
         _start_direct_delayed_sip_research_loop()
         _start_direct_scalp_research_loops()
