@@ -14,7 +14,7 @@ from app.api.shadow_evidence import router as shadow_evidence_router
 from app.api.stock_paper import router as stock_paper_router
 from app.core.config import settings
 from app.core.security import AuthenticationMiddleware
-from app.db.schema import assert_database_reachable, assert_schema_current
+from app.db.schema import assert_schema_current
 from app.db.session import SessionLocal, engine
 from app.models import models, stock_paper  # noqa: F401
 from app.services.seed import seed_defaults
@@ -44,12 +44,10 @@ def on_startup() -> None:
         # Do not include values from the configuration in the error. The process
         # must not start in an ambiguous production security state.
         raise RuntimeError("Production security configuration is incomplete: " + "; ".join(production_blockers))
-    if settings.environment == "production":
-        # The hosted supervisor has already run and supervised the migration
-        # process. Keep application boot bounded by checking reachability only;
-        # local and test environments retain strict schema verification below.
-        assert_database_reachable(engine)
-    else:
+    if settings.environment != "production":
+        # Local and test environments retain strict schema verification. The
+        # hosted supervisor runs and supervises migrations before this process;
+        # production API boot must not block on a second database round trip.
         assert_schema_current(engine)
     if settings.environment == "production":
         # A managed database can briefly stall while the hosting platform is
