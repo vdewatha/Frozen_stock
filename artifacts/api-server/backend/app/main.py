@@ -31,6 +31,7 @@ app.add_middleware(
 )
 
 _routers_ready = False
+_scalp_routes_ready = False
 _router_error: str | None = None
 
 
@@ -39,7 +40,8 @@ async def wait_for_application_routes(request: Request, call_next):
     """Keep hosted boot truthful while the large router graph loads."""
     if request.url.path == "/api/health":
         return await call_next(request)
-    if request.url.path.startswith("/api/") and not _routers_ready:
+    scalp_path = request.url.path.startswith("/api/research/scalp")
+    if request.url.path.startswith("/api/") and not _routers_ready and not (scalp_path and _scalp_routes_ready):
         body = {
             "status": "starting",
             "detail": "Paper API routes are still loading",
@@ -60,6 +62,7 @@ def hosted_health() -> dict:
         "service": "paper-trading-api",
         "paper_only": True,
         "live_trading": False,
+        "scalp_routes_ready": _scalp_routes_ready,
         "routes_ready": _routers_ready,
         **({"route_error": _router_error} if _router_error else {}),
     }
@@ -69,14 +72,6 @@ def load_application_routes() -> None:
     """Register the core API, then load optional research routers separately."""
     global _router_error, _routers_ready
     try:
-        # Give the dedicated scalp-research lane an independent startup path.
-        # The broad router graph includes many provider integrations and must
-        # not prevent this paper-only research surface from becoming usable.
-        from app.api.scalp_research import router as scalp_research_router
-        app.include_router(scalp_research_router, prefix="/api")
-        _routers_ready = True
-        print("FastAPI scalp research routes ready", flush=True)
-
         from app.api.routes import router
         _import_stage("routes")
 
@@ -84,6 +79,8 @@ def load_application_routes() -> None:
         # activity views. Register it before optional provider integrations so
         # a slow research import cannot hold the whole API in 503 startup.
         app.include_router(router, prefix="/api")
+        _routers_ready = True
+        print("FastAPI core routes ready", flush=True)
 
         if settings.environment == "production":
             threading.Thread(
@@ -141,6 +138,25 @@ def load_optional_application_routes() -> None:
     except Exception as exc:  # pragma: no cover - hosted import diagnostics
         _router_error = exc.__class__.__name__
         print(f"FastAPI optional route loading failed: {_router_error}", flush=True)
+
+
+def load_scalp_routes() -> None:
+    """Register the lightweight scalp lane before the broad router graph."""
+    global _scalp_routes_ready, _router_error
+    try:
+        from app.api.scalp_research import router as scalp_research_router
+
+        app.include_router(scalp_research_router, prefix="/api")
+        _scalp_routes_ready = True
+        print("FastAPI scalp research routes ready", flush=True)
+    except Exception as exc:  # pragma: no cover - hosted import diagnostics
+        _router_error = exc.__class__.__name__
+        print(f"FastAPI scalp route loading failed: {_router_error}", flush=True)
+
+
+# Register the paper-only research lane during module import. This keeps the
+# dedicated route independent from the slower, provider-heavy router graph.
+load_scalp_routes()
 
 print("FastAPI module import complete", flush=True)
 
