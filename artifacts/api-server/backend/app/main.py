@@ -328,8 +328,14 @@ print("FastAPI module import complete", flush=True)
 # background. Middleware keeps all non-health API calls fail-closed until the
 # graph is ready.
 if settings.environment == "production":
+    def load_core_routes_after_bind() -> None:
+        # Give Uvicorn a chance to bind the backend port before importing the
+        # large SQLAlchemy/Pydantic route graph on a cold hosted instance.
+        time.sleep(2)
+        load_application_routes()
+
     threading.Thread(
-        target=load_application_routes,
+        target=load_core_routes_after_bind,
         name="load-core-api-routes",
         daemon=True,
     ).start()
