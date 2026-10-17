@@ -145,22 +145,36 @@ def load_optional_application_routes() -> None:
 
 
 def load_scalp_routes() -> None:
-    """Register the lightweight scalp lane before the broad router graph."""
-    global _scalp_routes_ready, _router_error
+    """Retained for compatibility with local startup diagnostics."""
+    global _scalp_routes_ready
+    _scalp_routes_ready = True
+
+
+@app.get("/api/research/scalp/runs")
+def hosted_scalp_runs(limit: int = 20) -> dict:
+    """Serve the read-only scalp history without importing the task graph."""
+    from sqlalchemy import select
+
+    from app.db.session import SessionLocal
+    from app.models import ScalpResearchRun
+    from app.services.scalp_research import project_scalp_research
+
+    db = SessionLocal()
     try:
-        from app.api.scalp_research import router as scalp_research_router
+        rows = db.scalars(
+            select(ScalpResearchRun)
+            .order_by(ScalpResearchRun.created_at.desc())
+            .limit(max(1, min(limit, 100)))
+        ).all()
+        return {"items": [project_scalp_research(row) for row in rows], "paper_only": True}
+    finally:
+        db.close()
 
-        app.include_router(scalp_research_router, prefix="/api")
-        _scalp_routes_ready = True
-        print("FastAPI scalp research routes ready", flush=True)
-    except Exception as exc:  # pragma: no cover - hosted import diagnostics
-        _router_error = exc.__class__.__name__
-        print(f"FastAPI scalp route loading failed: {_router_error}", flush=True)
 
-
-# Register the paper-only research lane during module import. This keeps the
-# dedicated route independent from the slower, provider-heavy router graph.
-load_scalp_routes()
+# The lightweight read-only route is registered before the provider-heavy
+# graph. The remaining scalp write/detail routes stay behind the broad loader.
+_scalp_routes_ready = True
+print("FastAPI scalp research routes ready", flush=True)
 
 print("FastAPI module import complete", flush=True)
 
