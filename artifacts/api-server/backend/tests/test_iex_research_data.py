@@ -146,6 +146,15 @@ def test_exception_body_is_never_persisted(db):
     assert db.query(IntradayBar).count() == 0
 
 
+def test_missing_research_credentials_are_classified_without_provider_request(db):
+    with patch.object(type(iex.settings), "research_alpaca_credentials", return_value=("", "")):
+        with patch.object(iex, "BoundedStockDataClient", side_effect=iex.ResearchCredentialsMissing):
+            report = iex.collect_iex_research(db, now=NOW)
+    assert report["status"] == "unavailable"
+    assert report["failure_class"] == "credentials_missing"
+    assert report["credentials_configured"] is False
+
+
 def test_transport_bounds_and_no_redirects():
     with patch.object(type(settings), "research_alpaca_credentials", return_value=("test", "test")):
         client = iex.BoundedStockDataClient()

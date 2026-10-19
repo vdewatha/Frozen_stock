@@ -24,13 +24,17 @@ FEED = "iex"
 UTC = timezone.utc
 
 
+class ResearchCredentialsMissing(RuntimeError):
+    """Raised before any provider request when authenticated IEX access is absent."""
+
+
 class BoundedStockDataClient(StockHistoricalDataClient):
     """Pin the SDK transport's timeout, retries and destination for secret safety."""
 
     def __init__(self):
         key, secret = settings.research_alpaca_credentials()
         if not key or not secret:
-            raise RuntimeError("Alpaca paper data credentials are not configured")
+            raise ResearchCredentialsMissing("Alpaca paper data credentials are not configured")
         super().__init__(api_key=key, secret_key=secret, raw_data=True)
         self._retry = 0
 
@@ -151,9 +155,11 @@ def collect_iex_research(db: Session, *, now: datetime | None = None) -> dict:
     observed = now or datetime.now(UTC)
     start, end = incremental_collection_window(db, observed)
     symbols = sorted(ALLOWED_SYMBOLS)
+    research_key, research_secret = settings.research_alpaca_credentials()
     base = {
         "provider": PROVIDER, "feed_class": FEED, "research_only": True,
         "execution_eligible": False, "synthetic": False,
+        "credentials_configured": bool(research_key and research_secret),
         "checked_at": observed.isoformat(), "window_start": start.isoformat(),
         "window_end": end.isoformat(), "adjustment": "raw",
         "coverage_policy": "Observed IEX minutes only; absent minutes remain unknown, never filled",
@@ -163,7 +169,13 @@ def collect_iex_research(db: Session, *, now: datetime | None = None) -> dict:
     except Exception as exc:
         # SDK exceptions can carry upstream response bodies. Never persist them.
         code = getattr(exc, "status_code", None)
-        failure = "authentication" if code == 401 else "entitlement" if code == 403 else "rate_limit" if code == 429 else "unavailable_or_invalid"
+        failure = (
+            "credentials_missing" if isinstance(exc, ResearchCredentialsMissing) else
+            "authentication" if code == 401 else
+            "entitlement" if code == 403 else
+            "rate_limit" if code == 429 else
+            "unavailable_or_invalid"
+        )
         result = {**base, "status": "unavailable", "failure_class": failure, "results": []}
     else:
         results = []
@@ -210,6 +222,10 @@ def iex_research_status(db: Session, *, now: datetime | None = None) -> dict:
     return {
         "provider": PROVIDER, "feed_class": FEED, "research_only": True,
         "execution_eligible": False, "enabled": settings.iex_research_enabled,
+        "credentials_configured": bool(
+            settings.research_alpaca_credentials()[0]
+            and settings.research_alpaca_credentials()[1]
+        ),
         "poll_fresh": age is not None and 0 <= age <= 120,
         "last_collection": latest, "symbols": symbols,
         "runner": research_runner_status(now=observed),
