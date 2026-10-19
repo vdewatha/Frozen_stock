@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import json
 import threading
 import time
 from typing import Optional
@@ -98,6 +99,38 @@ def _scheduler_health() -> dict:
         if attempt + 1 < SCHEDULER_PROBE_ATTEMPTS:
             time.sleep(SCHEDULER_PROBE_RETRY_DELAY_SECONDS)
 
+    # A compact hosted worker can be busy enough that Celery's remote-control
+    # reply is delayed even though the worker is alive. Accept only a live,
+    # expiring heartbeat emitted by the worker process, and only for the
+    # explicitly bounded compact topology. Static environment configuration is
+    # never treated as worker evidence.
+    worker_heartbeat_evidence: list[str] = []
+    try:
+        client = redis.Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=SCHEDULER_PROBE_TIMEOUT_SECONDS,
+            socket_timeout=SCHEDULER_PROBE_TIMEOUT_SECONDS,
+        )
+        try:
+            for key in client.scan_iter(match="celery:worker:heartbeat:*"):
+                key_text = key.decode() if isinstance(key, bytes) else key
+                raw = client.get(key)
+                if isinstance(raw, bytes):
+                    raw = raw.decode()
+                try:
+                    payload = json.loads(raw or "{}")
+                except (TypeError, ValueError):
+                    continue
+                if payload.get("queue_mode") == "compact":
+                    worker_heartbeat_evidence.append(key_text)
+        finally:
+            client.close()
+    except Exception:
+        worker_heartbeat_evidence = []
+    if not worker_names and worker_heartbeat_evidence:
+        worker_names = sorted(f"heartbeat:{key.rsplit(':', 1)[-1]}" for key in worker_heartbeat_evidence)
+        worker_error = None
+
     evidence: list[str] = []
     beat_error = None
     for attempt in range(SCHEDULER_PROBE_ATTEMPTS):
@@ -132,6 +165,7 @@ def _scheduler_health() -> dict:
         "workers": worker_names,
         "worker_count": len(worker_names),
         "worker_error": worker_error,
+        "worker_heartbeat_evidence": worker_heartbeat_evidence,
         "beat_evidence": evidence,
         "beat_count": len(evidence),
         "beat_error": beat_error,

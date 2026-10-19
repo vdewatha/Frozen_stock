@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
+import socket
 
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import heartbeat_sent, worker_ready
 from kombu import Exchange, Queue
+import redis
 
 from app.core.config import settings
 
@@ -29,6 +33,31 @@ celery_app.conf.timezone = "America/New_York"
 celery_app.conf.task_track_started = True
 celery_app.conf.worker_send_task_events = True
 celery_app.conf.task_send_sent_event = True
+
+
+def _record_worker_heartbeat(*, sender=None, **kwargs) -> None:
+    """Publish short-lived evidence from the Celery worker process itself."""
+    hostname = getattr(sender, "hostname", None) or kwargs.get("hostname") or socket.gethostname()
+    queue_mode = os.environ.get("PAPER_WORKER_QUEUE_MODE", "").strip().lower()
+    payload = json.dumps({"hostname": hostname, "queue_mode": queue_mode})
+    client = None
+    try:
+        client = redis.Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=0.5,
+            socket_timeout=0.5,
+        )
+        client.set(f"celery:worker:heartbeat:{hostname}", payload, ex=90)
+    except Exception:
+        # Worker health evidence is advisory and must never stop task execution.
+        return
+    finally:
+        if client is not None:
+            client.close()
+
+
+heartbeat_sent.connect(_record_worker_heartbeat, weak=False)
+worker_ready.connect(_record_worker_heartbeat, weak=False)
 celery_app.conf.task_queues = (
     Queue("default", Exchange("default"), routing_key="default"),
     Queue("market_data", Exchange("market_data"), routing_key="market_data"),

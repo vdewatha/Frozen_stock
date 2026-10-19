@@ -116,6 +116,12 @@ const runtimeEnv = {
   // The direct monitor owns the monitoring cadence in this supervisor. Keep
   // Celery beat from running a second copy of the same task.
   PAPER_DIRECT_MONITOR_LOOP: process.env.PAPER_DIRECT_MONITOR_LOOP ?? "true",
+  // Let the worker heartbeat identify the bounded hosted queue topology.
+  // Readiness still requires a live expiring heartbeat; this is not a static
+  // configuration grant.
+  PAPER_WORKER_QUEUE_MODE:
+    process.env.PAPER_WORKER_QUEUE_MODE ??
+    (process.env.PAPER_COMPACT_WORKER === "true" ? "compact" : "dedicated"),
   PYTHONPATH: ".",
 };
 
