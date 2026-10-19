@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import (
+    LiveBrokerAccount,
+    LivePilot,
     LiveSafetyEvent,
     LiveSafetyState,
     StockDatasetSnapshot,
