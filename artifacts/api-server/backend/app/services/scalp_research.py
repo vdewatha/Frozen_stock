@@ -96,8 +96,29 @@ def _expected_research_session(observed: datetime):
     return None
 
 
-def _session_quality(bars: list[IntradayBar], *, now: datetime) -> dict:
-    """Reject stale or gapped bars before they can produce scalp labels."""
+def _completed_history_bars(bars: list[IntradayBar], *, now: datetime) -> list[IntradayBar]:
+    """Exclude an in-progress regular session from research-only evaluation."""
+    expected_day = _expected_research_session(now)
+    bounds = session_bounds(expected_day) if expected_day else None
+    local = now.astimezone(NY)
+    if not bounds or not (bounds[0].astimezone(NY) <= local < bounds[1].astimezone(NY)):
+        return bars
+    return [
+        bar for bar in bars
+        if _aware(bar.exchange_timestamp).astimezone(NY).date() != expected_day
+    ]
+
+
+def _session_quality(
+    bars: list[IntradayBar], *, now: datetime, research_only_completed_history: bool = False
+) -> dict:
+    """Reject stale or gapped bars before they can produce scalp labels.
+
+    During a regular session, the newest session is necessarily incomplete.
+    The optional history mode lets research inspect the newest *completed*
+    session in that case. It is intentionally separate from the default
+    execution-quality path and never grants trading eligibility.
+    """
     if not bars:
         return {"status": "blocked", "reason": "no trusted intraday bars", "missing_intervals": []}
     if any(
@@ -114,13 +135,27 @@ def _session_quality(bars: list[IntradayBar], *, now: datetime) -> dict:
     latest_day = latest.astimezone(NY).date()
     bounds = session_bounds(latest_day)
     expected_day = _expected_research_session(now)
+    observed_local = now.astimezone(NY)
+    expected_bounds = session_bounds(expected_day) if expected_day else None
+    current_session_in_progress = bool(
+        expected_bounds
+        and observed_local.date() == expected_day
+        and expected_bounds[0].astimezone(NY) <= observed_local < expected_bounds[1].astimezone(NY)
+    )
+    history_fallback = False
     if not bounds or latest < bounds[0] or latest >= bounds[1]:
         return {"status": "blocked", "reason": "latest observation is outside an NYSE regular session", "missing_intervals": []}
     if expected_day != latest_day:
-        return {"status": "blocked", "reason": "latest trusted session is stale", "missing_intervals": []}
+        if not (research_only_completed_history and current_session_in_progress and latest_day < expected_day):
+            return {"status": "blocked", "reason": "latest trusted session is stale", "missing_intervals": []}
+        history_fallback = True
+        expected_day = latest_day
+        bounds = session_bounds(latest_day)
+        if not bounds:
+            return {"status": "blocked", "reason": "latest trusted session is stale", "missing_intervals": []}
     observed = now.astimezone(timezone.utc)
     expected_end = bounds[1]
-    if expected_day == observed.astimezone(NY).date() and observed < bounds[1] + SCALP_LATE_DATA_ALLOWANCE:
+    if not history_fallback and expected_day == observed.astimezone(NY).date() and observed < bounds[1] + SCALP_LATE_DATA_ALLOWANCE:
         expected_end = min(
             bounds[1],
             (observed - SCALP_LATE_DATA_ALLOWANCE).replace(second=0, microsecond=0) + timedelta(minutes=1),
@@ -203,7 +238,7 @@ def _session_quality(bars: list[IntradayBar], *, now: datetime) -> dict:
             "latest": latest.isoformat(),
         }
     return {
-        "status": "ready",
+        "status": "ready_research_only" if history_fallback else "ready",
         "reason": None,
         "missing_intervals": [],
         "missing_count": 0,
@@ -212,10 +247,14 @@ def _session_quality(bars: list[IntradayBar], *, now: datetime) -> dict:
         "expected_bars": len(expected),
         "session_coverage": session_coverage,
         "authenticated_verification_at": latest_verification.isoformat(),
+        "research_only_completed_history": history_fallback,
     }
 
 
-def _bar_lineage(bars: list[IntradayBar], *, now: datetime | None = None) -> dict:
+def _bar_lineage(
+    bars: list[IntradayBar], *, now: datetime | None = None,
+    research_only_completed_history: bool = False,
+) -> dict:
     """Describe and fingerprint the exact trusted bars used by a run.
 
     Overnight/weekend gaps are expected. A large gap inside one regular NYSE
@@ -256,7 +295,11 @@ def _bar_lineage(bars: list[IntradayBar], *, now: datetime | None = None) -> dic
                 })
 
     encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
-    data_quality = _session_quality(bars, now=(now or _now()))
+    data_quality = _session_quality(
+        bars,
+        now=(now or _now()),
+        research_only_completed_history=research_only_completed_history,
+    )
     return {
         "bar_count": len(bars),
         "observed_start": canonical[0]["exchange_timestamp"] if canonical else None,
@@ -554,12 +597,26 @@ def run_scalp_research(db: Session, run_id: str) -> dict:
         metrics, snapshot = {}, {}
         for symbol in row.symbols:
             bars = _bars(db, symbol)
-            lineage = _bar_lineage(bars, now=claimed_at)
+            lineage = _bar_lineage(
+                bars,
+                now=claimed_at,
+                research_only_completed_history=True,
+            )
+            if lineage["data_quality"]["status"] == "blocked":
+                completed_history = _completed_history_bars(bars, now=claimed_at)
+                if completed_history != bars:
+                    history_lineage = _bar_lineage(
+                        completed_history,
+                        now=claimed_at,
+                        research_only_completed_history=True,
+                    )
+                    if history_lineage["data_quality"]["status"] == "ready_research_only":
+                        bars, lineage = completed_history, history_lineage
             snapshot[symbol] = lineage
             if len(bars) < 60:
                 metrics[symbol] = {"status": "blocked", "reason": "at least 60 trusted 1-minute bars are required"}
                 continue
-            if lineage["data_quality"]["status"] != "ready" or lineage["intraday_gap_count"]:
+            if lineage["data_quality"]["status"] not in {"ready", "ready_research_only"} or lineage["intraday_gap_count"]:
                 metrics[symbol] = {
                     "status": "blocked",
                     "reason": lineage["data_quality"]["reason"] or "trusted intraday history contains a material in-session gap",

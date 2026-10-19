@@ -7,6 +7,7 @@ from app.services.scalp_research import (
     _validation_metrics,
     _long_only_shadow_simulation,
     _strategy_signals,
+    _completed_history_bars,
     create_scalp_research_run,
     expire_stale_scalp_research_runs,
 )
@@ -101,6 +102,37 @@ def test_scalp_quality_accepts_only_contiguous_current_real_session():
     assert quality["status"] == "ready"
     assert quality["expected_bars"] == 29
     assert quality["authenticated_verification_at"] == "2026-09-28T13:58:00+00:00"
+
+
+def test_scalp_research_can_use_completed_history_while_current_session_is_open():
+    completed = _research_bars(
+        datetime(2026, 9, 25, 13, 30, tzinfo=timezone.utc), 390
+    )
+    for bar in completed:
+        bar.last_verified_at = datetime(2026, 9, 28, 13, 59, tzinfo=timezone.utc)
+    quality = _session_quality(
+        completed,
+        now=datetime(2026, 9, 28, 14, 0, tzinfo=timezone.utc),
+        research_only_completed_history=True,
+    )
+    assert quality["status"] == "ready_research_only"
+    assert quality["research_only_completed_history"] is True
+    assert quality["session_day"] == "2026-09-25"
+
+
+def test_completed_history_excludes_only_the_current_open_session():
+    previous = _research_bars(
+        datetime(2026, 9, 25, 13, 30, tzinfo=timezone.utc), 390
+    )
+    current = _research_bars(
+        datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc), 30
+    )
+    selected = _completed_history_bars(
+        previous + current,
+        now=datetime(2026, 9, 28, 14, 0, tzinfo=timezone.utc),
+    )
+    assert len(selected) == 390
+    assert selected[-1].exchange_timestamp.date().isoformat() == "2026-09-25"
 
 
 def test_scalp_quality_rejects_unverified_current_session():
