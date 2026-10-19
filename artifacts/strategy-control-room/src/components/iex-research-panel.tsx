@@ -15,9 +15,22 @@ type IexStatus = {
 };
 
 async function request<T>(path: string, method = "GET"): Promise<T> {
-  const response = await authenticatedFetch(`${API_BASE_URL}/market-data/iex/${path}`, { method, cache: "no-store" });
-  if (!response.ok) throw new Error(`IEX request failed (${response.status})`);
-  return response.json();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await authenticatedFetch(`${API_BASE_URL}/market-data/iex/${path}`, {
+      method, cache: "no-store", signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`IEX request failed (${response.status})`);
+    return response.json();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("IEX status request timed out; the feed is unavailable");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export function IexResearchPanel() {
