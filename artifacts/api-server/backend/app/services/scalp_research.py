@@ -39,7 +39,7 @@ def _now():
 
 
 def _bars(db: Session, symbol: str):
-    return list(reversed(db.scalars(
+    bars = list(reversed(db.scalars(
         select(IntradayBar)
         .where(
             IntradayBar.symbol == symbol,
@@ -50,6 +50,29 @@ def _bars(db: Session, symbol: str):
         .order_by(IntradayBar.opened_at.desc())
         .limit(MAX_LOOKBACK_BARS),
     ).all()))
+    if len(bars) < 2:
+        return bars
+
+    # The bounded query can begin halfway through the oldest regular session.
+    # That boundary is expected: the query intentionally does not fetch an
+    # unbounded history. Drop only that oldest partial session so the quality
+    # gate evaluates complete sessions and the current session, while still
+    # rejecting gaps in every session that remains in the research window.
+    sessions: dict = {}
+    for bar in bars:
+        observed = _aware(bar.exchange_timestamp)
+        session_day = observed.astimezone(NY).date()
+        if session_bounds(session_day):
+            sessions.setdefault(session_day, []).append(bar)
+    session_days = sorted(sessions)
+    if len(session_days) > 1:
+        oldest = session_days[0]
+        if len(sessions[oldest]) < 390:
+            bars = [
+                bar for bar in bars
+                if _aware(bar.exchange_timestamp).astimezone(NY).date() != oldest
+            ]
+    return bars
 
 
 def _aware(value: datetime) -> datetime:
