@@ -95,6 +95,10 @@ def fetch_iex_bars(symbols: list[str], start: datetime, end: datetime, *, client
     return _fetch_research_bars(symbols, start, end, feed=DataFeed.IEX, client=client)
 
 
+def fetch_sip_bars(symbols: list[str], start: datetime, end: datetime, *, client=None) -> dict[str, list[dict]]:
+    return _fetch_research_bars(symbols, start, end, feed=DataFeed.SIP, client=client)
+
+
 def _fetch_research_bars(symbols: list[str], start: datetime, end: datetime, *, feed: DataFeed, client=None) -> dict[str, list[dict]]:
     """Bounded shared transport; feed-specific callers enforce their time cutoff."""
     if feed not in {DataFeed.IEX, DataFeed.SIP}:

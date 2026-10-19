@@ -14,10 +14,11 @@ from sqlalchemy.orm import Session
 from app.models import IntradayBar, ScalpResearchRun
 from app.services.exchange_sessions import is_nyse_session, session_bounds
 from app.services.research_simulator import SimulationConfig, simulate
+from app.core.config import settings
 
 ALLOWED_SYMBOLS = frozenset({"AAPL", "MSFT", "SPY", "QQQ"})
-PROVIDER = "alpaca_iex"
-FEED_CLASS = "iex"
+PROVIDER = settings.active_market_data_provider.strip().lower()
+FEED_CLASS = "iex" if PROVIDER == "alpaca_iex" else "sip"
 TIMEFRAME = "1m"
 ESTIMATED_SLIPPAGE_BPS = 5.0
 ESTIMATED_FEE_BPS = 0.5

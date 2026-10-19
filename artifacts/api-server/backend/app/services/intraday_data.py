@@ -34,7 +34,7 @@ MARKET_DATA_FEED_CLASS = "iex" if MARKET_DATA_PROVIDER == "alpaca_iex" else "sip
 MARKET_DATA_EXECUTION_ELIGIBLE = (
     MARKET_DATA_PROVIDER == "tradier"
     or (
-        MARKET_DATA_PROVIDER == "alpaca_iex"
+        MARKET_DATA_PROVIDER in {"alpaca_iex", "alpaca_sip"}
         and settings.active_paper_broker == "alpaca_paper"
         and not settings.allow_live_trading
     )
@@ -219,6 +219,13 @@ def _fetch_alpaca_iex_bars(symbol: str, start: datetime, end: datetime) -> list[
     return fetch_iex_bars([symbol], start, end).get(symbol, [])
 
 
+def _fetch_alpaca_sip_bars(symbol: str, start: datetime, end: datetime) -> list[dict]:
+    """Fetch authenticated consolidated SIP observations for paper operation."""
+    from app.services.alpaca_research_data import fetch_sip_bars
+
+    return fetch_sip_bars([symbol], start, end).get(symbol, [])
+
+
 def upsert_intraday_bars(
     db: Session,
     symbol: str,
@@ -233,7 +240,10 @@ def upsert_intraday_bars(
     # leave persisted bars tagged with the provider active at import time.
     provider = provider or settings.active_market_data_provider.strip().lower()
     feed_class = feed_class or ("iex" if provider == "alpaca_iex" else "sip")
-    if (provider, feed_class) not in {("tradier", "sip"), ("alpaca_iex", "iex"), ("alpaca_delayed_sip", "sip_delayed")}:
+    if (provider, feed_class) not in {
+        ("tradier", "sip"), ("alpaca_iex", "iex"), ("alpaca_sip", "sip"),
+        ("alpaca_delayed_sip", "sip_delayed"),
+    }:
         raise ValueError("Unsupported intraday provenance")
     symbol = _symbol(symbol)
     observed_at = _aware_utc(ingested_at or datetime.now(UTC))
@@ -286,7 +296,7 @@ def upsert_intraday_bars(
         if row:
             # Re-fetching identical research data must not erase when it became
             # known. Corrections retain the new observation time, never the old one.
-            if (provider in {"alpaca_iex", "alpaca_delayed_sip"}
+            if (provider in {"alpaca_iex", "alpaca_sip", "alpaca_delayed_sip"}
                     and row.feed_class == feed_class
                     and all(getattr(row, key) == value for key, value in values.items())
                     and row.exchange_timestamp is not None
@@ -514,6 +524,10 @@ def _fetch_bars(
     configured_provider = settings.active_market_data_provider.strip().lower()
     if configured_provider == "alpaca_iex":
         page = _fetch_alpaca_iex_bars(symbol, start, end)
+        timestamps = [item.get("t") for item in page]
+        return page, len(timestamps) - len(set(timestamps)), timestamps != sorted(timestamps)
+    if configured_provider == "alpaca_sip":
+        page = _fetch_alpaca_sip_bars(symbol, start, end)
         timestamps = [item.get("t") for item in page]
         return page, len(timestamps) - len(set(timestamps)), timestamps != sorted(timestamps)
     if configured_provider != "tradier":
@@ -839,7 +853,7 @@ def preflight_intraday(
         ),
     }
     configured_provider = settings.active_market_data_provider.strip().lower()
-    if configured_provider not in {"tradier", "alpaca_iex"}:
+    if configured_provider not in {"tradier", "alpaca_iex", "alpaca_sip"}:
         return _record_preflight_audit(db, {
             **base,
             "status": "blocked",
@@ -862,19 +876,19 @@ def preflight_intraday(
     execution_eligible = (
         configured_provider == "tradier"
         or (
-            configured_provider == "alpaca_iex"
+            configured_provider in {"alpaca_iex", "alpaca_sip"}
             and settings.active_paper_broker == "alpaca_paper"
             and not settings.allow_live_trading
         )
     )
-    if configured_provider == "alpaca_iex" and not execution_eligible:
+    if configured_provider in {"alpaca_iex", "alpaca_sip"} and not execution_eligible:
         return _record_preflight_audit(db, {
             **base,
             "status": "blocked",
             "ready": False,
             "execution_eligible": False,
             "failure_class": "configuration",
-            "reason": "Alpaca IEX is restricted to live-disabled Alpaca paper operation",
+            "reason": "Alpaca intraday feeds are restricted to live-disabled Alpaca paper operation",
             "results": [],
         })
     market_data_key = (
