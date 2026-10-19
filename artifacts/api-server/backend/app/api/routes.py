@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import threading
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -140,6 +141,11 @@ from app.tasks.celery_app import celery_app
 from app.tasks.jobs import strategy_learning_batch_job, strategy_learning_scope_job
 
 router = APIRouter()
+_READINESS_CACHE_TTL_SECONDS = 15
+_readiness_cache_lock = threading.Lock()
+_readiness_cache: dict | None = None
+_readiness_refresh_active = False
+_readiness_refresh_error: str | None = None
 LEGACY_STOCK_EVIDENCE_QUARANTINE = (
     "Legacy simulator paper_trades/StrategyMemory are quarantined and cannot be "
     "used for stock risk, scoring, allocation, or governance."
@@ -203,8 +209,70 @@ def auth_config() -> dict:
 
 
 @router.get("/system/readiness", response_model=ReadinessResponse)
-def system_readiness(db: Session = Depends(get_db)) -> dict:
-    return readiness_snapshot(db)
+def system_readiness() -> dict:
+    """Return cached evidence while refreshing slow readiness dependencies.
+
+    Readiness is still fail-closed: the refresh computes the same full
+    snapshot used by paper-order gates.  The HTTP surface must not hang on a
+    broker or scheduler probe, though, so the first request starts a
+    background refresh and reports an explicit blocked state until evidence is
+    available.
+    """
+    global _readiness_refresh_active
+    now = datetime.utcnow()
+    with _readiness_cache_lock:
+        snapshot = _readiness_cache
+        age_seconds = (
+            (now - snapshot["generated_at"]).total_seconds()
+            if snapshot and snapshot.get("generated_at")
+            else None
+        )
+        needs_refresh = snapshot is None or age_seconds is None or age_seconds > _READINESS_CACHE_TTL_SECONDS
+        if needs_refresh and not _readiness_refresh_active:
+            _readiness_refresh_active = True
+            threading.Thread(
+                target=_refresh_readiness_snapshot,
+                name="readiness-refresh",
+                daemon=True,
+            ).start()
+        if snapshot is not None:
+            return snapshot
+        return _readiness_pending_snapshot(_readiness_refresh_error)
+
+
+def _readiness_pending_snapshot(error: str | None = None) -> dict:
+    return {
+        "generated_at": datetime.utcnow(),
+        "overall_status": "blocked",
+        "summary": {"ready": 0, "warning": 0, "blocked": 1},
+        "checks": [{
+            "name": "Readiness evaluation",
+            "status": "blocked",
+            "message": "Full readiness evidence is still being refreshed; paper decisions remain blocked.",
+            "details": {"refresh_active": True, **({"error": error} if error else {})},
+        }],
+        "paper_trading_allowed": False,
+        "live_safety": None,
+    }
+
+
+def _refresh_readiness_snapshot() -> None:
+    global _readiness_cache, _readiness_refresh_active, _readiness_refresh_error
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        snapshot = readiness_snapshot(db)
+        with _readiness_cache_lock:
+            _readiness_cache = snapshot
+            _readiness_refresh_error = None
+    except Exception as exc:  # readiness remains explicitly blocked
+        with _readiness_cache_lock:
+            _readiness_refresh_error = exc.__class__.__name__
+    finally:
+        db.close()
+        with _readiness_cache_lock:
+            _readiness_refresh_active = False
 
 
 @router.get("/system/live-safety", response_model=LiveSafetyResponse)
