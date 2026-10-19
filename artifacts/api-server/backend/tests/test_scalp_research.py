@@ -118,6 +118,7 @@ def test_scalp_research_can_use_completed_history_while_current_session_is_open(
     assert quality["status"] == "ready_research_only"
     assert quality["research_only_completed_history"] is True
     assert quality["session_day"] == "2026-09-25"
+    assert quality["verification_freshness"] == "historical_provenance"
 
 
 def test_completed_history_excludes_only_the_current_open_session():

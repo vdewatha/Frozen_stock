@@ -228,7 +228,10 @@ def _session_quality(
         }
     latest_verification = max(verified_at)
     verification_age = now.astimezone(timezone.utc) - latest_verification
-    if verification_age < timedelta(0) or verification_age > FEED_VERIFICATION_MAX_AGE:
+    if (
+        not history_fallback
+        and (verification_age < timedelta(0) or verification_age > FEED_VERIFICATION_MAX_AGE)
+    ):
         return {
             "status": "blocked",
             "reason": "authenticated feed verification is stale",
@@ -248,6 +251,7 @@ def _session_quality(
         "session_coverage": session_coverage,
         "authenticated_verification_at": latest_verification.isoformat(),
         "research_only_completed_history": history_fallback,
+        "verification_freshness": "historical_provenance" if history_fallback else "live_session",
     }
 
 
