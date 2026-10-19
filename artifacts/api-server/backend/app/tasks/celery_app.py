@@ -130,7 +130,10 @@ celery_app.conf.beat_schedule = {
         # check reduces recovery latency without duplicating scope work.
         "schedule": 60,
     },
-    "paper-trading-signal-job": {"task": "app.tasks.jobs.paper_trading_signal_job", "schedule": 60 * 60},
+    # Keep the governed paper signal lane aligned with the one-minute scalp
+    # research cadence. Reservation idempotency and risk gates prevent repeat
+    # submissions; outside readiness it records a safe skip instead.
+    "paper-trading-signal-job": {"task": "app.tasks.jobs.paper_trading_signal_job", "schedule": 60},
     "paper-trade-reconciliation-job": {"task": "app.tasks.jobs.paper_trade_reconciliation_job", "schedule": 60 * 30},
     "stock-paper-broker-reconciliation-job": {
         "task": "app.tasks.jobs.stock_paper_broker_reconciliation_job",

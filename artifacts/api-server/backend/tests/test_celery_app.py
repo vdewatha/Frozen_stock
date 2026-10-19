@@ -47,6 +47,11 @@ class CeleryConfigurationTests(unittest.TestCase):
             "scalp_research",
         )
 
+    def test_paper_signal_lane_is_minutely_and_expiring(self):
+        entry = celery_app.conf.beat_schedule["paper-trading-signal-job"]
+        self.assertEqual(entry["task"], "app.tasks.jobs.paper_trading_signal_job")
+        self.assertEqual(entry["schedule"], 60)
+
     def test_hosted_direct_scalp_runner_does_not_duplicate_beat_batch(self):
         with patch.dict("os.environ", {"PAPER_DIRECT_SCALP_RESEARCH_LOOP": "true"}):
             result = jobs.scheduled_scalp_research_job()
