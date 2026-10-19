@@ -23,6 +23,7 @@ TIMEFRAME = "1m"
 ESTIMATED_SLIPPAGE_BPS = 5.0
 ESTIMATED_FEE_BPS = 0.5
 MAX_LOOKBACK_BARS = 390 * 5
+LOOKBACK_POLICY = "drop_oldest_partial_session_v2"
 STALE_QUEUED_AFTER = timedelta(minutes=30)
 # The Celery task has a 55 second hard limit. A ten-minute bound is long
 # enough for a slow database transaction, but short enough that one crashed
@@ -515,6 +516,7 @@ def create_scalp_research_run(db: Session, *, symbols: list[str], actor: str) ->
             "estimated_slippage_bps": ESTIMATED_SLIPPAGE_BPS,
             "estimated_fee_bps": ESTIMATED_FEE_BPS,
             "max_lookback_bars": MAX_LOOKBACK_BARS,
+            "lookback_policy": LOOKBACK_POLICY,
             "paper_only": True, "eligible_for_trading": False,
             "dispatch_state": "unpublished",
         },
