@@ -526,6 +526,17 @@ def create_scalp_research_run(db: Session, *, symbols: list[str], actor: str) ->
     return row
 
 
+def _preserve_dispatch_metadata(db: Session, row: ScalpResearchRun) -> None:
+    """Merge API-written Celery metadata into a worker's stale ORM row."""
+    current_assumptions = db.execute(
+        select(ScalpResearchRun.assumptions).where(ScalpResearchRun.run_id == row.run_id)
+    ).scalar_one_or_none() or {}
+    if isinstance(current_assumptions, dict):
+        for key in ("dispatch_state", "task_id"):
+            if key in current_assumptions:
+                row.assumptions = {**(row.assumptions or {}), key: current_assumptions[key]}
+
+
 def run_scalp_research(db: Session, run_id: str) -> dict:
     claimed_at = _now()
     claimed = db.execute(
@@ -571,6 +582,13 @@ def run_scalp_research(db: Session, run_id: str) -> dict:
         row.status = "completed" if any(item.get("status") == "complete" for item in metrics.values()) else "blocked"
     except Exception as exc:
         row.status, row.error = "failed", f"{exc.__class__.__name__}: scalp research failed"
+    # The API publishes the Celery task marker in a second transaction after
+    # enqueueing. A fast worker can therefore hold a stale ORM instance with
+    # ``dispatch_state=unpublished`` and overwrite the marker when it commits
+    # its result. Re-read the two dispatch fields immediately before the final
+    # commit so recovery never mistakes a completed task for an unpublished
+    # one.
+    _preserve_dispatch_metadata(db, row)
     row.completed_at = _now()
     db.commit()
     return {"status": row.status, "run_id": row.run_id}

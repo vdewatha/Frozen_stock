@@ -403,3 +403,33 @@ def test_manual_scalp_dispatch_marks_row_published_before_response():
         assert row.assumptions["dispatch_state"] == "published"
         assert row.assumptions["task_id"] == "manual-task"
     assert job.apply_async.call_args.kwargs["expires"] == 10 * 60
+
+
+def test_scalp_completion_preserves_dispatch_marker_written_by_api():
+    """A fast worker must not make a published task look unpublished."""
+    from sqlalchemy import create_engine, update
+    from sqlalchemy.orm import Session
+    from app.models import ScalpResearchRun
+    from app.services.scalp_research import _preserve_dispatch_metadata
+
+    engine = create_engine("sqlite://")
+    ScalpResearchRun.__table__.create(engine)
+    with Session(engine) as db:
+        row = ScalpResearchRun(
+            run_id="dispatch-race", requested_by="worker", symbols=["AAPL"],
+            timeframe="1m", status="running", data_snapshot={}, metrics={},
+            assumptions={"dispatch_state": "unpublished"},
+        )
+        db.add(row)
+        db.commit()
+        # Simulate the API's second transaction updating the marker while the
+        # worker still holds its older ORM object.
+        db.execute(
+            update(ScalpResearchRun)
+            .where(ScalpResearchRun.run_id == row.run_id)
+            .values(assumptions={"dispatch_state": "published", "task_id": "task-1"}),
+            execution_options={"synchronize_session": False},
+        )
+        _preserve_dispatch_metadata(db, row)
+        assert row.assumptions["dispatch_state"] == "published"
+        assert row.assumptions["task_id"] == "task-1"
