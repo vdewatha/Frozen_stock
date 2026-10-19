@@ -707,7 +707,11 @@ def ingest_intraday(
 def _provider_failure(exc: Exception) -> tuple[str, str]:
     """Classify provider failures without returning provider or credential details."""
     provider = settings.active_market_data_provider.strip().lower()
-    provider_label = "Tradier production" if provider == "tradier" else "Alpaca IEX"
+    provider_label = {
+        "tradier": "Tradier production",
+        "alpaca_iex": "Alpaca IEX",
+        "alpaca_sip": "Alpaca SIP",
+    }.get(provider, "Configured market-data")
     classified = getattr(exc, "failure_class", None)
     if classified == "authentication":
         return "authentication", f"{provider_label} market-data authentication denied"
