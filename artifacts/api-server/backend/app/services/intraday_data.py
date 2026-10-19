@@ -541,7 +541,10 @@ def ingest_intraday(
     symbols: list[str] | None = None,
     *,
     now: datetime | None = None,
+    repair_sessions: int = 1,
 ) -> dict:
+    if not 1 <= repair_sessions <= 5:
+        raise ValueError("repair_sessions must be between 1 and 5")
     selected = symbols or [
         asset.symbol for asset in db.query(Asset).filter(Asset.is_active.is_(True)).all()
         if asset.symbol in ALLOWED_SYMBOLS
@@ -577,19 +580,24 @@ def ingest_intraday(
                         )
                         if backfill_window:
                             windows.append(backfill_window)
-            previous_bounds = session_bounds(_previous_session(local_now.date()))
-            assert previous_bounds is not None
-            if _session_missing(db, symbol, previous_bounds[0], previous_bounds[1]):
-                target_ranges.append(previous_bounds)
-                backfill_window = _bounded_missing_window(
-                    db, symbol, previous_bounds[0], previous_bounds[1]
-                )
-                if backfill_window:
-                    windows.append(backfill_window)
+            repair_day = local_now.date()
+            repair_bounds = None
+            for _ in range(repair_sessions):
+                repair_day = _previous_session(repair_day)
+                repair_bounds = session_bounds(repair_day)
+                assert repair_bounds is not None
+                if _session_missing(db, symbol, repair_bounds[0], repair_bounds[1]):
+                    target_ranges.append(repair_bounds)
+                    backfill_window = _bounded_missing_window(
+                        db, symbol, repair_bounds[0], repair_bounds[1]
+                    )
+                    if backfill_window:
+                        windows.append(backfill_window)
+            assert repair_bounds is not None
             if not windows:
                 # Continuously verify the configured credentials and SIP
                 # entitlement even when the latest session is already complete.
-                windows.append((previous_bounds[1] - BAR_CADENCE, previous_bounds[1]))
+                windows.append((repair_bounds[1] - BAR_CADENCE, repair_bounds[1]))
 
             saved = {"rows_imported": 0, "duplicate_bars": 0, "out_of_order": False}
             provider_duplicates = 0

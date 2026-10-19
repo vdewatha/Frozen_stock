@@ -61,7 +61,7 @@ def test_scalp_runner_commits_a_paper_research_batch():
     assert observed["symbol"] == "AAPL"
     assert observed["execution_eligible"] is False
     assert observed["ingestion"]["status"] == "complete"
-    ingest.assert_called_once_with(db, ["AAPL"], now=NOW)
+    ingest.assert_called_once_with(db, ["AAPL"], now=NOW, repair_sessions=5)
     create.assert_called_once_with(db, symbols=["AAPL"], actor="hosted-research-worker")
     run.assert_called_once_with(db, "research-1")
     assert db.commit.call_count == 2
