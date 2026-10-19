@@ -24,11 +24,12 @@ from app.services.trusted_data import trusted_history, validate_intraday_readine
 
 SCHEDULER_PROBE_ATTEMPTS = 2
 SCHEDULER_PROBE_TIMEOUT_SECONDS = 0.75
+SCHEDULER_PROBE_RETRY_TIMEOUT_SECONDS = 3.0
 SCHEDULER_PROBE_RETRY_DELAY_SECONDS = 0.1
 _worker_probe_lock = threading.Lock()
 
 
-def _bounded_worker_ping() -> tuple[dict, str | None]:
+def _bounded_worker_ping(timeout_seconds: float = SCHEDULER_PROBE_TIMEOUT_SECONDS) -> tuple[dict, str | None]:
     """Probe Celery without allowing an unresponsive broker to pin the API."""
     if not _worker_probe_lock.acquire(blocking=False):
         return {}, "probe_in_progress"
@@ -39,7 +40,7 @@ def _bounded_worker_ping() -> tuple[dict, str | None]:
     def probe() -> None:
         nonlocal result, error
         try:
-            result = celery_app.control.inspect(timeout=SCHEDULER_PROBE_TIMEOUT_SECONDS).ping() or {}
+            result = celery_app.control.inspect(timeout=timeout_seconds).ping() or {}
         except Exception as exc:  # broker failures are readiness evidence
             error = exc.__class__.__name__
         finally:
@@ -47,7 +48,7 @@ def _bounded_worker_ping() -> tuple[dict, str | None]:
 
     thread = threading.Thread(target=probe, name="readiness-worker-probe", daemon=True)
     thread.start()
-    thread.join(SCHEDULER_PROBE_TIMEOUT_SECONDS)
+    thread.join(timeout_seconds)
     if thread.is_alive():
         return {}, "timeout"
     return result, error
@@ -78,7 +79,12 @@ def _scheduler_health() -> dict:
             # Readiness is called by deployment monitors and UI polling. Keep
             # a broker outage from pinning the API request for several seconds;
             # an incomplete probe remains fail-closed through `healthy=False`.
-            workers, probe_error = _bounded_worker_ping()
+            probe_timeout = (
+                SCHEDULER_PROBE_TIMEOUT_SECONDS
+                if attempt == 0
+                else SCHEDULER_PROBE_RETRY_TIMEOUT_SECONDS
+            )
+            workers, probe_error = _bounded_worker_ping(probe_timeout)
             if probe_error:
                 raise RuntimeError(probe_error)
             worker_names = sorted(workers)
