@@ -24,6 +24,50 @@ def _research_bars(start, count, *, provider="alpaca_iex"):
     ) for index in range(count)]
 
 
+def test_bounded_lookback_trims_only_the_partial_oldest_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from app.models import IntradayBar
+    from app.services import scalp_research
+
+    engine = create_engine("sqlite://")
+    IntradayBar.__table__.create(engine)
+    session_starts = [
+        (datetime(2026, 10, 12, 13, 30, tzinfo=timezone.utc), 100),
+        *[
+            (datetime(2026, 10, day, 13, 30, tzinfo=timezone.utc), 390)
+            for day in range(13, 17)
+        ],
+    ]
+    bars = [
+        IntradayBar(
+            symbol="SPY",
+            timeframe="1m",
+            provider=scalp_research.PROVIDER,
+            feed_class=scalp_research.FEED_CLASS,
+            opened_at=start + timedelta(minutes=index),
+            exchange_timestamp=start + timedelta(minutes=index),
+            open=100,
+            high=101,
+            low=99,
+            close=100,
+            volume=10,
+        )
+        for start, count in session_starts
+        for index in range(count)
+    ]
+
+    with Session(engine) as db:
+        db.add_all(bars)
+        db.commit()
+        selected = scalp_research._bars(db, "SPY")
+
+    assert len(selected) == 4 * 390
+    assert selected[0].exchange_timestamp.date().isoformat() == "2026-10-13"
+    assert selected[-1].exchange_timestamp.date().isoformat() == "2026-10-16"
+
+
 def test_scalp_quality_rejects_missing_current_session_minute():
     start = datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc)
     bars = _research_bars(start, 29)
