@@ -50,6 +50,9 @@ def test_scalp_runner_commits_a_paper_research_batch():
     row = Mock(run_id="research-1")
     result = {"status": "completed", "execution_eligible": False}
     with patch.object(runner.settings, "iex_research_enabled", True), patch(
+        "app.services.intraday_data.ingest_intraday",
+        return_value={"status": "complete", "results": [{"symbol": "AAPL", "status": "complete"}]},
+    ) as ingest, patch(
         "app.services.scalp_research.create_scalp_research_run", return_value=row
     ) as create, patch(
         "app.services.scalp_research.run_scalp_research", return_value=result
@@ -57,9 +60,11 @@ def test_scalp_runner_commits_a_paper_research_batch():
         observed = runner.run_scalp_research_once("AAPL", now=NOW, redis_client=client, db_factory=lambda: db)
     assert observed["symbol"] == "AAPL"
     assert observed["execution_eligible"] is False
+    assert observed["ingestion"]["status"] == "complete"
+    ingest.assert_called_once_with(db, ["AAPL"], now=NOW)
     create.assert_called_once_with(db, symbols=["AAPL"], actor="hosted-research-worker")
     run.assert_called_once_with(db, "research-1")
-    db.commit.assert_called_once_with()
+    assert db.commit.call_count == 2
     db.close.assert_called_once_with()
     lock.release.assert_called_once_with()
 

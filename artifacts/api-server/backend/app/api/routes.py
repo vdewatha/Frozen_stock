@@ -108,6 +108,7 @@ from app.services.experiments import list_strategy_experiments, run_strategy_exp
 from app.services.governance import evaluate_strategy_governance, latest_strategy_governance_scorecard
 from app.services.learning import propose_parameter_experiments
 from app.services.market_data import get_price_points, import_market_prices
+from app.services.market_regime import latest_market_regime
 from app.services.intraday_data import MARKET_DATA_PROVIDER, MARKET_DATA_FEED_CLASS, feed_status, ingest_intraday, preflight_intraday
 from app.models import IntradayBar
 from app.services.trusted_data import trusted_history, UntrustedMarketData
@@ -1000,8 +1001,6 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSnapshot:
     recent_trades = []
     stored_experiments = list_strategy_experiments(db, strategy_slug="moving_average_crossover", limit=3)
     proposed_experiments = propose_parameter_experiments("moving_average_crossover", {"short_window": 20, "long_window": 50})
-    from app.services.market_regime import latest_market_regime
-
     current_regime = latest_market_regime(db, auto_detect=False)
     kill_switch_enabled = bool(((risk_rule.value if risk_rule else {}) or {}).get("kill_switch_enabled", False))
     return DashboardSnapshot(

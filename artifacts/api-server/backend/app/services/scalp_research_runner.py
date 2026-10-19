@@ -112,11 +112,30 @@ def run_scalp_research_once(
 
         db = db_factory()
         try:
+            # Refresh the symbol's bounded authenticated IEX window before
+            # evaluating it. This keeps the independent scalp lane useful on
+            # hosted deployments where the general Celery repair worker may be
+            # delayed, while preserving the research-only execution boundary.
+            from app.services.intraday_data import ingest_intraday
+
+            try:
+                ingestion = ingest_intraday(db, [symbol], now=observed)
+            except Exception as exc:  # research can still report the data gate
+                ingestion = {
+                    "status": "unavailable",
+                    "failure_class": exc.__class__.__name__,
+                    "results": [],
+                }
+            db.commit()
             row = create_scalp_research_run(db, symbols=[symbol], actor="hosted-research-worker")
             db.commit()
             result = run_scalp_research(db, row.run_id)
             result.setdefault("execution_eligible", False)
             result["symbol"] = symbol
+            result["ingestion"] = {
+                "status": ingestion.get("status"),
+                "results": ingestion.get("results", []),
+            }
             return result
         finally:
             db.close()
