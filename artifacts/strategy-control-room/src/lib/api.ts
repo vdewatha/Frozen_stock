@@ -1852,7 +1852,7 @@ export async function startAgentResearch(symbol: string): Promise<AgentResearchR
 
 export type ScalpResearchRun = {
   run_id: string; symbols: string[]; timeframe: string; status: string; eligible_for_trading: false;
-  data_snapshot: Record<string, { bars?: number; latest?: string | null }>;
+  data_snapshot: Record<string, { bar_count?: number; bars?: number; latest?: string | null }>;
   metrics: Record<string, unknown>; assumptions: Record<string, unknown>; error: string | null;
   created_at: string; started_at: string | null; completed_at: string | null;
 };
