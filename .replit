@@ -66,7 +66,7 @@ PAPER_LEARNING_CONCURRENCY = "1"
 # still requires complete, authenticated intraday data before it can qualify.
 PAPER_EXECUTION_SYMBOLS = "[\"AAPL\", \"MSFT\", \"SPY\", \"QQQ\"]"
 # Updated for each deployable release so hosted readiness can be verified.
-PAPER_BUILD_ID = "scalp-paper-20261019-49ba5c2"
+PAPER_BUILD_ID = "scalp-paper-20261019-b5d825d"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 # These direct loops remain research-only and never create live orders.
