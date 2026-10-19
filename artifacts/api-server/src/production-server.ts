@@ -272,6 +272,12 @@ function startPaperWorkers(): void {
     // process outside the Celery pool so a queue backlog cannot mask a
     // stalled paper worker.
     supervisePaperWorker(["scripts/run_stock_watchdog.py"], "watchdog");
+    // The compact worker path still needs the independent monitor heartbeat.
+    // Without it, the watchdog correctly halts paper admission forever after
+    // the previous heartbeat expires.
+    if (process.env.PAPER_DIRECT_MONITOR_LOOP !== "false") {
+      supervisePaperWorker(["scripts/run_stock_monitor_loop.py"], "direct-monitor");
+    }
     supervisePaperWorker(["scripts/run_beat_with_lease.py"], "beat");
     return;
   }
