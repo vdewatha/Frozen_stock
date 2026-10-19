@@ -10,6 +10,8 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.db.base import Base
 from app.models import AuditLog, CorporateAction, IntradayBar
+# Register the lazily loaded paper-order tables when this module is run alone.
+import app.models.stock_paper  # noqa: F401
 from app.services import intraday_data
 from app.services.intraday_data import _aware_utc
 from app.services.trusted_data import UntrustedMarketData, validate_intraday_readiness
