@@ -21,6 +21,10 @@ from app.services.portfolio_risk import portfolio_risk_snapshot
 from app.tasks.celery_app import celery_app
 from app.services.trusted_data import trusted_history, validate_intraday_readiness, UntrustedMarketData, TRUSTED_SOURCES
 
+SCHEDULER_PROBE_ATTEMPTS = 2
+SCHEDULER_PROBE_TIMEOUT_SECONDS = 0.75
+SCHEDULER_PROBE_RETRY_DELAY_SECONDS = 0.1
+
 
 def _check(name: str, status: str, message: str, details: Optional[dict] = None) -> dict:
     return {"name": name, "status": status, "message": message, "details": details or {}}
@@ -42,9 +46,12 @@ def _scheduler_health() -> dict:
     # A single inspect ping can time out while a worker is busy or reconnecting.
     # Retry the bounded probe before declaring the paper path unhealthy; a
     # sustained failure still remains fail-closed.
-    for attempt in range(3):
+    for attempt in range(SCHEDULER_PROBE_ATTEMPTS):
         try:
-            workers = celery_app.control.inspect(timeout=1.5).ping() or {}
+            # Readiness is called by deployment monitors and UI polling. Keep
+            # a broker outage from pinning the API request for several seconds;
+            # an incomplete probe remains fail-closed through `healthy=False`.
+            workers = celery_app.control.inspect(timeout=SCHEDULER_PROBE_TIMEOUT_SECONDS).ping() or {}
             worker_names = sorted(workers)
             worker_error = None
             if worker_names:
@@ -53,15 +60,17 @@ def _scheduler_health() -> dict:
         except Exception as exc:
             worker_names = []
             worker_error = exc.__class__.__name__
-        if attempt < 2:
-            time.sleep(0.25)
+        if attempt + 1 < SCHEDULER_PROBE_ATTEMPTS:
+            time.sleep(SCHEDULER_PROBE_RETRY_DELAY_SECONDS)
 
     evidence: list[str] = []
     beat_error = None
-    for attempt in range(3):
+    for attempt in range(SCHEDULER_PROBE_ATTEMPTS):
         try:
             client = redis.Redis.from_url(
-                settings.redis_url, socket_connect_timeout=2, socket_timeout=2,
+                settings.redis_url,
+                socket_connect_timeout=SCHEDULER_PROBE_TIMEOUT_SECONDS,
+                socket_timeout=SCHEDULER_PROBE_TIMEOUT_SECONDS,
             )
             try:
                 found: list[str] = []
@@ -80,8 +89,8 @@ def _scheduler_health() -> dict:
         except Exception as exc:
             evidence = []
             beat_error = exc.__class__.__name__
-        if attempt < 2:
-            time.sleep(0.25)
+        if attempt + 1 < SCHEDULER_PROBE_ATTEMPTS:
+            time.sleep(SCHEDULER_PROBE_RETRY_DELAY_SECONDS)
     recent_job_failures = None
     return {
         "configured_jobs": job_names,
