@@ -109,6 +109,7 @@ from app.services.governance import evaluate_strategy_governance, latest_strateg
 from app.services.learning import propose_parameter_experiments
 from app.services.market_data import get_price_points, import_market_prices
 from app.services.market_regime import latest_market_regime
+from app.services.backtester import BacktestConfig, run_backtest
 from app.services.intraday_data import MARKET_DATA_PROVIDER, MARKET_DATA_FEED_CLASS, feed_status, ingest_intraday, preflight_intraday
 from app.models import IntradayBar
 from app.services.trusted_data import trusted_history, UntrustedMarketData
@@ -546,8 +547,6 @@ def backtest(payload: BacktestRequest, db: Session = Depends(get_db)) -> dict:
     # Backtesting imports pandas and the full analytics stack. Keep that
     # optional work out of hosted API boot so health and paper research routes
     # can become ready independently.
-    from app.services.backtester import BacktestConfig, run_backtest
-
     prices, source = _research_prices(db, payload.symbol, 320, 80)
     config = BacktestConfig(
         starting_cash=payload.starting_cash,

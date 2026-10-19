@@ -913,6 +913,7 @@ class ForwardTrialTests(unittest.TestCase):
                             feed_class="sip",
                             exchange_timestamp=opened,
                             ingested_at=now,
+                            last_verified_at=now,
                         )
                     )
             db.flush()
