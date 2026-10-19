@@ -10,16 +10,34 @@ import logging
 import os
 import time
 
-from app.tasks.jobs import stock_monitoring_job
+from app.db.session import SessionLocal
+from app.services.stock_monitoring import run_stock_monitoring
+from app.services.stock_learning_cycle import sync_cycle_observability
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s stock-monitor-loop %(message)s")
 logger = logging.getLogger("stock-monitor-loop")
 
 
 def run_once() -> dict:
-    # Reuse the normal job wrapper so Redis and PostgreSQL leases prevent
-    # duplicate evaluations when autoscale starts more than one instance.
-    return stock_monitoring_job()
+    # This process is already supervised as the singleton monitor in the
+    # direct-loop deployment mode. Calling the Celery task wrapper here would
+    # add a Redis lease dependency and can suppress the heartbeat when the
+    # queue worker still holds the same lease.
+    db = SessionLocal()
+    try:
+        result = run_stock_monitoring(db, source="direct_monitor_loop")
+        sync_cycle_observability(
+            db,
+            monitor_snapshot_id=result.get("snapshot_id"),
+            recovery_event_id=result.get("recovery_event_id"),
+        )
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def main() -> None:
