@@ -144,7 +144,11 @@ def _check_celery_schedule() -> dict:
 def _check_celery_workers() -> dict:
     """Require ping and queue-subscription evidence, never configuration alone."""
     try:
-        inspector = celery_app.control.inspect(timeout=2)
+        # The hosted compact worker shares a small VM with the API and can be
+        # briefly occupied by a market-data task. Keep the probe bounded, but
+        # allow enough time for a real ping instead of recording a false
+        # zero-worker result during normal queue activity.
+        inspector = celery_app.control.inspect(timeout=5)
         responses = inspector.ping() or {}
         workers = sorted(
             name for name, response in responses.items()
