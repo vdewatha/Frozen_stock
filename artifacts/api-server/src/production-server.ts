@@ -1,6 +1,8 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
+import { dirname, join } from "node:path";
 import { request as httpRequest } from "node:http";
+import { fileURLToPath } from "node:url";
 
 import { clerkMiddleware, getAuth } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
@@ -143,6 +145,11 @@ function roleMappings(): Record<string, string> {
 
 const app = express();
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
+
+// Serve the frontend from the same immutable release as the API. Replit's
+// deployment build produces this directory before starting the gateway.
+const frontendRoot = join(dirname(fileURLToPath(import.meta.url)), "../../strategy-control-room/dist/public");
+app.use(express.static(frontendRoot, { index: "index.html" }));
 
 // Bind the public paper-only gateway before database migration or worker
 // startup. Hosting probes must get an immediate response during boot.
@@ -366,6 +373,18 @@ app.use(
   },
   apiProxy,
 );
+
+// Client-side routes must resolve to the same built application without
+// intercepting API requests or deployment diagnostics.
+app.get("/{*splat}", (req, res, next) => {
+  if (req.path.startsWith("/api") || req.path.startsWith(CLERK_PROXY_PATH)) {
+    next();
+    return;
+  }
+  res.sendFile(join(frontendRoot, "index.html"), (error) => {
+    if (error) next(error);
+  });
+});
 
 const server = app.listen(publicPort, "0.0.0.0", () => {
   console.log(`Production authentication gateway listening on ${publicPort}`);
