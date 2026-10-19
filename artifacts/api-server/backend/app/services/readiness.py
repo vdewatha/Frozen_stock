@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import threading
 import time
 from typing import Optional
 
@@ -24,6 +25,32 @@ from app.services.trusted_data import trusted_history, validate_intraday_readine
 SCHEDULER_PROBE_ATTEMPTS = 2
 SCHEDULER_PROBE_TIMEOUT_SECONDS = 0.75
 SCHEDULER_PROBE_RETRY_DELAY_SECONDS = 0.1
+_worker_probe_lock = threading.Lock()
+
+
+def _bounded_worker_ping() -> tuple[dict, str | None]:
+    """Probe Celery without allowing an unresponsive broker to pin the API."""
+    if not _worker_probe_lock.acquire(blocking=False):
+        return {}, "probe_in_progress"
+
+    result: dict = {}
+    error: str | None = None
+
+    def probe() -> None:
+        nonlocal result, error
+        try:
+            result = celery_app.control.inspect(timeout=SCHEDULER_PROBE_TIMEOUT_SECONDS).ping() or {}
+        except Exception as exc:  # broker failures are readiness evidence
+            error = exc.__class__.__name__
+        finally:
+            _worker_probe_lock.release()
+
+    thread = threading.Thread(target=probe, name="readiness-worker-probe", daemon=True)
+    thread.start()
+    thread.join(SCHEDULER_PROBE_TIMEOUT_SECONDS)
+    if thread.is_alive():
+        return {}, "timeout"
+    return result, error
 
 
 def _check(name: str, status: str, message: str, details: Optional[dict] = None) -> dict:
@@ -51,7 +78,9 @@ def _scheduler_health() -> dict:
             # Readiness is called by deployment monitors and UI polling. Keep
             # a broker outage from pinning the API request for several seconds;
             # an incomplete probe remains fail-closed through `healthy=False`.
-            workers = celery_app.control.inspect(timeout=SCHEDULER_PROBE_TIMEOUT_SECONDS).ping() or {}
+            workers, probe_error = _bounded_worker_ping()
+            if probe_error:
+                raise RuntimeError(probe_error)
             worker_names = sorted(workers)
             worker_error = None
             if worker_names:
