@@ -151,6 +151,24 @@ def test_completed_history_excludes_incomplete_session_after_close():
     assert selected[-1].exchange_timestamp.date().isoformat() == "2026-09-25"
 
 
+def test_completed_history_drops_older_damaged_sessions_without_filling_them():
+    previous = _research_bars(
+        datetime(2026, 9, 24, 13, 30, tzinfo=timezone.utc), 390
+    )
+    damaged = _research_bars(
+        datetime(2026, 9, 25, 13, 30, tzinfo=timezone.utc), 389
+    )
+    current = _research_bars(
+        datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc), 30
+    )
+    selected = _completed_history_bars(
+        previous + damaged + current,
+        now=datetime(2026, 9, 28, 14, 0, tzinfo=timezone.utc),
+    )
+    assert len(selected) == 390
+    assert {bar.exchange_timestamp.date().isoformat() for bar in selected} == {"2026-09-24"}
+
+
 def test_scalp_research_accepts_completed_history_after_close():
     completed = _research_bars(
         datetime(2026, 9, 25, 13, 30, tzinfo=timezone.utc), 390

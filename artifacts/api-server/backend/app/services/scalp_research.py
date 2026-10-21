@@ -1,7 +1,7 @@
 """Independent 1-minute paper research; this module has no broker/order imports."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 from statistics import mean, pstdev
@@ -97,16 +97,38 @@ def _expected_research_session(observed: datetime):
 
 
 def _completed_history_bars(bars: list[IntradayBar], *, now: datetime) -> list[IntradayBar]:
-    """Exclude an in-progress regular session from research-only evaluation."""
+    """Keep only complete historical sessions for research-only evaluation.
+
+    The current session is excluded because it is still mutable. Older sessions
+    with missing minutes are excluded as well; dropping them is preferable to
+    silently filling gaps or allowing a damaged session into model evaluation.
+    """
     expected_day = _expected_research_session(now)
     bounds = session_bounds(expected_day) if expected_day else None
     local = now.astimezone(NY)
-    if not bounds or local < bounds[0].astimezone(NY):
-        return bars
-    return [
-        bar for bar in bars
-        if _aware(bar.exchange_timestamp).astimezone(NY).date() != expected_day
-    ]
+    exclude_current = bool(bounds and local >= bounds[0].astimezone(NY))
+    by_day: dict[date, list[IntradayBar]] = {}
+    for bar in bars:
+        day = _aware(bar.exchange_timestamp).astimezone(NY).date()
+        by_day.setdefault(day, []).append(bar)
+
+    selected: list[IntradayBar] = []
+    for day, day_bars in by_day.items():
+        if exclude_current and day == expected_day:
+            continue
+        day_bounds = session_bounds(day)
+        if not day_bounds or not is_nyse_session(day):
+            continue
+        expected_minutes = int((day_bounds[1] - day_bounds[0]).total_seconds() // 60)
+        timestamps = {
+            _aware(bar.exchange_timestamp)
+            for bar in day_bars
+            if day_bounds[0] <= _aware(bar.exchange_timestamp) < day_bounds[1]
+        }
+        if len(timestamps) != expected_minutes:
+            continue
+        selected.extend(day_bars)
+    return sorted(selected, key=lambda bar: _aware(bar.exchange_timestamp))
 
 
 def _session_quality(
