@@ -202,11 +202,22 @@ def _session_quality(
     # complete coverage for every session represented by the lookback, not
     # just the newest one, so an older hole cannot improve a backtest result.
     first_day = timestamps[0].astimezone(NY).date()
+    represented_days = {
+        stamp.astimezone(NY).date()
+        for stamp in timestamps
+        if session_bounds(stamp.astimezone(NY).date())
+    }
     session_coverage = []
     cursor_day = first_day
     while cursor_day <= latest_day:
         day_bounds = session_bounds(cursor_day)
         if day_bounds and is_nyse_session(cursor_day):
+            # Completed-history fallback intentionally removes damaged
+            # sessions. Do not turn those explicit exclusions into synthetic
+            # missing sessions while validating the remaining evidence.
+            if history_fallback and cursor_day not in represented_days:
+                cursor_day += timedelta(days=1)
+                continue
             day_present = {
                 stamp for stamp in timestamps
                 if day_bounds[0] <= stamp < day_bounds[1]

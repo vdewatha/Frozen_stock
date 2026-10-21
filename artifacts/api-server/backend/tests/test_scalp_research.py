@@ -169,6 +169,25 @@ def test_completed_history_drops_older_damaged_sessions_without_filling_them():
     assert {bar.exchange_timestamp.date().isoformat() for bar in selected} == {"2026-09-24"}
 
 
+def test_completed_history_quality_allows_explicitly_dropped_sessions():
+    complete_days = ["2026-10-08", "2026-10-12", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20"]
+    bars = []
+    for day in complete_days:
+        bars.extend(_research_bars(datetime.fromisoformat(day + "T13:30:00+00:00"), 390))
+    bars.extend(_research_bars(datetime(2026, 10, 21, 13, 30, tzinfo=timezone.utc), 23))
+    selected = _completed_history_bars(
+        bars,
+        now=datetime(2026, 10, 21, 14, 0, tzinfo=timezone.utc),
+    )
+    quality = _session_quality(
+        selected,
+        now=datetime(2026, 10, 21, 14, 0, tzinfo=timezone.utc),
+        research_only_completed_history=True,
+    )
+    assert quality["status"] == "ready_research_only"
+    assert quality["research_only_completed_history"] is True
+
+
 def test_scalp_research_accepts_completed_history_after_close():
     completed = _research_bars(
         datetime(2026, 9, 25, 13, 30, tzinfo=timezone.utc), 390
