@@ -101,7 +101,7 @@ def _completed_history_bars(bars: list[IntradayBar], *, now: datetime) -> list[I
     expected_day = _expected_research_session(now)
     bounds = session_bounds(expected_day) if expected_day else None
     local = now.astimezone(NY)
-    if not bounds or not (bounds[0].astimezone(NY) <= local < bounds[1].astimezone(NY)):
+    if not bounds or local < bounds[0].astimezone(NY):
         return bars
     return [
         bar for bar in bars
@@ -137,16 +137,16 @@ def _session_quality(
     expected_day = _expected_research_session(now)
     observed_local = now.astimezone(NY)
     expected_bounds = session_bounds(expected_day) if expected_day else None
-    current_session_in_progress = bool(
+    current_session_researchable = bool(
         expected_bounds
         and observed_local.date() == expected_day
-        and expected_bounds[0].astimezone(NY) <= observed_local < expected_bounds[1].astimezone(NY)
+        and observed_local >= expected_bounds[0].astimezone(NY)
     )
     history_fallback = False
     if not bounds or latest < bounds[0] or latest >= bounds[1]:
         return {"status": "blocked", "reason": "latest observation is outside an NYSE regular session", "missing_intervals": []}
     if expected_day != latest_day:
-        if not (research_only_completed_history and current_session_in_progress and latest_day < expected_day):
+        if not (research_only_completed_history and current_session_researchable and latest_day < expected_day):
             return {"status": "blocked", "reason": "latest trusted session is stale", "missing_intervals": []}
         history_fallback = True
         expected_day = latest_day
