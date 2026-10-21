@@ -557,8 +557,8 @@ def ingest_intraday(
     now: datetime | None = None,
     repair_sessions: int = 1,
 ) -> dict:
-    if not 1 <= repair_sessions <= 5:
-        raise ValueError("repair_sessions must be between 1 and 5")
+    if not 1 <= repair_sessions <= 10:
+        raise ValueError("repair_sessions must be between 1 and 10")
     selected = symbols or [
         asset.symbol for asset in db.query(Asset).filter(Asset.is_active.is_(True)).all()
         if asset.symbol in ALLOWED_SYMBOLS

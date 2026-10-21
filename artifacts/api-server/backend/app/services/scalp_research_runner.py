@@ -119,7 +119,10 @@ def run_scalp_research_once(
             from app.services.intraday_data import ingest_intraday
 
             try:
-                ingestion = ingest_intraday(db, [symbol], now=observed, repair_sessions=5)
+                # Keep a ten-session authenticated repair horizon so one
+                # damaged recent session does not starve research of older
+                # complete sessions. Requests remain bounded per cycle.
+                ingestion = ingest_intraday(db, [symbol], now=observed, repair_sessions=10)
             except Exception as exc:  # research can still report the data gate
                 ingestion = {
                     "status": "unavailable",

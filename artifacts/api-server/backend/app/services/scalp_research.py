@@ -22,8 +22,8 @@ FEED_CLASS = "iex" if PROVIDER == "alpaca_iex" else "sip"
 TIMEFRAME = "1m"
 ESTIMATED_SLIPPAGE_BPS = 5.0
 ESTIMATED_FEE_BPS = 0.5
-MAX_LOOKBACK_BARS = 390 * 5
-LOOKBACK_POLICY = "drop_oldest_partial_session_v2"
+MAX_LOOKBACK_BARS = 390 * 10
+LOOKBACK_POLICY = "drop_oldest_partial_session_v3"
 STALE_QUEUED_AFTER = timedelta(minutes=30)
 # The Celery task has a 55 second hard limit. A ten-minute bound is long
 # enough for a slow database transaction, but short enough that one crashed
