@@ -86,6 +86,7 @@ def portfolio_risk_snapshot(db: Session) -> dict:
     position_utilization = len(open_trades) / max(int(rules.get("max_open_positions", 1)), 1)
     symbol_limit = float(rules.get("max_symbol_exposure", 1))
     max_daily_drawdown = float(rules.get("max_daily_drawdown", 1))
+    gross_limit = float(rules.get("max_total_exposure", 1.0))
     current_drawdown = abs(min(total_unrealized_pl / DEFAULT_PAPER_EQUITY, 0.0))
 
     if bool(rules.get("kill_switch_enabled", False)):
@@ -98,6 +99,14 @@ def portfolio_risk_snapshot(db: Session) -> dict:
         alerts.append(_alert("breach", "Drawdown", "Unrealized paper drawdown is beyond the daily drawdown limit.", current_drawdown / max_daily_drawdown))
     elif max_daily_drawdown > 0 and current_drawdown / max_daily_drawdown >= WARN_UTILIZATION:
         alerts.append(_alert("warning", "Drawdown", "Unrealized paper drawdown is close to the daily drawdown limit.", current_drawdown / max_daily_drawdown))
+
+    # Symbol caps do not bound the book; monitor the aggregate cap as well.
+    if gross_limit > 0:
+        gross_utilization = gross_exposure / gross_limit
+        if gross_utilization >= 1:
+            alerts.append(_alert("breach", "Gross exposure", "Gross paper exposure is at or above the aggregate cap.", gross_utilization))
+        elif gross_utilization >= WARN_UTILIZATION:
+            alerts.append(_alert("warning", "Gross exposure", "Gross paper exposure is close to the aggregate cap.", gross_utilization))
 
     for symbol, exposure in symbol_exposure.items():
         utilization = exposure / symbol_limit if symbol_limit else 0.0
@@ -130,6 +139,8 @@ def portfolio_risk_snapshot(db: Session) -> dict:
             "max_open_positions": int(rules.get("max_open_positions", 0)),
             "max_open_positions_per_strategy": max_per_strategy,
             "max_symbol_exposure": symbol_limit,
+            "max_total_exposure": gross_limit,
+            "max_risk_per_trade": float(rules.get("max_risk_per_trade", 0.01)),
             "max_daily_drawdown": max_daily_drawdown,
             "candidate_review_score_threshold": float(rules.get("candidate_review_score_threshold", 0.70)),
             "activation_score_threshold": float(rules.get("activation_score_threshold", 0.72)),
