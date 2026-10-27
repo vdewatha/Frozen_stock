@@ -339,15 +339,20 @@ def _price_follow_through(db: Session, cache: dict[str, tuple], symbol: str, ent
         return {"source": source, "status": "pending", "horizon_days": horizon, "return": None}
     entry_price = float(prices.iloc[entry_index]["close"])
     exit_price = float(prices.iloc[target_index]["close"])
+    complete = target_index - entry_index >= horizon
+    observed_return = round(exit_price / entry_price - 1, 6) if entry_price else None
     return {
         "source": source,
-        "status": "complete" if target_index - entry_index >= horizon else "partial",
+        "status": "complete" if complete else "partial",
         "horizon_days": horizon,
         "entry_date": str(prices.iloc[entry_index]["date"]),
         "exit_date": str(prices.iloc[target_index]["date"]),
         "entry_price": round(entry_price, 6),
         "exit_price": round(exit_price, 6),
-        "return": round(exit_price / entry_price - 1, 6) if entry_price else None,
+        # A partial horizon is not an outcome; scoring it as one rewards or
+        # punishes decisions on a window shorter than the one they predicted.
+        "return": observed_return if complete else None,
+        "partial_return": None if complete else observed_return,
     }
 
 
@@ -367,22 +372,29 @@ def _journal_follow_through(db: Session, cache: dict[str, tuple], row: Candidate
         if item >= str(entry_date):
             entry_index = index
             break
-    if entry_index is None:
+    if entry_index is None or (entry_index == 0 and str(prices.iloc[0]["date"])[:10] > str(entry_date)[:10]):
+        # An entry older than the loaded window would otherwise be scored from
+        # the first available bar, a different (later) date than the decision.
         return {"source": source, "status": "missing_entry_date", "horizon_days": horizon, "return": None}
 
     target_index = min(entry_index + horizon, len(prices) - 1)
     if target_index <= entry_index:
         return {"source": source, "status": "pending", "horizon_days": horizon, "return": None}
     exit_price = float(prices.iloc[target_index]["close"])
+    complete = target_index - entry_index >= horizon
+    observed_return = round(exit_price / entry_price - 1, 6) if entry_price else None
     return {
         "source": source,
-        "status": "complete" if target_index - entry_index >= horizon else "partial",
+        "status": "complete" if complete else "partial",
         "horizon_days": horizon,
         "entry_date": str(prices.iloc[entry_index]["date"]),
         "exit_date": str(prices.iloc[target_index]["date"]),
         "entry_price": round(entry_price, 6),
         "exit_price": round(exit_price, 6),
-        "return": round(exit_price / entry_price - 1, 6) if entry_price else None,
+        # A partial horizon is not an outcome; scoring it as one rewards or
+        # punishes decisions on a window shorter than the one they predicted.
+        "return": observed_return if complete else None,
+        "partial_return": None if complete else observed_return,
     }
 
 

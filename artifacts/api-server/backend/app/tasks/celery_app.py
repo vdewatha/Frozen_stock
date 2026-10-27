@@ -198,6 +198,9 @@ celery_app.conf.beat_schedule = {
     "scheduled-stock-challenger-retraining": {"task": "app.tasks.jobs.scheduled_stock_challenger_retraining_job", "schedule": 60 * 60 * 24},
     "scheduled-stock-paper-trial-handoff": {"task": "app.tasks.jobs.scheduled_stock_paper_trial_handoff_job", "schedule": 60 * 5},
     "scheduled-stock-paper-promotion": {"task": "app.tasks.jobs.scheduled_stock_paper_promotion_job", "schedule": 60 * 15},
+    # Paper-only demotion of trial strategies with statistically confident
+    # rolling edge decay. It can only pause; reactivation needs a new cycle.
+    "strategy-edge-decay": {"task": "app.tasks.jobs.strategy_edge_decay_job", "schedule": 60 * 15},
     "stock-forward-trial-reconcile": {
         "task": "app.tasks.jobs.stock_forward_trial_reconcile_job",
         "schedule": 60,

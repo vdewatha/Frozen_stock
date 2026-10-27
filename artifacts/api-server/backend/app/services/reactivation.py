@@ -4,8 +4,12 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from datetime import datetime, timezone
+
 from app.models import RiskRule, Strategy, StrategyMemory
+from app.models.stock_paper import StockPaperStrategyEvidence
 from app.services.audit import write_audit_log
+from app.services.governance import aggregate_strategy_memory
 from app.services.notifications import create_notification
 
 
@@ -48,12 +52,42 @@ def _memory_snapshot(memory: Optional[StrategyMemory]) -> dict:
     }
 
 
+def _reactivation_memory(db: Session, strategy_id: int) -> dict:
+    snapshot = aggregate_strategy_memory(db, strategy_id)
+    return {
+        "sample_size": snapshot["sample_size"],
+        "win_rate": snapshot["win_rate"],
+        "profit_factor": snapshot["profit_factor"],
+        "avg_drawdown": snapshot["avg_drawdown"],
+        "confidence_score": snapshot["confidence_score"],
+        "market_regime": snapshot.get("market_regime") or "unclassified",
+        "symbol": snapshot.get("symbol"),
+    }
+
+
 def _kill_switch_enabled(db: Session) -> bool:
     rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
     return bool(((rule.value if rule else {}) or {}).get("kill_switch_enabled", False))
 
 
-def _blockers(strategy: Strategy, memory: dict, kill_switch_enabled: bool) -> list[str]:
+def _forward_evidence_blocker(db: Session, strategy_id: int, now: Optional[datetime] = None) -> Optional[str]:
+    """Activation needs current, approved forward-trial evidence for this strategy."""
+    evidence = db.query(StockPaperStrategyEvidence).filter(
+        StockPaperStrategyEvidence.strategy_id == strategy_id
+    ).one_or_none()
+    if evidence is None:
+        return "No forward paper-trial evidence; reactivation requires a fresh holdout and forward trial."
+    if evidence.status != "approved":
+        return f"Forward evidence is {evidence.status}; reactivation requires a new governed cycle."
+    expires_at = evidence.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < (now or datetime.now(timezone.utc)):
+        return "Forward paper-trial evidence has expired."
+    return None
+
+
+def _blockers(strategy: Strategy, memory: dict, kill_switch_enabled: bool, db: Optional[Session] = None) -> list[str]:
     blockers: list[str] = []
     if strategy.current_status not in REVIEWABLE_STATUSES:
         blockers.append("Strategy is not paused or in candidate review.")
@@ -69,6 +103,10 @@ def _blockers(strategy: Strategy, memory: dict, kill_switch_enabled: bool) -> li
         blockers.append("Strategy confidence score below reactivation threshold.")
     if memory["avg_drawdown"] <= MAX_REACTIVATION_DRAWDOWN:
         blockers.append("Strategy drawdown remains beyond reactivation limit.")
+    if db is not None:
+        evidence_blocker = _forward_evidence_blocker(db, strategy.id)
+        if evidence_blocker:
+            blockers.append(evidence_blocker)
     return blockers
 
 
@@ -77,8 +115,8 @@ def reactivation_queue(db: Session) -> dict:
     strategies = db.query(Strategy).filter(Strategy.current_status.in_(REVIEWABLE_STATUSES)).order_by(Strategy.name).all()
     candidates = []
     for strategy in strategies:
-        memory = _memory_snapshot(_latest_memory_for_strategy(db, strategy.id))
-        blockers = _blockers(strategy, memory, kill_switch)
+        memory = _reactivation_memory(db, strategy.id)
+        blockers = _blockers(strategy, memory, kill_switch, db)
         candidates.append(
             {
                 "strategy_id": strategy.id,
@@ -103,8 +141,8 @@ def review_strategy_reactivation(db: Session, strategy_id: int, decision: str, r
         raise ValueError("Decision must be approve, reject, or hold.")
 
     kill_switch = _kill_switch_enabled(db)
-    memory = _memory_snapshot(_latest_memory_for_strategy(db, strategy.id))
-    blockers = _blockers(strategy, memory, kill_switch)
+    memory = _reactivation_memory(db, strategy.id)
+    blockers = _blockers(strategy, memory, kill_switch, db)
     old_status = strategy.current_status
     new_status = old_status
     status = "complete"

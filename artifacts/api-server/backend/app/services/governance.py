@@ -77,6 +77,39 @@ def _latest_memory_for_strategy(db: Session, strategy_id: int) -> Optional[Strat
     )
 
 
+def aggregate_strategy_memory(db: Session, strategy_id: int) -> dict:
+    """Combine every symbol/regime memory slice of a strategy.
+
+    Using only the most recently updated slice let a strategy be judged on
+    whichever symbol happened to close last, hiding losses in other slices.
+    Rates are sample-weighted; drawdown is the worst slice.
+    """
+    rows = (
+        db.query(StrategyMemory)
+        .filter(StrategyMemory.strategy_id == strategy_id)
+        .order_by(StrategyMemory.last_updated.desc())
+        .all()
+    )
+    if not rows:
+        return _memory_snapshot(None)
+    latest = _memory_snapshot(rows[0])
+    total = sum(int(row.sample_size or 0) for row in rows)
+    if total <= 0 or len(rows) == 1:
+        return latest | {"slices": len(rows)}
+
+    def weighted(field: str) -> float:
+        return sum(float(getattr(row, field) or 0) * int(row.sample_size or 0) for row in rows) / total
+
+    return latest | {
+        "sample_size": total,
+        "win_rate": round(weighted("win_rate"), 6),
+        "profit_factor": round(weighted("profit_factor"), 6),
+        "confidence_score": round(weighted("confidence_score"), 6),
+        "avg_drawdown": min(float(row.avg_drawdown or 0) for row in rows),
+        "slices": len(rows),
+    }
+
+
 def _check(label: str, passed: bool, actual: float, threshold: float, comparator: str) -> dict:
     return {
         "label": label,
@@ -116,8 +149,7 @@ def _governance_checks(snapshot: dict) -> dict:
 
 
 def evaluate_single_strategy(db: Session, strategy: Strategy) -> dict:
-    memory = _latest_memory_for_strategy(db, strategy.id)
-    snapshot = _memory_snapshot(memory)
+    snapshot = aggregate_strategy_memory(db, strategy.id)
     checks = _governance_checks(snapshot)
     old_status = strategy.current_status
     decision = "hold"
@@ -154,11 +186,24 @@ def evaluate_single_strategy(db: Session, strategy: Strategy) -> dict:
             and snapshot["profit_factor"] >= MIN_PROFIT_FACTOR
             and snapshot["confidence_score"] >= MIN_CONFIDENCE_SCORE
         ):
-            decision = "promote"
-            reason = "Paper-trading evidence meets active-strategy thresholds."
-            new_status = "paper_trading_active"
+            if old_status == "paper_trading_active":
+                reason = "Paper-trading evidence meets active-strategy thresholds; strategy remains active."
+            else:
+                # Governance may only demote.  Activation must go through the
+                # gated reactivation review (fresh holdout + forward trial).
+                decision = "promotion_review_required"
+                reason = (
+                    "Paper evidence meets thresholds, but activation requires reactivation review "
+                    "with fresh holdout and forward paper-trial evidence."
+                )
         else:
             reason = "Paper evidence reviewed; no lifecycle change."
+
+    if old_status == "retired" and new_status != "retired":
+        # Never move a retired strategy back toward reviewable states.
+        new_status = old_status
+        decision = "hold"
+        reason = "Strategy is retired; lifecycle changes require a new governed research cycle."
 
     if new_status != old_status:
         strategy.current_status = new_status

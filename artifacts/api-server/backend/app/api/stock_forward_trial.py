@@ -92,6 +92,22 @@ def eligible_bindings(db: Session = Depends(get_db)):
                        "paper_only": True, "live_authorized": False})
     return {"items": result}
 
+@router.get("/learning/mistakes")
+def strategy_mistakes(db: Session = Depends(get_db)):
+    """Read-only post-trade mistake attribution aggregated by strategy."""
+    from app.services.trade_mistakes import strategy_mistake_report
+
+    return jsonable_encoder(strategy_mistake_report(db))
+
+
+@router.get("/learning/edge-decay")
+def strategy_edge_decay(db: Session = Depends(get_db)):
+    """Read-only rolling forward-edge assessment; demotion runs in the scheduled job."""
+    from app.services.strategy_edge_decay import edge_decay_projection
+
+    return jsonable_encoder(edge_decay_projection(db))
+
+
 @router.get("/{trial_id}")
 def get_trial(trial_id: str, db: Session = Depends(get_db)):
     row = db.get(StockPaperTrial, trial_id)
@@ -123,6 +139,17 @@ def decisions(
         "offset": offset,
         "has_more": offset + len(rows) < total,
     }
+
+@router.get("/{trial_id}/mistakes")
+def trial_mistakes(trial_id: str, db: Session = Depends(get_db)):
+    """Read-only per-lot mistake attribution for one forward trial."""
+    from app.services.trade_mistakes import trial_mistake_report
+
+    try:
+        return jsonable_encoder(trial_mistake_report(db, trial_id))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
 
 @router.get("/{trial_id}/metrics")
 def metrics(
