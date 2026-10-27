@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
-from app.models import Asset, CorporateAction, IntradayBar
+from app.models import Asset, CorporateAction, IntradayBar, IntradayNoTradeInterval
 from app.services.audit import write_audit_log
 from app.services.exchange_sessions import is_nyse_session, nyse_holidays, session_bounds
 
@@ -27,6 +27,13 @@ ENTITLEMENT_VERIFICATION_MAX_AGE = timedelta(minutes=5)
 BAR_CADENCE = timedelta(minutes=1)
 LATE_TRADE_ALLOWANCE = timedelta(seconds=60)
 INTRADAY_BACKFILL_WINDOW = timedelta(minutes=60)
+# Partial-venue feeds publish a minute bar only when that venue traded. Only
+# these feed classes may resolve a bar-less minute as a verified no-trade
+# minute; consolidated (SIP/Tradier) gaps always stay missing.
+NO_TRADE_VERIFIABLE_FEEDS = frozenset({"iex"})
+# A bar-less minute is only accepted after an authenticated re-query made at
+# least this long after the minute closed (beyond the late-trade allowance).
+NO_TRADE_CONFIRMATION_DELAY = timedelta(minutes=2)
 
 
 MARKET_DATA_PROVIDER = settings.active_market_data_provider.strip().lower()
@@ -383,6 +390,7 @@ def _session_missing(
         .all()
     )
     existing = {_aware_utc(item.opened_at) for item in rows}
+    existing |= _verified_no_trade_minutes(db, symbol, start, end)
     missing: list[str] = []
     cursor = start
     while cursor < end and len(missing) < cap:
@@ -390,6 +398,173 @@ def _session_missing(
             missing.append(cursor.isoformat())
         cursor += BAR_CADENCE
     return missing
+
+
+def _verified_no_trade_minutes(
+    db: Session,
+    symbol: str,
+    start: datetime,
+    end: datetime,
+) -> set[datetime]:
+    """Return provider-verified no-trade minutes for the configured feed.
+
+    These minutes are excluded from gap accounting only; they are never bars
+    and never reach research, training or execution price readers.
+    """
+    if MARKET_DATA_FEED_CLASS not in NO_TRADE_VERIFIABLE_FEEDS:
+        return set()
+    rows = (
+        db.query(IntradayNoTradeInterval.opened_at)
+        .filter(
+            IntradayNoTradeInterval.symbol == symbol,
+            IntradayNoTradeInterval.timeframe == "1m",
+            IntradayNoTradeInterval.provider == MARKET_DATA_PROVIDER,
+            IntradayNoTradeInterval.feed_class == MARKET_DATA_FEED_CLASS,
+            IntradayNoTradeInterval.opened_at >= start,
+            IntradayNoTradeInterval.opened_at < end,
+        )
+        .all()
+    )
+    return {_aware_utc(item.opened_at) for item in rows}
+
+
+def record_verified_no_trade_minutes(
+    db: Session,
+    symbol: str,
+    query_start: datetime,
+    query_end: datetime,
+    *,
+    observed_at: datetime,
+    provider: str,
+    feed_class: str,
+) -> list[str]:
+    """Mark closed minutes a successful provider query returned without a bar.
+
+    Call only after an authenticated provider request for ``[query_start,
+    query_end)`` succeeded and its bars were persisted. A minute is marked
+    only when all of these hold, so a genuine outage stays fail-closed:
+
+    * the feed is a partial-venue feed (IEX) and matches the configured one;
+    * the minute closed at least ``NO_TRADE_CONFIRMATION_DELAY`` before the
+      query, so late prints had time to arrive;
+    * authenticated real bars exist on both sides of the bar-less run within
+      the same regular session (the feed was live before and after); and
+    * the bar-less run is no longer than
+      ``settings.intraday_no_trade_max_run_minutes``.
+
+    Session-open and session-close edges, the newest minutes of the feed and
+    any longer run remain missing.
+    """
+    max_run = settings.intraday_no_trade_max_run_minutes
+    if (
+        max_run <= 0
+        or feed_class not in NO_TRADE_VERIFIABLE_FEEDS
+        or provider != MARKET_DATA_PROVIDER
+        or feed_class != MARKET_DATA_FEED_CLASS
+    ):
+        return []
+    symbol = _symbol(symbol)
+    observed_at = _aware_utc(observed_at)
+    query_start = _aware_utc(query_start)
+    query_end = _aware_utc(query_end)
+    bounds = session_bounds(query_start.astimezone(NY).date())
+    if bounds is None:
+        return []
+    session_open, session_close = bounds
+    start = max(query_start, session_open)
+    end = min(query_end, session_close)
+    if end <= start:
+        return []
+    span = BAR_CADENCE * (max_run + 1)
+    bar_rows = (
+        db.query(IntradayBar.opened_at, IntradayBar.last_verified_at)
+        .filter(
+            IntradayBar.symbol == symbol,
+            IntradayBar.timeframe == "1m",
+            IntradayBar.provider == provider,
+            IntradayBar.feed_class == feed_class,
+            IntradayBar.opened_at >= max(session_open, start - span),
+            IntradayBar.opened_at < min(session_close, end + span),
+        )
+        .all()
+    )
+    verified_bars = {
+        _aware_utc(row.opened_at)
+        for row in bar_rows
+        if row.last_verified_at is not None
+    }
+    all_bars = {_aware_utc(row.opened_at) for row in bar_rows}
+    markers = (
+        db.query(IntradayNoTradeInterval)
+        .filter(
+            IntradayNoTradeInterval.symbol == symbol,
+            IntradayNoTradeInterval.timeframe == "1m",
+            IntradayNoTradeInterval.provider == provider,
+            IntradayNoTradeInterval.opened_at >= start,
+            IntradayNoTradeInterval.opened_at < end,
+        )
+        .all()
+    )
+    marked = set()
+    for marker in markers:
+        opened_at = _aware_utc(marker.opened_at)
+        if opened_at in all_bars:
+            # A late real bar always supersedes a no-trade marker.
+            db.delete(marker)
+        else:
+            marked.add(opened_at)
+
+    confirmed_before = observed_at - NO_TRADE_CONFIRMATION_DELAY
+    created: list[str] = []
+    pending: list[dict] = []
+    cursor = start
+    while cursor < end:
+        if cursor in all_bars or cursor in marked or cursor + BAR_CADENCE > confirmed_before:
+            cursor += BAR_CADENCE
+            continue
+        previous_bar = cursor - BAR_CADENCE
+        while previous_bar >= session_open and previous_bar not in all_bars and cursor - previous_bar <= span:
+            previous_bar -= BAR_CADENCE
+        next_bar = cursor + BAR_CADENCE
+        while next_bar < session_close and next_bar not in all_bars and next_bar - cursor <= span:
+            next_bar += BAR_CADENCE
+        run_minutes = int((next_bar - previous_bar) / BAR_CADENCE) - 1
+        if (
+            previous_bar in verified_bars
+            and next_bar in verified_bars
+            and 1 <= run_minutes <= max_run
+        ):
+            pending.append(
+                {
+                    "symbol": symbol,
+                    "timeframe": "1m",
+                    "opened_at": cursor,
+                    "provider": provider,
+                    "feed_class": feed_class,
+                    "reason": "provider_returned_no_bar",
+                    "verified_at": observed_at,
+                    "query_start": query_start,
+                    "query_end": query_end,
+                    "previous_bar_at": previous_bar,
+                    "next_bar_at": next_bar,
+                    "run_minutes": run_minutes,
+                }
+            )
+            created.append(cursor.isoformat())
+        cursor += BAR_CADENCE
+    if pending:
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            # Concurrent collectors may verify the same minute; the first
+            # durable verification wins and the rest are idempotent no-ops.
+            db.execute(
+                pg_insert(IntradayNoTradeInterval)
+                .values(pending)
+                .on_conflict_do_nothing(constraint="uq_intraday_no_trade_provider")
+            )
+        else:
+            db.add_all(IntradayNoTradeInterval(**values) for values in pending)
+    db.commit()
+    return created
 
 
 def _bounded_missing_window(
@@ -617,6 +792,7 @@ def ingest_intraday(
             provider_duplicates = 0
             provider_out_of_order = False
             missing: list[str] = []
+            verified_no_trade: list[str] = []
             processed_windows: list[tuple[datetime, datetime]] = []
             max_windows = 1 + settings.intraday_backfill_chunks_per_cycle
             for window_index in range(max_windows):
@@ -626,6 +802,22 @@ def ingest_intraday(
                 rows, duplicates, out_of_order = _fetch_bars(symbol, window_start, window_end)
                 persisted = upsert_intraday_bars(
                     db, symbol, rows, ingested_at=observed_at, verify_entitlement=True
+                )
+                # The authenticated request above succeeded (failures raise),
+                # so bar-less closed minutes in this window are provider
+                # answers, not transport gaps. Only short, bracketed runs on a
+                # partial-venue feed are recorded; outages stay missing.
+                configured_provider = settings.active_market_data_provider.strip().lower()
+                verified_no_trade.extend(
+                    record_verified_no_trade_minutes(
+                        db,
+                        symbol,
+                        window_start,
+                        window_end,
+                        observed_at=observed_at,
+                        provider=configured_provider,
+                        feed_class="iex" if configured_provider == "alpaca_iex" else "sip",
+                    )
                 )
                 saved["rows_imported"] += persisted["rows_imported"]
                 saved["duplicate_bars"] += persisted["duplicate_bars"]
@@ -674,6 +866,7 @@ def ingest_intraday(
                     "missing_intervals": missing,
                     "deferred_window": deferred_window,
                     "oldest_unresolved_interval": oldest_unresolved_interval,
+                    "verified_no_trade_intervals": sorted(set(verified_no_trade)),
                     "duplicate_bars": provider_duplicates + saved["duplicate_bars"],
                     "out_of_order": provider_out_of_order or saved["out_of_order"],
                     "failure_class": "incomplete_data" if missing else None,
@@ -1149,6 +1342,14 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             else None
         ),
         "oldest_unresolved_interval": missing[0] if missing else None,
+        # Provider-verified no-trade minutes are excluded from missing
+        # intervals; they are listed so operators can audit every exclusion.
+        "verified_no_trade_intervals": sorted(
+            value.isoformat()
+            for value in _verified_no_trade_minutes(
+                db, symbol, target_bounds[0], expected_end
+            )
+        ) if expected_end > target_bounds[0] else [],
         "checked_at": observed_at,
         "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
     }

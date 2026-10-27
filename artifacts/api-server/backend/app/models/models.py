@@ -70,6 +70,41 @@ class IntradayBar(Base):
     last_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
+class IntradayNoTradeInterval(Base):
+    """Provider-verified regular-session minute with no printed bar.
+
+    Partial-venue feeds such as Alpaca IEX only publish a minute bar when that
+    venue traded. A closed minute that an authenticated re-query still returns
+    without a bar, while bars exist on both sides, is recorded here so gap
+    accounting can tell it apart from an outage. It is deliberately not an
+    ``IntradayBar``: no price is fabricated and research/training readers of
+    ``intraday_bars`` never see it.
+    """
+
+    __tablename__ = "intraday_no_trade_intervals"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "timeframe", "opened_at", "provider",
+            name="uq_intraday_no_trade_provider",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    timeframe: Mapped[str] = mapped_column(String(8), nullable=False, default="1m")
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    feed_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(String(64), nullable=False, default="provider_returned_no_bar")
+    # Authenticated provider re-query that returned no bar for this minute.
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    query_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    query_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Real bars that bracket the no-trade run and prove the feed was live.
+    previous_bar_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    next_bar_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    run_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class CorporateAction(Base):
     __tablename__ = "corporate_actions"
     __table_args__ = (UniqueConstraint("symbol", "action_type", "ex_date", "value", name="uq_corporate_action"),)

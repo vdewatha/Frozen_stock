@@ -152,6 +152,7 @@ class FeedStatusResponse(BaseModel):
     missing_intervals: list[str] = Field(default_factory=list)
     deferred_window: Optional[dict[str, str]] = None
     oldest_unresolved_interval: Optional[str] = None
+    verified_no_trade_intervals: list[str] = Field(default_factory=list)
     unavailable_reason: Optional[str] = None
     checked_at: Optional[datetime] = None
     adjustment_policy: Optional[str] = None

@@ -241,6 +241,41 @@ class MigrationTests(unittest.TestCase):
         command.stamp(self.config, "0054_paper_account_transition")
         command.upgrade(self.config, "0055_intraday_verify")
 
+    def test_intraday_no_trade_migration_accepts_publish_precreated_table(self):
+        command.upgrade(self.config, "0061_scalp_timezone_reconciled")
+        from app.db.base import Base
+
+        table = Base.metadata.tables["intraday_no_trade_intervals"]
+        Base.metadata.create_all(self.engine, tables=[table])
+
+        command.upgrade(self.config, "0062_intraday_no_trade")
+        command.stamp(self.config, "0061_scalp_timezone_reconciled")
+        command.upgrade(self.config, "0062_intraday_no_trade")
+
+        inspector = inspect(self.engine)
+        self.assertIn("intraday_no_trade_intervals", inspector.get_table_names())
+        self.assertEqual(
+            {
+                "ix_intraday_no_trade_intervals_symbol",
+                "ix_intraday_no_trade_intervals_opened_at",
+            },
+            {
+                index["name"]
+                for index in inspector.get_indexes("intraday_no_trade_intervals")
+            },
+        )
+        from alembic.autogenerate import compare_metadata
+        from alembic.migration import MigrationContext
+
+        with self.engine.connect() as connection:
+            drift = [
+                item for item in compare_metadata(
+                    MigrationContext.configure(connection), Base.metadata
+                )
+                if "intraday_no_trade" in repr(item)
+            ]
+        self.assertEqual(drift, [])
+
     def test_worker_lease_migration_accepts_publish_preapplied_columns(self):
         command.upgrade(self.config, "0056_learning_worker_dispatch")
         with self.engine.begin() as connection:
