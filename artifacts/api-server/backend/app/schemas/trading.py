@@ -192,6 +192,16 @@ class BacktestResponse(BaseModel):
     rejection_reasons: list[str]
     equity_curve: list[dict]
     trades: list[dict]
+    # Evaluation-honesty context (optional so older payloads still validate).
+    execution_model: Optional[str] = None
+    exit_model: Optional[str] = None
+    cost_model: Optional[dict] = None
+    average_exposure: Optional[float] = None
+    profit_factor_capped: Optional[bool] = None
+    baselines: Optional[dict] = None
+    excess_return: Optional[dict] = None
+    beats_baselines: Optional[dict] = None
+    statistics: Optional[dict] = None
 
 
 class ModelPredictionRequest(BaseModel):

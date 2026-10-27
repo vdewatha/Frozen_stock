@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import unittest
-from app.services.research_simulator import SimulationConfig, simulate
+from app.services.research_simulator import SimulationConfig, simulate, simulate_research_matrix
 
 
 def bars(count=4):
@@ -87,3 +87,33 @@ class SimulatorTests(unittest.TestCase):
         benchmark = result["benchmarks"]["buy_and_hold"]
         self.assertEqual(benchmark["quantity"], 50)
         self.assertEqual(benchmark["fill_count"], 5)
+
+
+class BaselineAndTrialTests(unittest.TestCase):
+    def test_excess_return_against_benchmarks_after_costs(self):
+        rows = bars(6)
+        for i, row in enumerate(rows):
+            row.update(open=100 + i, high=101 + i, low=99 + i, close=100 + i, volume=10**7)
+        result = simulate(rows, [0] * 6)
+        self.assertEqual(result["excess_return"]["cash"], 0)
+        self.assertEqual(result["excess_return"]["buy_and_hold"],
+                         -result["benchmarks"]["buy_and_hold"]["total_return"])
+        self.assertEqual(result["beats_benchmarks"], {"cash": False, "buy_and_hold": False})
+
+    def test_matrix_reports_trial_count_and_deflated_best_case(self):
+        cases = []
+        for index in range(6):
+            rows = bars(40)
+            for i, row in enumerate(rows):
+                price = 100 + ((i * (index + 3)) % 7) - 3
+                row.update(open=price, high=price + 1, low=price - 1, close=price, volume=10**7)
+            cases.append({"symbol": f"S{index}", "strategy": "alt", "rows": rows,
+                          "decisions": [(i + index) % 2 for i in range(40)]})
+        matrix = simulate_research_matrix(cases)
+        testing = matrix["multiple_testing"]
+        self.assertEqual(testing["trials"], 6)
+        best = max(matrix["runs"], key=lambda r: r["result"]["total_return"])
+        self.assertEqual(testing["best_case"]["symbol"], best["symbol"])
+        self.assertEqual(testing["best_case_deflated_sharpe"]["trials"], 6)
+        self.assertEqual(testing["best_case_bootstrap"]["status"], "ok")
+        self.assertLessEqual(testing["cases_beating_buy_and_hold"], 6)
