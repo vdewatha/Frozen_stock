@@ -80,7 +80,9 @@ DELAYED_SIP_RESEARCH_ENABLED = "false"
 # The 0.5 vCPU / 2 GiB VM hung under research load. Shed research-only beat
 # entries so the paper trading, learning-cycle and monitoring jobs keep running.
 PAPER_BEAT_EXCLUDE = "scalp-research-batch,scalp-research-queue-recovery,strategy-learning-batch-job,delayed-sip-collection"
-PAPER_STARTUP_REFRESH = "false"
+# Queue one market-data import on every boot so a restart never leaves
+# daily prices stale until the next scheduled import.
+PAPER_STARTUP_REFRESH = "true"
 PAPER_DIRECT_MONITOR_LOOP = "true"
 PAPER_MONITOR_INTERVAL_SECONDS = "60"
 ACTIVE_PAPER_BROKER = "alpaca_paper"

@@ -149,7 +149,8 @@ class CeleryConfigurationTests(unittest.TestCase):
             {"queue": "learning"},
         )
         self.assertEqual(entry["task"], "app.tasks.jobs.model_realization_scoring_job")
-        self.assertEqual(entry["schedule"], 60 * 60)
+        self.assertIsInstance(entry["schedule"], crontab)
+        self.assertEqual(entry["schedule"].minute, {50})
 
     def test_model_realization_scoring_is_research_only(self):
         db = Mock()
@@ -169,7 +170,21 @@ class CeleryConfigurationTests(unittest.TestCase):
     def test_feature_generation_refreshes_on_learning_cadence(self):
         entry = celery_app.conf.beat_schedule["daily-feature-generation"]
         self.assertEqual(entry["task"], "app.tasks.jobs.daily_feature_generation")
-        self.assertEqual(entry["schedule"], 6 * 60 * 60)
+        self.assertIsInstance(entry["schedule"], crontab)
+        self.assertEqual(entry["schedule"].hour, {2, 8, 13, 17})
+
+    def test_slow_jobs_use_wall_clock_so_restarts_cannot_starve_them(self):
+        # An interval schedule restarts its countdown with every beat restart;
+        # anything hourly or slower must be a crontab to survive frequent deploys.
+        for name, entry in celery_app.conf.beat_schedule.items():
+            schedule = entry["schedule"]
+            if isinstance(schedule, (int, float)):
+                self.assertLess(schedule, 60 * 60, name)
+
+    def test_daily_price_import_runs_before_open_and_after_close(self):
+        schedule = celery_app.conf.beat_schedule["daily-market-data-import"]["schedule"]
+        self.assertIsInstance(schedule, crontab)
+        self.assertEqual((schedule.hour, schedule.minute), ({8, 17}, {15}))
 
     def test_intraday_schedule_remains_expiring_each_minute(self):
         schedule = celery_app.conf.beat_schedule["intraday-market-data-import"]

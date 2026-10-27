@@ -121,7 +121,12 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(),
         "options": {"expires": 55},
     },
-    "daily-market-data-import": {"task": "app.tasks.jobs.daily_market_data_import", "schedule": 60 * 60 * 24},
+    # Slow jobs use wall-clock crontabs, not intervals. Beat's interval clock
+    # restarts with every deploy or crash, so a 24-hour interval on a host that
+    # restarts more than daily never fires (daily prices went stale for a week).
+    # Times are America/New_York: imports land before the open and after the
+    # close, and dependent jobs follow them.
+    "daily-market-data-import": {"task": "app.tasks.jobs.daily_market_data_import", "schedule": crontab(minute=15, hour="8,17")},
     # Expire a tick before the next cadence window. The task itself also holds
     # a Redis lease, so a slow request is skipped rather than overlapped.
     "intraday-market-data-import": {
@@ -130,25 +135,25 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(),
         "options": {"expires": 55},
     },
-    "daily-economic-data-import": {"task": "app.tasks.jobs.daily_economic_data_import", "schedule": 60 * 60 * 24},
-    "daily-news-import": {"task": "app.tasks.jobs.daily_news_import", "schedule": 60 * 60 * 24},
+    "daily-economic-data-import": {"task": "app.tasks.jobs.daily_economic_data_import", "schedule": crontab(minute=0, hour=7)},
+    "daily-news-import": {"task": "app.tasks.jobs.daily_news_import", "schedule": crontab(minute=30, hour=7)},
     # Re-run the corrected, trusted prediction pipeline often enough to clear
     # transient worker failures and keep the multi-symbol research loop fresh.
     # It remains serialized by the job lease and never authorizes orders.
-    "daily-feature-generation": {"task": "app.tasks.jobs.daily_feature_generation", "schedule": 60 * 60 * 6},
+    "daily-feature-generation": {"task": "app.tasks.jobs.daily_feature_generation", "schedule": crontab(minute=45, hour="2,8,13,17")},
     # Prediction labels mature on trading-day horizons. Re-score often enough
     # to feed the learning and monitoring views without overlapping imports.
     "model-realization-scoring": {
         "task": "app.tasks.jobs.model_realization_scoring_job",
         # Matured one-day forecasts should enter the feedback loop within an
         # hour of their next trusted daily bar, without creating any orders.
-        "schedule": 60 * 60,
+        "schedule": crontab(minute=50),
     },
-    "trade-candidate-scan-job": {"task": "app.tasks.jobs.trade_candidate_scan_job", "schedule": 60 * 60 * 6},
-    "daily-market-regime-detection": {"task": "app.tasks.jobs.daily_market_regime_detection", "schedule": 60 * 60 * 24},
-    "nightly-backtest-job": {"task": "app.tasks.jobs.nightly_backtest_job", "schedule": 60 * 60 * 24},
-    "nightly-learning-job": {"task": "app.tasks.jobs.nightly_strategy_learning_job", "schedule": 60 * 60 * 24},
-    "strategy-learning-batch-job": {"task": "app.tasks.jobs.strategy_learning_batch_job", "schedule": 60 * 60 * 6},
+    "trade-candidate-scan-job": {"task": "app.tasks.jobs.trade_candidate_scan_job", "schedule": crontab(minute=0, hour="3,9,14,18")},
+    "daily-market-regime-detection": {"task": "app.tasks.jobs.daily_market_regime_detection", "schedule": crontab(minute=0, hour=18)},
+    "nightly-backtest-job": {"task": "app.tasks.jobs.nightly_backtest_job", "schedule": crontab(minute=0, hour=19)},
+    "nightly-learning-job": {"task": "app.tasks.jobs.nightly_strategy_learning_job", "schedule": crontab(minute=30, hour=19)},
+    "strategy-learning-batch-job": {"task": "app.tasks.jobs.strategy_learning_batch_job", "schedule": crontab(minute=0, hour="*/6")},
     "strategy-learning-dispatch-recovery": {
         "task": "app.tasks.jobs.recover_unpublished_strategy_learning_scopes_job",
         "schedule": 60,
@@ -170,7 +175,7 @@ celery_app.conf.beat_schedule = {
     },
     "memory-replay-gate-monitor-job": {"task": "app.tasks.jobs.memory_replay_gate_monitor_job", "schedule": 60 * 30},
     "deployment-monitor-job": {"task": "app.tasks.jobs.deployment_monitor_job", "schedule": 60 * 15},
-    "strategy-promotion-job": {"task": "app.tasks.jobs.strategy_promotion_job", "schedule": 60 * 60 * 24},
+    "strategy-promotion-job": {"task": "app.tasks.jobs.strategy_promotion_job", "schedule": crontab(minute=0, hour=20)},
     "risk-monitor-job": {"task": "app.tasks.jobs.risk_monitor_job", "schedule": 60 * 5},
     "stock-monitoring-job": {
         "task": "app.tasks.jobs.stock_monitoring_job",
@@ -195,7 +200,7 @@ celery_app.conf.beat_schedule = {
         "schedule": 60 * 15,
         "options": {"expires": 10 * 60},
     },
-    "scheduled-stock-challenger-retraining": {"task": "app.tasks.jobs.scheduled_stock_challenger_retraining_job", "schedule": 60 * 60 * 24},
+    "scheduled-stock-challenger-retraining": {"task": "app.tasks.jobs.scheduled_stock_challenger_retraining_job", "schedule": crontab(minute=30, hour=18)},
     "scheduled-stock-paper-trial-handoff": {"task": "app.tasks.jobs.scheduled_stock_paper_trial_handoff_job", "schedule": 60 * 5},
     "scheduled-stock-paper-promotion": {"task": "app.tasks.jobs.scheduled_stock_paper_promotion_job", "schedule": 60 * 15},
     # Paper-only demotion of trial strategies with statistically confident
