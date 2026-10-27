@@ -13,11 +13,18 @@ from app.services.scalp_research import (
 )
 
 
-def _research_bars(start, count, *, provider="alpaca_iex"):
+def _research_bars(start, count, *, provider=None):
+    # Use the configured research provenance rather than a hard-coded feed:
+    # scalp_research.PROVIDER/FEED_CLASS follow active_market_data_provider,
+    # so fixtures must match whatever provider the settings select.
     from app.models import IntradayBar
+    from app.services import scalp_research
+
+    provider = provider or scalp_research.PROVIDER
+    feed_class = scalp_research.FEED_CLASS
 
     return [IntradayBar(
-        symbol="SPY", timeframe="1m", provider=provider, feed_class="iex",
+        symbol="SPY", timeframe="1m", provider=provider, feed_class=feed_class,
         opened_at=start + timedelta(minutes=index),
         exchange_timestamp=start + timedelta(minutes=index),
         open=100, high=101, low=99, close=100, volume=10,
