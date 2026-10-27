@@ -119,6 +119,10 @@ class ForwardEvaluationTests(unittest.TestCase):
         self.assertLess(ml['net_equity_pnl'], ml['realized_net_pnl'])
         self.assertGreater(ml['fees_paid'], 0)
         self.assertEqual(report['arms']['challenger_baseline']['coverage'], 1)
+        # One roundtrip is not a sample: no confidence interval is claimed.
+        self.assertEqual(ml['roundtrip_pnl_bootstrap']['status'], 'insufficient_observations')
+        self.assertEqual(report['statistical_confidence']['baseline']['excludes_zero'], False)
+        self.assertIsNone(report['statistical_confidence']['baseline']['roundtrip_mean_pnl_ci_95'])
         self.assertEqual(before, {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in self.root.glob('evidence/*.sqlite')})
 
     def test_account_snapshot_tampering_rejected(self):

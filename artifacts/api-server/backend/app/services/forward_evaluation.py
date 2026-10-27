@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sqlite3
 
+from app.services.backtest_statistics import block_bootstrap_ci
 from app.services.paper_comparison import STRATEGIES, canonical, money, number, _initial_state, ComparisonConfig
 
 
@@ -122,7 +123,11 @@ def _ledger(path, arm, start, end, clock, expected):
                 open_quantity=float(state['quantity']), maximum_drawdown=float(state['drawdown']),
                 gross_winning_net_pnl=float(wins), gross_losing_net_pnl=float(losses),
                 profit_factor=float(wins/losses) if losses else None, no_losing_roundtrips=losses == 0,
-                halted=bool(current.get(name, {}).get('halted', False)))
+                halted=bool(current.get(name, {}).get('halted', False)),
+                # Roundtrips are treated as exchangeable (block length 1).
+                # Descriptive only; the frozen checks are unchanged.
+                roundtrip_pnl_bootstrap=block_bootstrap_ci([float(p) for p in state['pnls']], block_length=1)
+                    | {'unit': 'net_pnl_per_roundtrip'})
         due = sum(stamp <= clock-timedelta(minutes=5) for stamp in stamps)
         return dict(status='observed' if stamps else 'empty', observations=len(stamps), due_observations=due,
                     expected_hours=expected, missing_hours=max(0, expected-due), coverage=due/expected if expected else 0,
@@ -175,18 +180,26 @@ def evaluate_experiment(root, observed_at):
             beats_buy_hold=bool(ml) and ml['net_equity_pnl'] > challenger['strategies']['buy_hold']['net_equity_pnl'],
             beats_trend=bool(ml) and ml['net_equity_pnl'] > challenger['strategies']['trend']['net_equity_pnl'],
             beats_mean_reversion=bool(ml) and ml['net_equity_pnl'] > challenger['strategies']['mean_reversion']['net_equity_pnl'])
+    confidence = {}
+    for cost in ('baseline', 'stress'):
+        boot = arms[f'challenger_{cost}']['strategies'].get('cost_ml', {}).get('roundtrip_pnl_bootstrap') or {}
+        interval = boot.get('mean_return_ci')
+        confidence[cost] = dict(roundtrip_mean_pnl_ci_95=interval, observations=boot.get('observations', 0),
+            excludes_zero=bool(interval) and interval[0] > 0,
+            status=boot.get('status', 'unavailable'))
     complete = clock >= end
     passed = complete and all(all(items.values()) for items in checks.values())
     for arm in arms.values():
         arm.pop('data_hashes', None)
     return dict(version='forward-evaluation-v1', experiment_id=manifest['experiment_id'], observed_at=clock.isoformat(),
         start_at=start.isoformat(), end_at=end.isoformat(), status='review_candidate' if passed else ('inconclusive' if complete else 'accumulating'),
-        window_complete=complete, checks=checks, arms=arms, eligible_for_live_trading=False, live_authorized=False,
+        window_complete=complete, checks=checks, statistical_confidence=confidence, arms=arms, eligible_for_live_trading=False, live_authorized=False,
         probability_diagnostics=forecast_summary(root),
         limitations=['Hourly close-proxy simulation is not brokerage execution evidence.',
                      'Accounting is reconciled to recorded fills; source quotes are not independently replayed.',
                      'Open positions remain marked, not forcibly liquidated; exit costs are not reserved in equity.',
-                     'No automatic promotion or live authorization; independent review and explicit approval remain required.'])
+                     'No automatic promotion or live authorization; independent review and explicit approval remain required.',
+                     'Roundtrip bootstrap intervals are descriptive; a review candidate whose interval includes zero is not evidence of an edge.'])
 
 
 def render_markdown(report):
