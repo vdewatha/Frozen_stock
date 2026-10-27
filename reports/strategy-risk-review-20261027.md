@@ -187,4 +187,17 @@ Line numbers below refer to the pre-change files (commit `719dffb`).
 
 ## Test results
 
-See the commit message and the final summary for the full-suite counts at the time of commit.
+Full backend suite: `PYTHONPATH=artifacts/api-server/backend python -m pytest artifacts/api-server/backend/tests -q`.
+
+- **After the changes, in the worktree:** 9 failed, 1519 passed, 32 skipped, and 206 subtests passed.
+- **Baseline at `719dffb`, in a `git archive` copy:** 12 failed, 1475 passed, 32 skipped.
+  - 3 of these failures (`test_paper_operations.py`) are artifacts of the copy: it has no
+    `deploy/` directory.
+  - The other 9 are the same tests that fail after the changes. They are pre-existing and
+    unrelated to this front:
+    - 8 in `test_scalp_research.py`: session quality returns `blocked`, and one test has a
+      `missing_count` KeyError.
+    - 1 in `test_readiness_scheduler.py::test_scheduler_health_retries_transient_worker_and_beat_probe`.
+- **New tests:** 44 more passing tests overall. These are the 41 new tests plus the 3
+  `paper_operations` tests that pass in the real worktree.
+- **Regressions introduced:** none.
