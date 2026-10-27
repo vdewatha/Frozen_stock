@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, ROUND_DOWN
 
+from app.services.backtest_statistics import block_bootstrap_ci, deflated_sharpe_ratio, equity_returns, return_moments
 from app.services.instruments import utc_timestamp
 
 
@@ -133,6 +134,11 @@ def simulate(rows: list[dict], decisions: list[int], config: SimulationConfig = 
     result = _simulate(bars, decisions, config)
     result["benchmarks"] = {"cash": _simulate(bars, [0] * len(bars), config),
                             "buy_and_hold": _simulate(bars, [1] * len(bars), config, buy_and_hold=True)}
+    # Benchmarks share the cost, capacity and allocation configuration, so
+    # the differences below are like-for-like after costs.
+    result["excess_return"] = {name: result["total_return"] - benchmark["total_return"]
+                               for name, benchmark in result["benchmarks"].items()}
+    result["beats_benchmarks"] = {name: value > 0 for name, value in result["excess_return"].items()}
     result["mode"] = "offline_research"
     result["eligible_for_trading"] = False
     return result
@@ -183,6 +189,7 @@ def simulate_research_matrix(cases: list[dict], config: SimulationConfig = Simul
         }
 
     symbols = sorted({row["symbol"] for row in runs})
+    multiple_testing = _multiple_testing(runs, config)
     strategies = sorted({row["strategy"] for row in runs})
     return {
         "mode": "offline_research_matrix",
@@ -193,4 +200,36 @@ def simulate_research_matrix(cases: list[dict], config: SimulationConfig = Simul
         "by_symbol": {symbol: aggregate([row for row in runs if row["symbol"] == symbol]) for symbol in symbols},
         "by_strategy": {strategy: aggregate([row for row in runs if row["strategy"] == strategy]) for strategy in strategies},
         "overall": aggregate(runs),
+        "multiple_testing": multiple_testing,
+    }
+
+
+def _period_returns(result, config):
+    values = [config.initial_cash] + [point["equity"] for point in result["equity_curve"]]
+    return equity_returns(values)
+
+
+def _multiple_testing(runs, config):
+    """Honesty context for picking the best case out of a research matrix.
+
+    The best total return among N variants is an optimistic estimate. Report
+    the number of trials, the deflated Sharpe ratio of that best case, and a
+    bootstrap interval of its mean period return.
+    """
+    moments = [return_moments(_period_returns(row["result"], config)) for row in runs]
+    best_index = max(range(len(runs)), key=lambda i: runs[i]["result"]["total_return"])
+    best = moments[best_index]
+    row = runs[best_index]
+    return {
+        "trials": len(runs),
+        "best_case": {"symbol": row["symbol"], "strategy": row["strategy"],
+                      "total_return": row["result"]["total_return"],
+                      "excess_return_vs_buy_and_hold": row["result"]["excess_return"]["buy_and_hold"]},
+        "best_case_deflated_sharpe": deflated_sharpe_ratio(
+            best["sharpe_per_period"], best["observations"], trials=len(runs),
+            trial_sharpes=[item["sharpe_per_period"] for item in moments],
+            skewness=best["skewness"], kurtosis=best["kurtosis"]),
+        "best_case_bootstrap": block_bootstrap_ci(_period_returns(row["result"], config)),
+        "cases_beating_buy_and_hold": sum(bool(r["result"]["beats_benchmarks"]["buy_and_hold"]) for r in runs),
+        "note": "Selecting the best of many variants on the same history overstates expected performance.",
     }
