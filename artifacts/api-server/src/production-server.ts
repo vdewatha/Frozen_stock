@@ -279,8 +279,19 @@ function startPaperWorkers(): void {
       "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
       "--loglevel=INFO", "--hostname=paper-core@%h",
       "--queues=default,market_data,intraday_market_data,research_market_data,scalp_research,learning,paper_trading,risk,monitoring",
-      "--pool=threads", "--concurrency=2",
+      // Only reserve tasks a free thread can start. With the default prefetch,
+      // a core busy with long learning or import jobs held minutely intraday
+      // imports until their 55-second expiry and they were discarded.
+      "--pool=threads", "--concurrency=2", "--prefetch-multiplier=1",
     ], "paper-core");
+    // Time-critical lane: long research and learning jobs must never starve
+    // the minutely intraday import, paper signals, risk or monitoring.
+    supervisePaperWorker([
+      "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
+      "--loglevel=INFO", "--hostname=paper-fast@%h",
+      "--queues=intraday_market_data,paper_trading,risk,monitoring",
+      "--pool=threads", "--concurrency=2", "--prefetch-multiplier=1",
+    ], "paper-fast");
     // Recovery admission requires an independent heartbeat. Keep this
     // process outside the Celery pool so a queue backlog cannot mask a
     // stalled paper worker.
