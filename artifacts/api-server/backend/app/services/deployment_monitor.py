@@ -127,6 +127,10 @@ def _check_celery_schedule() -> dict:
     direct_monitor = os.environ.get("PAPER_DIRECT_MONITOR_LOOP", "false").strip().lower() == "true"
     if not direct_monitor:
         required_jobs.add("stock-monitoring-job")
+    # Operators may deliberately shed research jobs on small hosts.
+    required_jobs -= {
+        name.strip() for name in os.environ.get("PAPER_BEAT_EXCLUDE", "").split(",") if name.strip()
+    }
     missing = sorted(required_jobs - set(job_names))
     return {
         "name": "Scheduled job definitions",

@@ -221,6 +221,17 @@ celery_app.conf.beat_schedule = configured_schedule(
 # and deployments that do not opt into the direct loop.
 if os.environ.get("PAPER_DIRECT_MONITOR_LOOP", "false").strip().lower() == "true":
     celery_app.conf.beat_schedule.pop("stock-monitoring-job", None)
+
+
+def excluded_schedule(schedule: dict, excluded: str) -> dict:
+    """Drop comma-separated beat entry names so small hosts can shed research load."""
+    names = {name.strip() for name in excluded.split(",") if name.strip()}
+    return {name: entry for name, entry in schedule.items() if name not in names}
+
+
+celery_app.conf.beat_schedule = excluded_schedule(
+    celery_app.conf.beat_schedule, os.environ.get("PAPER_BEAT_EXCLUDE", ""),
+)
 # The task definitions live in `app.tasks.jobs`, rather than the conventional
 # `app.tasks.tasks` module. Explicitly name that related module so standalone
 # Celery workers register the same tasks as the API process.

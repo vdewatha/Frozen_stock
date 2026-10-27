@@ -8,7 +8,7 @@ from celery.contrib.testing.worker import start_worker
 from celery.schedules import crontab
 from sqlalchemy.exc import InternalError
 
-from app.tasks.celery_app import celery_app, configured_schedule, OBSERVATION_TASKS
+from app.tasks.celery_app import celery_app, configured_schedule, excluded_schedule, OBSERVATION_TASKS
 from app.tasks import jobs
 
 
@@ -21,6 +21,15 @@ class CeleryConfigurationTests(unittest.TestCase):
         self.assertEqual(filtered["iex-research-collection"]["options"], {"expires": 55})
         self.assertNotIn("paper-trading-signal-job", filtered)
         self.assertNotIn("nightly-backtest-job", filtered)
+
+    def test_excluded_schedule_drops_named_research_entries_only(self):
+        schedule = celery_app.conf.beat_schedule
+        trimmed = excluded_schedule(schedule, " scalp-research-batch, strategy-learning-batch-job ,,")
+        self.assertNotIn("scalp-research-batch", trimmed)
+        self.assertNotIn("strategy-learning-batch-job", trimmed)
+        self.assertIn("paper-trading-signal-job", trimmed)
+        self.assertEqual(len(trimmed), len(schedule) - 2)
+        self.assertEqual(excluded_schedule(schedule, ""), schedule)
 
     def test_research_cadence_is_minutely_expiring_and_locked(self):
         entry = celery_app.conf.beat_schedule["iex-research-collection"]

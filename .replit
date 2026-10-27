@@ -66,17 +66,20 @@ PAPER_LEARNING_CONCURRENCY = "1"
 # still requires complete, authenticated intraday data before it can qualify.
 PAPER_EXECUTION_SYMBOLS = "[\"AAPL\", \"MSFT\", \"SPY\", \"QQQ\"]"
 # Updated for each deployable release so hosted readiness can be verified.
-PAPER_BUILD_ID = "scalp-paper-20261021-clean-history-v5"
+PAPER_BUILD_ID = "paper-slim-20261027-v1"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 # These direct loops remain research-only and never create live orders.
-PAPER_DIRECT_RESEARCH_LOOP = "true"
+PAPER_DIRECT_RESEARCH_LOOP = "false"
 # One Redis-leased research loop per symbol. These loops never submit orders.
-PAPER_DIRECT_SCALP_RESEARCH_LOOP = "true"
+PAPER_DIRECT_SCALP_RESEARCH_LOOP = "false"
 PAPER_SCALP_RESEARCH_SYMBOLS = "AAPL,MSFT,SPY,QQQ"
 # The Reserved VM sidecar coordinates both the paper queue and research loops.
 PAPER_RESEARCH_EMBEDDED_REDIS = "true"
-DELAYED_SIP_RESEARCH_ENABLED = "true"
+DELAYED_SIP_RESEARCH_ENABLED = "false"
+# The 0.5 vCPU / 2 GiB VM hung under research load. Shed research-only beat
+# entries so the paper trading, learning-cycle and monitoring jobs keep running.
+PAPER_BEAT_EXCLUDE = "scalp-research-batch,scalp-research-queue-recovery,strategy-learning-batch-job,delayed-sip-collection"
 PAPER_STARTUP_REFRESH = "false"
 PAPER_DIRECT_MONITOR_LOOP = "true"
 PAPER_MONITOR_INTERVAL_SECONDS = "60"
