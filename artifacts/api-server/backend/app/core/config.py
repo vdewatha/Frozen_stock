@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     active_paper_broker: str = "tradier_sandbox"
     intraday_enabled: bool = True
     intraday_backfill_chunks_per_cycle: int = Field(default=1, ge=1, le=8)
+    # Longest run of consecutive bar-less minutes, bracketed by real bars, that a
+    # partial-venue feed (Alpaca IEX) may resolve as provider-verified no-trade
+    # minutes. Longer runs stay missing and keep readiness fail-closed. 0 disables.
+    intraday_no_trade_max_run_minutes: int = Field(default=5, ge=0, le=10)
     iex_research_enabled: bool = False
     delayed_sip_research_enabled: bool = False
     research_observation_only: bool = False
