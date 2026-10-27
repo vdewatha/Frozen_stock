@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 from app.services.probabilistic_model import predict_probabilities
-from app.services.strategies.base import BaseStrategy, StrategySignalResult, clamp
+from app.services.strategies.base import (
+    BaseStrategy,
+    StrategySignalResult,
+    clamp,
+    has_valid_history,
+    neutral_signal,
+    rsi as compute_rsi,
+)
 
 
 class MovingAverageCrossoverStrategy(BaseStrategy):
@@ -13,20 +22,30 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         short_window = int(self.parameters.get("short_window", 20))
         long_window = int(self.parameters.get("long_window", 50))
+        if not has_valid_history(data, max(short_window, long_window)):
+            return neutral_signal(
+                f"Insufficient history for the {short_window}/{long_window}-day crossover.",
+                {"required_rows": max(short_window, long_window), "rows": len(data)},
+            )
         frame = data.copy()
         frame["short_ma"] = frame["close"].rolling(short_window).mean()
         frame["long_ma"] = frame["close"].rolling(long_window).mean()
         latest = frame.iloc[-1]
         distance = (latest["short_ma"] - latest["long_ma"]) / latest["close"]
         confidence = clamp(0.5 + abs(distance) * 6)
-        action = "BUY" if latest["short_ma"] > latest["long_ma"] else "SELL"
+        if latest["short_ma"] > latest["long_ma"]:
+            action = "BUY"
+        elif latest["short_ma"] < latest["long_ma"]:
+            action = "SELL"
+        else:
+            action = "HOLD"
         probability_up = clamp(0.5 + distance * 5)
         return StrategySignalResult(
             action=action,
             probability_up=probability_up,
             probability_down=1 - probability_up,
             confidence=confidence,
-            reason=f"{short_window}-day average is {'above' if action == 'BUY' else 'below'} the {long_window}-day average.",
+            reason=f"{short_window}-day average is {'above' if action == 'BUY' else 'below' if action == 'SELL' else 'equal to'} the {long_window}-day average.",
             features={"short_ma": float(latest["short_ma"]), "long_ma": float(latest["long_ma"]), "distance": float(distance)},
         )
 
@@ -38,11 +57,9 @@ class RSIMeanReversionStrategy(BaseStrategy):
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         buy_threshold = float(self.parameters.get("buy_threshold", 30))
         sell_threshold = float(self.parameters.get("sell_threshold", 70))
-        delta = data["close"].diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = -delta.clip(upper=0).rolling(14).mean()
-        rsi = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
-        latest_rsi = float(rsi.iloc[-1])
+        if not has_valid_history(data, 15):
+            return neutral_signal("Insufficient history for a 14-period RSI.", {"required_rows": 15, "rows": len(data)})
+        latest_rsi = float(compute_rsi(data["close"].astype(float), 14).iloc[-1])
         if latest_rsi <= buy_threshold:
             action = "BUY"
             confidence = clamp((buy_threshold - latest_rsi) / buy_threshold + 0.55)
@@ -71,12 +88,21 @@ class MACDMomentumStrategy(BaseStrategy):
         fast_span = int(self.parameters.get("fast_span", 12))
         slow_span = int(self.parameters.get("slow_span", 26))
         signal_span = int(self.parameters.get("signal_span", 9))
+        required_rows = slow_span + signal_span
+        if not has_valid_history(data, required_rows):
+            return neutral_signal(
+                f"Insufficient history to warm up MACD {fast_span}/{slow_span}/{signal_span}.",
+                {"required_rows": required_rows, "rows": len(data)},
+            )
         close = data["close"]
         macd = close.ewm(span=fast_span, adjust=False).mean() - close.ewm(span=slow_span, adjust=False).mean()
         signal = macd.ewm(span=signal_span, adjust=False).mean()
         histogram = float((macd - signal).iloc[-1])
-        action = "BUY" if histogram > 0 else "SELL"
-        confidence = clamp(0.55 + abs(histogram) / max(float(close.iloc[-1]), 1) * 20)
+        action = "BUY" if histogram > 0 else "SELL" if histogram < 0 else "HOLD"
+        # Confidence starts at the neutral 0.5 and grows with the histogram's
+        # size relative to price.  A 0.55 floor made every non-zero histogram
+        # clear the 0.55 entry gate, so confidence carried no information.
+        confidence = clamp(0.5 + abs(histogram) / max(float(close.iloc[-1]), 1) * 20)
         probability_up = clamp(0.5 + histogram / max(float(close.iloc[-1]), 1) * 15)
         return StrategySignalResult(
             action=action,
@@ -192,16 +218,18 @@ class BollingerMeanReversionStrategy(BaseStrategy):
         window = int(self.parameters.get("window", 20))
         std_dev = float(self.parameters.get("std_dev", 2.0))
         rsi_buy = float(self.parameters.get("rsi_buy", 35))
+        required_rows = max(window, 15)
+        if not has_valid_history(data, required_rows):
+            return neutral_signal("Insufficient history for Bollinger bands and RSI.", {"required_rows": required_rows, "rows": len(data)})
         frame = data.copy()
-        close = frame["close"]
+        close = frame["close"].astype(float)
         middle = close.rolling(window).mean()
         std = close.rolling(window).std()
+        if not float(std.iloc[-1]) > 0:
+            return neutral_signal("Bollinger band width is zero; price is flat or stale.", {"window": window, "std_dev": std_dev})
         lower = middle - std_dev * std
         upper = middle + std_dev * std
-        delta = close.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = -delta.clip(upper=0).rolling(14).mean()
-        rsi = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
+        rsi = compute_rsi(close, 14)
         latest_close = float(close.iloc[-1])
         latest_lower = float(lower.iloc[-1])
         latest_upper = float(upper.iloc[-1])
@@ -238,15 +266,24 @@ class ChannelBreakoutStrategy(BaseStrategy):
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         lookback = int(self.parameters.get("lookback", 55))
         volume_window = int(self.parameters.get("volume_window", 20))
+        required_rows = max(lookback + 1, volume_window)
+        if not has_valid_history(data, required_rows):
+            return neutral_signal(
+                f"Insufficient history for a {lookback}-day prior channel.",
+                {"required_rows": required_rows, "rows": len(data)},
+            )
         frame = data.copy()
         close = frame["close"]
         volume = frame["volume"]
         prior_high = float(close.rolling(lookback).max().shift(1).iloc[-1])
         latest_close = float(close.iloc[-1])
-        avg_volume = float(volume.rolling(volume_window).mean().iloc[-1] or 0)
-        latest_volume = float(volume.iloc[-1] or 0)
+        avg_volume = float(volume.rolling(volume_window).mean().iloc[-1])
+        latest_volume = float(volume.iloc[-1])
+        if not (math.isfinite(avg_volume) and math.isfinite(latest_volume) and avg_volume > 0):
+            # Missing volume cannot confirm a breakout; never treat it as 1x.
+            return neutral_signal("Volume is missing or zero; breakout cannot be confirmed.", {"lookback": lookback, "prior_high": prior_high})
         breakout = latest_close > prior_high
-        volume_ratio = latest_volume / avg_volume if avg_volume else 1
+        volume_ratio = latest_volume / avg_volume
         breakout_strength = latest_close / prior_high - 1 if prior_high else 0
         action = "BUY" if breakout and volume_ratio >= 1.05 else "HOLD"
         confidence = clamp(0.55 + breakout_strength * 10 + max(volume_ratio - 1, 0) * 0.10)
@@ -274,14 +311,19 @@ class TrendPullbackStrategy(BaseStrategy):
         fast = int(self.parameters.get("fast_ema", 20))
         slow = int(self.parameters.get("slow_ema", 100))
         rsi_pullback = float(self.parameters.get("rsi_pullback", 58))
+        # An adjust=False EMA has a value from the first bar, but it is
+        # dominated by the seed price until roughly ``span`` bars have passed.
+        required_rows = max(fast, slow, 15)
+        if not has_valid_history(data, required_rows):
+            return neutral_signal(
+                f"Insufficient history to warm up the {slow}-EMA trend filter.",
+                {"required_rows": required_rows, "rows": len(data)},
+            )
         frame = data.copy()
-        close = frame["close"]
+        close = frame["close"].astype(float)
         fast_ema = close.ewm(span=fast, adjust=False).mean()
         slow_ema = close.ewm(span=slow, adjust=False).mean()
-        delta = close.diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = -delta.clip(upper=0).rolling(14).mean()
-        rsi = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
+        rsi = compute_rsi(close, 14)
         latest_close = float(close.iloc[-1])
         latest_fast = float(fast_ema.iloc[-1])
         latest_slow = float(slow_ema.iloc[-1])

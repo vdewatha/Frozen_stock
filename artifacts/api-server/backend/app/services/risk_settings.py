@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -28,6 +29,45 @@ UPDATABLE_RISK_FIELDS = {
 }
 
 
+# Mirrors RiskSettingsUpdateRequest so service-level callers (jobs, scripts)
+# cannot store values the API would reject, e.g. NaN, which silently disables
+# every ``<`` / ``>`` comparison in approve_trade.
+RISK_FIELD_BOUNDS: dict[str, tuple[type, float, float]] = {
+    "min_confidence": (float, 0, 1),
+    "max_daily_drawdown": (float, 0, 1),
+    "max_strategy_drawdown": (float, 0, 1),
+    "max_open_positions": (int, 1, 100),
+    "max_open_positions_per_strategy": (int, 1, 100),
+    "max_symbol_exposure": (float, 0, 1),
+    "max_risk_per_trade": (float, 0, 1),
+    "stop_after_consecutive_losses": (int, 1, 100),
+    "candidate_review_score_threshold": (float, 0, 2),
+    "activation_score_threshold": (float, 0, 2),
+    "journal_feedback_review_threshold_cap": (float, 0, 0.25),
+    "journal_feedback_allocation_multiplier_cap": (float, 0, 1),
+    "memory_replay_min_complete_samples": (int, 0, 1000),
+    "memory_replay_min_avg_return_delta": (float, -1, 1),
+    "memory_replay_min_hit_rate_delta": (float, -1, 1),
+}
+
+
+def _validated_risk_value(field: str, value):
+    kind, lower, upper = RISK_FIELD_BOUNDS[field]
+    if isinstance(value, bool):
+        raise ValueError(f"{field} must be numeric, not boolean.")
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be numeric.") from exc
+    if not math.isfinite(numeric) or numeric < lower or numeric > upper:
+        raise ValueError(f"{field} must be a finite value between {lower} and {upper}.")
+    if kind is int:
+        if numeric != int(numeric):
+            raise ValueError(f"{field} must be a whole number.")
+        return int(numeric)
+    return numeric
+
+
 def get_active_risk_rule(db: Session) -> RiskRule:
     rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
     if rule:
@@ -48,13 +88,15 @@ def update_risk_settings(
     actor: str = "system",
     authorization: dict | None = None,
 ) -> RiskRule:
+    validated = {
+        field: _validated_risk_value(field, value)
+        for field, value in updates.items()
+        if field in UPDATABLE_RISK_FIELDS and value is not None
+    }
     rule = get_active_risk_rule(db)
     old_value = DEFAULT_RISK_RULES | ((rule.value or {}).copy())
     next_value = old_value.copy()
-
-    for field, value in updates.items():
-        if field in UPDATABLE_RISK_FIELDS and value is not None:
-            next_value[field] = value
+    next_value.update(validated)
 
     next_value["paper_only"] = True
     next_value["kill_switch_enabled"] = bool(old_value.get("kill_switch_enabled", False))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -49,7 +50,21 @@ DEFAULT_RISK_RULES = {
 }
 
 
+def _finite(value) -> Optional[float]:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
 def approve_trade(signal: dict, portfolio: PortfolioState, strategy_state: StrategyState, risk_rules: Optional[dict] = None) -> tuple[bool, str]:
+    """Deterministic pre-trade gate.  Every check fails closed.
+
+    Optional ``signal["proposed_exposure"]`` (fraction of equity the order
+    would add) is included in the symbol and gross caps when supplied, so a
+    symbol just under its cap cannot be pushed far over it by one order.
+    """
     rules = DEFAULT_RISK_RULES | (risk_rules or {})
     symbol = signal.get("symbol", "")
     strategy = str(signal.get("strategy", ""))
@@ -64,11 +79,23 @@ def approve_trade(signal: dict, portfolio: PortfolioState, strategy_state: Strat
         return False, "Strategy is not active for paper trading."
     if signal.get("action") not in {"BUY", "SELL"}:
         return False, "Signal is not actionable."
-    if float(signal.get("confidence", 0)) < float(rules["min_confidence"]):
+    # NaN compares False against every threshold, so a NaN confidence or
+    # drawdown used to pass these gates.  Non-finite inputs are rejected.
+    confidence = _finite(signal.get("confidence", 0))
+    if confidence is None:
+        return False, "Signal confidence is missing or not finite."
+    if confidence < float(rules["min_confidence"]):
         return False, "Confidence below minimum threshold."
-    if portfolio.daily_drawdown > float(rules["max_daily_drawdown"]):
+    daily_drawdown = _finite(portfolio.daily_drawdown)
+    if daily_drawdown is None:
+        return False, "Daily drawdown is unknown."
+    # A drawdown exactly at the limit is a breach (portfolio_risk alerts at >=).
+    if daily_drawdown >= float(rules["max_daily_drawdown"]):
         return False, "Daily drawdown limit exceeded."
-    if strategy_state.drawdown > float(rules["max_strategy_drawdown"]):
+    strategy_drawdown = _finite(strategy_state.drawdown)
+    if strategy_drawdown is None:
+        return False, "Strategy drawdown is unknown."
+    if strategy_drawdown >= float(rules["max_strategy_drawdown"]):
         return False, "Strategy drawdown limit exceeded."
     if strategy_state.consecutive_losses >= int(rules["stop_after_consecutive_losses"]):
         return False, "Strategy hit consecutive-loss pause rule."
@@ -76,7 +103,50 @@ def approve_trade(signal: dict, portfolio: PortfolioState, strategy_state: Strat
         return False, "Portfolio has too many open positions."
     if strategy and strategy_positions.get(strategy, 0) >= int(rules["max_open_positions_per_strategy"]):
         return False, "Strategy has too many open positions."
-    if exposures.get(symbol, 0) >= float(rules["max_symbol_exposure"]):
+    exposure_values = [_finite(value) for value in exposures.values()]
+    if any(value is None for value in exposure_values):
+        return False, "Open exposure is not finite."
+    proposed = 0.0
+    if signal.get("proposed_exposure") is not None:
+        proposed = _finite(signal.get("proposed_exposure"))
+        if proposed is None or proposed < 0:
+            return False, "Proposed exposure is not a finite non-negative fraction."
+    symbol_limit = float(rules["max_symbol_exposure"])
+    symbol_exposure = float(exposures.get(symbol, 0) or 0)
+    if symbol_exposure >= symbol_limit:
         return False, "Symbol exposure limit reached."
+    if proposed and symbol_exposure + proposed > symbol_limit + 1e-9:
+        return False, "Proposed order would exceed the symbol exposure limit."
+    # Per-symbol caps alone allow N symbols x cap of gross exposure; the
+    # aggregate cap bounds the whole book.
+    gross_limit = float(rules.get("max_total_exposure", 1.0))
+    gross_exposure = sum(abs(value) for value in exposure_values if value is not None)
+    if gross_exposure >= gross_limit:
+        return False, "Gross exposure limit reached."
+    if proposed and gross_exposure + proposed > gross_limit + 1e-9:
+        return False, "Proposed order would exceed the gross exposure limit."
 
     return True, "Approved for paper trading."
+
+
+ATR_STOP_MULTIPLE = 2.0
+
+
+def volatility_capped_exposure(
+    atr_pct: Optional[float],
+    rules: Optional[dict] = None,
+    *,
+    stop_multiple: float = ATR_STOP_MULTIPLE,
+) -> Optional[float]:
+    """Largest equity fraction whose ``stop_multiple`` x ATR stop loses at most
+    ``max_risk_per_trade`` of equity.
+
+    Returns ``None`` when ATR is unavailable so callers keep their existing
+    cap rather than silently sizing to zero or to infinity.
+    """
+    merged = DEFAULT_RISK_RULES | (rules or {})
+    atr = _finite(atr_pct)
+    if atr is None or atr <= 0:
+        return None
+    risk_budget = max(float(merged.get("max_risk_per_trade", 0.01)), 0.0)
+    return risk_budget / (max(float(stop_multiple), 0.1) * atr)

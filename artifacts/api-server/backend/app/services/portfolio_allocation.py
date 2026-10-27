@@ -31,6 +31,42 @@ def _candidate_weight(candidate: dict) -> float:
     return max(score + probability_edge * 0.5 + expected_return * 8 + backtest_score * 0.2, 0.0001)
 
 
+def _unit_fraction(value, default: float = 1.0) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    if numeric != numeric:  # NaN
+        return default
+    return _bounded(numeric, 0.0, 1.0)
+
+
+def _symbol_risk_cap(candidates: list[dict], symbol_limit: float) -> tuple[float, dict]:
+    """Per-symbol exposure cap after volatility and regime scaling.
+
+    Volatility: never exceed the exposure whose ATR stop risks more than
+    ``max_risk_per_trade`` (``volatility_exposure_cap`` from the scanner).
+    Regime: multiply by the scanner's ``regime_risk_multiplier`` (<= 1).
+    Both can only shrink the configured symbol cap.
+    """
+    caps = [
+        float(candidate["volatility_exposure_cap"])
+        for candidate in candidates
+        if candidate.get("volatility_exposure_cap") is not None
+        and float(candidate["volatility_exposure_cap"]) == float(candidate["volatility_exposure_cap"])
+    ]
+    volatility_cap = min(caps) if caps else None
+    regime_multiplier = min((_unit_fraction(candidate.get("regime_risk_multiplier")) for candidate in candidates), default=1.0)
+    cap = symbol_limit if volatility_cap is None else min(symbol_limit, max(volatility_cap, 0.0))
+    cap *= regime_multiplier
+    return cap, {
+        "configured_symbol_limit": symbol_limit,
+        "volatility_exposure_cap": volatility_cap,
+        "regime_risk_multiplier": regime_multiplier,
+        "effective_symbol_cap": round(cap, 6),
+    }
+
+
 def _gate_lookup(groups: list[dict]) -> dict:
     return {str(group.get("key")): group for group in groups}
 
@@ -113,14 +149,14 @@ def _recommendation(
             memory_note = " Journal feedback sizing increase is held flat by replay policy."
     if status != "paper_trading_active":
         if symbol_room >= MIN_ACTION_EXPOSURE:
-            return "activate_candidate", f"Positive scanner evidence has room under the symbol cap; review for paper activation.{memory_note}"
-        return "wait_for_room", f"Positive scanner evidence exists, but the symbol cap is full.{memory_note}"
+            return "activate_candidate", f"Positive scanner evidence has room under the symbol and gross caps; review for paper activation.{memory_note}"
+        return "wait_for_room", f"Positive scanner evidence exists, but the symbol or gross exposure cap is full.{memory_note}"
     if is_open and current_exposure > target_exposure + TARGET_TOLERANCE:
         return "trim", f"Open exposure is above the score-weighted target allocation.{memory_note}"
     if gap >= MIN_ACTION_EXPOSURE and symbol_room >= MIN_ACTION_EXPOSURE:
         return "add", f"Active positive candidate has room below its score-weighted target allocation.{memory_note}"
     if gap >= MIN_ACTION_EXPOSURE:
-        return "wait_for_room", f"Active positive candidate ranks well, but the symbol cap is full.{memory_note}"
+        return "wait_for_room", f"Active positive candidate ranks well, but the symbol or gross exposure cap is full.{memory_note}"
     if is_open:
         return "hold", f"Open exposure is close to its score-weighted target allocation.{memory_note}"
     return "watch", f"Positive candidate is active, but the target gap is too small for a new paper entry.{memory_note}"
@@ -149,6 +185,10 @@ def allocation_plan(db: Session, limit: int = 20) -> dict:
 
     symbol_exposure = {row["key"]: float(row["exposure_pct"]) for row in risk["symbol_exposure"]}
     symbol_limit = float(risk["risk_limits"].get("max_symbol_exposure", 0))
+    # Per-symbol rooms alone let N symbols each fill their cap; new adds also
+    # need room under the aggregate (gross) exposure cap.
+    gross_limit = float(risk["risk_limits"].get("max_total_exposure", 1.0))
+    gross_room = max(gross_limit - float(risk.get("gross_exposure") or 0), 0.0)
     positives = [
         candidate
         for candidate in scanner.get("candidates", [])
@@ -172,6 +212,11 @@ def allocation_plan(db: Session, limit: int = 20) -> dict:
         base_weights_by_symbol[symbol] = base_weights_by_symbol.get(symbol, 0.0) + base_weight
         weights_by_symbol[symbol] = weights_by_symbol.get(symbol, 0.0) + adjusted_weight
 
+    symbol_caps = {
+        symbol: _symbol_risk_cap([candidate for candidate in positives if candidate["symbol"] == symbol], symbol_limit)
+        for symbol in weights_by_symbol
+    }
+
     rows: list[dict] = []
     for candidate in positives:
         symbol = candidate["symbol"]
@@ -180,13 +225,14 @@ def allocation_plan(db: Session, limit: int = 20) -> dict:
         open_position = open_lookup.get((symbol, strategy_type))
         current_exposure = float((open_position or {}).get("exposure_pct") or 0)
         symbol_current_exposure = symbol_exposure.get(symbol, 0.0)
-        symbol_room = max(symbol_limit - symbol_current_exposure, 0.0)
+        symbol_cap, sizing_context = symbol_caps[symbol]
+        symbol_room = max(min(symbol_cap - symbol_current_exposure, gross_room), 0.0)
         weight_context = candidate_weights[(symbol, strategy_type)]
         weight = float(weight_context["adjusted_weight"])
         base_weight = float(weight_context["base_weight"])
         memory_context = weight_context["memory_context"]
-        raw_target_exposure = symbol_limit * (base_weight / max(base_weights_by_symbol.get(symbol, base_weight), 0.0001))
-        target_exposure = symbol_limit * (weight / max(weights_by_symbol.get(symbol, weight), 0.0001))
+        raw_target_exposure = symbol_cap * (base_weight / max(base_weights_by_symbol.get(symbol, base_weight), 0.0001))
+        target_exposure = symbol_cap * (weight / max(weights_by_symbol.get(symbol, weight), 0.0001))
         recommendation, reason = _recommendation(
             candidate.get("strategy_status") or (strategy.current_status if strategy else "unknown"),
             current_exposure,
@@ -216,6 +262,8 @@ def allocation_plan(db: Session, limit: int = 20) -> dict:
                 "symbol_exposure_pct": round(symbol_current_exposure, 6),
                 "symbol_limit_pct": symbol_limit,
                 "symbol_room_pct": round(symbol_room, 6),
+                "gross_room_pct": round(gross_room, 6),
+                "sizing_context": sizing_context,
                 "recommendation": recommendation,
                 "reason": reason,
             }
@@ -661,10 +709,17 @@ def execute_allocation_plan(db: Session, *, dry_run: bool = True, max_actions: i
     add_allowed = not blocked_checks
     actions: list[dict] = []
     skipped: list[dict] = []
+    added_symbols: set[str] = set()
 
     for row in plan["recommendations"]:
         if len(actions) >= max_actions:
             skipped.append({**row, "skip_reason": "Maximum allocation actions reached."})
+            continue
+        # Every row's symbol room was computed once, before any action ran.
+        # A second add on the same symbol in one pass would reuse room the
+        # first add already consumed, so defer it to the next (fresh) plan.
+        if row.get("recommendation") == "add" and row.get("symbol") in added_symbols:
+            skipped.append({**row, "skip_reason": "Symbol already received an add in this pass; re-plan before adding again."})
             continue
 
         action, skipped_row = _allocation_executor_action(
@@ -676,6 +731,8 @@ def execute_allocation_plan(db: Session, *, dry_run: bool = True, max_actions: i
         )
         if action:
             actions.append(action)
+            if action.get("action") == "add":
+                added_symbols.add(str(action.get("symbol")))
         if skipped_row:
             skipped.append(skipped_row)
 
