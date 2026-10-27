@@ -23,8 +23,10 @@ def _price_features(prices) -> dict:
         }
     close = prices["close"].astype(float)
     latest_close = float(close.iloc[-1])
-    return_20d = latest_close / float(close.iloc[-21]) - 1 if len(close) > 21 and float(close.iloc[-21]) else 0.0
-    return_60d = latest_close / float(close.iloc[-61]) - 1 if len(close) > 61 and float(close.iloc[-61]) else 0.0
+    # close.iloc[-21] is 20 bars before the latest close and exists once there
+    # are 21 rows (the old ``> 21`` needed 22 and zeroed the 21-row case).
+    return_20d = latest_close / float(close.iloc[-21]) - 1 if len(close) >= 21 and float(close.iloc[-21]) else 0.0
+    return_60d = latest_close / float(close.iloc[-61]) - 1 if len(close) >= 61 and float(close.iloc[-61]) else 0.0
     ma_20 = float(close.tail(20).mean()) if len(close) >= 20 else latest_close
     ma_50 = float(close.tail(50).mean()) if len(close) >= 50 else latest_close
     if latest_close > ma_20 > ma_50:
@@ -56,7 +58,8 @@ def _opportunity_score(best_candidate: dict | None, news: dict, features: dict) 
     candidate_score = float((best_candidate or {}).get("score") or 0)
     probability_up = float((best_candidate or {}).get("probability_up") or 0.5)
     expected_return = float((best_candidate or {}).get("expected_return") or 0)
-    news_score = float(news.get("average_sentiment") or 0)
+    # Synthetic (mock/fallback) headlines carry no information.
+    news_score = 0.0 if news.get("synthetic_only") else float(news.get("average_sentiment") or 0)
     trend_bonus = 0.06 if features["trend_label"] == "uptrend" else (-0.04 if features["trend_label"] == "downtrend" else 0)
     return round(candidate_score * 0.55 + (probability_up - 0.5) * 0.25 + expected_return * 4 + news_score * 0.08 + trend_bonus, 6)
 

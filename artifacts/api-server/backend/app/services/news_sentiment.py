@@ -44,6 +44,9 @@ NEGATIVE_TERMS = {
 }
 
 
+SYNTHETIC_NEWS_SOURCES = {"mock_news"}
+
+
 def _decimal(value: float) -> Decimal:
     return Decimal(str(round(float(value), 4)))
 
@@ -301,6 +304,7 @@ def summarize_news_context(db: Session, symbol: str, limit: int = 10, auto_seed:
             "sentiment_label": "neutral",
             "summary": "No stored news context is available.",
             "top_headlines": [],
+            "synthetic_only": True,
         }
 
     scores = [float(row.sentiment_score or 0) for row in rows]
@@ -323,7 +327,12 @@ def summarize_news_context(db: Session, symbol: str, limit: int = 10, auto_seed:
         }
         for row in top_rows
     ]
+    # Mock headlines are auto-seeded (and used as provider fallbacks); their
+    # templated tone must never be read as market evidence.
+    synthetic_only = all(str(row.source or "") in SYNTHETIC_NEWS_SOURCES for row in rows)
     summary = f"{symbol} news tone is {label} across {len(rows)} stored items; average sentiment {average:.2f}."
+    if synthetic_only:
+        summary += " All items are synthetic placeholders, not market evidence."
     return {
         "symbol": symbol,
         "article_count": len(rows),
@@ -331,4 +340,5 @@ def summarize_news_context(db: Session, symbol: str, limit: int = 10, auto_seed:
         "sentiment_label": label,
         "summary": summary,
         "top_headlines": top_headlines,
+        "synthetic_only": synthetic_only,
     }
