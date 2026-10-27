@@ -5,6 +5,7 @@ router = "application"
 deploymentTarget = "vm"
 build = "pnpm --filter @workspace/api-server build && PORT=5173 BASE_PATH=/ pnpm --filter @workspace/strategy-control-room build"
 run = "cd artifacts/api-server && pnpm start"
+ignorePorts = false
 
 [packager.features]
 enabledForHosting = true
