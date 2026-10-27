@@ -34,6 +34,7 @@ from app.services.stock_paper_ledger import (
     active_paper_account, NONTERMINAL_ORDER_STATUSES,
 )
 from app.services.audit import write_audit_log
+from app.services.strategy_edge_decay import review_strategy_edge, strategy_is_suspended
 from app.services.intraday_data import (
     ALLOWED_SYMBOLS,
     MARKET_DATA_PROVIDER,
@@ -149,7 +150,9 @@ def _evidence_allows_trade(db: Session, trial: StockPaperTrial, manifest: dict, 
     outcomes = sorted(_lot_outcomes(db, lots), key=lambda x: x["close_at"])
     losses = 0
     for outcome in reversed(outcomes):
-        if outcome["outcome"] < 0: losses += 1
+        # A trade that is only profitable before known costs is still a loss.
+        realized = outcome["net_outcome"] if outcome.get("net_outcome") is not None else outcome["outcome"]
+        if realized < 0: losses += 1
         else: break
     drawdown = ((trial.peak_equity - account.equity) / trial.peak_equity
                 if trial.peak_equity and trial.peak_equity > 0 else None)
@@ -157,6 +160,18 @@ def _evidence_allows_trade(db: Session, trial: StockPaperTrial, manifest: dict, 
         return False, "forward_drawdown_limit_exceeded"
     evidence = db.scalar(select(StockPaperStrategyEvidence).where(
         StockPaperStrategyEvidence.strategy_id == trial.strategy_id)) if trial.strategy_id else None
+    if trial.strategy_id:
+        # Learning-loop demotion is one-way: a paused strategy or suspended
+        # evidence is never refreshed back into trading permission here.
+        suspended = strategy_is_suspended(db, trial.strategy_id)
+        if suspended:
+            return False, suspended
+        if evidence is None:
+            return False, "missing_strategy_evidence"
+        decay = review_strategy_edge(db, trial.strategy_id, outcomes, now=now,
+                                     source="stock_forward_trial_pretrade")
+        if decay["assessment"]["status"] == "decayed":
+            return False, "edge_decay_detected"
     if not trial.strategy_id:
         strategy = Strategy(name=f"forward_trial:{trial.id}", strategy_type="stock_forward_trial",
             description="Task12 controlled forward paper trial", parameters={"trial_id": trial.id},
@@ -228,6 +243,9 @@ def _lot_outcomes(db: Session, lots: list[StockPaperTrialLot]) -> list[dict]:
         entry_fees = sum((f.fee or Decimal("0") for f in entries), Decimal("0"))
         result.append({
             "closed": True,
+            "lot_id": lot.id,
+            "symbol": lot.symbol,
+            "entry_cost": matched_cost,
             "outcome": gross_outcome,
             "net_outcome": gross_outcome - entry_fees - matched_exit_fees if costs_known else None,
             "costs_known": costs_known,

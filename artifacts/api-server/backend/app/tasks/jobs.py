@@ -97,6 +97,7 @@ REDIS_LOCKED_JOBS = frozenset(
         "stock_forward_trial_observe_job",
         "stock_forward_trial_reconcile_job",
         "stock_monitoring_job",
+        "strategy_edge_decay_job",
     }
 )
 REDIS_JOB_LOCK_TTL_SECONDS = 15 * 60
@@ -1330,3 +1331,18 @@ def stock_forward_trial_evaluate_job(trial_id: str) -> dict:
         db.commit()
         return {"status": metric.classification, "trial_id": trial_id, **metric.payload}
     return _run_job("stock_forward_trial_evaluate_job", work)
+
+
+@celery_app.task
+def strategy_edge_decay_job() -> dict:
+    """Pause (paper only) trial strategies whose rolling forward edge has decayed.
+
+    Monotonic: it can only pause/suspend, never re-enable, so overlapping runs
+    with the forward-trial pre-trade check cannot race into a looser state.
+    """
+    def work(db):
+        from app.services.strategy_edge_decay import run_edge_decay_review
+
+        return run_edge_decay_review(db)
+
+    return _run_job("strategy_edge_decay_job", work)

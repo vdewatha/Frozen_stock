@@ -2103,6 +2103,23 @@ def _automatic_monitor_gate(
     ), snapshot.id
 
 
+def _automatic_strategy_edge_gate(db: Session, trial: StockPaperTrial | None) -> dict:
+    """A trial strategy paused for edge decay can never be promoted."""
+    from app.services.strategy_edge_decay import strategy_is_suspended
+
+    if trial is None or not trial.strategy_id:
+        return _gate("pass", evidence={"strategy_id": None, "suspended": None})
+    suspended = strategy_is_suspended(db, trial.strategy_id)
+    return _gate(
+        "fail" if suspended else "pass",
+        reason=(
+            "the forward-trial strategy is paused or its evidence is suspended for edge decay"
+            if suspended else None
+        ),
+        evidence={"strategy_id": trial.strategy_id, "suspended": suspended},
+    )
+
+
 def _automatic_trial_and_report(
     db: Session, cycle: StockLearningCycle, active_binding: StockPaperModelBinding | None,
 ) -> tuple[StockPaperTrial | None, dict | None]:
@@ -2346,6 +2363,7 @@ def automate_paper_promotion(
         "monitor_health": monitor,
         "recovery_state": recovery_gate,
         "paper_only": paper_gate,
+        "strategy_edge": _automatic_strategy_edge_gate(db, trial),
     }
     evidence = {
         "report_hash": report.get("report_hash") if report else None,
