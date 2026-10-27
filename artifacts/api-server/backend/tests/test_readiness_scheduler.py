@@ -15,11 +15,20 @@ def test_scheduler_health_retries_transient_worker_and_beat_probe():
         [b"celery:beat:lease:primary"] if "lease" in match else []
     )
     redis_client.close = lambda: None
+    # Make the retry path deterministic: use a private probe lock so a probe
+    # thread left over from another test cannot report "probe_in_progress",
+    # give the (instant) mocked probes generous join timeouts so scheduler
+    # load cannot turn them into "timeout", and skip the real retry delay.
+    # Production timeouts and fail-closed behaviour are untouched.
     with patch.object(
         readiness.celery_app.control,
         "inspect",
         side_effect=[Exception("timeout"), inspector],
-    ), patch.object(readiness.redis.Redis, "from_url", return_value=redis_client):
+    ), patch.object(readiness.redis.Redis, "from_url", return_value=redis_client), \
+            patch.object(readiness, "_worker_probe_lock", threading.Lock()), \
+            patch.object(readiness, "SCHEDULER_PROBE_TIMEOUT_SECONDS", 30.0), \
+            patch.object(readiness, "SCHEDULER_PROBE_RETRY_TIMEOUT_SECONDS", 30.0), \
+            patch.object(readiness, "SCHEDULER_PROBE_RETRY_DELAY_SECONDS", 0.0):
         result = readiness._scheduler_health()
 
     assert result["workers"] == ["execution@localhost"]
