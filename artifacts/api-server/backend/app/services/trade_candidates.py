@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 from typing import Optional
+
+import pandas as pd
 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
@@ -11,21 +14,133 @@ from app.core.config import settings
 from app.services.audit import write_audit_log
 from app.services.backtester import BacktestConfig, run_backtest
 from app.services.economic_data import summarize_macro_context
-from app.services.market_regime import latest_market_regime
+from app.services.market_regime import latest_market_regime, regime_risk_multiplier
 from app.services.news_sentiment import summarize_news_context
 from app.services.probabilistic_model import predict_probabilities
+from app.services.risk import DEFAULT_RISK_RULES, volatility_capped_exposure
 from app.services.trusted_data import trusted_history, UntrustedMarketData
 from app.services.strategy_research import strategy_research_for
 from app.services.strategies.registry import get_strategy
 
 
-def _best_positive_prediction(predictions: list[dict]) -> Optional[dict]:
-    candidates = [
-        prediction
-        for prediction in predictions
-        if float(prediction.get("probability_up", 0)) >= 0.54 and float(prediction.get("expected_return", 0)) > 0.002
-    ]
-    return max(candidates, key=lambda item: (float(item.get("expected_return", 0)), float(item.get("probability_up", 0))), default=None)
+MIN_MODEL_PROBABILITY_UP = 0.54
+MIN_GROSS_EXPECTED_RETURN = 0.002
+# Net-of-cost edge a horizon must still show after a modeled round trip.
+MIN_NET_EXPECTED_EDGE = 0.001
+# The scanner's "confident BUY" bar must not sit below the execution risk
+# gate; otherwise rows are labelled positive that approve_trade always blocks.
+MIN_STRATEGY_CONFIDENCE = max(0.55, float(DEFAULT_RISK_RULES["min_confidence"]))
+ATR_WINDOW = 14
+
+
+def round_trip_cost(config: Optional[BacktestConfig] = None) -> float:
+    """Fees plus slippage paid on entry and exit, as a return fraction."""
+    config = config or BacktestConfig()
+    return 2 * (float(config.fees_bps) + float(config.slippage_bps)) / 10_000
+
+
+def _finite_or(value, default: float) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    return numeric if math.isfinite(numeric) else default
+
+
+def _best_positive_prediction(predictions: list[dict], cost: Optional[float] = None) -> Optional[dict]:
+    """Best horizon whose expected return clears costs with a margin.
+
+    Non-finite probabilities or returns never qualify.  Ranking uses the
+    net-of-cost edge so a horizon is never chosen for gross return alone.
+    """
+    cost = round_trip_cost() if cost is None else float(cost)
+    candidates = []
+    for prediction in predictions:
+        probability = _finite_or(prediction.get("probability_up"), float("nan"))
+        expected = _finite_or(prediction.get("expected_return"), float("nan"))
+        if not (math.isfinite(probability) and math.isfinite(expected)):
+            continue
+        if probability < MIN_MODEL_PROBABILITY_UP or expected <= MIN_GROSS_EXPECTED_RETURN:
+            continue
+        if expected - cost < MIN_NET_EXPECTED_EDGE:
+            continue
+        candidates.append(prediction)
+    return max(
+        candidates,
+        key=lambda item: (float(item.get("expected_return", 0)) - cost, float(item.get("probability_up", 0))),
+        default=None,
+    )
+
+
+def average_true_range_pct(prices: pd.DataFrame, window: int = ATR_WINDOW) -> Optional[float]:
+    """Latest simple-average true range divided by the latest close.
+
+    Uses high/low/previous-close when available and falls back to absolute
+    close-to-close moves.  Returns ``None`` when it cannot be computed.
+    """
+    if prices is None or len(prices) < window + 1 or "close" not in prices:
+        return None
+    close = pd.to_numeric(prices["close"], errors="coerce").astype(float)
+    previous = close.shift(1)
+    if {"high", "low"}.issubset(prices.columns):
+        high = pd.to_numeric(prices["high"], errors="coerce").astype(float)
+        low = pd.to_numeric(prices["low"], errors="coerce").astype(float)
+        true_range = pd.concat([high - low, (high - previous).abs(), (low - previous).abs()], axis=1).max(axis=1, skipna=False)
+    else:
+        true_range = (close - previous).abs()
+    atr = true_range.rolling(window).mean().iloc[-1]
+    latest_close = close.iloc[-1]
+    if not (math.isfinite(atr) and math.isfinite(latest_close) and latest_close > 0):
+        return None
+    return float(atr / latest_close)
+
+
+def _decision_trace(
+    *,
+    signal,
+    best_prediction: Optional[dict],
+    backtest: dict,
+    cost: float,
+    regime_risk: dict,
+    atr_pct: Optional[float],
+    gates: dict,
+    status: str,
+) -> dict:
+    """Structured, JSON-safe "why" for a scanner decision."""
+    expected = float(best_prediction.get("expected_return", 0)) if best_prediction else None
+    return {
+        "version": 1,
+        "status": status,
+        "gates": gates,
+        "thresholds": {
+            "min_model_probability_up": MIN_MODEL_PROBABILITY_UP,
+            "min_gross_expected_return": MIN_GROSS_EXPECTED_RETURN,
+            "min_net_expected_edge": MIN_NET_EXPECTED_EDGE,
+            "min_strategy_confidence": MIN_STRATEGY_CONFIDENCE,
+            "backtest_requires_unrejected_positive_score": True,
+        },
+        "inputs": {
+            "strategy_action": signal.action,
+            "strategy_confidence": round(_finite_or(signal.confidence, 0.0), 4),
+            "strategy_probability_up": round(_finite_or(signal.probability_up, 0.5), 4),
+            "model_best_horizon_days": best_prediction.get("horizon_days") if best_prediction else None,
+            "model_probability_up": float(best_prediction.get("probability_up", 0)) if best_prediction else None,
+            "backtest_score": backtest.get("score"),
+            "backtest_rejected": bool(backtest.get("rejected")),
+            "backtest_rejection_reasons": list(backtest.get("rejection_reasons") or []),
+        },
+        "expected_edge": {
+            "gross_expected_return": expected,
+            "round_trip_cost": round(cost, 6),
+            "net_expected_return": round(expected - cost, 6) if expected is not None else None,
+        },
+        "risk": {
+            "atr_pct": round(atr_pct, 6) if atr_pct is not None else None,
+            "regime_risk_multiplier": regime_risk.get("multiplier", 1.0),
+            "regime_risk_reasons": regime_risk.get("reasons", []),
+            "market_regime": regime_risk.get("market_regime"),
+        },
+    }
 
 
 def _backtest_supported(backtest: dict) -> bool:
@@ -72,6 +187,8 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
     ]
     macro_context = summarize_macro_context(db)
     regime = latest_market_regime(db, auto_detect=False) or {}
+    regime_risk = regime_risk_multiplier(regime)
+    cost = round_trip_cost()
     db.commit()
     candidates: list[dict] = []
     blocked_assets: list[dict] = []
@@ -92,7 +209,9 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
             include_walk_forward=False,
             forest_estimators=40,
         )
-        best_prediction = _best_positive_prediction(model.get("predictions", []))
+        best_prediction = _best_positive_prediction(model.get("predictions", []), cost)
+        atr_pct = average_true_range_pct(prices)
+        volatility_cap = volatility_capped_exposure(atr_pct)
         news_context = summarize_news_context(db, symbol)
         db.commit()
 
@@ -102,7 +221,8 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
             # measured against all available evidence, not an arbitrary tail.
             backtest = run_backtest(symbol, strategy_row["strategy_type"], prices, BacktestConfig(), strategy_row["parameters"])
             model_supported = best_prediction is not None
-            strategy_supported = signal.action == "BUY" and signal.confidence >= 0.55
+            signal_confidence = _finite_or(signal.confidence, 0.0)
+            strategy_supported = signal.action == "BUY" and signal_confidence >= MIN_STRATEGY_CONFIDENCE
             # A positive score is not enough to make a candidate actionable:
             # every backtest rejection, including an insufficient sample, must
             # be resolved before a strategy can enter the paper-trade lane.
@@ -111,14 +231,28 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
             if model_supported and strategy_supported and not backtest_supported:
                 status = "needs_more_evidence"
 
-            probability = float(best_prediction.get("probability_up", 0)) if best_prediction else float(signal.probability_up)
+            probability = float(best_prediction.get("probability_up", 0)) if best_prediction else _finite_or(signal.probability_up, 0.5)
             expected_return = float(best_prediction.get("expected_return", 0)) if best_prediction else 0.0
             base_score = (
                 probability * 0.35
                 + max(expected_return, -0.05) * 4
-                + float(signal.confidence) * 0.20
+                + signal_confidence * 0.20
                 + float(backtest["score"]) * 0.25
                 + (0.10 if status == "positive_candidate" else 0)
+            )
+            decision_trace = _decision_trace(
+                signal=signal,
+                best_prediction=best_prediction,
+                backtest=backtest,
+                cost=cost,
+                regime_risk=regime_risk,
+                atr_pct=atr_pct,
+                gates={
+                    "model_supported": model_supported,
+                    "strategy_supported": strategy_supported,
+                    "backtest_supported": backtest_supported,
+                },
+                status=status,
             )
             journal_feedback = _journal_feedback_adjustment(db, strategy_row, symbol)
             score = base_score + float(journal_feedback["score_adjustment"])
@@ -153,8 +287,14 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
                     "action": signal.action,
                     "probability_up": round(probability, 4),
                     "expected_return": round(expected_return, 4),
+                    "net_expected_return": round(expected_return - cost, 4) if best_prediction else None,
+                    "round_trip_cost": round(cost, 6),
+                    "atr_pct": round(atr_pct, 6) if atr_pct is not None else None,
+                    "volatility_exposure_cap": round(volatility_cap, 6) if volatility_cap is not None else None,
+                    "regime_risk_multiplier": regime_risk["multiplier"],
+                    "decision_trace": decision_trace,
                     "horizon_days": best_prediction.get("horizon_days") if best_prediction else None,
-                    "confidence": round(float(signal.confidence), 4),
+                    "confidence": round(signal_confidence, 4),
                     "backtest_score": backtest["score"],
                     "backtest_rejected": backtest["rejected"],
                     "blockers": blockers[:4],

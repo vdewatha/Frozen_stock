@@ -68,11 +68,15 @@ def classify_market_regime(prices: pd.DataFrame, macro_context: Optional[dict] =
     # Macro data is display-only until a trusted entitled source is configured.
     # Retain the argument for API compatibility, but never use it as evidence.
 
-    if spy_trend == "uptrend" and volatility_regime != "high_volatility" and rate_regime != "restrictive":
+    # ``_rate_proxy_label`` emits risk_on / risk_off / neutral.  These
+    # branches previously compared against "restrictive", a label it never
+    # produces, so a -8% 60-day drawdown could still be called a bull trend
+    # and policy_stress was unreachable.
+    if spy_trend == "uptrend" and volatility_regime != "high_volatility" and rate_regime != "risk_off":
         market_regime = "bull_trend"
     elif spy_trend == "downtrend" and volatility_regime == "high_volatility":
         market_regime = "bear_stress"
-    elif rate_regime == "restrictive" and volatility_regime == "high_volatility":
+    elif rate_regime == "risk_off" and volatility_regime == "high_volatility":
         market_regime = "policy_stress"
     elif volatility_regime == "high_volatility":
         market_regime = "volatile_range"
@@ -98,6 +102,41 @@ def classify_market_regime(prices: pd.DataFrame, macro_context: Optional[dict] =
             "macro_context": {"status": "excluded", "reason": "No trusted macro feed configured."},
         },
     }
+
+
+# Exposure multipliers applied to new-entry sizing.  They only ever reduce
+# size; an unknown regime keeps the existing (unscaled) behaviour.
+REGIME_RISK_MULTIPLIERS = {
+    "bear_stress": 0.25,
+    "policy_stress": 0.5,
+    "volatile_range": 0.5,
+}
+DOWNTREND_RISK_MULTIPLIER = 0.5
+HIGH_VOLATILITY_RISK_MULTIPLIER = 0.5
+RISK_OFF_RISK_MULTIPLIER = 0.75
+
+
+def regime_risk_multiplier(regime: Optional[dict]) -> dict:
+    """Return ``{"multiplier", "reasons"}`` for sizing new long entries.
+
+    The most restrictive applicable factor wins.  Values are <= 1.0, so the
+    regime filter can shrink but never enlarge a position.
+    """
+    regime = regime or {}
+    label = str(regime.get("market_regime") or "unclassified")
+    factors: list[tuple[float, str]] = []
+    if label in REGIME_RISK_MULTIPLIERS:
+        factors.append((REGIME_RISK_MULTIPLIERS[label], f"market_regime={label}"))
+    if regime.get("spy_trend") == "downtrend":
+        factors.append((DOWNTREND_RISK_MULTIPLIER, "spy_trend=downtrend"))
+    if regime.get("volatility_regime") == "high_volatility":
+        factors.append((HIGH_VOLATILITY_RISK_MULTIPLIER, "volatility_regime=high_volatility"))
+    if regime.get("rate_regime") == "risk_off":
+        factors.append((RISK_OFF_RISK_MULTIPLIER, "rate_regime=risk_off"))
+    if not factors:
+        return {"multiplier": 1.0, "market_regime": label, "reasons": []}
+    multiplier = min(value for value, _ in factors)
+    return {"multiplier": multiplier, "market_regime": label, "reasons": [reason for _, reason in factors]}
 
 
 def detect_and_store_market_regime(db: Session, symbol: str = "SPY") -> dict:

@@ -837,6 +837,12 @@ class TradeCandidate(BaseModel):
     action: str
     probability_up: float
     expected_return: float
+    net_expected_return: Optional[float] = None
+    round_trip_cost: Optional[float] = None
+    atr_pct: Optional[float] = None
+    volatility_exposure_cap: Optional[float] = None
+    regime_risk_multiplier: Optional[float] = None
+    decision_trace: dict = Field(default_factory=dict)
     horizon_days: Optional[int]
     confidence: float
     backtest_score: float
