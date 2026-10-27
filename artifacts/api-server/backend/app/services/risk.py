@@ -118,7 +118,10 @@ def approve_trade(signal: dict, portfolio: PortfolioState, strategy_state: Strat
     if proposed and symbol_exposure + proposed > symbol_limit + 1e-9:
         return False, "Proposed order would exceed the symbol exposure limit."
     # Per-symbol caps alone allow N symbols x cap of gross exposure; the
-    # aggregate cap bounds the whole book.
+    # aggregate cap bounds the whole book.  A long-only SELL can only reduce
+    # gross exposure, so it must stay possible when the book is over the cap.
+    if signal.get("action") == "SELL":
+        return True, "Approved for paper trading."
     gross_limit = float(rules.get("max_total_exposure", 1.0))
     gross_exposure = sum(abs(value) for value in exposure_values if value is not None)
     if gross_exposure >= gross_limit:

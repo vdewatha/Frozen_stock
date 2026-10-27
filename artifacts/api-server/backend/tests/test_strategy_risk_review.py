@@ -137,6 +137,13 @@ def test_gross_exposure_cap_blocks_even_when_symbol_has_room():
     assert not approved and "Gross exposure" in reason
 
 
+def test_sell_is_not_blocked_by_gross_cap():
+    book = {f"S{i}": 0.099 for i in range(9)} | {"BIG": 0.5, "AAA": 0.05}
+    portfolio = PortfolioState(open_positions_by_symbol=book)
+    assert approve_trade(_buy(action="SELL"), portfolio, StrategyState()) == (True, "Approved for paper trading.")
+    assert not approve_trade(_buy(), portfolio, StrategyState())[0]
+
+
 def test_proposed_exposure_counts_against_symbol_cap():
     portfolio = PortfolioState(open_positions_by_symbol={"AAA": 0.09})
     assert approve_trade(_buy(proposed_exposure=0.005), portfolio, StrategyState())[0]
