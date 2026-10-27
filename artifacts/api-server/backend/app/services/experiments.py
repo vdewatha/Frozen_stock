@@ -8,8 +8,14 @@ from sqlalchemy.orm import Session
 
 from app.models import Strategy, StrategyBacktest, StrategyExperiment
 from app.services.audit import write_audit_log
+from app.services.backtest_statistics import deflated_sharpe_ratio
 from app.services.learning import propose_parameter_experiments
-from app.services.trusted_data import trusted_history
+from app.services.trusted_data import UntrustedMarketData, trusted_history
+
+# Probability that the selected candidate's true Sharpe beats the best Sharpe
+# expected from luck across all candidates tried on the same validation data.
+MIN_VALIDATION_DEFLATED_SHARPE = 0.95
+BENCHMARK_SYMBOL = "SPY"
 
 
 def _decimal(value: float) -> Decimal:
@@ -41,12 +47,57 @@ def _save_backtest(db: Session, strategy_id: int, symbol: str, parameters: dict,
     return row
 
 
+def _sharpe_inputs(result: dict) -> tuple[float, int, float, float]:
+    stats = result.get("statistics") or {}
+    return (
+        float(stats.get("sharpe_per_period", 0.0)),
+        int(stats.get("observations", 0)),
+        float(stats.get("skewness", 0.0)),
+        float(stats.get("kurtosis", 3.0)),
+    )
+
+
+def multiple_testing_summary(selected: dict, all_results: list[dict]) -> dict:
+    """Deflated Sharpe of ``selected`` given every trial run on the same data."""
+    sharpe, observations, skewness, kurtosis = _sharpe_inputs(selected)
+    trial_sharpes = [_sharpe_inputs(result)[0] for result in all_results]
+    return deflated_sharpe_ratio(
+        sharpe, observations, trials=len(all_results), trial_sharpes=trial_sharpes,
+        skewness=skewness, kurtosis=kurtosis,
+    )
+
+
+def _comparison_metrics(result: dict) -> dict:
+    return {
+        "total_return": result["total_return"],
+        "max_drawdown": result["max_drawdown"],
+        "win_rate": result["win_rate"],
+        "profit_factor": result["profit_factor"],
+        "number_of_trades": result["number_of_trades"],
+        "excess_return": result.get("excess_return"),
+        "beats_baselines": result.get("beats_baselines"),
+        "sharpe_ci": ((result.get("statistics") or {}).get("bootstrap") or {}).get("sharpe_ci"),
+    }
+
+
+def _benchmark_prices(db: Session, symbol: str):
+    if symbol == BENCHMARK_SYMBOL:
+        return None
+    try:
+        prices, _source = trusted_history(db, BENCHMARK_SYMBOL, 420, minimum=100)
+    except UntrustedMarketData:
+        return None
+    return prices
+
+
 def _decision(
     old_result: dict,
     new_result: dict,
     *,
     validation_old: dict | None = None,
     validation_new: dict | None = None,
+    validation_deflated_sharpe: float | None = None,
+    validation_trials: int | None = None,
 ) -> tuple[str, str]:
     delta_score = new_result["score"] - old_result["score"]
     if new_result["rejected"]:
@@ -67,6 +118,15 @@ def _decision(
         if validation_delta < 0.03:
             return "needs_more_data", (
                 f"Out-of-sample score delta {validation_delta:.3f} is below the promotion threshold."
+            )
+        # Several candidates are validated on the same tail and the best one
+        # is applied, so the tail is itself a selection. Require the
+        # candidate's Sharpe to survive deflation for the number of trials.
+        if validation_deflated_sharpe is None or validation_deflated_sharpe < MIN_VALIDATION_DEFLATED_SHARPE:
+            shown = "unavailable" if validation_deflated_sharpe is None else f"{validation_deflated_sharpe:.3f}"
+            return "needs_more_data", (
+                f"Out-of-sample deflated Sharpe ratio {shown} across {validation_trials or 'unknown'} "
+                f"trials is below {MIN_VALIDATION_DEFLATED_SHARPE:.2f}; the improvement may be selection luck."
             )
         return "promoted", (
             f"Out-of-sample score improved by {validation_delta:.3f} after an in-sample "
@@ -99,6 +159,7 @@ def run_strategy_experiments(
     current_parameters = dict(strategy.parameters or {})
 
     prices, source = trusted_history(db, symbol, 420, minimum=100)
+    benchmark_prices = _benchmark_prices(db, symbol)
 
     # Loading trusted history starts a database transaction. Backtests are
     # CPU-bound and can run longer than PostgreSQL's idle-in-transaction
@@ -121,7 +182,8 @@ def run_strategy_experiments(
     else:
         split_at = None
 
-    old_result = run_backtest(symbol, strategy_slug, evaluation_prices, config, current_parameters)
+    old_result = run_backtest(symbol, strategy_slug, evaluation_prices, config, current_parameters,
+                              benchmark_prices=benchmark_prices)
     old_backtest = _save_backtest(db, strategy_id, symbol, current_parameters, old_result)
     # Close the transaction before the next CPU-bound experiment. PostgreSQL
     # may terminate an idle transaction while a long backtest is running.
@@ -137,19 +199,39 @@ def run_strategy_experiments(
         # tail after the split. This path is used only for the explicit
         # promotion workflow; research fan-out stays fast.
         validation_prices = prices.iloc[max(0, split_at - 60):].copy()
-        validation_old = run_backtest(symbol, strategy_slug, validation_prices, config, current_parameters)
+        validation_old = run_backtest(symbol, strategy_slug, validation_prices, config, current_parameters,
+                                      benchmark_prices=benchmark_prices)
 
+    # Run every CPU-bound backtest before persisting so multiple-testing
+    # statistics can account for all trials on the same history. No database
+    # transaction is open here (committed above).
+    candidate_runs = []
     for proposal in proposals:
         new_parameters = proposal["new_parameters"]
-        new_result = run_backtest(symbol, strategy_slug, evaluation_prices, config, new_parameters)
-        new_backtest = _save_backtest(db, strategy_id, symbol, new_parameters, new_result)
+        new_result = run_backtest(symbol, strategy_slug, evaluation_prices, config, new_parameters,
+                                  benchmark_prices=benchmark_prices)
+        candidate_validation = None
         if validation_prices is not None:
-            validation_new = run_backtest(symbol, strategy_slug, validation_prices, config, new_parameters)
+            candidate_validation = run_backtest(symbol, strategy_slug, validation_prices, config, new_parameters,
+                                                benchmark_prices=benchmark_prices)
+        candidate_runs.append((proposal, new_result, candidate_validation))
+    in_sample_trials = [old_result] + [run[1] for run in candidate_runs]
+    validation_trials = [run[2] for run in candidate_runs if run[2] is not None]
+
+    for proposal, new_result, validation_new in candidate_runs:
+        new_parameters = proposal["new_parameters"]
+        new_backtest = _save_backtest(db, strategy_id, symbol, new_parameters, new_result)
+        in_sample_dsr = multiple_testing_summary(new_result, in_sample_trials)
+        validation_dsr = (
+            multiple_testing_summary(validation_new, validation_trials) if validation_new is not None else None
+        )
         decision, reason = _decision(
             old_result,
             new_result,
             validation_old=validation_old,
             validation_new=validation_new,
+            validation_deflated_sharpe=validation_dsr["deflated_sharpe_ratio"] if validation_dsr else None,
+            validation_trials=len(validation_trials) or None,
         )
         if not apply_promotions and decision == "promoted":
             # Research fan-out is never promotion-authorized, even if the
@@ -167,19 +249,13 @@ def run_strategy_experiments(
             "old_score": old_result["score"],
             "new_score": new_result["score"],
             "delta_score": round(new_result["score"] - old_result["score"], 4),
-            "old_metrics": {
-                "total_return": old_result["total_return"],
-                "max_drawdown": old_result["max_drawdown"],
-                "win_rate": old_result["win_rate"],
-                "profit_factor": old_result["profit_factor"],
-                "number_of_trades": old_result["number_of_trades"],
-            },
-            "new_metrics": {
-                "total_return": new_result["total_return"],
-                "max_drawdown": new_result["max_drawdown"],
-                "win_rate": new_result["win_rate"],
-                "profit_factor": new_result["profit_factor"],
-                "number_of_trades": new_result["number_of_trades"],
+            "old_metrics": _comparison_metrics(old_result),
+            "new_metrics": _comparison_metrics(new_result),
+            "multiple_testing": {
+                "in_sample": in_sample_dsr,
+                "validation": validation_dsr,
+                "minimum_validation_deflated_sharpe": MIN_VALIDATION_DEFLATED_SHARPE,
+                "note": "Trials share one history; the best in-sample score is expected to be optimistic.",
             },
             "validation": ({
                 "period_start": str(validation_prices.iloc[60]["date"]),
