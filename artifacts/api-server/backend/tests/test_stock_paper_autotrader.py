@@ -1,10 +1,42 @@
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.core.config import settings
 from app.services.stock_paper_autotrader import run_stock_paper_signal_cycle
+from app.services.stock_paper_ledger import StockPaperError
+
+
+@contextmanager
+def signal_source(research: bool = False, **mock_kwargs):
+    """Patch the batched signal pass with a per-pair signal double.
+
+    ``research`` selects which per-pair path the double stands in for
+    (``create_stock_paper_research_signal`` vs ``create_stock_paper_signal``);
+    pairs on the other path fail closed. The yielded mock is called with the
+    same ``(db, symbol, strategy_type)`` arguments as the per-pair functions.
+    """
+    mock = MagicMock(**mock_kwargs)
+
+    def fake(db, symbols, strategies):
+        outcomes = {}
+        for symbol in symbols:
+            for strategy in strategies:
+                research_only = getattr(strategy, "current_status", "paper_trading_active") != "paper_trading_active"
+                key = (symbol, strategy.strategy_type)
+                if research_only != research:
+                    outcomes[key] = StockPaperError("signal path not patched")
+                    continue
+                try:
+                    outcomes[key] = mock(db, symbol, strategy.strategy_type)
+                except Exception as exc:
+                    outcomes[key] = exc
+        return outcomes, {}
+
+    with patch("app.services.stock_paper_autotrader.generate_cycle_signals", side_effect=fake):
+        yield mock
 
 
 class _Query:
@@ -79,7 +111,7 @@ def test_cycle_fans_out_symbols_and_strategies_but_keeps_orders_gated():
     with patch.object(settings, "paper_execution_symbols", ["AAPL", "SPY"]), \
          patch("app.services.stock_paper_autotrader.active_paper_account", return_value=_account()), \
          patch("app.services.stock_paper_autotrader._is_regular_session", return_value=True), \
-         patch("app.services.stock_paper_autotrader.create_stock_paper_signal", side_effect=signal), \
+         signal_source(False, side_effect=signal), \
          patch("app.services.stock_paper_autotrader.reserve_stock_paper_order", side_effect=RuntimeError("risk gate")):
         result = run_stock_paper_signal_cycle(db)
 
@@ -96,7 +128,7 @@ def test_cycle_dispatches_only_after_modern_reservation():
     with patch.object(settings, "paper_execution_symbols", ["AAPL"]), \
          patch("app.services.stock_paper_autotrader.active_paper_account", return_value=_account()), \
          patch("app.services.stock_paper_autotrader._is_regular_session", return_value=True), \
-         patch("app.services.stock_paper_autotrader.create_stock_paper_signal", return_value={
+         signal_source(False, return_value={
              "signal_id": 7, "signal_action": "BUY", "reference_price": "100",
          }), \
          patch("app.services.stock_paper_autotrader.reserve_stock_paper_order", return_value=order) as reserve, \
@@ -114,7 +146,7 @@ def test_candidate_strategies_are_observed_without_order_path():
     with patch.object(settings, "paper_execution_symbols", ["AAPL"]), \
          patch("app.services.stock_paper_autotrader.active_paper_account", return_value=_account()), \
          patch("app.services.stock_paper_autotrader._is_regular_session", return_value=True), \
-         patch("app.services.stock_paper_autotrader.create_stock_paper_research_signal", return_value={
+         signal_source(True, return_value={
              "signal_id": 8, "signal_action": "BUY", "reference_price": "100",
          }) as observe, \
          patch("app.services.stock_paper_autotrader.reserve_stock_paper_order") as reserve:
@@ -153,7 +185,7 @@ def _run(db, actions, holdings, pending=(), attributed=True):
     with patch.object(settings, "paper_execution_symbols", ["SPY"]), \
          patch("app.services.stock_paper_autotrader.active_paper_account", return_value=_account()), \
          patch("app.services.stock_paper_autotrader._is_regular_session", return_value=True), \
-         patch("app.services.stock_paper_autotrader.create_stock_paper_signal", side_effect=_signals(actions)), \
+         signal_source(False, side_effect=_signals(actions)), \
          patch("app.services.stock_paper_autotrader._strategy_holdings", return_value=(holdings, attributed)), \
          patch("app.services.stock_paper_autotrader._pending_orders", return_value=list(pending)), \
          patch("app.services.stock_paper_autotrader.reserve_stock_paper_order", return_value=order) as reserve, \

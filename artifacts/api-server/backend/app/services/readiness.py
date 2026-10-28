@@ -15,11 +15,16 @@ from app.core.config import settings
 from app.services.broker import stock_paper_broker_status
 from app.services.intraday_data import (
     feed_status,
-    ALLOWED_SYMBOLS,
     MARKET_DATA_PROVIDER,
     MARKET_DATA_FEED_CLASS,
 )
 from app.services.portfolio_risk import portfolio_risk_snapshot
+from app.services.trading_universe import (
+    classify_feed_outage,
+    execution_symbols as configured_execution_symbols,
+    intraday_symbols,
+    never_ingested_symbols,
+)
 from app.tasks.celery_app import celery_app
 from app.services.trusted_data import trusted_history, validate_intraday_readiness, UntrustedMarketData, TRUSTED_SOURCES
 
@@ -208,10 +213,32 @@ def readiness_snapshot(db: Session) -> dict:
             stale_assets.append(asset.symbol)
         if (latest_price.source or "unknown") not in trusted_sources:
             untrusted_assets.append(asset.symbol)
+    # Per-symbol gating: an invalid/stale/missing daily history blocks only
+    # that symbol (trusted_history fails its signals); only a broad outage
+    # (>threshold of the execution universe, or SPY/QQQ) blocks globally.
+    execution_universe = configured_execution_symbols()
+    active_symbol_set = {asset.symbol for asset in active_assets}
+    daily_failed = (
+        set(invalid_histories) | set(stale_assets) | set(missing_assets)
+        | (set(execution_universe) - active_symbol_set)
+    )
+    # Symbols with no daily rows (or no Asset row) yet are onboarding: blocked
+    # individually, excluded from the broad-outage share.
+    daily_onboarding = set(missing_assets) | (set(execution_universe) - active_symbol_set)
+    daily_outage = classify_feed_outage(
+        daily_failed & set(execution_universe), execution_universe, onboarding=daily_onboarding,
+    )
+    research_daily_failed = sorted(daily_failed - set(execution_universe))
+    if not active_assets or daily_outage["scope"] == "broad":
+        market_data_status = "blocked"
+    elif daily_failed or untrusted_assets:
+        market_data_status = "warning"
+    else:
+        market_data_status = "ready"
     checks.append(
         _check(
             "Market data",
-            _status_from_count(len(invalid_histories) + int(not active_assets), len(stale_assets)),
+            market_data_status,
             "Active assets have recent trusted market data."
             if not missing_assets and not stale_assets and not untrusted_assets
             else "Market data is missing, stale, or not from a trusted provider for one or more active assets.",
@@ -224,6 +251,10 @@ def readiness_snapshot(db: Session) -> dict:
                 "latest_prices": latest_prices,
                 "latest_sources": latest_sources,
                 "trusted_sources": sorted(trusted_sources),
+                "outage_scope": daily_outage["scope"],
+                "blocked_symbols": daily_outage["blocked_symbols"],
+                "outage_reason": daily_outage["reason"],
+                "research_only_failures": research_daily_failed,
             },
         )
     )
@@ -231,23 +262,21 @@ def readiness_snapshot(db: Session) -> dict:
     intraday_historical_warnings = {}
     intraday_status = {}
     active_symbols = {asset.symbol for asset in active_assets}
-    execution_symbols = set(settings.paper_execution_symbols)
+    execution_symbols = set(execution_universe)
     missing_execution_symbols = sorted(execution_symbols - active_symbols)
-    if missing_execution_symbols:
-        intraday_failures["__configuration__"] = (
-            "Configured paper execution symbols are not active assets: "
-            + ", ".join(missing_execution_symbols)
-        )
+    for symbol in missing_execution_symbols:
+        intraday_failures[symbol] = "Configured paper execution symbol is not an active asset"
     # Research-only symbols need the same completeness checks as execution
     # symbols. They cannot place orders, but unresolved bars still corrupt
     # forward evaluation and should be visible through the repair workflow.
+    intraday_universe = intraday_symbols()
     intraday_assets = [
         asset for asset in active_assets
-        if asset.symbol in ALLOWED_SYMBOLS
+        if asset.symbol in intraday_universe
     ]
     research_only_symbols = sorted(active_symbols - execution_symbols)
     unsupported_intraday_assets = [
-        asset.symbol for asset in active_assets if asset.symbol not in ALLOWED_SYMBOLS
+        asset.symbol for asset in active_assets if asset.symbol not in intraday_universe
     ]
     for asset in intraday_assets:
         try:
@@ -267,9 +296,24 @@ def readiness_snapshot(db: Session) -> dict:
                     "status": "unavailable",
                     "unavailable_reason": str(status_exc),
                 }
-    intraday_check_status = _status_from_count(
-        len(intraday_failures), len(intraday_historical_warnings)
+    # A stale/incomplete symbol blocks only orders in that symbol
+    # (reserve_stock_paper_order checks feed_status per symbol). Only a broad
+    # outage blocks the check; research-only failures are warnings.
+    intraday_failed = set(intraday_failures) & execution_symbols
+    intraday_outage = classify_feed_outage(
+        intraday_failed,
+        execution_universe,
+        onboarding=(
+            set(missing_execution_symbols)
+            | never_ingested_symbols(db, intraday_failed - set(missing_execution_symbols), MARKET_DATA_PROVIDER)
+        ),
     )
+    if intraday_outage["scope"] == "broad":
+        intraday_check_status = "blocked"
+    elif intraday_failures or intraday_historical_warnings:
+        intraday_check_status = "warning"
+    else:
+        intraday_check_status = "ready"
     representative = next(iter(intraday_status.values()), {})
     checks.append(_check(
         "Intraday feed",
@@ -277,6 +321,11 @@ def readiness_snapshot(db: Session) -> dict:
          (
              "Completed authenticated intraday bars are fresh."
              if intraday_check_status == "ready"
+             else (
+                 "Some symbols lack fresh complete intraday data; only those symbols are blocked: "
+                 + ", ".join(sorted(intraday_failures))
+             )
+             if intraday_check_status == "warning" and intraday_failures
              else "Current authenticated execution bars are usable; historical repair gaps remain for research."
              if intraday_check_status == "warning"
              else "Fresh complete intraday data is required for paper decisions."
@@ -304,6 +353,11 @@ def readiness_snapshot(db: Session) -> dict:
              },
             "unavailable_reason": representative.get("unavailable_reason"),
             "failures": intraday_failures,
+            "outage_scope": intraday_outage["scope"],
+            "blocked_symbols": sorted(intraday_failures),
+            "onboarding_symbols": intraday_outage["onboarding_symbols"],
+            "outage_reason": intraday_outage["reason"],
+            "broad_outage_fraction": intraday_outage["broad_outage_fraction"],
             "historical_warnings": intraday_historical_warnings,
             "symbols": intraday_status,
             "execution_symbols": sorted(execution_symbols),
@@ -456,7 +510,9 @@ def readiness_snapshot(db: Session) -> dict:
         "blocked": sum(1 for check in checks if check["status"] == "blocked"),
     }
     overall_status = "blocked" if summary["blocked"] else ("warning" if summary["warning"] else "ready")
-    allowed_paper_warnings = {"Intraday feed", "Complete accounting"}
+    # "Market data"/"Intraday feed" warnings mean a minority of symbols is
+    # blocked individually; a broad outage escalates them to blocked.
+    allowed_paper_warnings = {"Intraday feed", "Complete accounting", "Market data"}
     unexpected_warnings = [
         check["name"] for check in checks
         if check["status"] == "warning" and check["name"] not in allowed_paper_warnings

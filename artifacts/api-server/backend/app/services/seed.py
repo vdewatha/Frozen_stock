@@ -6,6 +6,38 @@ from app.models import Asset, RiskRule, Strategy
 from app.services.risk import DEFAULT_RISK_RULES
 
 
+def ensure_paper_execution_assets(db: Session) -> list[str]:
+    """Create missing Asset rows for the configured paper execution universe.
+
+    Only missing rows are added; an operator-deactivated asset is left alone
+    (readiness reports it). Daily import then fills trusted history for every
+    active asset, so a newly configured symbol becomes tradable once its data
+    is present and fresh. Returns the symbols that were created.
+    """
+    from app.services.trading_universe import (
+        ETF_SYMBOLS, SECTOR_NAMES, execution_symbols, sector_group,
+    )
+
+    wanted = execution_symbols()
+    existing = {
+        row[0] for row in db.query(Asset.symbol).filter(Asset.symbol.in_(wanted)).all()
+    }
+    created = [symbol for symbol in wanted if symbol not in existing]
+    for symbol in created:
+        group = sector_group(symbol)
+        db.add(Asset(
+            symbol=symbol,
+            name=symbol,
+            asset_type="stock",
+            sector=SECTOR_NAMES.get(group),
+            industry="ETF" if symbol in ETF_SYMBOLS else None,
+            is_active=True,
+        ))
+    if created:
+        db.flush()
+    return created
+
+
 def seed_defaults(db: Session) -> None:
     if not db.query(Asset).first():
         db.add_all(
@@ -77,6 +109,8 @@ def seed_defaults(db: Session) -> None:
                 ),
             ]
         )
+    db.flush()
+    ensure_paper_execution_assets(db)
     if not db.query(RiskRule).first():
         db.add(RiskRule(name="default_paper_risk", value=DEFAULT_RISK_RULES, is_active=True))
     db.commit()

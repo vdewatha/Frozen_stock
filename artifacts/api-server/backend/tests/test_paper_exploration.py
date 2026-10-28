@@ -24,6 +24,7 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
 )
 from tests.test_stock_paper_ledger import FakeAlpaca
+from tests.test_stock_paper_autotrader import signal_source
 
 
 class ExplorationLedgerTests(unittest.TestCase):
@@ -180,7 +181,7 @@ def _run_cycle(enabled):
          patch.object(settings, "paper_exploration_enabled", enabled), \
          patch("app.services.stock_paper_autotrader.active_paper_account", return_value=account), \
          patch("app.services.stock_paper_autotrader._is_regular_session", return_value=True), \
-         patch("app.services.stock_paper_autotrader.create_stock_paper_research_signal", return_value={
+         signal_source(True, return_value={
              "signal_id": 5, "signal_action": "BUY", "reference_price": "100",
          }), \
          patch("app.services.stock_paper_autotrader.reserve_stock_paper_order", return_value=order) as reserve, \

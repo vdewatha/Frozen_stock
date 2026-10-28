@@ -1,14 +1,17 @@
 """Scheduled, paper-only execution through the governed stock-paper ledger.
 
 This service deliberately does not use the legacy ``PaperTrade`` simulator.
-It generates one signal per configured symbol and approved paper strategy, then
-lets the durable stock-paper reservation and dispatch gates decide whether an
-order can be submitted to Alpaca paper.
+It generates one signal per configured symbol and approved paper strategy (in
+one batched pass, see ``stock_paper_signal_batch``), then lets the durable
+stock-paper reservation and dispatch gates decide whether an order can be
+submitted to Alpaca paper.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
+import logging
+import time
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -20,15 +23,16 @@ from app.services.stock_paper_ledger import (
     NONTERMINAL_ORDER_STATUSES,
     StockPaperError,
     active_paper_account,
-    create_stock_paper_signal,
-    create_stock_paper_research_signal,
     EXPLORATION_SOURCE,
     EXPLORATION_STRATEGY_STATUSES,
     dispatch_reserved_order,
     reserve_stock_paper_order,
 )
 from app.services.intraday_data import session_bounds
+from app.services.stock_paper_signal_batch import generate_cycle_signals
+from app.services.trading_universe import execution_symbols, sector_group
 
+logger = logging.getLogger(__name__)
 UTC = timezone.utc
 ET = ZoneInfo("America/New_York")
 SCHEDULED_SOURCE = "scheduled_paper_signal"
@@ -131,6 +135,33 @@ def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
     }
 
 
+def _max_positions_per_sector(rules: dict) -> int:
+    value = rules.get("max_positions_per_sector", settings.paper_max_positions_per_sector)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return int(settings.paper_max_positions_per_sector)
+
+
+def _sector_exposure(db: Session, account_id: int) -> dict[str, set[str]]:
+    """Symbols held or being bought, grouped by sector ETF group."""
+    held = db.query(StockPaperPosition).filter(
+        StockPaperPosition.account_id == account_id, StockPaperPosition.quantity > 0
+    ).all()
+    buying = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account_id,
+        StockPaperOrder.side == "buy",
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+    ).all()
+    groups: dict[str, set[str]] = {}
+    for row in [*held, *buying]:
+        symbol = getattr(row, "symbol", None)
+        if symbol:
+            symbol = str(symbol).upper()
+            groups.setdefault(sector_group(symbol), set()).add(symbol)
+    return groups
+
+
 def run_stock_paper_signal_cycle(db: Session) -> dict:
     """Run one bounded multi-symbol/multi-strategy paper execution cycle.
 
@@ -138,13 +169,15 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
     BUY/SELL still passes through the existing reservation and dispatch gates;
     a failed gate is recorded in the result and does not become an order.
     """
+    cycle_started = time.perf_counter()
     now = datetime.now(UTC)
     account = active_paper_account(db)
+    symbols = execution_symbols()
     base = {
         "job": "paper_trading_signal_job",
         "paper_only": True,
         "live_trading": False,
-        "symbols": list(settings.paper_execution_symbols),
+        "symbols": list(symbols),
     }
     if account is None:
         return base | {"status": "skipped", "reason": "stock paper account is not initialized"}
@@ -175,9 +208,15 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
     rules = rule.value if rule else {}
     session_key = now.astimezone(ET).date().isoformat()
     type_by_id = {row.id: row.strategy_type for row in db.query(Strategy).all()}
+    # Phase 0: every strategy signal for every symbol in one batched pass
+    # (one data load per symbol, one commit).  Outcomes are the same signal
+    # dicts / exceptions the per-pair create_* calls produced.
+    signal_outcomes, signal_stats = generate_cycle_signals(db, symbols, strategies)
+    signals_done = time.perf_counter()
+    sector_cap = _max_positions_per_sector(rules)
+    sector_groups = _sector_exposure(db, account.id) if sector_cap else {}
     results: list[dict] = []
-    for symbol in settings.paper_execution_symbols:
-        symbol = symbol.strip().upper()
+    for symbol in symbols:
         # Phase 1: observe every strategy for this symbol before acting, so
         # opposing signals from different strategies are resolved
         # deterministically instead of by strategy id order.
@@ -189,11 +228,11 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                 # Test doubles and older rows may omit the status field; the
                 # existing cycle contract treated those rows as active.
                 research_only = getattr(strategy, "current_status", "paper_trading_active") != "paper_trading_active"
-                signal = (
-                    create_stock_paper_research_signal(db, symbol, strategy.strategy_type)
-                    if research_only
-                    else create_stock_paper_signal(db, symbol, strategy.strategy_type)
-                )
+                signal = signal_outcomes.get((symbol, strategy.strategy_type))
+                if signal is None:
+                    raise StockPaperError("signal was not generated for this symbol and strategy")
+                if isinstance(signal, BaseException):
+                    raise signal
                 result.update({
                     "signal_id": signal["signal_id"],
                     "signal_action": signal["signal_action"],
@@ -263,6 +302,20 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         result.update({"status": "skipped", "reason": "strategy already holds or is buying this symbol; no pyramiding on a persistent signal"})
                         results.append(result)
                         continue
+                    group = sector_group(symbol)
+                    group_symbols = sector_groups.get(group, set())
+                    if sector_cap and symbol not in group_symbols and len(group_symbols) >= sector_cap:
+                        # Correlation guard: a new name in a sector group that
+                        # already has ``sector_cap`` open/pending names.
+                        result.update({
+                            "status": "skipped",
+                            "reason": (
+                                f"sector group {group} already has {len(group_symbols)} open or pending "
+                                f"positions (cap {sector_cap})"
+                            ),
+                        })
+                        results.append(result)
+                        continue
                     quantity = _quantity_for_buy(account, reference_price, rules,
                                                  exploration=result.get("mode") == "explore")
                     if quantity <= 0:
@@ -321,6 +374,8 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                     result["reason"] = f"broker order ended in {order_status} status"
                 if side == "sell" and order_status != "cancelled":
                     exiting = True
+                if side == "buy" and order_status != "cancelled":
+                    sector_groups.setdefault(sector_group(symbol), set()).add(symbol)
             except StockPaperError as exc:
                 result.update({"status": "blocked", "reason": str(exc)})
             except Exception as exc:  # one symbol/strategy must not stop the fan-out
@@ -330,11 +385,24 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
 
     submitted = sum(item.get("status") == "submitted" for item in results)
     blocked = sum(item.get("status") in {"blocked", "failed"} for item in results)
+    finished = time.perf_counter()
+    timing = {
+        "signals_ms": round((signals_done - cycle_started) * 1000, 1),
+        "orders_ms": round((finished - signals_done) * 1000, 1),
+        "total_ms": round((finished - cycle_started) * 1000, 1),
+    }
+    logger.info(
+        "stock paper cycle: symbols=%s strategies=%s signals_ms=%s orders_ms=%s total_ms=%s submitted=%s blocked=%s",
+        len(symbols), len(strategies), timing["signals_ms"], timing["orders_ms"], timing["total_ms"],
+        submitted, blocked,
+    )
     return base | {
         "status": "complete" if blocked == 0 else "partially_complete",
         "strategy_count": len(strategies),
         "signal_count": len(results),
         "submitted_count": submitted,
         "blocked_count": blocked,
+        "timing": timing,
+        "signal_batch": {key: value for key, value in signal_stats.items()},
         "results": results,
     }

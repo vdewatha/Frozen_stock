@@ -1949,16 +1949,12 @@ def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: s
     return signal
 
 
-def _create_stock_paper_signal(
-    db: Session,
-    symbol: str,
-    strategy_slug: str,
-    *,
-    allowed_statuses: set[str],
-    research_only: bool,
-) -> dict:
-    """Persist a real generated signal without creating a reservation or order."""
-    symbol = symbol.strip().upper()
+ACTIVE_SIGNAL_STATUSES = frozenset({"paper_trading_active"})
+RESEARCH_SIGNAL_STATUSES = frozenset({"research", "paper_trading_candidate"})
+
+
+def _resolve_signal_strategy(db: Session, strategy_slug: str, allowed_statuses) -> Strategy:
+    """Bind a signal to the oldest active strategy row of this type and scope."""
     # Strategy type is the public registry key.  A historical database can
     # contain more than one row for a type, so choose the oldest currently
     # paper-approved row deterministically instead of binding the signal to a
@@ -1969,24 +1965,32 @@ def _create_stock_paper_signal(
             strategy_type=strategy_slug,
             is_active=True,
         )
-        .filter(Strategy.current_status.in_(allowed_statuses))
+        .filter(Strategy.current_status.in_(sorted(allowed_statuses)))
         .order_by(Strategy.id)
         .first()
     )
     if not strategy:
         raise StockPaperError(f"Unknown strategy: {strategy_slug}")
+    return strategy
+
+
+def _load_signal_inputs(db: Session, symbol: str) -> tuple[Any, str, dict]:
+    """Load the trusted daily frame and execution observation for one symbol."""
     try:
         prices, source = trusted_history(db, symbol, require_active=False)
         observation = trusted_intraday_observation(db, symbol)
     except UntrustedMarketData as exc:
         raise StockPaperError(str(exc)) from exc
-    generated = get_strategy(strategy_slug, strategy.parameters).generate_signal(symbol, prices)
-    now = datetime.now(UTC)
+    return prices, source, observation
+
+
+def _build_stock_paper_signal(strategy: Strategy, symbol: str, generated: Any, source: str,
+                              observation: dict, research_only: bool, now: datetime) -> StrategySignal:
     observation_payload = {
         key: value.isoformat() if isinstance(value, datetime) else value
         for key, value in observation.items()
     }
-    signal = StrategySignal(strategy_id=strategy.id, symbol=symbol, signal_time=now, action=generated.action,
+    return StrategySignal(strategy_id=strategy.id, symbol=symbol, signal_time=now, action=generated.action,
         probability_up=Decimal(str(generated.probability_up)), probability_down=Decimal(str(generated.probability_down)),
         confidence=Decimal(str(generated.confidence)), reason=generated.reason,
         features={
@@ -1996,21 +2000,52 @@ def _create_stock_paper_signal(
             "stock_paper": True,
             "research_only": research_only,
         })
-    db.add(signal)
-    db.flush()
-    _event(db, None, "signal", "generated", None, {"signal_id": signal.id, "symbol": symbol, "strategy_id": strategy.id})
-    db.commit()
-    return {"mode": "paper", "action": "signal_generated", "signal_id": signal.id, "symbol": symbol,
+
+
+def _record_signal_generated(db: Session, signal: StrategySignal) -> None:
+    _event(db, None, "signal", "generated", None, {"signal_id": signal.id, "symbol": signal.symbol, "strategy_id": signal.strategy_id})
+
+
+def _stock_paper_signal_result(signal: StrategySignal, strategy_slug: str, observation: dict,
+                               research_only: bool) -> dict:
+    return {"mode": "paper", "action": "signal_generated", "signal_id": signal.id, "symbol": signal.symbol,
             "strategy": strategy_slug, "signal_action": signal.action, "confidence": str(signal.confidence),
             "reference_price": str(observation["close"]), "execution_created": False,
             "research_only": research_only}
+
+
+def _create_stock_paper_signal(
+    db: Session,
+    symbol: str,
+    strategy_slug: str,
+    *,
+    allowed_statuses: set[str],
+    research_only: bool,
+) -> dict:
+    """Persist a real generated signal without creating a reservation or order.
+
+    The scheduled cycle uses the batched equivalent in
+    ``stock_paper_signal_batch``; both share the helpers above so the persisted
+    row, features payload and event are identical.
+    """
+    symbol = symbol.strip().upper()
+    strategy = _resolve_signal_strategy(db, strategy_slug, allowed_statuses)
+    prices, source, observation = _load_signal_inputs(db, symbol)
+    generated = get_strategy(strategy_slug, strategy.parameters).generate_signal(symbol, prices)
+    now = datetime.now(UTC)
+    signal = _build_stock_paper_signal(strategy, symbol, generated, source, observation, research_only, now)
+    db.add(signal)
+    db.flush()
+    _record_signal_generated(db, signal)
+    db.commit()
+    return _stock_paper_signal_result(signal, strategy_slug, observation, research_only)
 
 
 def create_stock_paper_signal(db: Session, symbol: str, strategy_slug: str) -> dict:
     """Persist an execution-eligible signal; reservation still requires evidence."""
     return _create_stock_paper_signal(
         db, symbol, strategy_slug,
-        allowed_statuses={"paper_trading_active"},
+        allowed_statuses=ACTIVE_SIGNAL_STATUSES,
         research_only=False,
     )
 
@@ -2019,7 +2054,7 @@ def create_stock_paper_research_signal(db: Session, symbol: str, strategy_slug: 
     """Persist a candidate/research observation that can never create an order."""
     return _create_stock_paper_signal(
         db, symbol, strategy_slug,
-        allowed_statuses={"research", "paper_trading_candidate"},
+        allowed_statuses=RESEARCH_SIGNAL_STATUSES,
         research_only=True,
     )
 

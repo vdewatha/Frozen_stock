@@ -19,10 +19,17 @@ from app.core.config import settings
 from app.models import Asset, CorporateAction, IntradayBar, IntradayNoTradeInterval
 from app.services.audit import write_audit_log
 from app.services.exchange_sessions import is_nyse_session, nyse_holidays, session_bounds
+from app.services.trading_universe import RESEARCH_CORE_SYMBOLS, intraday_symbols
 
 NY = ZoneInfo("America/New_York")
 UTC = timezone.utc
-ALLOWED_SYMBOLS = frozenset({"AAPL", "MSFT", "QQQ", "SPY"})
+# Frozen research universe (forward trials, scalp/online research, live
+# pilot). The intraday execution feed covers ``intraday_symbols()``: this core
+# plus ``settings.paper_execution_symbols``.
+ALLOWED_SYMBOLS = RESEARCH_CORE_SYMBOLS
+# Symbols per multi-symbol Alpaca bars request. 50 symbols x 60 one-minute bars
+# = 3,000 bars, well inside one 10,000-bar page.
+MULTI_SYMBOL_CHUNK = 50
 ENTITLEMENT_VERIFICATION_MAX_AGE = timedelta(minutes=5)
 BAR_CADENCE = timedelta(minutes=1)
 LATE_TRADE_ALLOWANCE = timedelta(seconds=60)
@@ -129,8 +136,11 @@ def next_regular_session_gap(now: datetime, next_open: datetime) -> str | None:
 
 def _symbol(symbol: str) -> str:
     value = symbol.strip().upper()
-    if value not in ALLOWED_SYMBOLS:
-        raise ValueError("Intraday symbol must be one of AAPL, MSFT, QQQ, SPY")
+    if value not in intraday_symbols():
+        raise ValueError(
+            "Intraday symbol must be in the configured paper execution universe "
+            "or the AAPL, MSFT, QQQ, SPY research core"
+        )
     return value
 
 
@@ -671,7 +681,13 @@ def upsert_corporate_actions(db: Session, symbol: str, actions: list[dict]) -> i
 
 
 def ingest_corporate_actions(db: Session, symbols: list[str] | None = None) -> dict:
-    selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
+    # Daily import passes every active asset; a watchlist asset outside the
+    # intraday universe is skipped rather than failing the whole import.
+    universe = intraday_symbols()
+    selected = [
+        value.strip().upper() for value in (symbols or sorted(ALLOWED_SYMBOLS))
+        if value.strip().upper() in universe
+    ]
     results = [
         {
             "symbol": symbol,
@@ -725,6 +741,52 @@ def _fetch_bars(
     return page, len(timestamps) - len(set(timestamps)), timestamps != sorted(timestamps)
 
 
+def _fetch_bars_multi(
+    symbols: list[str], start: datetime, end: datetime
+) -> dict[str, tuple[list[dict], int, bool]]:
+    """Fetch one window for many symbols with multi-symbol Alpaca requests.
+
+    One HTTP request covers up to ``MULTI_SYMBOL_CHUNK`` symbols, so the
+    newest window for a 50-symbol universe costs one request instead of 50.
+    Tradier has no multi-symbol timesales endpoint; it returns ``{}`` and the
+    caller falls back to per-symbol requests.
+    """
+    if end <= start or end - start > INTRADAY_BACKFILL_WINDOW:
+        raise ValueError("Market-data request exceeds the bounded one-hour window")
+    configured_provider = settings.active_market_data_provider.strip().lower()
+    if configured_provider not in {"alpaca_iex", "alpaca_sip"}:
+        return {}
+    from app.services.alpaca_research_data import fetch_iex_bars, fetch_sip_bars
+
+    fetch = fetch_iex_bars if configured_provider == "alpaca_iex" else fetch_sip_bars
+    fetched: dict[str, tuple[list[dict], int, bool]] = {}
+    for offset in range(0, len(symbols), MULTI_SYMBOL_CHUNK):
+        chunk = symbols[offset:offset + MULTI_SYMBOL_CHUNK]
+        pages = fetch(chunk, start, end)
+        for symbol in chunk:
+            page = pages.get(symbol, [])
+            timestamps = [item.get("t") for item in page]
+            fetched[symbol] = (
+                page, len(timestamps) - len(set(timestamps)), timestamps != sorted(timestamps)
+            )
+    return fetched
+
+
+def _latest_completed_window(observed_at: datetime) -> tuple[datetime, datetime] | None:
+    """The newest completed slice every symbol polls in this cycle."""
+    today_bounds = session_bounds(observed_at.astimezone(NY).date())
+    if not today_bounds or observed_at < today_bounds[0]:
+        return None
+    completed_through = min(
+        today_bounds[1],
+        (observed_at - BAR_CADENCE - LATE_TRADE_ALLOWANCE).replace(second=0, microsecond=0)
+        + BAR_CADENCE,
+    )
+    if completed_through <= today_bounds[0]:
+        return None
+    return max(today_bounds[0], completed_through - INTRADAY_BACKFILL_WINDOW), completed_through
+
+
 def ingest_intraday(
     db: Session,
     symbols: list[str] | None = None,
@@ -734,15 +796,37 @@ def ingest_intraday(
 ) -> dict:
     if not 1 <= repair_sessions <= 10:
         raise ValueError("repair_sessions must be between 1 and 10")
+    universe = intraday_symbols()
     selected = symbols or [
         asset.symbol for asset in db.query(Asset).filter(Asset.is_active.is_(True)).all()
-        if asset.symbol in ALLOWED_SYMBOLS
+        if asset.symbol in universe
     ]
     selected = [_symbol(value) for value in selected]
     observed_at = _aware_utc(now or datetime.now(UTC))
     local_now = observed_at.astimezone(NY)
     results = []
-    for symbol in selected:
+    # Rate-limit design: the newest completed window (needed by every symbol
+    # every minute) is fetched for all symbols with multi-symbol requests;
+    # repair/backfill windows are per symbol and share one bounded budget.
+    latest_window = _latest_completed_window(observed_at)
+    prefetched: dict[str, tuple[list[dict], int, bool]] = {}
+    prefetch_rate_limited: Exception | None = None
+    if latest_window and len(selected) > 1:
+        try:
+            prefetched = _fetch_bars_multi(selected, *latest_window)
+        except Exception as exc:
+            # Fall back to bounded per-symbol requests so one bad symbol cannot
+            # fail the whole universe -- except on HTTP 429, where per-symbol
+            # retries would only deepen the rate-limit hole.
+            prefetched = {}
+            if getattr(exc, "status_code", None) == 429:
+                prefetch_rate_limited = exc
+    backfill_budget = settings.intraday_backfill_request_budget
+    # Rotate which symbols are first in line for the shared backfill budget so
+    # a long repair queue cannot starve the same tail symbols every minute.
+    rotation = (observed_at.minute % len(selected)) if selected else 0
+    processing_order = selected[rotation:] + selected[:rotation]
+    for symbol in processing_order:
         try:
             windows: list[tuple[datetime, datetime]] = []
             target_ranges: list[tuple[datetime, datetime]] = []
@@ -799,7 +883,20 @@ def ingest_intraday(
                 if window_index >= len(windows):
                     break
                 window_start, window_end = windows[window_index]
-                rows, duplicates, out_of_order = _fetch_bars(symbol, window_start, window_end)
+                if window_index == 0 and (window_start, window_end) == latest_window and (
+                    symbol in prefetched or prefetch_rate_limited is not None
+                ):
+                    if prefetch_rate_limited is not None:
+                        raise prefetch_rate_limited
+                    rows, duplicates, out_of_order = prefetched[symbol]
+                else:
+                    if window_index > 0:
+                        if backfill_budget <= 0:
+                            # Budget spent: remaining gaps stay reported as
+                            # missing and are repaired on a later cycle.
+                            break
+                        backfill_budget -= 1
+                    rows, duplicates, out_of_order = _fetch_bars(symbol, window_start, window_end)
                 persisted = upsert_intraday_bars(
                     db, symbol, rows, ingested_at=observed_at, verify_entitlement=True
                 )
@@ -886,6 +983,8 @@ def ingest_intraday(
                     "unavailable_reason": reason,
                 }
             )
+    position = {symbol: index for index, symbol in enumerate(selected)}
+    results.sort(key=lambda row: position.get(row["symbol"], len(position)))
     return {
         "provider": MARKET_DATA_PROVIDER,
         "feed_class": MARKET_DATA_FEED_CLASS,
@@ -893,6 +992,8 @@ def ingest_intraday(
         "cadence": "1m",
         "session": "regular",
         "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
+        "multi_symbol_prefetch": len(prefetched),
+        "backfill_requests_remaining": backfill_budget,
         "results": results,
     }
 
@@ -1006,7 +1107,7 @@ def collect_scheduled_intraday(db: Session, symbols: list[str] | None = None, *,
         return preflight_intraday(db, symbols, now=observed)
     # Historical maintenance also feeds the independent scalp-research lane;
     # it must not silently omit symbols that are research-only for execution.
-    selected = [_symbol(value) for value in (symbols or sorted(ALLOWED_SYMBOLS))]
+    selected = [_symbol(value) for value in (symbols or sorted(intraday_symbols()))]
     result = ingest_intraday(db, selected, now=observed)
     complete = bool(result["results"]) and all(row["status"] == "complete" for row in result["results"])
     return _record_preflight_audit(db, {
