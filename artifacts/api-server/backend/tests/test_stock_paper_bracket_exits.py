@@ -35,7 +35,7 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
 )
 from tests.test_stock_paper_ledger import FakeAlpaca
-from tests.test_stock_paper_autotrader import _ModelDb, _account
+from tests.test_stock_paper_autotrader import _ModelDb, _account, signal_source
 
 PARENT = "parent-1"
 TP_LEG = "leg-tp-1"
@@ -386,7 +386,7 @@ def _cycle(db, action, *, holdings=None, pending=(), coverage=Decimal("0"), exit
         stack.enter_context(patch("app.services.stock_paper_autotrader.active_paper_account", return_value=_account()))
         stack.enter_context(patch("app.services.stock_paper_autotrader._is_regular_session", return_value=True))
         stack.enter_context(patch("app.services.stock_paper_autotrader.cancel_stale_exit_entries", return_value=[]))
-        stack.enter_context(patch("app.services.stock_paper_autotrader.create_stock_paper_signal", return_value={
+        stack.enter_context(signal_source(return_value={
             "signal_id": 7, "signal_action": action, "reference_price": price}))
         stack.enter_context(patch("app.services.stock_paper_autotrader._strategy_holdings",
                                   return_value=(holdings or {}, True)))
