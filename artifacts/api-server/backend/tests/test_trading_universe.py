@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 import app.models.stock_paper  # noqa: F401  register paper tables
 from app.core.config import DEFAULT_PAPER_EXECUTION_SYMBOLS, Settings, settings
 from app.db.base import Base
-from app.models import Asset
+from app.models import Asset, IntradayBar
 from app.services import intraday_data, stock_monitoring
 from app.services.seed import ensure_paper_execution_assets
 from app.services.trading_universe import (
@@ -75,6 +75,26 @@ def test_execution_assets_are_created_once_and_deactivations_respected():
 # --- per-symbol vs broad outage ---------------------------------------------
 
 UNIVERSE = [f"S{index:02d}" for index in range(18)] + ["SPY", "QQQ"]
+OPENED = datetime(2026, 10, 9, 14, 58, tzinfo=UTC)
+
+
+def _ingested(symbol):
+    """One persisted bar: the symbol has been ingested before (not onboarding)."""
+    return IntradayBar(
+        symbol=symbol, timeframe="1m", opened_at=OPENED, open=1, high=1, low=1, close=1, volume=1,
+        provider=intraday_data.MARKET_DATA_PROVIDER, feed_class=intraday_data.MARKET_DATA_FEED_CLASS,
+        exchange_timestamp=OPENED, ingested_at=OPENED,
+    )
+
+
+def test_never_ingested_symbols_are_blocked_but_not_counted_as_outage():
+    failed = [f"S{index:02d}" for index in range(10)]
+    result = classify_feed_outage(failed, UNIVERSE, onboarding=failed)
+    assert result["scope"] == "partial"
+    assert result["blocked_symbols"] == failed
+    assert result["onboarding_symbols"] == failed
+    # Every symbol onboarding (fresh database) stays fail-closed.
+    assert classify_feed_outage(UNIVERSE, UNIVERSE, onboarding=UNIVERSE)["scope"] == "broad"
 
 
 def test_isolated_stale_symbols_are_partial():
@@ -92,7 +112,7 @@ def test_more_than_threshold_or_index_sentinel_is_broad():
     assert classify_feed_outage([], UNIVERSE)["scope"] == "none"
 
 
-def _monitor(failed, symbols=UNIVERSE):
+def _monitor(failed, symbols=UNIVERSE, ingested=None):
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     ready = {
@@ -103,6 +123,7 @@ def _monitor(failed, symbols=UNIVERSE):
     try:
         with Session(engine) as db:
             db.add_all([Asset(symbol=symbol, asset_type="stock", is_active=True) for symbol in symbols])
+            db.add_all([_ingested(symbol) for symbol in (symbols if ingested is None else ingested)])
             db.commit()
             with patch.object(settings, "paper_execution_symbols", list(symbols)), \
                  patch.object(stock_monitoring, "feed_status",
@@ -126,6 +147,13 @@ def test_monitor_broad_or_sentinel_outage_is_still_a_safety_breach():
     assert _monitor({"AAPL"}, ["AAPL", "MSFT", "QQQ", "SPY"])["status"] == "breach"
 
 
+def test_monitor_newly_added_symbols_do_not_pause_the_stock_path():
+    new = {f"S{index:02d}" for index in range(12)}  # 60% of the universe, never ingested
+    result = _monitor(new, ingested=[symbol for symbol in UNIVERSE if symbol not in new])
+    assert result["status"] == "warning"
+    assert result["details"]["onboarding_symbols"] == sorted(new)
+
+
 def test_readiness_blocks_only_on_broad_outage(monkeypatch):
     from app.services import readiness
 
@@ -134,6 +162,7 @@ def test_readiness_blocks_only_on_broad_outage(monkeypatch):
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
     db.add_all([Asset(symbol=symbol, asset_type="stock", is_active=True) for symbol in symbols])
+    db.add_all([_ingested(symbol) for symbol in symbols])
     db.commit()
     failed: set[str] = set()
 

@@ -240,9 +240,12 @@ def _freshness_and_provenance(db: Session) -> dict:
     # reserve_stock_paper_order. Only a broad outage (more than the configured
     # share of the evaluated execution assets, or SPY/QQQ) is a safety breach
     # that pauses the whole stock path.
-    from app.services.trading_universe import classify_feed_outage
+    from app.services.trading_universe import classify_feed_outage, never_ingested_symbols
 
-    outage = classify_feed_outage(failures, [asset.symbol for asset in execution_assets] or sorted(failures))
+    onboarding = never_ingested_symbols(db, failures, MARKET_DATA_PROVIDER)
+    outage = classify_feed_outage(
+        failures, [asset.symbol for asset in execution_assets] or sorted(failures), onboarding=onboarding,
+    )
     if not execution_assets and not failures:
         outage = {**outage, "scope": "none", "reason": None}
     status = (
@@ -264,6 +267,7 @@ def _freshness_and_provenance(db: Session) -> dict:
             "failures": failures,
             "outage_scope": outage["scope"],
             "blocked_symbols": outage["blocked_symbols"],
+            "onboarding_symbols": outage["onboarding_symbols"],
             "outage_reason": outage["reason"],
             "historical_warnings": historical_warnings,
             "execution_symbols": sorted(execution_symbols),

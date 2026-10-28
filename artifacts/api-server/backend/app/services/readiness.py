@@ -19,7 +19,12 @@ from app.services.intraday_data import (
     MARKET_DATA_FEED_CLASS,
 )
 from app.services.portfolio_risk import portfolio_risk_snapshot
-from app.services.trading_universe import classify_feed_outage, execution_symbols as configured_execution_symbols, intraday_symbols
+from app.services.trading_universe import (
+    classify_feed_outage,
+    execution_symbols as configured_execution_symbols,
+    intraday_symbols,
+    never_ingested_symbols,
+)
 from app.tasks.celery_app import celery_app
 from app.services.trusted_data import trusted_history, validate_intraday_readiness, UntrustedMarketData, TRUSTED_SOURCES
 
@@ -217,8 +222,11 @@ def readiness_snapshot(db: Session) -> dict:
         set(invalid_histories) | set(stale_assets) | set(missing_assets)
         | (set(execution_universe) - active_symbol_set)
     )
+    # Symbols with no daily rows (or no Asset row) yet are onboarding: blocked
+    # individually, excluded from the broad-outage share.
+    daily_onboarding = set(missing_assets) | (set(execution_universe) - active_symbol_set)
     daily_outage = classify_feed_outage(
-        daily_failed & set(execution_universe), execution_universe
+        daily_failed & set(execution_universe), execution_universe, onboarding=daily_onboarding,
     )
     research_daily_failed = sorted(daily_failed - set(execution_universe))
     if not active_assets or daily_outage["scope"] == "broad":
@@ -291,8 +299,14 @@ def readiness_snapshot(db: Session) -> dict:
     # A stale/incomplete symbol blocks only orders in that symbol
     # (reserve_stock_paper_order checks feed_status per symbol). Only a broad
     # outage blocks the check; research-only failures are warnings.
+    intraday_failed = set(intraday_failures) & execution_symbols
     intraday_outage = classify_feed_outage(
-        set(intraday_failures) & execution_symbols, execution_universe
+        intraday_failed,
+        execution_universe,
+        onboarding=(
+            set(missing_execution_symbols)
+            | never_ingested_symbols(db, intraday_failed - set(missing_execution_symbols), MARKET_DATA_PROVIDER)
+        ),
     )
     if intraday_outage["scope"] == "broad":
         intraday_check_status = "blocked"
@@ -341,6 +355,7 @@ def readiness_snapshot(db: Session) -> dict:
             "failures": intraday_failures,
             "outage_scope": intraday_outage["scope"],
             "blocked_symbols": sorted(intraday_failures),
+            "onboarding_symbols": intraday_outage["onboarding_symbols"],
             "outage_reason": intraday_outage["reason"],
             "broad_outage_fraction": intraday_outage["broad_outage_fraction"],
             "historical_warnings": intraday_historical_warnings,

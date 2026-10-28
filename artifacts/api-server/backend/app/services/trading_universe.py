@@ -86,22 +86,49 @@ def sector_group(symbol: str) -> str:
     return SECTOR_GROUPS.get(symbol, symbol)
 
 
+def never_ingested_symbols(db, symbols: Iterable[str], provider: str) -> set[str]:
+    """Symbols with no persisted 1m bar from ``provider`` at all.
+
+    A newly added symbol that has never been ingested is *onboarding*, not a
+    feed outage: it stays blocked by its own per-symbol gates, but it must not
+    count toward the broad-outage share (otherwise expanding the universe
+    would pause the whole stock path until every new name is backfilled).
+    """
+    from app.models import IntradayBar
+
+    missing: set[str] = set()
+    for symbol in _normalize(symbols):
+        exists = (
+            db.query(IntradayBar.id)
+            .filter(IntradayBar.symbol == symbol, IntradayBar.provider == provider)
+            .first()
+        )
+        if exists is None:
+            missing.add(symbol)
+    return missing
+
+
 def classify_feed_outage(
     failed_symbols: Iterable[str],
     universe: Iterable[str],
     *,
     max_fraction: float | None = None,
+    onboarding: Iterable[str] = (),
 ) -> dict:
     """Decide whether failed symbols are isolated or a broad outage.
 
     ``partial``: only the failed symbols are blocked; every other symbol keeps
     trading through its own per-symbol feed gate in ``reserve_stock_paper_order``.
     ``broad``: more than ``max_fraction`` of the universe failed, an index
-    sentinel (SPY/QQQ) failed, or the universe is empty.  A broad outage blocks
+    sentinel (SPY/QQQ) failed, or the universe is empty.  ``onboarding``
+    symbols (never ingested) are blocked but excluded from that share; if every
+    symbol is onboarding the universe is empty and the outage is broad.  A broad outage blocks
     all trading exactly as a single stale symbol used to.
     """
-    universe_list = _normalize(universe)
-    failed = sorted(set(_normalize(failed_symbols)))
+    onboarding_set = set(_normalize(onboarding))
+    all_failed = sorted(set(_normalize(failed_symbols)))
+    universe_list = [symbol for symbol in _normalize(universe) if symbol not in onboarding_set]
+    failed = [symbol for symbol in all_failed if symbol not in onboarding_set]
     fraction = settings.paper_feed_broad_outage_fraction if max_fraction is None else max_fraction
     failed_fraction = (len(failed) / len(universe_list)) if universe_list else 1.0
     sentinels = sorted(set(failed) & INDEX_SENTINEL_SYMBOLS & set(universe_list))
@@ -120,9 +147,12 @@ def classify_feed_outage(
         scope, reason = "partial", (
             f"{len(failed)} of {len(universe_list)} symbols unavailable; only those symbols are blocked"
         )
+    if scope == "none" and all_failed:
+        scope, reason = "partial", "only onboarding symbols without any ingested data are blocked"
     return {
         "scope": scope,
-        "blocked_symbols": failed,
+        "blocked_symbols": all_failed,
+        "onboarding_symbols": sorted(onboarding_set & set(all_failed)),
         "failed_fraction": round(failed_fraction, 4),
         "broad_outage_fraction": fraction,
         "index_sentinels_failed": sentinels,
