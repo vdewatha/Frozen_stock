@@ -22,6 +22,8 @@ from app.services.stock_paper_ledger import (
     active_paper_account,
     create_stock_paper_signal,
     create_stock_paper_research_signal,
+    EXPLORATION_SOURCE,
+    EXPLORATION_STRATEGY_STATUSES,
     dispatch_reserved_order,
     reserve_stock_paper_order,
 )
@@ -42,8 +44,11 @@ def _is_regular_session(now: datetime) -> bool:
     return bool(bounds and bounds[0] <= now < bounds[1])
 
 
-def _quantity_for_buy(account, reference_price: Decimal, rules: dict) -> Decimal:
-    risk_fraction = Decimal(str(rules.get("max_risk_per_trade", "0.01")))
+def _quantity_for_buy(account, reference_price: Decimal, rules: dict, *, exploration: bool = False) -> Decimal:
+    risk_fraction = (
+        Decimal(str(settings.paper_exploration_risk_fraction)) if exploration
+        else Decimal(str(rules.get("max_risk_per_trade", "0.01")))
+    )
     notional = max(Decimal("0"), account.equity) * risk_fraction
     return (notional / reference_price).quantize(QUANTITY_INCREMENT, rounding=ROUND_DOWN)
 
@@ -196,6 +201,16 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                 })
                 if observed_price is None:
                     observed_price = Decimal(signal["reference_price"])
+                exploring = (
+                    research_only
+                    and settings.paper_exploration_enabled
+                    and getattr(strategy, "current_status", None) in EXPLORATION_STRATEGY_STATUSES
+                )
+                if exploring and signal["signal_action"] in {"BUY", "SELL"}:
+                    # Small tagged learning order; never promotion evidence.
+                    result["mode"] = "explore"
+                    actionable.append((strategy, signal, result))
+                    continue
                 if research_only:
                     result.update({"status": "observed", "reason": "research-only strategy; no order path"})
                 elif signal["signal_action"] in {"BUY", "SELL"}:
@@ -248,7 +263,8 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         result.update({"status": "skipped", "reason": "strategy already holds or is buying this symbol; no pyramiding on a persistent signal"})
                         results.append(result)
                         continue
-                    quantity = _quantity_for_buy(account, reference_price, rules)
+                    quantity = _quantity_for_buy(account, reference_price, rules,
+                                                 exploration=result.get("mode") == "explore")
                     if quantity <= 0:
                         result.update({"status": "blocked", "reason": "risk-sized quantity rounded to zero"})
                         results.append(result)
@@ -280,14 +296,18 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         quantity = position.quantity
                     side = "sell"
 
+                exploring = result.get("mode") == "explore"
                 order = reserve_stock_paper_order(
                     db,
                     symbol=symbol,
                     side=side,
                     quantity=quantity,
                     reference_price=reference_price,
-                    idempotency_key=f"scheduled-paper:{session_key}:{symbol}:{strategy.strategy_type}:{side}",
-                    source=SCHEDULED_SOURCE,
+                    idempotency_key=(
+                        f"{'explore' if exploring else 'scheduled'}-paper:{session_key}:{symbol}:"
+                        f"{strategy.strategy_type}:{side}"
+                    ),
+                    source=EXPLORATION_SOURCE if exploring else SCHEDULED_SOURCE,
                     signal_id=signal["signal_id"],
                 )
                 submitted = dispatch_reserved_order(db, order.id)

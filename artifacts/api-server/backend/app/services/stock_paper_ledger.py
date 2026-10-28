@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 import hashlib
 import json
+import math
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -46,8 +47,12 @@ RECONCILIATION_OVERLAP = timedelta(minutes=10)
 NONTERMINAL_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
 ALLOWED_ORDER_SOURCES = frozenset({
     "manual_control_room", "manual_close", "manual_reduce", "recovery_flatten",
-    "broker_import", "scheduled_paper_signal",
+    "broker_import", "scheduled_paper_signal", "paper_exploration",
 })
+# Autonomous sources that must pass the scheduled launch admission gates.
+AUTONOMOUS_ORDER_SOURCES = frozenset({"scheduled_paper_signal", "paper_exploration"})
+EXPLORATION_SOURCE = "paper_exploration"
+EXPLORATION_STRATEGY_STATUSES = frozenset({"paper_trading_candidate", "research"})
 MAX_REFERENCE_PRICE_DEVIATION = Decimal("0.02")
 MAX_BROKER_SNAPSHOT_AGE = timedelta(minutes=5)
 TRADIER_PAPER_EVIDENCE = {
@@ -1888,6 +1893,62 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     return signal, evidence
 
 
+def _open_exploration_lots(db: Session, account: StockPaperAccount) -> int:
+    """Count (strategy, symbol) exploration lots that are held or being bought."""
+    orders = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id, StockPaperOrder.source == EXPLORATION_SOURCE
+    ).all()
+    if not orders:
+        return 0
+    by_id = {row.id: row for row in orders}
+    net: dict[tuple[int | None, str], Decimal] = {}
+    for fill in db.query(StockPaperFill).filter(StockPaperFill.order_id.in_(by_id)).all():
+        order = by_id[fill.order_id]
+        sign = Decimal("1") if fill.side == "buy" else Decimal("-1")
+        key = (order.strategy_id, fill.symbol)
+        net[key] = net.get(key, Decimal("0")) + sign * fill.quantity
+    lots = {key for key, quantity in net.items() if quantity > 0}
+    lots |= {
+        (row.strategy_id, row.symbol) for row in orders
+        if row.side == "buy" and row.status in NONTERMINAL_ORDER_STATUSES
+    }
+    return len(lots)
+
+
+def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: str, signal_id: int | None,
+                              quantity: Decimal, reference_price: Decimal, rules: dict,
+                              now: datetime) -> StrategySignal:
+    """Admit a small learning buy from a candidate or research strategy.
+
+    Exploration replaces only the approved-evidence requirement of
+    ``_validate_signal_buy`` with a tighter size and lot budget. Market,
+    reconciliation, launch, kill-switch, cash and exposure gates in
+    ``reserve_stock_paper_order`` still apply, and exploration orders carry no
+    evidence id, so they can never count toward promotion.
+    """
+    if not settings.paper_exploration_enabled:
+        raise StockPaperError("Paper exploration is disabled")
+    if signal_id is None:
+        raise StockPaperError("Exploration buy requires a persisted stock-paper signal_id")
+    signal = db.query(StrategySignal).filter_by(id=signal_id).with_for_update().one_or_none()
+    if not signal or signal.symbol != symbol or signal.action != "BUY":
+        raise StockPaperError("Signal is missing or does not match a BUY for this symbol")
+    if not signal.strategy_id or not signal.signal_time or _utc(signal.signal_time) < now - timedelta(minutes=5):
+        raise StockPaperError("Signal is stale or has no bound strategy")
+    strategy = db.get(Strategy, signal.strategy_id)
+    if not strategy or not strategy.is_active or strategy.current_status not in EXPLORATION_STRATEGY_STATUSES:
+        raise StockPaperError("Only active candidate or research strategies may explore")
+    confidence = float(signal.confidence or 0)
+    if not math.isfinite(confidence) or confidence < float(rules["min_confidence"]):
+        raise StockPaperError("Exploration signal confidence is below the minimum threshold")
+    budget = account.equity * Decimal(str(settings.paper_exploration_risk_fraction))
+    if account.equity <= 0 or quantity * reference_price > budget * Decimal("1.0001"):
+        raise StockPaperError("Exploration order exceeds the per-trade exploration budget")
+    if _open_exploration_lots(db, account) >= settings.paper_exploration_max_positions:
+        raise StockPaperError("Exploration lot limit reached")
+    return signal
+
+
 def _create_stock_paper_signal(
     db: Session,
     symbol: str,
@@ -1985,7 +2046,7 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
         raise StockPaperError("Only positive long buy/sell paper orders are permitted")
     now = datetime.now(UTC)
-    if source == "scheduled_paper_signal":
+    if source in AUTONOMOUS_ORDER_SOURCES:
         # Scheduled execution is the autonomous path. It must satisfy the
         # same persisted qualification, recovery, notification, audit, feed,
         # and risk evidence used by the launch preflight before reserving an
@@ -2042,7 +2103,9 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     if source not in ALLOWED_ORDER_SOURCES:
         raise StockPaperError("Stock paper order source is not an approved execution source")
     signal = evidence = None
-    if side == "buy":
+    if side == "buy" and source == EXPLORATION_SOURCE:
+        signal = _validate_exploration_buy(db, account, symbol, signal_id, quantity, reference_price, DEFAULT_RISK_RULES | rules, now)
+    elif side == "buy":
         signal, evidence = _validate_signal_buy(db, account, symbol, signal_id, quantity, reference_price, DEFAULT_RISK_RULES | rules, now)
     if side == "sell":
         position = db.query(StockPaperPosition).filter_by(account_id=account.id, symbol=symbol).one_or_none()
