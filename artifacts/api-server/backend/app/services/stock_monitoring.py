@@ -236,10 +236,25 @@ def _freshness_and_provenance(db: Session) -> dict:
                 failures[asset.symbol] = execution_status or status.get("status", "unavailable")
         except Exception as exc:
             failures[asset.symbol] = exc.__class__.__name__
-    status = "breach" if failures else "warning" if historical_warnings else "clear"
+    # Per-symbol gating: a stale symbol is blocked by its own feed gate in
+    # reserve_stock_paper_order. Only a broad outage (more than the configured
+    # share of the evaluated execution assets, or SPY/QQQ) is a safety breach
+    # that pauses the whole stock path.
+    from app.services.trading_universe import classify_feed_outage
+
+    outage = classify_feed_outage(failures, [asset.symbol for asset in execution_assets] or sorted(failures))
+    if not execution_assets and not failures:
+        outage = {**outage, "scope": "none", "reason": None}
+    status = (
+        "breach" if outage["scope"] == "broad"
+        else "warning" if failures or historical_warnings
+        else "clear"
+    )
     return _check(
         "data.freshness_provenance", "data", "data_freshness_and_provenance", status,
-         "Fresh trusted execution-feed data is not available for every active stock."
+         "Fresh trusted execution-feed data is unavailable for a broad share of the execution universe."
+        if status == "breach" else
+        "Some symbols lack fresh execution-feed data; only those symbols are blocked."
         if failures else "Current execution-feed data is usable; historical repair gaps remain for research."
         if historical_warnings else "Freshness and provider provenance are valid for the active stock universe.",
          value={"failed_symbols": sorted(failures), "ready_symbols": sorted(set(results) - set(failures))},
@@ -247,6 +262,9 @@ def _freshness_and_provenance(db: Session) -> dict:
         details={
             "symbols": results,
             "failures": failures,
+            "outage_scope": outage["scope"],
+            "blocked_symbols": outage["blocked_symbols"],
+            "outage_reason": outage["reason"],
             "historical_warnings": historical_warnings,
             "execution_symbols": sorted(execution_symbols),
             "research_only_symbols": research_only_symbols,

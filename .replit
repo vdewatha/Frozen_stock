@@ -62,9 +62,10 @@ PAPER_WORKERS_ENABLED = "true"
 PAPER_COMPACT_WORKER = "true"
 PAPER_LEARNING_REPLICAS = "3"
 PAPER_LEARNING_CONCURRENCY = "1"
-# All four supported scalp symbols share the bounded paper-execution gate; each
-# still requires complete, authenticated intraday data before it can qualify.
-PAPER_EXECUTION_SYMBOLS = "[\"AAPL\", \"MSFT\", \"SPY\", \"QQQ\"]"
+# Liquid paper execution universe (index/sector ETFs + megacaps; matches the
+# settings default). Each symbol still needs fresh authenticated intraday data;
+# a stale symbol blocks only itself unless >20% of symbols or SPY/QQQ are stale.
+PAPER_EXECUTION_SYMBOLS = "[\"SPY\", \"QQQ\", \"IWM\", \"DIA\", \"XLK\", \"XLF\", \"XLE\", \"XLV\", \"XLY\", \"XLP\", \"XLI\", \"XLU\", \"XLB\", \"XLRE\", \"XLC\", \"SMH\", \"AAPL\", \"MSFT\", \"NVDA\", \"AMZN\", \"GOOGL\", \"META\", \"TSLA\", \"AVGO\", \"JPM\", \"V\", \"MA\", \"UNH\", \"XOM\", \"LLY\", \"COST\", \"HD\", \"PG\", \"JNJ\", \"ABBV\", \"MRK\", \"PEP\", \"KO\", \"BAC\", \"WMT\", \"NFLX\", \"AMD\", \"CRM\", \"ORCL\", \"ADBE\"]"
 # Updated for each deployable release so hosted readiness can be verified.
 PAPER_BUILD_ID = "paper-slim-20261027-v1"
 PAPER_EMBEDDED_REDIS = "true"

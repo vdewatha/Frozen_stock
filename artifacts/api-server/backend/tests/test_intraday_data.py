@@ -108,7 +108,9 @@ class IntradayDataTests(unittest.TestCase):
         ) as ingest:
             intraday_data.collect_scheduled_intraday(self.db, now=observed)
         selected = ingest.call_args.args[1]
-        self.assertEqual(set(selected), intraday_data.ALLOWED_SYMBOLS)
+        # Research core plus every configured paper execution symbol.
+        self.assertEqual(set(selected), intraday_data.intraday_symbols())
+        self.assertTrue(intraday_data.ALLOWED_SYMBOLS <= set(selected))
 
     def test_post_close_provider_failures_do_not_become_success(self):
         observed = datetime(2026, 9, 29, 20, 2, tzinfo=UTC)
@@ -566,7 +568,9 @@ class IntradayDataTests(unittest.TestCase):
             settings,
             "tradier_market_data_api_key",
             type(settings.tradier_market_data_api_key)("key"),
-        ), patch("app.services.intraday_data.ingest_intraday", return_value=imported), patch(
+        ), patch.object(settings, "paper_execution_symbols", ["AAPL", "MSFT", "QQQ", "SPY"]), patch(
+            "app.services.intraday_data.ingest_intraday", return_value=imported
+        ), patch(
             "app.services.intraday_data.feed_status", side_effect=lambda db, symbol, now: statuses[symbol]
         ):
             result = intraday_data.preflight_intraday(self.db, now=now)
@@ -755,8 +759,8 @@ class IntradayDataTests(unittest.TestCase):
         self.assertTrue(symbol_result["missing_intervals"])
 
     def test_unsupported_symbol_is_structured_untrusted_data(self):
-        with self.assertRaisesRegex(UntrustedMarketData, "must be one of"):
-            validate_intraday_readiness(self.db, "TSLA")
+        with self.assertRaisesRegex(UntrustedMarketData, "must be in the configured"):
+            validate_intraday_readiness(self.db, "ZZZZ")
 
     def test_rate_limit_retries_are_bounded(self):
         limited = HTTPError("https://example", 429, "limited", {}, None)
