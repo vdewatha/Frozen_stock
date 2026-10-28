@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     # Research can cover a wider universe than the symbols admitted to paper
     # decisions. A symbol with incomplete execution data stays research-only.
     paper_execution_symbols: list[str] = ["AAPL", "MSFT", "QQQ", "SPY"]
+    # Paper exploration lets candidate/research strategies place small, tagged
+    # paper orders to generate learning data before they earn trial evidence.
+    # Exploration fills never count as promotion evidence. Off by default.
+    paper_exploration_enabled: bool = False
+    paper_exploration_risk_fraction: float = Field(default=0.0025, gt=0, le=0.01)
+    paper_exploration_max_positions: int = Field(default=12, ge=1, le=40)
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # A shared workspace .env also contains frontend and provider-specific

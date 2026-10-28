@@ -85,6 +85,10 @@ PAPER_BEAT_EXCLUDE = "scalp-research-batch,scalp-research-queue-recovery,strateg
 PAPER_STARTUP_REFRESH = "true"
 PAPER_DIRECT_MONITOR_LOOP = "true"
 PAPER_MONITOR_INTERVAL_SECONDS = "60"
+# Let candidate/research strategies place small tagged paper orders (0.25% of
+# equity, max 12 open lots) so the learning loop gets outcomes quickly.
+# Exploration fills never count as promotion evidence.
+PAPER_EXPLORATION_ENABLED = "true"
 ACTIVE_PAPER_BROKER = "alpaca_paper"
 ALPACA_PAPER_ZERO_COMMISSION_CONTRACT = "true"
 ALPACA_ACTIVITY_SSE_ENABLED = "true"
