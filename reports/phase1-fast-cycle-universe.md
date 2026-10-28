@@ -190,8 +190,9 @@ fallback is rarely used.
   symbol, with readiness and the monitor at `warning` rather than broad. That lasts
   until their daily history exists (startup refresh / 08:15 import) and verified
   intraday bars exist (post-close/pre-open repair, or the first minute of the
-  session). Once a symbol has any bars it counts normally. While its session is still
-  being backfilled, it counts as a failure toward the 20% threshold. Expect
+  session). Once a symbol has any bars it counts normally. Session gaps whose newest
+  bar is current and verified count as historical warnings in the monitor, not as
+  failures. A stale or unverified newest bar does count toward the 20% threshold. Expect
   "Intraday feed: warning" (repair gaps) on deploy day. It is best to deploy outside
   market hours, at least about 15 minutes before the open, so post-close repair
   (budget 40 requests/min) can fill the prior session for the new names.
