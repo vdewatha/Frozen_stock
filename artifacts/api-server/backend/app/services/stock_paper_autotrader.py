@@ -24,7 +24,13 @@ from app.services.stock_paper_ledger import (
     create_stock_paper_research_signal,
     EXPLORATION_SOURCE,
     EXPLORATION_STRATEGY_STATUSES,
+    broker_stop_coverage,
+    build_exit_plan,
+    cancel_broker_exit_orders,
+    cancel_stale_exit_entries,
     dispatch_reserved_order,
+    live_exit_orders,
+    release_unsubmitted_reservation,
     reserve_stock_paper_order,
 )
 from app.services.intraday_data import session_bounds
@@ -36,6 +42,23 @@ QUANTITY_INCREMENT = Decimal("0.000001")
 # Matches the retired simulator's STOP_LOSS_PCT; override with the
 # ``position_stop_loss_pct`` risk rule (0 disables).
 DEFAULT_POSITION_STOP_LOSS_PCT = Decimal("0.03")
+# Broker-side take-profit leg distance; ``position_take_profit_pct`` risk rule
+# (0 disables the take-profit leg).
+DEFAULT_POSITION_TAKE_PROFIT_PCT = Decimal("0.03")
+WHOLE_SHARE = Decimal("1")
+
+
+def _is_exit_leg(row) -> bool:
+    return bool(getattr(row, "leg_role", None))
+
+
+def _exit_plan(rules: dict, reference_price: Decimal) -> dict | None:
+    """Broker-side stop-loss/take-profit plan for a new entry (None = disabled)."""
+    return build_exit_plan(
+        reference_price,
+        stop_loss_pct=rules.get("position_stop_loss_pct", DEFAULT_POSITION_STOP_LOSS_PCT),
+        take_profit_pct=rules.get("position_take_profit_pct", DEFAULT_POSITION_TAKE_PROFIT_PCT),
+    )
 
 
 def _is_regular_session(now: datetime) -> bool:
@@ -109,11 +132,22 @@ def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
         return None
     result = {"symbol": symbol, "strategy": "protective_stop", "signal_action": "SELL",
               "reference_price": str(price), "loss_from_entry": str(loss.quantize(Decimal("0.0001")))}
-    if any(row.side == "sell" for row in _pending_orders(db, account.id, symbol)):
+    if any(row.side == "sell" and not _is_exit_leg(row) for row in _pending_orders(db, account.id, symbol)):
         return result | {"status": "skipped", "reason": "sell order is already pending"}
+    # A live broker stop-loss leg already protects its lot at the broker and
+    # fires even when this app is down; selling those shares here as well
+    # would double-sell.  Only quantity without a live stop leg (fractional
+    # legacy lots, partially filled entries) is exited app-side.
+    covered = broker_stop_coverage(db, account.id, symbol)
+    quantity = position.quantity - covered
+    if quantity <= 0:
+        return result | {"status": "skipped", "reason": "broker-side stop-loss leg protects this position",
+                         "broker_stop_quantity": str(covered)}
+    if covered > 0:
+        result["broker_stop_quantity"] = str(covered)
     try:
         order = reserve_stock_paper_order(
-            db, symbol=symbol, side="sell", quantity=position.quantity, reference_price=price,
+            db, symbol=symbol, side="sell", quantity=quantity, reference_price=price,
             idempotency_key=f"scheduled-paper:{session_key}:{symbol}:protective_stop:sell",
             source=SCHEDULED_SOURCE,
         )
@@ -152,6 +186,13 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
         return base | {"status": "skipped", "reason": "regular market session is closed"}
     if account.status != "reconciled" or account.reconciliation_required or account.unexplained_residual:
         return base | {"status": "skipped", "reason": "stock paper account is not reconciled"}
+    try:
+        stale_entries = cancel_stale_exit_entries(db, account, now)
+    except StockPaperError as exc:
+        db.rollback()
+        stale_entries = {"status": "blocked", "reason": str(exc)}
+    if stale_entries:
+        base["stale_entry_cancellations"] = stale_entries
 
     all_strategies = (
         db.query(Strategy)
@@ -236,7 +277,8 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
         # cycle and paid the spread twice.
         holdings, attributed = _strategy_holdings(db, account.id, symbol, type_by_id)
         pending = _pending_orders(db, account.id, symbol)
-        exiting = any(row.side == "sell" for row in pending)
+        # Broker exit legs are resting protection, not an in-flight exit.
+        exiting = any(row.side == "sell" and not _is_exit_leg(row) for row in pending)
         if stop_result is not None and stop_result.get("status") == "submitted":
             exiting = True
             for _strategy, _signal, result in actionable:
@@ -263,23 +305,57 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         result.update({"status": "skipped", "reason": "strategy already holds or is buying this symbol; no pyramiding on a persistent signal"})
                         results.append(result)
                         continue
+                    if any(_is_exit_leg(row) for row in pending):
+                        # Another lot's resting exit legs are opposite-side
+                        # orders; Alpaca may reject a new entry as a potential
+                        # wash trade, and a rejected POST halts the ledger.
+                        result.update({"status": "skipped", "reason": "broker-side exit legs are live for this symbol; no new entry until they close"})
+                        results.append(result)
+                        continue
                     quantity = _quantity_for_buy(account, reference_price, rules,
                                                  exploration=result.get("mode") == "explore")
                     if quantity <= 0:
                         result.update({"status": "blocked", "reason": "risk-sized quantity rounded to zero"})
                         results.append(result)
                         continue
+                    exit_plan = _exit_plan(rules, reference_price)
+                    if exit_plan is not None:
+                        # Alpaca only accepts bracket/OTO orders for whole
+                        # shares; round down rather than enter without exits.
+                        whole = quantity.quantize(WHOLE_SHARE, rounding=ROUND_DOWN)
+                        if whole <= 0:
+                            result.update({
+                                "status": "skipped",
+                                "reason": (
+                                    f"risk-sized quantity {quantity} is below one whole share; broker-side "
+                                    "bracket exits require whole shares (Alpaca rejects fractional brackets)"
+                                ),
+                            })
+                            results.append(result)
+                            continue
+                        quantity = whole
+                        result["exit_plan"] = {
+                            "order_class": exit_plan["order_class"],
+                            "stop_price": str(exit_plan["stop_price"]) if exit_plan["stop_price"] is not None else None,
+                            "take_profit_price": (
+                                str(exit_plan["take_profit_price"]) if exit_plan["take_profit_price"] is not None else None
+                            ),
+                        }
                     side = "buy"
                 else:
                     position = db.query(StockPaperPosition).filter_by(
                         account_id=account.id, symbol=symbol
                     ).one_or_none()
-                    pending_sell = next((row for row in pending if row.side == "sell"), None)
+                    pending_sell = next((row for row in pending if row.side == "sell" and not _is_exit_leg(row)), None)
                     if not position or position.quantity <= 0:
                         result.update({"status": "skipped", "reason": "sell signal has no long position"})
                         results.append(result)
                         continue
-                    if pending_sell:
+                    strategy_ids = {sid for sid, kind in type_by_id.items() if kind == strategy.strategy_type}
+                    exit_orders = live_exit_orders(
+                        db, account.id, symbol, strategy_ids=strategy_ids if attributed else None,
+                    ) if any(_is_exit_leg(row) for row in pending) else []
+                    if pending_sell and not (exit_orders and pending_sell.status == "reserved"):
                         result.update({"status": "skipped", "reason": "sell order is already pending", "order_id": pending_sell.id})
                         results.append(result)
                         continue
@@ -297,6 +373,14 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                     side = "sell"
 
                 exploring = result.get("mode") == "explore"
+                extra = {}
+                if side == "buy" and exit_plan is not None:
+                    extra["exit_plan"] = exit_plan
+                if side == "sell" and exit_orders:
+                    # Reserve first so every gate (kill switch, session,
+                    # feed, reconciliation) passes before any exit leg is
+                    # touched; dispatch still refuses while a leg is live.
+                    extra["replacing_exit_order_ids"] = {row.id for row in exit_orders}
                 order = reserve_stock_paper_order(
                     db,
                     symbol=symbol,
@@ -309,7 +393,26 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                     ),
                     source=EXPLORATION_SOURCE if exploring else SCHEDULED_SOURCE,
                     signal_id=signal["signal_id"],
+                    **extra,
                 )
+                if side == "sell" and exit_orders:
+                    cancel = cancel_broker_exit_orders(db, exit_orders)
+                    result["cancelled_exit_order_ids"] = cancel["cancelled_order_ids"]
+                    if cancel["leg_filled"]:
+                        release_unsubmitted_reservation(
+                            db, order.id, "Broker-side exit leg already filled; app-side sell not needed",
+                        )
+                        result.update({"status": "skipped", "order_id": order.id,
+                                       "reason": "broker-side exit leg already filled; reconciliation will settle the lot"})
+                        exiting = True
+                        results.append(result)
+                        continue
+                    if not cancel["clear"]:
+                        result.update({"status": "deferred", "order_id": order.id,
+                                       "reason": "waiting for broker to confirm exit-leg cancellation; sell stays reserved"})
+                        exiting = True
+                        results.append(result)
+                        continue
                 submitted = dispatch_reserved_order(db, order.id)
                 order_status = str(submitted.status)
                 result.update({

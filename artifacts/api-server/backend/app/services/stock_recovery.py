@@ -42,6 +42,7 @@ from app.services.stock_paper_ledger import (
     _halt,
     _utc,
     dispatch_reserved_order,
+    exit_cancel_targets,
     reconcile_stock_paper_account,
 )
 from app.services.stock_training_jobs import (
@@ -293,7 +294,11 @@ def cancel_open_stock_orders(
     cancelled = []
     failures = []
     gateway = gateway or active_paper_gateway()
-    for order in broker_orders:
+    # Bracket entries and their exit legs form one broker OCO group: one
+    # DELETE cancels the group, and a second DELETE on an already-cancelled
+    # sibling is rejected.  The siblings stay pending_cancel until the
+    # reconciliation below confirms them terminal.
+    for order in exit_cancel_targets(broker_orders):
         try:
             gateway.cancel_order(order.broker_order_id)
             cancelled.append(order.id)

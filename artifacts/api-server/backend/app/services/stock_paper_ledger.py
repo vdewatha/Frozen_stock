@@ -6,7 +6,7 @@ before one POST and turns an ambiguous outcome into a halt rather than a retry.
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN
 import hashlib
 import json
 import math
@@ -54,6 +54,16 @@ AUTONOMOUS_ORDER_SOURCES = frozenset({"scheduled_paper_signal", "paper_explorati
 EXPLORATION_SOURCE = "paper_exploration"
 EXPLORATION_STRATEGY_STATUSES = frozenset({"paper_trading_candidate", "research"})
 MAX_REFERENCE_PRICE_DEVIATION = Decimal("0.02")
+# Broker-side exits.  Alpaca rejects bracket/OTO/OCO orders on fractional
+# quantities ("fractional orders must be simple orders"), and allows only
+# ``day``/``gtc`` for advanced classes.  Entries that carry exits are therefore
+# whole-share ``gtc`` orders so the stop-loss and take-profit legs keep working
+# at the broker overnight and while this app is slow, restarting or paused.
+ENTRY_EXIT_ORDER_CLASSES = frozenset({"bracket", "oto"})
+BROKER_EXIT_ORDER_CLASSES = frozenset({"bracket", "oto", "oco"})
+EXIT_LEG_ROLES = frozenset({"take_profit", "stop_loss"})
+EXIT_ENTRY_TIME_IN_FORCE = "gtc"
+STALE_ENTRY_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled"})
 MAX_BROKER_SNAPSHOT_AGE = timedelta(minutes=5)
 TRADIER_PAPER_EVIDENCE = {
     "complete": False,
@@ -89,6 +99,7 @@ class AlpacaPaperClient:
     """Server-only Alpaca client. The trading base URL is deliberately immutable."""
 
     base_url = ALPACA_PAPER_URL
+    supports_bracket_orders = True
 
     def _headers(self) -> dict[str, str]:
         key, secret = settings.paper_broker_credentials()
@@ -369,6 +380,9 @@ class TradierPaperClient:
     """
 
     evidence_complete = False
+    # The sandbox adapter maps only simple order fields; an advanced order
+    # class would be silently downgraded to an entry without exits.
+    supports_bracket_orders = False
 
     def __init__(self) -> None:
         configured = str(getattr(settings, "tradier_sandbox_url", "") or TRADIER_SANDBOX_URL).rstrip("/")
@@ -777,6 +791,301 @@ def _activity_classification(raw: dict) -> str:
     return "unsupported"
 
 
+def _price_tick(price: Decimal) -> Decimal:
+    # Alpaca accepts at most two decimals at or above $1 and four below.
+    return Decimal("0.01") if price >= 1 else Decimal("0.0001")
+
+
+def build_exit_plan(reference_price: Decimal, *, stop_loss_pct: Any, take_profit_pct: Any) -> dict | None:
+    """Return broker-side exit prices for a long entry, or None when disabled.
+
+    The stop is rounded down and the take-profit up to a valid price tick, and
+    both are kept at least one tick away from the entry limit, which is
+    Alpaca's base price for bracket/OTO validation on limit entries.
+    """
+    try:
+        stop_pct = Decimal(str(stop_loss_pct or 0))
+        take_pct = Decimal(str(take_profit_pct or 0))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise StockPaperError("Broker-side exit percentages are invalid") from exc
+    if not stop_pct.is_finite() or not take_pct.is_finite() or stop_pct < 0 or take_pct < 0 or stop_pct >= 1:
+        raise StockPaperError("Broker-side exit percentages are invalid")
+    if stop_pct == 0 and take_pct == 0:
+        return None
+    if reference_price <= 0:
+        raise StockPaperError("Broker-side exits require a positive entry price")
+    tick = _price_tick(reference_price)
+    plan: dict = {
+        "order_class": "bracket" if stop_pct > 0 and take_pct > 0 else "oto",
+        "stop_price": None,
+        "take_profit_price": None,
+    }
+    if stop_pct > 0:
+        stop = (reference_price * (1 - stop_pct)).quantize(tick, rounding=ROUND_DOWN)
+        stop = min(stop, (reference_price - tick).quantize(tick, rounding=ROUND_DOWN))
+        if stop <= 0:
+            raise StockPaperError("Broker-side stop-loss price rounds to zero")
+        plan["stop_price"] = stop
+    if take_pct > 0:
+        take = (reference_price * (1 + take_pct)).quantize(tick, rounding=ROUND_CEILING)
+        plan["take_profit_price"] = max(take, (reference_price + tick).quantize(tick, rounding=ROUND_CEILING))
+    return plan
+
+
+def _is_exit_leg(order: Any) -> bool:
+    return bool(getattr(order, "leg_role", None))
+
+
+def _exit_group_key(order: StockPaperOrder) -> int | None:
+    """Identify the broker OCO group an order belongs to (entry id or OCO id)."""
+    if order.leg_role:
+        return order.parent_order_id or order.id
+    if (order.order_class or "simple") in BROKER_EXIT_ORDER_CLASSES:
+        return order.id
+    return None
+
+
+def _exit_group_exposure(db: Session, parent_id: int, legs: list[StockPaperOrder]) -> Decimal:
+    """Inventory a live OCO leg group can sell: counted once, not once per leg.
+
+    Bracket/OTO legs only activate after the entry fills completely, so an
+    unfilled entry's held legs commit no inventory yet and a partially filled
+    entry commits at most what has filled.
+    """
+    widest = max((leg.quantity for leg in legs), default=Decimal("0"))
+    parent = db.get(StockPaperOrder, parent_id)
+    if parent is None or parent.side != "buy":
+        return widest
+    if parent.status == "filled":
+        return widest
+    if parent.status == "partially_filled":
+        try:
+            filled = Decimal(str((parent.raw_payload or {}).get("filled_qty") or 0))
+        except (InvalidOperation, ValueError, TypeError):
+            filled = widest
+        return min(widest, max(filled, Decimal("0")))
+    return Decimal("0")
+
+
+def _committed_sell_quantity(db: Session, account_id: int, symbol: str, *, exclude_ids=()) -> Decimal:
+    """Nonterminal sell quantity, counting each bracket leg group once."""
+    excluded = set(exclude_ids or ())
+    rows = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account_id,
+        StockPaperOrder.symbol == symbol,
+        StockPaperOrder.side == "sell",
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+    ).all()
+    total = Decimal("0")
+    groups: dict[int, list[StockPaperOrder]] = {}
+    for row in rows:
+        if row.id in excluded:
+            continue
+        if row.leg_role:
+            groups.setdefault(row.parent_order_id or row.id, []).append(row)
+        else:
+            total += row.quantity
+    for parent_id, legs in groups.items():
+        total += _exit_group_exposure(db, parent_id, legs)
+    return total
+
+
+def live_exit_orders(db: Session, account_id: int, symbol: str | None = None,
+                     *, strategy_ids: set[int] | None = None) -> list[StockPaperOrder]:
+    """Nonterminal broker-side exit legs and their still-open bracket entries."""
+    query = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account_id,
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+    )
+    if symbol is not None:
+        query = query.filter(StockPaperOrder.symbol == symbol)
+    rows = [row for row in query.all() if _exit_group_key(row) is not None]
+    if strategy_ids is not None:
+        rows = [row for row in rows if row.strategy_id in strategy_ids]
+    return rows
+
+
+def broker_stop_coverage(db: Session, account_id: int, symbol: str) -> Decimal:
+    """Position quantity currently protected by a live broker stop-loss leg."""
+    groups: dict[int, list[StockPaperOrder]] = {}
+    for row in live_exit_orders(db, account_id, symbol):
+        if row.leg_role == "stop_loss":
+            groups.setdefault(row.parent_order_id or row.id, []).append(row)
+    return sum((_exit_group_exposure(db, key, legs) for key, legs in groups.items()), Decimal("0"))
+
+
+def exit_cancel_targets(orders: list[StockPaperOrder]) -> list[StockPaperOrder]:
+    """Choose one broker cancel per OCO group; simple orders are all targets.
+
+    Alpaca cancels the remaining open legs of a group when any leg is
+    cancelled, and a second DELETE on an already-cancelled sibling is
+    rejected.  An open entry is cancelled itself (taking its held legs with
+    it); after the entry is terminal the active (non-held) leg is cancelled.
+    """
+    by_id = {row.id: row for row in orders}
+    targets: list[StockPaperOrder] = []
+    seen: set[int] = set()
+    for row in orders:
+        if not row.broker_order_id:
+            continue
+        key = _exit_group_key(row)
+        if key is None:
+            targets.append(row)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        members = [item for item in orders if item.broker_order_id and _exit_group_key(item) == key]
+        parent = by_id.get(key)
+        if parent is not None and not parent.leg_role and parent.broker_order_id:
+            targets.append(parent)
+            continue
+        legs = [item for item in members if item.leg_role]
+        active = [item for item in legs if item.status != "held"] or legs
+        if active:
+            targets.append(active[0])
+    return targets
+
+
+def _exit_leg_row(db: Session, parent: StockPaperOrder, raw: dict) -> StockPaperOrder | None:
+    """Create or adopt the ledger row for one broker child leg of ``parent``."""
+    broker_order_id = str(raw.get("id") or "").strip()
+    order_type = str(raw.get("type") or "").lower()
+    role = "take_profit" if order_type == "limit" else "stop_loss" if order_type in {"stop", "stop_limit"} else None
+    side = str(raw.get("side") or "").lower()
+    symbol = str(raw.get("symbol") or parent.symbol).strip().upper()
+    if not broker_order_id or role is None or symbol != parent.symbol or side not in {"buy", "sell"} or side == parent.side:
+        return None
+    quantity = _decimal(raw.get("qty") or parent.quantity, "leg quantity")
+    if quantity <= 0:
+        return None
+    limit_price = _decimal(raw["limit_price"], "leg limit price") if raw.get("limit_price") is not None else None
+    stop_price = _decimal(raw["stop_price"], "leg stop price") if raw.get("stop_price") is not None else None
+    client_order_id = str(raw.get("client_order_id") or f"broker-{broker_order_id}")[:64]
+    row = db.query(StockPaperOrder).filter(StockPaperOrder.broker_order_id == broker_order_id).one_or_none()
+    if row is None:
+        row = db.query(StockPaperOrder).filter(StockPaperOrder.client_order_id == client_order_id).one_or_none()
+    if row is not None:
+        if row.account_id != parent.account_id:
+            raise StockPaperError("Broker exit leg belongs to another ledger account")
+        if row.parent_order_id not in (None, parent.id) or (row.source != "broker_import" and row.parent_order_id is None):
+            raise StockPaperError("Broker exit leg is already linked to a different order")
+    else:
+        row = StockPaperOrder(
+            account_id=parent.account_id, client_order_id=client_order_id, broker_order_id=broker_order_id,
+            symbol=symbol, side=side, quantity=quantity, order_type=order_type,
+            time_in_force=str(raw.get("time_in_force") or parent.time_in_force).lower(),
+            limit_price=limit_price, reserved_cash=Decimal("0"), status=str(raw.get("status") or "held"),
+            raw_payload=raw,
+        )
+        db.add(row)
+    # Adopt: the leg is part of the strategy lot the entry opened.  signal_id
+    # stays on the entry only (it is unique per order).
+    row.source = parent.source
+    row.strategy_id = parent.strategy_id
+    row.trial_id = parent.trial_id
+    row.evidence_id = parent.evidence_id
+    row.order_class = parent.order_class or "bracket"
+    row.parent_order_id = parent.id
+    row.leg_role = role
+    row.stop_price = stop_price
+    return row
+
+
+def _record_exit_legs(db: Session, parent: StockPaperOrder, legs: Any) -> list[StockPaperOrder]:
+    if not isinstance(legs, list):
+        return []
+    recorded = []
+    for raw in legs:
+        if isinstance(raw, dict):
+            row = _exit_leg_row(db, parent, raw)
+            if row is not None:
+                recorded.append(row)
+    return recorded
+
+
+def cancel_broker_exit_orders(db: Session, orders: list[StockPaperOrder],
+                              gateway: AlpacaPaperGateway | None = None) -> dict:
+    """Cancel live exit groups at the broker and report confirmed state.
+
+    Used before an app-side exit replaces broker-side legs.  It never submits
+    an order.  Each group gets at most one DELETE (none while a cancel is
+    already pending), then every member is re-read by client order id; the
+    caller may sell only when nothing is left live and no leg filled.
+    """
+    gateway = gateway or active_paper_gateway()
+    live = [row for row in orders if row.status in NONTERMINAL_ORDER_STATUSES and row.broker_order_id]
+    pending_groups = {_exit_group_key(row) for row in live if row.status == "pending_cancel"}
+    targets = [row for row in exit_cancel_targets(live) if _exit_group_key(row) not in pending_groups]
+    account = db.get(StockPaperAccount, live[0].account_id) if live else None
+    for row in targets:
+        gateway.cancel_order(row.broker_order_id)
+        row.status = "pending_cancel"
+    if targets:
+        _event(db, account, "exit_leg_cancel", "requested",
+               "App-side exit is replacing broker-side exit legs",
+               {"order_ids": [row.id for row in targets],
+                "broker_order_ids": [row.broker_order_id for row in targets]})
+        db.commit()
+    still_live: list[int] = []
+    leg_filled = False
+    for row in live:
+        resolved = gateway.order_by_client_id(row.client_order_id)
+        if resolved and str(resolved.get("id") or "") == row.broker_order_id:
+            row.status = str(resolved.get("status") or row.status)
+            row.raw_payload = resolved
+            if row.leg_role:
+                try:
+                    if Decimal(str(resolved.get("filled_qty") or 0)) > 0:
+                        leg_filled = True
+                except (InvalidOperation, ValueError, TypeError):
+                    leg_filled = True
+        if row.status in NONTERMINAL_ORDER_STATUSES:
+            still_live.append(row.id)
+        if row.leg_role and row.status in {"filled", "partially_filled"}:
+            leg_filled = True
+    db.commit()
+    return {"cancelled_order_ids": [row.id for row in targets], "still_live_order_ids": still_live,
+            "leg_filled": leg_filled, "clear": not still_live and not leg_filled}
+
+
+def cancel_stale_exit_entries(db: Session, account: StockPaperAccount, now: datetime,
+                              gateway: AlpacaPaperGateway | None = None) -> list[int]:
+    """Cancel GTC bracket entries left open from an earlier session.
+
+    The previous simple entries were DAY orders.  Bracket entries are GTC so
+    their exit legs survive overnight; an entry that did not fill in its own
+    session is cancelled here (Alpaca cancels its held legs with it) instead
+    of filling later on a stale signal.  Filled shares of a partially filled
+    entry stay protected by the app-side protective stop if the legs go too.
+    """
+    bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
+    if bounds is None:
+        return []
+    rows = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id,
+        StockPaperOrder.side == "buy",
+        StockPaperOrder.status.in_(STALE_ENTRY_STATUSES),
+        StockPaperOrder.order_class.in_(ENTRY_EXIT_ORDER_CLASSES),
+    ).all()
+    stale = [
+        row for row in rows
+        if row.broker_order_id and row.submitted_at is not None and _utc(row.submitted_at) < bounds[0]
+    ]
+    if not stale:
+        return []
+    gateway = gateway or active_paper_gateway()
+    cancelled = []
+    for row in stale:
+        gateway.cancel_order(row.broker_order_id)
+        row.status = "pending_cancel"
+        cancelled.append(row.id)
+    _event(db, account, "stale_exit_entry_cancel", "requested",
+           "Unfilled GTC bracket entry from an earlier session was cancelled", {"order_ids": cancelled})
+    db.commit()
+    return cancelled
+
+
 def _halt(account: StockPaperAccount, reason: str, *, reconciliation_required: bool = True) -> None:
     account.status = "halted"
     account.halt_reason = reason
@@ -863,7 +1172,43 @@ def _activity_timestamp(raw: dict, fallback: datetime) -> datetime:
     return _timestamp(value, fallback=fallback)
 
 
-def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict]) -> None:
+def _exit_leg_parents(db: Session, account: StockPaperAccount, rows: list[dict],
+                      leg_hints: dict[str, str] | None = None) -> dict[str, StockPaperOrder]:
+    """Map broker child-leg ids to the ledger entry that owns them.
+
+    Evidence is a parent row's nested ``legs`` (submit responses and
+    client-id lookups) or an explicit hint gathered during reconciliation.
+    Only app-owned parents are eligible; legs of an externally submitted
+    bracket stay broker imports and keep failing closed.
+    """
+    parent_by_leg: dict[str, str] = dict(leg_hints or {})
+    client_by_broker: dict[str, str] = {}
+    for raw in rows:
+        if raw.get("id") and raw.get("client_order_id"):
+            client_by_broker[str(raw["id"])] = str(raw["client_order_id"])
+        for leg in raw.get("legs") or []:
+            if isinstance(leg, dict) and leg.get("id"):
+                parent_by_leg[str(leg["id"])] = str(raw.get("id") or "")
+    result: dict[str, StockPaperOrder] = {}
+    for leg_id, parent_broker_id in parent_by_leg.items():
+        if not parent_broker_id:
+            continue
+        parent = db.query(StockPaperOrder).filter(StockPaperOrder.broker_order_id == parent_broker_id).one_or_none()
+        if parent is None and parent_broker_id in client_by_broker:
+            # An uncertain submission learns its broker id in this same batch.
+            parent = db.query(StockPaperOrder).filter(
+                StockPaperOrder.client_order_id == client_by_broker[parent_broker_id]
+            ).one_or_none()
+            if parent is not None and parent.broker_order_id not in (None, parent_broker_id):
+                parent = None
+        if parent is not None and parent.account_id == account.id and parent.source != "broker_import" and not parent.leg_role:
+            result[leg_id] = parent
+    return result
+
+
+def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict],
+                   leg_hints: dict[str, str] | None = None) -> None:
+    leg_parents = _exit_leg_parents(db, account, rows, leg_hints)
     for raw in rows:
         broker_order_id = str(raw.get("id") or "").strip()
         if not broker_order_id:
@@ -884,10 +1229,39 @@ def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict]) ->
             order = db.query(StockPaperOrder).filter(StockPaperOrder.client_order_id == imported_client_id).one_or_none()
         if order is not None and order.account_id != account.id:
             raise StockPaperError("Broker order belongs to another ledger account")
+        parent = leg_parents.get(broker_order_id)
+        if parent is None and raw.get("replaces") and (order is None or order.source == "broker_import"):
+            # A replaced (PATCHed) leg is a new broker order that still
+            # belongs to the original entry's OCO group.
+            replaced = db.query(StockPaperOrder).filter(
+                StockPaperOrder.broker_order_id == str(raw["replaces"])
+            ).one_or_none()
+            if replaced is not None and replaced.leg_role and replaced.parent_order_id:
+                parent = db.get(StockPaperOrder, replaced.parent_order_id)
+        if parent is not None and (order is None or order.source == "broker_import" or order.parent_order_id == parent.id):
+            adopted = _exit_leg_row(db, parent, raw)
+            if adopted is not None:
+                order = adopted
+        if order is not None and order.leg_role:
+            # Exit legs: quantity follows the broker (the stop is reduced
+            # after a partial take-profit fill); the rest stays immutable.
+            immutable = (order.symbol, order.side, order.order_type, order.time_in_force, order.limit_price)
+            if immutable != (symbol, side, order_type, tif, limit_price):
+                raise StockPaperError("Broker exit leg immutable fields changed; refusing corrupted evidence")
+            order.broker_order_id = broker_order_id
+            order.quantity = quantity
+            order.status = str(raw.get("status") or "unknown")
+            order.uncertain_submission = False
+            if raw.get("stop_price") is not None:
+                order.stop_price = _decimal(raw["stop_price"], "stop price")
+            order.raw_payload = raw
+            continue
         if order is None:
             order = StockPaperOrder(account_id=account.id, client_order_id=imported_client_id, broker_order_id=broker_order_id,
                                     symbol=symbol, side=side, quantity=quantity, order_type=order_type, time_in_force=tif,
                                     limit_price=limit_price,
+                                    stop_price=_decimal(raw["stop_price"], "stop price") if raw.get("stop_price") is not None else None,
+                                    order_class=str(raw.get("order_class") or "simple").lower()[:16] or "simple",
                                     reserved_cash=Decimal("0"), status=str(raw.get("status") or "unknown"), source="broker_import")
             db.add(order)
         else:
@@ -1517,11 +1891,23 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
         ).all()
         known_broker_ids = {str(row.get("id") or "") for row in raw_orders}
         unresolved_nonterminal: list[str] = []
+        leg_hints: dict[str, str] = {}
         for order in nonterminal:
             if order.status == "reserved" and order.submission_attempted_at is None and not order.broker_order_id:
                 # Local reservations cannot exist at the broker before dispatch.
                 continue
             resolved = gateway.order_by_client_id(order.client_order_id)
+            if resolved and not order.leg_role:
+                # A bracket entry looked up by client id carries its child
+                # legs; an uncertain submission recovers its exits here.
+                for leg in resolved.get("legs") or []:
+                    leg_id = str(leg.get("id") or "") if isinstance(leg, dict) else ""
+                    if not leg_id:
+                        continue
+                    leg_hints[leg_id] = str(resolved.get("id") or "")
+                    if leg_id not in known_broker_ids:
+                        raw_orders.append(leg)
+                        known_broker_ids.add(leg_id)
             if resolved and str(resolved.get("id") or "") not in known_broker_ids:
                 raw_orders.append(resolved)
                 known_broker_ids.add(str(resolved.get("id") or ""))
@@ -1540,7 +1926,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             raise StockPaperError("Broker account identifier changed; refusing to merge accounts")
         for key, value in values.items():
             setattr(account, key, value)
-        _upsert_orders(db, account, raw_orders)
+        _upsert_orders(db, account, raw_orders, leg_hints)
         enriched_activity_ids = _upsert_fills(db, account, raw_fills, observed)
         position_values = [_position_values(row, observed) for row in raw_positions]
         new_activities = [
@@ -1893,7 +2279,7 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     return signal, evidence
 
 
-def _open_exploration_lots(db: Session, account: StockPaperAccount) -> int:
+def _open_exploration_lots(db: Session, account: StockPaperAccount, *, exclude_order_id: int | None = None) -> int:
     """Count (strategy, symbol) exploration lots that are held or being bought."""
     orders = db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id, StockPaperOrder.source == EXPLORATION_SOURCE
@@ -1910,14 +2296,14 @@ def _open_exploration_lots(db: Session, account: StockPaperAccount) -> int:
     lots = {key for key, quantity in net.items() if quantity > 0}
     lots |= {
         (row.strategy_id, row.symbol) for row in orders
-        if row.side == "buy" and row.status in NONTERMINAL_ORDER_STATUSES
+        if row.side == "buy" and row.status in NONTERMINAL_ORDER_STATUSES and row.id != exclude_order_id
     }
     return len(lots)
 
 
 def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: str, signal_id: int | None,
                               quantity: Decimal, reference_price: Decimal, rules: dict,
-                              now: datetime) -> StrategySignal:
+                              now: datetime, *, dispatching_order_id: int | None = None) -> StrategySignal:
     """Admit a small learning buy from a candidate or research strategy.
 
     Exploration replaces only the approved-evidence requirement of
@@ -1944,7 +2330,7 @@ def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: s
     budget = account.equity * Decimal(str(settings.paper_exploration_risk_fraction))
     if account.equity <= 0 or quantity * reference_price > budget * Decimal("1.0001"):
         raise StockPaperError("Exploration order exceeds the per-trade exploration budget")
-    if _open_exploration_lots(db, account) >= settings.paper_exploration_max_positions:
+    if _open_exploration_lots(db, account, exclude_order_id=dispatching_order_id) >= settings.paper_exploration_max_positions:
         raise StockPaperError("Exploration lot limit reached")
     return signal
 
@@ -2026,8 +2412,16 @@ def create_stock_paper_research_signal(db: Session, symbol: str, strategy_slug: 
 
 def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: Decimal, reference_price: Decimal,
                               idempotency_key: str, source: str, signal_id: int | None = None,
-                              trial_id: str | None = None) -> StockPaperOrder:
-    """Commit a serialized reservation before any broker POST."""
+                              trial_id: str | None = None, exit_plan: dict | None = None,
+                              replacing_exit_order_ids=()) -> StockPaperOrder:
+    """Commit a serialized reservation before any broker POST.
+
+    ``exit_plan`` (from :func:`build_exit_plan`) turns an autonomous whole-share
+    entry into a GTC bracket/OTO order whose exits live at the broker.
+    ``replacing_exit_order_ids`` lets an app-side sell reserve inventory that
+    broker exit legs currently hold; dispatch still refuses to submit it until
+    those legs are confirmed terminal, so the two can never both sell.
+    """
     account = active_paper_account(db, for_update=True)
     side, symbol = side.lower(), symbol.strip().upper()
     client_order_id = "sp-" + hashlib.sha256(idempotency_key.encode()).hexdigest()[:45]
@@ -2102,6 +2496,23 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         raise StockPaperError("Stock paper order blocked by kill switch")
     if source not in ALLOWED_ORDER_SOURCES:
         raise StockPaperError("Stock paper order source is not an approved execution source")
+    if exit_plan is not None:
+        if side != "buy" or source not in AUTONOMOUS_ORDER_SOURCES or trial_id:
+            raise StockPaperError("Broker-side exits attach only to scheduled or exploration entries")
+        if exit_plan.get("order_class") not in ENTRY_EXIT_ORDER_CLASSES:
+            raise StockPaperError("Unsupported broker-side exit order class")
+        if quantity != quantity.to_integral_value():
+            raise StockPaperError(
+                "Broker-side bracket exits require a whole-share quantity; "
+                "Alpaca rejects fractional bracket/OTO orders"
+            )
+        plan_stop, plan_take = exit_plan.get("stop_price"), exit_plan.get("take_profit_price")
+        if plan_stop is None and plan_take is None:
+            raise StockPaperError("Broker-side exit plan has no exit leg")
+        if (plan_stop is not None and not Decimal("0") < plan_stop < reference_price) or (
+            plan_take is not None and plan_take <= reference_price
+        ):
+            raise StockPaperError("Broker-side exit prices must bracket the entry price")
     signal = evidence = None
     if side == "buy" and source == EXPLORATION_SOURCE:
         signal = _validate_exploration_buy(db, account, symbol, signal_id, quantity, reference_price, DEFAULT_RISK_RULES | rules, now)
@@ -2109,11 +2520,10 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         signal, evidence = _validate_signal_buy(db, account, symbol, signal_id, quantity, reference_price, DEFAULT_RISK_RULES | rules, now)
     if side == "sell":
         position = db.query(StockPaperPosition).filter_by(account_id=account.id, symbol=symbol).one_or_none()
-        already_reserved = db.scalar(select(func.coalesce(func.sum(StockPaperOrder.quantity), 0)).where(
-            StockPaperOrder.account_id == account.id, StockPaperOrder.symbol == symbol, StockPaperOrder.side == "sell",
-            StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES)
-        ))
-        if not position or quantity + Decimal(str(already_reserved)) > position.quantity:
+        already_reserved = _committed_sell_quantity(
+            db, account.id, symbol, exclude_ids=replacing_exit_order_ids,
+        )
+        if not position or quantity + already_reserved > position.quantity:
             raise StockPaperError("Sell would create a short position")
         reserved_cash = Decimal("0")
     else:
@@ -2162,8 +2572,12 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     order = StockPaperOrder(account_id=account.id, client_order_id=client_order_id, symbol=symbol, side=side, quantity=quantity,
         strategy_id=signal.strategy_id if signal else None, signal_id=signal.id if signal else None,
         trial_id=trial_id,
-        evidence_id=evidence.evidence_id if evidence else None, order_type="limit", time_in_force="day",
-        limit_price=reference_price, reserved_cash=reserved_cash, status="reserved", source=source)
+        evidence_id=evidence.evidence_id if evidence else None, order_type="limit",
+        time_in_force=EXIT_ENTRY_TIME_IN_FORCE if exit_plan else "day",
+        limit_price=reference_price, reserved_cash=reserved_cash, status="reserved", source=source,
+        order_class=exit_plan["order_class"] if exit_plan else "simple",
+        stop_price=exit_plan.get("stop_price") if exit_plan else None,
+        take_profit_price=exit_plan.get("take_profit_price") if exit_plan else None)
     db.add(order)
     _event(db, account, "order_reservation", "reserved", None, {"client_order_id": client_order_id})
     try:
@@ -2174,6 +2588,19 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         if existing and (existing.symbol, existing.side, existing.quantity, existing.limit_price) == (symbol, side, quantity, reference_price):
             return existing
         raise StockPaperError("Concurrent order reservation conflicted; no broker request was made")
+    return order
+
+
+def release_unsubmitted_reservation(db: Session, order_id: int, reason: str) -> StockPaperOrder:
+    """Cancel a local reservation that never reached the broker."""
+    order = db.query(StockPaperOrder).filter_by(id=order_id).with_for_update().one()
+    if order.status != "reserved" or order.submission_attempted_at is not None or order.broker_order_id:
+        raise StockPaperError("Only an unsubmitted local reservation can be released")
+    order.status = "cancelled"
+    order.reserved_cash = Decimal("0")
+    _event(db, db.get(StockPaperAccount, order.account_id), "order_reservation", "released", reason,
+           {"client_order_id": order.client_order_id})
+    db.commit()
     return order
 
 
@@ -2256,7 +2683,9 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     ).all()
     position = db.query(StockPaperPosition).filter_by(account_id=account.id, symbol=order.symbol).one_or_none()
     if order.side == "sell":
-        reserved_quantity = sum((row.quantity for row in pending if row.side == "sell" and row.symbol == order.symbol), Decimal("0"))
+        # Live broker exit legs count (once per OCO group): an app-side sell
+        # cannot be submitted while a leg could still sell the same shares.
+        reserved_quantity = _committed_sell_quantity(db, account.id, order.symbol, exclude_ids={order.id})
         if position is None or order.quantity + reserved_quantity > position.quantity:
             raise StockPaperError("Reserved sell exceeds current inventory or competing reservations")
     if order.side == "buy":
@@ -2268,8 +2697,16 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
         limit = Decimal(str((DEFAULT_RISK_RULES | (rule.value if rule else {}))["max_symbol_exposure"]))
         if (position.market_value if position else Decimal("0")) + symbol_reserved + notional > account.equity * limit:
             raise StockPaperError("Reserved buy exceeds current symbol exposure limit")
-        _validate_signal_buy(db, account, order.symbol, order.signal_id, order.quantity, order.limit_price,
-                             DEFAULT_RISK_RULES | (rule.value if rule else {}), now)
+        if order.source == EXPLORATION_SOURCE:
+            # Exploration entries were admitted by the exploration validator
+            # (no approved-evidence requirement); re-check that same contract,
+            # excluding this reservation from its own lot count.
+            _validate_exploration_buy(db, account, order.symbol, order.signal_id, order.quantity, order.limit_price,
+                                      DEFAULT_RISK_RULES | (rule.value if rule else {}), now,
+                                      dispatching_order_id=order.id)
+        else:
+            _validate_signal_buy(db, account, order.symbol, order.signal_id, order.quantity, order.limit_price,
+                                 DEFAULT_RISK_RULES | (rule.value if rule else {}), now)
         if approved_context:
             limits = approved_context[1].exposure_limits
             order_cap = Decimal(str(limits["max_order_notional"]))
@@ -2325,20 +2762,47 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
                 )
     elif not recovery_flatten and order.source not in ALLOWED_ORDER_SOURCES:
         raise StockPaperError("Reserved order source is not approved")
+    payload = {"symbol": order.symbol, "qty": str(order.quantity), "side": order.side,
+               "type": order.order_type, "time_in_force": order.time_in_force, "limit_price": str(order.limit_price),
+               "client_order_id": order.client_order_id}
+    if (order.order_class or "simple") != "simple":
+        if order.order_class not in ENTRY_EXIT_ORDER_CLASSES or order.side != "buy":
+            raise StockPaperError("Reserved order has an unsupported order class")
+        if order.quantity != order.quantity.to_integral_value():
+            raise StockPaperError("Broker-side bracket exits require a whole-share quantity")
+        gateway = gateway or active_paper_gateway()
+        if not getattr(gateway, "supports_bracket_orders", True):
+            raise StockPaperError("Active paper broker cannot carry broker-side exits; entry was not submitted")
+        payload["order_class"] = order.order_class
+        # Send an integral share count ("2", not the ledger's "2.000000000").
+        payload["qty"] = str(order.quantity.to_integral_value())
+        if order.take_profit_price is not None:
+            payload["take_profit"] = {"limit_price": str(order.take_profit_price.quantize(_price_tick(order.take_profit_price)))}
+        if order.stop_price is not None:
+            payload["stop_loss"] = {"stop_price": str(order.stop_price.quantize(_price_tick(order.stop_price)))}
     account_id = account.id
     order.status, order.submission_attempted_at = "submitting", datetime.now(UTC)
     db.commit()
     try:
-        raw = (gateway or active_paper_gateway()).submit_order({"symbol": order.symbol, "qty": str(order.quantity), "side": order.side,
-            "type": order.order_type, "time_in_force": order.time_in_force, "limit_price": str(order.limit_price),
-            "client_order_id": order.client_order_id})
+        raw = (gateway or active_paper_gateway()).submit_order(payload)
         broker_id = str(raw.get("id") or "").strip()
         if not broker_id:
             raise StockPaperUnavailable("Broker accepted an order without an identifier")
         order = db.get(StockPaperOrder, order_id)
         order.broker_order_id, order.status, order.submitted_at, order.raw_payload = broker_id, str(raw.get("status") or "accepted"), datetime.now(UTC), raw
+        legs = []
+        if (order.order_class or "simple") != "simple":
+            try:
+                legs = _record_exit_legs(db, order, raw.get("legs"))
+            except StockPaperError:
+                # The entry is accepted; reconciliation imports the legs by
+                # client-id lookup.  Never turn an accepted POST into a retry.
+                legs = []
         _event(db, db.get(StockPaperAccount, account_id), "order_submission", order.status,
-               "Broker reported sandbox order submission", {"client_order_id": order.client_order_id, "broker_order_id": broker_id})
+               "Broker reported sandbox order submission", {"client_order_id": order.client_order_id, "broker_order_id": broker_id,
+                                                            **({"order_class": order.order_class,
+                                                                "exit_leg_broker_order_ids": [leg.broker_order_id for leg in legs]}
+                                                               if order.order_class != "simple" else {})})
         db.commit()
     except Exception:
         db.rollback()
@@ -2409,6 +2873,8 @@ def stock_paper_status(db: Session) -> dict:
                        "observed_at": row.observed_at.isoformat()} for row in positions],
         "orders": [{"id": row.id, "client_order_id": row.client_order_id, "broker_order_id": row.broker_order_id, "symbol": row.symbol, "side": row.side, "quantity": money(row.quantity),
                     "order_type": row.order_type, "limit_price": money(row.limit_price), "status": row.status,
+                    "order_class": row.order_class, "parent_order_id": row.parent_order_id, "leg_role": row.leg_role,
+                    "stop_price": money(row.stop_price), "take_profit_price": money(row.take_profit_price),
                     "reserved_cash": money(row.reserved_cash), "signal_id": row.signal_id,
                     "strategy_id": row.strategy_id, "evidence_id": row.evidence_id,
                     "uncertain_submission": row.uncertain_submission,
