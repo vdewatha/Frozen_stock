@@ -21,7 +21,7 @@ from app.services.stock_paper_ledger import (
     create_stock_paper_research_signal,
     create_stock_paper_signal,
 )
-from app.services.strategies.registry import STRATEGY_REGISTRY
+from app.services.strategies.registry import RESEARCH_ONLY_STRATEGY_SLUGS, STRATEGY_REGISTRY
 from app.services.trusted_data import UntrustedMarketData
 
 STRATEGY_STATUSES = {
@@ -118,7 +118,7 @@ class SignalBatchTests(unittest.TestCase):
             return outcomes, stats, commit.call_count
 
     def test_fifty_symbols_eight_strategies_load_each_symbol_once_and_commit_once(self):
-        self.assertEqual(set(STRATEGY_STATUSES), set(STRATEGY_REGISTRY))
+        self.assertEqual(set(STRATEGY_STATUSES), set(STRATEGY_REGISTRY) - RESEARCH_ONLY_STRATEGY_SLUGS)
         symbols = [f"S{index:02d}" for index in range(50)]
         data = _DataDouble(symbols)
         started = time.perf_counter()
