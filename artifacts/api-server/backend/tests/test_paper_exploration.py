@@ -197,7 +197,10 @@ def test_cycle_routes_candidate_buys_through_small_exploration_orders():
     assert kwargs["source"] == EXPLORATION_SOURCE
     assert kwargs["idempotency_key"].startswith("explore-paper:")
     expected = Decimal("100000") * Decimal(str(settings.paper_exploration_risk_fraction)) / Decimal("100")
-    assert kwargs["quantity"] == expected.quantize(Decimal("0.000001"))
+    # Exploration entries carry broker-side bracket exits, which Alpaca only
+    # accepts for whole shares: the risk-sized quantity is rounded down.
+    assert kwargs["quantity"] == expected.quantize(Decimal("1"), rounding="ROUND_DOWN")
+    assert kwargs["exit_plan"]["order_class"] == "bracket"
     assert result["results"][0]["mode"] == "explore"
 
 

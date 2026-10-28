@@ -664,6 +664,8 @@ class RiskSettingsUpdateRequest(BaseModel):
     memory_replay_min_complete_samples: Optional[int] = Field(default=None, ge=0, le=1000)
     memory_replay_min_avg_return_delta: Optional[float] = Field(default=None, ge=-1, le=1)
     memory_replay_min_hit_rate_delta: Optional[float] = Field(default=None, ge=-1, le=1)
+    position_stop_loss_pct: Optional[float] = Field(default=None, ge=0, le=0.5)
+    position_take_profit_pct: Optional[float] = Field(default=None, ge=0, le=0.5)
     reason: Optional[str] = "Risk settings updated from control room."
 
 

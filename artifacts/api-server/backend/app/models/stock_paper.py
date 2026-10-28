@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -164,6 +164,18 @@ class StockPaperOrder(Base):
     uncertain_submission: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     raw_payload: Mapped[Optional[dict]] = mapped_column(JSON)
+    # Broker-side exits (migration 0063).  ``order_class`` is the Alpaca order
+    # class ("simple", "bracket", "oto", "oco").  An entry parent carries the
+    # planned exit prices; each broker child leg is its own row linked by
+    # ``parent_order_id`` (plain integer, no FK, to keep the self-reference
+    # out of the paper schema's existing FK cycles) with ``leg_role`` set to
+    # "take_profit" or "stop_loss", and inherits the parent's strategy_id so
+    # leg fills stay attributed to the strategy lot that opened the position.
+    order_class: Mapped[str] = mapped_column(String(16), nullable=False, default="simple", server_default="simple")
+    parent_order_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    leg_role: Mapped[Optional[str]] = mapped_column(String(16))
+    stop_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    take_profit_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
