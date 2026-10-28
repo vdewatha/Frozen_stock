@@ -63,6 +63,18 @@ class Settings(BaseSettings):
     # The paper Activity SSE provides bounded historical replay and structured
     # cash-impact evidence. It does not turn missing commissions into zero.
     alpaca_activity_sse_enabled: bool = False
+    # Bounded warm-up after a supervised restart (see stock_restart_grace).
+    # Only stale-heartbeat / stale-data findings that predate the recorded
+    # worker start are deferred, new entries stay blocked while warming up,
+    # and any other breach still pauses. Requires the gateway boot markers
+    # (PAPER_BOOT_ID / PAPER_WORKERS_STARTED_AT); without them there is no grace.
+    stock_restart_grace_enabled: bool = True
+    stock_restart_grace_seconds: int = Field(default=300, ge=0, le=900)
+    # The previous process generation must have produced a watchdog heartbeat
+    # within this long before the restart; longer gaps are outages, not deploys.
+    stock_restart_grace_max_downtime_seconds: int = Field(default=1800, ge=60, le=7200)
+    # Restart-storm guard: more grace windows than this per rolling hour are denied.
+    stock_restart_grace_max_boots_per_hour: int = Field(default=3, ge=1, le=12)
     tradier_market_data_api_key: SecretStr = SecretStr("")
     tradier_api_key: SecretStr = SecretStr("")
     tradier_account_id: str = ""

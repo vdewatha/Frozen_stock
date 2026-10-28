@@ -874,17 +874,23 @@ def evaluate_launch_admission_prerequisites(
             watchdog_at
             and timedelta(0) <= observed_at - watchdog_at <= HEARTBEAT_TIMEOUT
         )
+        from app.services.stock_restart_grace import restart_warmup_status
+
+        restart_warmup = restart_warmup_status(db, observed_at)
         recovery_ready = bool(
             recovery
             and recovery.status == "armed"
             and not recovery.accounting_review_required
             and monitor_fresh
             and watchdog_fresh
+            and not restart_warmup.get("active")
         )
         gates["recovery_state"] = _gate(
             "pass" if recovery_ready else "fail" if recovery else "unknown",
             reason=(
                 None if recovery_ready else
+                "Paper recovery is warming up after a supervised restart; new entries are blocked"
+                if recovery and restart_warmup.get("active") else
                 "Paper recovery is not armed with current monitor and watchdog evidence"
                 if recovery else
                 "Paper recovery readiness has not been initialized"
@@ -902,6 +908,7 @@ def evaluate_launch_admission_prerequisites(
                 ),
                 "monitor_fresh": monitor_fresh,
                 "watchdog_fresh": watchdog_fresh,
+                "restart_warmup": restart_warmup,
                 "heartbeat_timeout_seconds": HEARTBEAT_TIMEOUT.total_seconds(),
             },
         )
