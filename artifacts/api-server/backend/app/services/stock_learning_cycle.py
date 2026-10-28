@@ -70,6 +70,11 @@ from app.services.stock_forward_trial import (
     validate_trial_artifact,
 )
 
+# Recovery states in which autonomous paper work may proceed. "resumable" is
+# set by a successful operator revalidation; nothing transitions it back to
+# "armed", so requiring "armed" alone blocked every order after any recovery.
+TRADABLE_RECOVERY_STATUSES = frozenset({"armed", "resumable"})
+
 TERMINAL_STATUSES = {"complete", "promoted", "demoted", "rolled_back", "failed"}
 VALID_TRIGGERS = {"manual", "scheduled"}
 ONE_SESSION_SYMBOLS = ["AAPL", "MSFT", "QQQ", "SPY"]
@@ -879,7 +884,7 @@ def evaluate_launch_admission_prerequisites(
         restart_warmup = restart_warmup_status(db, observed_at)
         recovery_ready = bool(
             recovery
-            and recovery.status == "armed"
+            and recovery.status in TRADABLE_RECOVERY_STATUSES
             and not recovery.accounting_review_required
             and monitor_fresh
             and watchdog_fresh
@@ -1847,7 +1852,7 @@ def start_scheduled_learning_trial(
         )
 
     recovery = db.get(StockPaperRecoveryState, 1)
-    if recovery and recovery.status != "armed":
+    if recovery and recovery.status not in TRADABLE_RECOVERY_STATUSES:
         return _handoff_failure(
             db, cycle, stage="preflight", status="deferred",
             reason="Paper recovery is paused or awaiting operator revalidation",
@@ -2298,8 +2303,8 @@ def automate_paper_promotion(
         },
     )
     recovery_gate = _gate(
-        "pass" if recovery is None or recovery.status == "armed" else "fail",
-        reason=None if recovery is None or recovery.status == "armed"
+        "pass" if recovery is None or recovery.status in TRADABLE_RECOVERY_STATUSES else "fail",
+        reason=None if recovery is None or recovery.status in TRADABLE_RECOVERY_STATUSES
         else "paper recovery is paused or awaiting revalidation",
         evidence={"status": recovery.status if recovery else "uninitialized"},
     )
