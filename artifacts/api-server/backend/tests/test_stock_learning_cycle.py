@@ -1471,7 +1471,7 @@ def test_launch_admission_gates_require_affirmative_broker_evidence_and_armed_fr
     now = datetime(2026, 9, 17, 15, 0, tzinfo=timezone.utc)
     db = MagicMock()
     db.get.return_value = SimpleNamespace(
-        status="resumable",
+        status="revalidation_required",
         accounting_review_required=False,
         last_monitor_heartbeat_at=now,
         last_watchdog_heartbeat_at=now,
@@ -1536,6 +1536,25 @@ def test_launch_admission_gates_require_affirmative_broker_evidence_and_armed_fr
         fresh = learning_cycle_service.evaluate_launch_admission_prerequisites(db, now=now)
     assert fresh["broker_qualification"]["status"] == "pass"
     assert fresh["recovery_state"]["status"] == "pass"
+
+    # An operator revalidation leaves the state "resumable" permanently; it
+    # must admit autonomous paper work just like a freshly armed state.
+    db.get.return_value.status = "resumable"
+    with (
+        patch.object(
+            learning_cycle_service,
+            "stock_paper_broker_status",
+            return_value={
+                "paper_broker": "alpaca_paper",
+                "live_trading_blocked": True,
+                "accounting": {"ready": True, "provider_evidence_complete": None},
+            },
+        ),
+        patch.object(learning_cycle_service, "portfolio_risk_snapshot", return_value={"alerts": []}),
+        patch.object(learning_cycle_service, "_audit_chain_check", return_value={"status": "clear"}),
+    ):
+        resumed = learning_cycle_service.evaluate_launch_admission_prerequisites(db, now=now)
+    assert resumed["recovery_state"]["status"] == "pass"
 
 
 def test_schedule_control_is_viewer_read_and_operator_write():

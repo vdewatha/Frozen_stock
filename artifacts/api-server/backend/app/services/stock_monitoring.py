@@ -39,6 +39,14 @@ from app.services.intraday_data import (
 from app.services.notifications import create_notification
 from app.services.risk import DEFAULT_RISK_RULES
 from app.services.stock_recovery import enter_stock_recovery, record_stock_monitor_heartbeat
+from app.services.stock_restart_grace import (
+    RESTART_EXPLAINABLE_KEYS,
+    boot_identity,
+    monitoring_check_explained_by_restart,
+    open_restart_grace,
+    record_restart_deferral,
+    record_restart_warmup_complete,
+)
 from app.services.stock_paper_ledger import active_paper_account
 from app.services.stock_training_jobs import StockTrainingError, transition_stock_model_lifecycle
 from app.services.trusted_data import TRUSTED_SOURCES, UntrustedMarketData, trusted_history
@@ -223,6 +231,7 @@ def _freshness_and_provenance(db: Session) -> dict:
                 "ingestion_timestamp": status.get("ingestion_timestamp").isoformat() if status.get("ingestion_timestamp") else None,
                 "missing_intervals": status.get("missing_intervals", []),
                 "unavailable_reason": status.get("unavailable_reason"),
+                "failure_class": status.get("failure_class"),
             }
             execution_status = status.get("execution_status") or status.get("status")
             execution_feed_usable = (
@@ -236,10 +245,28 @@ def _freshness_and_provenance(db: Session) -> dict:
                 failures[asset.symbol] = execution_status or status.get("status", "unavailable")
         except Exception as exc:
             failures[asset.symbol] = exc.__class__.__name__
-    status = "breach" if failures else "warning" if historical_warnings else "clear"
+    # Per-symbol gating: a stale symbol is blocked by its own feed gate in
+    # reserve_stock_paper_order. Only a broad outage (more than the configured
+    # share of the evaluated execution assets, or SPY/QQQ) is a safety breach
+    # that pauses the whole stock path.
+    from app.services.trading_universe import classify_feed_outage, never_ingested_symbols
+
+    onboarding = never_ingested_symbols(db, failures, MARKET_DATA_PROVIDER)
+    outage = classify_feed_outage(
+        failures, [asset.symbol for asset in execution_assets] or sorted(failures), onboarding=onboarding,
+    )
+    if not execution_assets and not failures:
+        outage = {**outage, "scope": "none", "reason": None}
+    status = (
+        "breach" if outage["scope"] == "broad"
+        else "warning" if failures or historical_warnings
+        else "clear"
+    )
     return _check(
         "data.freshness_provenance", "data", "data_freshness_and_provenance", status,
-         "Fresh trusted execution-feed data is not available for every active stock."
+         "Fresh trusted execution-feed data is unavailable for a broad share of the execution universe."
+        if status == "breach" else
+        "Some symbols lack fresh execution-feed data; only those symbols are blocked."
         if failures else "Current execution-feed data is usable; historical repair gaps remain for research."
         if historical_warnings else "Freshness and provider provenance are valid for the active stock universe.",
          value={"failed_symbols": sorted(failures), "ready_symbols": sorted(set(results) - set(failures))},
@@ -247,6 +274,10 @@ def _freshness_and_provenance(db: Session) -> dict:
         details={
             "symbols": results,
             "failures": failures,
+            "outage_scope": outage["scope"],
+            "blocked_symbols": outage["blocked_symbols"],
+            "onboarding_symbols": outage["onboarding_symbols"],
+            "outage_reason": outage["reason"],
             "historical_warnings": historical_warnings,
             "execution_symbols": sorted(execution_symbols),
             "research_only_symbols": research_only_symbols,
@@ -355,7 +386,28 @@ def _worker_scheduler_health(db: Session) -> list[dict]:
     return [_check("health.worker_scheduler", "health", "worker_scheduler_health", status, "Workers and exactly one scheduler are evidenced." if status == "clear" else "Worker, scheduler, or recent scheduled-job health is not confirmed.", value={"worker_count": details["worker_count"], "beat_count": details["beat_count"]}, threshold={"worker_count": 1, "beat_count": 1}, details=details, action_scope="safety")]
 
 
-def _persist_breach(db: Session, check: dict, now: datetime) -> dict:
+def _persistence_floor(db: Session) -> datetime | None:
+    """Earliest observation that may count toward a persistent breach.
+
+    Observations made before the latest operator revalidation describe the
+    pause/halt that the operator has just reviewed (a halted account is a
+    ``health.broker`` breach by definition), and observations made before the
+    current supervised worker start describe the previous process generation.
+    Neither may combine with a fresh observation to re-pause the path; a new
+    breach still needs its own consecutive observations and then pauses.
+    """
+    # Re-read: an operator resume may commit while this evaluation is running.
+    recovery = db.query(StockPaperRecoveryState).populate_existing().filter_by(id=1).one_or_none()
+    identity = boot_identity()
+    floors = [
+        _aware(recovery.last_revalidation_at) if recovery and recovery.last_revalidation_at else None,
+        identity["anchor"] if identity else None,
+    ]
+    floors = [floor for floor in floors if floor is not None]
+    return max(floors) if floors else None
+
+
+def _persist_breach(db: Session, check: dict, now: datetime, floor: datetime | None = None) -> dict:
     row = db.query(StockMonitoringBreach).filter_by(breach_key=check["key"]).one_or_none()
     if row is None:
         row = StockMonitoringBreach(
@@ -365,7 +417,12 @@ def _persist_breach(db: Session, check: dict, now: datetime) -> dict:
         db.add(row)
         db.flush()
     if check["status"] == "breach":
-        prior_recent = row.status in {"observed", "persistent"} and _aware(row.last_observed_at) and now - _aware(row.last_observed_at) <= PERSISTENCE_WINDOW
+        prior_recent = (
+            row.status in {"observed", "persistent"}
+            and _aware(row.last_observed_at)
+            and now - _aware(row.last_observed_at) <= PERSISTENCE_WINDOW
+            and (floor is None or _aware(row.last_observed_at) > floor)
+        )
         row.consecutive_count = row.consecutive_count + 1 if prior_recent else 1
         row.status = "persistent" if row.consecutive_count >= 2 else "observed"
         row.severity = "critical" if row.status == "persistent" else "warning"
@@ -453,15 +510,63 @@ def _demote_active_model(db: Session, reasons: list[str], now: datetime) -> dict
     return {"action": "demote_model", "model_run_id": binding.model_run_id, "reasons": reasons}
 
 
+def _restart_warmup_action(db: Session, checks: list[dict], persistent_safety: list[str], now: datetime) -> dict | None:
+    """Defer only restart-explained staleness during a bounded post-restart window.
+
+    Persistence counting is untouched, so a condition that is still present
+    when the window closes pauses on the next evaluation exactly as before.
+    Any other persistent safety breach still pauses in the same evaluation.
+    """
+    recovery = db.get(StockPaperRecoveryState, 1)
+    grace = open_restart_grace(
+        db,
+        now=now,
+        recovery_status=recovery.status if recovery else "armed",
+        prior_watchdog_heartbeat_at=recovery.last_watchdog_heartbeat_at if recovery else None,
+        source="stock_monitor",
+    )
+    if not grace.get("active"):
+        return None
+    account = active_paper_account(db)
+    by_key = {check["key"]: check for check in checks}
+    deferred = [
+        key for key in persistent_safety
+        if monitoring_check_explained_by_restart(by_key[key], grace, account)
+    ]
+    still_stale = [
+        check["key"] for check in checks
+        if check["key"] in RESTART_EXPLAINABLE_KEYS and check["status"] == "breach"
+    ]
+    if deferred:
+        record_restart_deferral(db, grace, source="stock_monitor", deferred=deferred, now=now)
+    elif not still_stale:
+        record_restart_warmup_complete(db, grace, source="stock_monitor", now=now)
+        return None
+    return {
+        "action": "restart_warmup",
+        "deferred": deferred,
+        "warming": still_stale,
+        "boot_id": grace.get("boot_id"),
+        "build_id": grace.get("build_id"),
+        "grace_until": grace["grace_until"].isoformat() if grace.get("grace_until") else None,
+        "entries_blocked": True,
+    }
+
+
 def run_stock_monitoring(db: Session, *, source: str = "stock_monitoring_job") -> dict:
     now = _now()
     checks = _distribution_drift(db) + [_performance_drift(db), _freshness_and_provenance(db), _execution_divergence(db, now)]
     checks += _stock_risk_metrics(db, now)
     checks += _broker_reconciliation_health(db, now) + _worker_scheduler_health(db)
-    persisted = [_persist_breach(db, check, now) for check in checks]
+    floor = _persistence_floor(db)
+    persisted = [_persist_breach(db, check, now, floor) for check in checks]
     persistent_safety = [check["key"] for check, state in zip(checks, persisted) if state["status"] == "persistent" and check["action_scope"] == "safety"]
     persistent_model = [check["key"] for check, state in zip(checks, persisted) if state["status"] == "persistent" and check["action_scope"] == "model"]
     actions: list[dict] = []
+    warmup = _restart_warmup_action(db, checks, persistent_safety, now)
+    if warmup:
+        persistent_safety = [key for key in persistent_safety if key not in warmup["deferred"]]
+        actions.append(warmup)
     if persistent_safety:
         actions.append(_pause_stock_path(db, persistent_safety, now))
     if persistent_model:

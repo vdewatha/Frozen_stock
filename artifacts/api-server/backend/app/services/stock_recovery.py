@@ -42,6 +42,7 @@ from app.services.stock_paper_ledger import (
     _halt,
     _utc,
     dispatch_reserved_order,
+    exit_cancel_targets,
     reconcile_stock_paper_account,
 )
 from app.services.stock_training_jobs import (
@@ -293,7 +294,11 @@ def cancel_open_stock_orders(
     cancelled = []
     failures = []
     gateway = gateway or active_paper_gateway()
-    for order in broker_orders:
+    # Bracket entries and their exit legs form one broker OCO group: one
+    # DELETE cancels the group, and a second DELETE on an already-cancelled
+    # sibling is rejected.  The siblings stay pending_cancel until the
+    # reconciliation below confirms them terminal.
+    for order in exit_cancel_targets(broker_orders):
         try:
             gateway.cancel_order(order.broker_order_id)
             cancelled.append(order.id)
@@ -965,6 +970,13 @@ def recovery_status(db: Session) -> dict:
                         "evidence_generated_at": _utc(latest_snapshot.generated_at).isoformat(),
                     },
                 }
+    from app.services.stock_restart_grace import restart_warmup_status
+
+    restart_warmup = restart_warmup_status(db)
+    reported_status = state.status
+    if restart_warmup.get("active") and state.status in {"armed", "resumable"}:
+        # Derived, never persisted: entry gates treat it as not ready.
+        reported_status = "warming_up"
     automatic_review_status = (
         "blocked"
         if state.accounting_review_required
@@ -973,7 +985,9 @@ def recovery_status(db: Session) -> dict:
         else "not_required"
     )
     return {
-        "status": state.status,
+        "status": reported_status,
+        "persisted_status": state.status,
+        "restart_warmup": restart_warmup,
         "flatten_policy": state.flatten_policy,
         "cooldown_until": state.cooldown_until.isoformat() if state.cooldown_until else None,
         "pause_reason": state.pause_reason,
@@ -1144,22 +1158,62 @@ def recovery_evidence(db: Session) -> dict:
 
 
 def run_stock_watchdog(db: Session) -> dict:
+    from app.services.stock_restart_grace import (
+        heartbeat_explained_by_restart,
+        open_restart_grace,
+        record_restart_deferral,
+    )
+
     now = _now()
     state = _state(db)
     account = active_paper_account(db)
-    reasons = []
+    # Decide (once per supervised boot) before this run refreshes the watchdog
+    # heartbeat, so the previous generation's heartbeat is the evidence used.
+    grace = open_restart_grace(
+        db,
+        now=now,
+        recovery_status=state.status,
+        prior_watchdog_heartbeat_at=state.last_watchdog_heartbeat_at,
+        source="stock_watchdog",
+    )
+    observations = []
     if account:
-        issue = _heartbeat_issue(account.last_reconciled_at, now, "broker reconciliation heartbeat")
-        if issue:
+        observations.append((account.last_reconciled_at, "broker reconciliation heartbeat"))
+    observations.append((state.last_monitor_heartbeat_at, "continuous monitor heartbeat"))
+    reasons = []
+    deferred = []
+    for observed, label in observations:
+        issue = _heartbeat_issue(observed, now, label)
+        if not issue:
+            continue
+        # Only a stale heartbeat last written before the restart is deferred;
+        # missing or future-dated evidence is never restart-explained.
+        if issue.endswith(" is stale") and heartbeat_explained_by_restart(observed, grace):
+            deferred.append(issue)
+        else:
             reasons.append(issue)
-    issue = _heartbeat_issue(state.last_monitor_heartbeat_at, now, "continuous monitor heartbeat")
-    if issue:
-        reasons.append(issue)
     if reasons and (account is None or account.status != "halted"):
-        enter_stock_recovery(db, reason="Independent watchdog: " + "; ".join(reasons), actor="stock_watchdog")
+        enter_stock_recovery(db, reason="Independent watchdog: " + "; ".join(reasons + deferred), actor="stock_watchdog")
         status = "paused"
+    elif deferred and (account is None or account.status != "halted"):
+        record_restart_deferral(db, grace, source="stock_watchdog", deferred=deferred, now=now)
+        status = "warming_up"
     else:
         status = "clear"
-    record_stock_watchdog_heartbeat(db, status=status, details={"reasons": reasons})
+    details = {"reasons": reasons}
+    if deferred:
+        details |= {
+            "restart_deferred": deferred,
+            "restart_grace_until": grace["grace_until"].isoformat() if grace.get("grace_until") else None,
+            "boot_id": grace.get("boot_id"),
+        }
+    record_stock_watchdog_heartbeat(db, status=status, details=details)
     db.commit()
-    return {"status": status, "reasons": reasons, "generated_at": now}
+    result = {"status": status, "reasons": reasons, "generated_at": now}
+    if deferred:
+        result["deferred"] = deferred
+        result["restart_grace"] = {
+            "boot_id": grace.get("boot_id"),
+            "grace_until": grace["grace_until"].isoformat() if grace.get("grace_until") else None,
+        }
+    return result

@@ -24,6 +24,13 @@ const internalPort = 8090;
 const internalSecret = randomBytes(32).toString("hex");
 const internalTarget = `http://127.0.0.1:${internalPort}`;
 const buildId = process.env.PAPER_BUILD_ID?.trim() || "unknown";
+// One identity per gateway process (a deploy or VM restart). Paper workers
+// use it to recognise a supervised restart and apply the bounded warm-up
+// grace; a worker respawned by this supervisor keeps the same identity, so a
+// crash loop cannot reopen or extend the window.
+const bootId = randomBytes(12).toString("hex");
+const bootAt = new Date().toISOString();
+let workersStartedAt: string | undefined;
 const allowedRoles = new Set(["viewer", "researcher", "operator", "admin"]);
 const clerkConfigured = Boolean(process.env.CLERK_SECRET_KEY?.trim());
 // Autoscale is a gateway host, not a durable worker host. Workers must be
@@ -125,7 +132,10 @@ const runtimeEnv = {
     process.env.PAPER_WORKER_QUEUE_MODE ??
     (process.env.PAPER_COMPACT_WORKER === "true" ? "compact" : "dedicated"),
   PYTHONPATH: ".",
-};
+  PAPER_BUILD_ID: buildId,
+  PAPER_BOOT_ID: bootId,
+  PAPER_BOOT_AT: bootAt,
+} as NodeJS.ProcessEnv;
 
 function roleMappings(): Record<string, string> {
   try {
@@ -171,6 +181,9 @@ app.get("/api/startup", (_req, res) => {
   res.status(ready ? 200 : 503).json({
     status: backendReady && !clerkConfigured ? "auth_missing" : startupState,
     build_id: buildId,
+    boot_id: bootId,
+    boot_at: bootAt,
+    workers_started_at: workersStartedAt ?? null,
     paper_only: true,
     live_trading: false,
     auth_configured: clerkConfigured,
@@ -274,6 +287,12 @@ function startBackendAfterMigration(): void {
 
 function startPaperWorkers(): void {
   if (!paperWorkersEnabled) return;
+  // Fixed at the first worker start of this gateway process; heartbeats can
+  // only resume from here, so the grace window is measured from this moment.
+  if (!workersStartedAt) {
+    workersStartedAt = new Date().toISOString();
+    runtimeEnv.PAPER_WORKERS_STARTED_AT = workersStartedAt;
+  }
   if (compactPaperWorker) {
     supervisePaperWorker([
       "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",

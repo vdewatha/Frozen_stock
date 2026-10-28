@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import AuditLog, IntradayBar
 from app.services.audit import write_audit_log
+from app.services.trading_universe import intraday_symbols
 from app.services.intraday_data import (
     ALLOWED_SYMBOLS, NY, _aware_utc, _parse_bar, session_bounds, upsert_intraday_bars,
 )
@@ -103,7 +104,7 @@ def _fetch_research_bars(symbols: list[str], start: datetime, end: datetime, *, 
     """Bounded shared transport; feed-specific callers enforce their time cutoff."""
     if feed not in {DataFeed.IEX, DataFeed.SIP}:
         raise ValueError("Unsupported research feed")
-    if not symbols or len(set(symbols)) != len(symbols) or not set(symbols) <= ALLOWED_SYMBOLS:
+    if not symbols or len(set(symbols)) != len(symbols) or not set(symbols) <= intraday_symbols():
         raise ValueError("IEX collection requires unique supported symbols")
     if start.tzinfo is None or end.tzinfo is None or not timedelta(0) < end - start <= timedelta(hours=7):
         raise ValueError("IEX collection requires a bounded, timezone-aware session")

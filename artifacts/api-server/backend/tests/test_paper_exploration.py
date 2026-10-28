@@ -24,6 +24,7 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
 )
 from tests.test_stock_paper_ledger import FakeAlpaca
+from tests.test_stock_paper_autotrader import signal_source
 
 
 class ExplorationLedgerTests(unittest.TestCase):
@@ -180,7 +181,7 @@ def _run_cycle(enabled):
          patch.object(settings, "paper_exploration_enabled", enabled), \
          patch("app.services.stock_paper_autotrader.active_paper_account", return_value=account), \
          patch("app.services.stock_paper_autotrader._is_regular_session", return_value=True), \
-         patch("app.services.stock_paper_autotrader.create_stock_paper_research_signal", return_value={
+         signal_source(True, return_value={
              "signal_id": 5, "signal_action": "BUY", "reference_price": "100",
          }), \
          patch("app.services.stock_paper_autotrader.reserve_stock_paper_order", return_value=order) as reserve, \
@@ -196,7 +197,10 @@ def test_cycle_routes_candidate_buys_through_small_exploration_orders():
     assert kwargs["source"] == EXPLORATION_SOURCE
     assert kwargs["idempotency_key"].startswith("explore-paper:")
     expected = Decimal("100000") * Decimal(str(settings.paper_exploration_risk_fraction)) / Decimal("100")
-    assert kwargs["quantity"] == expected.quantize(Decimal("0.000001"))
+    # Exploration entries carry broker-side bracket exits, which Alpaca only
+    # accepts for whole shares: the risk-sized quantity is rounded down.
+    assert kwargs["quantity"] == expected.quantize(Decimal("1"), rounding="ROUND_DOWN")
+    assert kwargs["exit_plan"]["order_class"] == "bracket"
     assert result["results"][0]["mode"] == "explore"
 
 

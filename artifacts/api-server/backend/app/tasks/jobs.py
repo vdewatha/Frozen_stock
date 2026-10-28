@@ -327,6 +327,13 @@ def _run_job(job_name: str, work: Callable) -> dict:
 @celery_app.task
 def daily_market_data_import() -> dict:
     def work(db):
+        # A newly configured execution symbol needs an Asset row before its
+        # trusted daily history can be imported and evaluated.
+        from app.services.seed import ensure_paper_execution_assets
+
+        created_assets = ensure_paper_execution_assets(db)
+        if created_assets:
+            db.commit()
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
         results = [import_market_prices(db, asset.symbol, "5y") for asset in assets]
         corporate_actions = ingest_corporate_actions(db, [asset.symbol for asset in assets])
@@ -344,6 +351,7 @@ def daily_market_data_import() -> dict:
         return {
             "status": "complete",
             "job": "daily_market_data_import",
+            "created_assets": created_assets,
             "results": results,
             "trusted_assets": trusted_imported,
             "learning_refresh_task_id": learning_refresh,

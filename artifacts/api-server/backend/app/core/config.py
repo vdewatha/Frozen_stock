@@ -8,6 +8,17 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, SecretStr, field_validator, model_validator
 
+# Liquid paper execution universe: broad/sector ETFs plus US megacaps. Kept in
+# sync with PAPER_EXECUTION_SYMBOLS in .replit (see trading_universe.py).
+DEFAULT_PAPER_EXECUTION_SYMBOLS: tuple[str, ...] = (
+    "SPY", "QQQ", "IWM", "DIA",
+    "XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLU", "XLB", "XLRE", "XLC", "SMH",
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "JPM", "V", "MA",
+    "UNH", "XOM", "LLY", "COST", "HD", "PG", "JNJ", "ABBV", "MRK", "PEP", "KO", "BAC",
+    "WMT", "NFLX", "AMD", "CRM", "ORCL", "ADBE",
+)
+MAX_PAPER_EXECUTION_SYMBOLS = 60
+
 
 class Settings(BaseSettings):
     app_name: str = "Paper Trading Research API"
@@ -63,6 +74,18 @@ class Settings(BaseSettings):
     # The paper Activity SSE provides bounded historical replay and structured
     # cash-impact evidence. It does not turn missing commissions into zero.
     alpaca_activity_sse_enabled: bool = False
+    # Bounded warm-up after a supervised restart (see stock_restart_grace).
+    # Only stale-heartbeat / stale-data findings that predate the recorded
+    # worker start are deferred, new entries stay blocked while warming up,
+    # and any other breach still pauses. Requires the gateway boot markers
+    # (PAPER_BOOT_ID / PAPER_WORKERS_STARTED_AT); without them there is no grace.
+    stock_restart_grace_enabled: bool = True
+    stock_restart_grace_seconds: int = Field(default=300, ge=0, le=900)
+    # The previous process generation must have produced a watchdog heartbeat
+    # within this long before the restart; longer gaps are outages, not deploys.
+    stock_restart_grace_max_downtime_seconds: int = Field(default=1800, ge=60, le=7200)
+    # Restart-storm guard: more grace windows than this per rolling hour are denied.
+    stock_restart_grace_max_boots_per_hour: int = Field(default=3, ge=1, le=12)
     tradier_market_data_api_key: SecretStr = SecretStr("")
     tradier_api_key: SecretStr = SecretStr("")
     tradier_account_id: str = ""
@@ -87,7 +110,21 @@ class Settings(BaseSettings):
     stock_learning_default_provider: str = "yfinance"
     # Research can cover a wider universe than the symbols admitted to paper
     # decisions. A symbol with incomplete execution data stays research-only.
-    paper_execution_symbols: list[str] = ["AAPL", "MSFT", "QQQ", "SPY"]
+    # The default is a liquid ~45-name list (index/sector ETFs + megacaps);
+    # PAPER_EXECUTION_SYMBOLS in .replit carries the same list.
+    paper_execution_symbols: list[str] = list(DEFAULT_PAPER_EXECUTION_SYMBOLS)
+    # Stale market data blocks only the affected symbol unless more than this
+    # fraction of the execution universe (or SPY/QQQ) is stale: a broad outage
+    # still blocks everything.
+    paper_feed_broad_outage_fraction: float = Field(default=0.2, gt=0, le=1)
+    # Correlation guard: max open (or pending-entry) positions per sector ETF
+    # group for scheduled paper entries. The risk rule key
+    # ``max_positions_per_sector`` overrides it; 0 disables the cap.
+    paper_max_positions_per_sector: int = Field(default=3, ge=0, le=50)
+    # Upper bound on extra (repair/backfill) intraday provider requests one
+    # ingestion cycle may make across all symbols. The newest window for all
+    # symbols is fetched with multi-symbol requests and does not count here.
+    intraday_backfill_request_budget: int = Field(default=40, ge=0, le=150)
     # Paper exploration lets candidate/research strategies place small, tagged
     # paper orders to generate learning data before they earn trial evidence.
     # Exploration fills never count as promotion evidence. Off by default.
@@ -119,10 +156,12 @@ class Settings(BaseSettings):
     @classmethod
     def validate_paper_execution_universe(cls, values: list[str]) -> list[str]:
         symbols = sorted({value.strip().upper() for value in values})
-        if not symbols or len(symbols) > 25 or any(
+        if not symbols or len(symbols) > MAX_PAPER_EXECUTION_SYMBOLS or any(
             not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,15}", symbol) for symbol in symbols
         ):
-            raise ValueError("Paper execution universe requires 1 to 25 valid stock symbols")
+            raise ValueError(
+                f"Paper execution universe requires 1 to {MAX_PAPER_EXECUTION_SYMBOLS} valid stock symbols"
+            )
         return symbols
 
     @field_validator("database_url", mode="before")

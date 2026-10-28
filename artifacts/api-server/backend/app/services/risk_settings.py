@@ -26,6 +26,8 @@ UPDATABLE_RISK_FIELDS = {
     "memory_replay_min_complete_samples",
     "memory_replay_min_avg_return_delta",
     "memory_replay_min_hit_rate_delta",
+    "position_stop_loss_pct",
+    "position_take_profit_pct",
 }
 
 
@@ -48,6 +50,10 @@ RISK_FIELD_BOUNDS: dict[str, tuple[type, float, float]] = {
     "memory_replay_min_complete_samples": (int, 0, 1000),
     "memory_replay_min_avg_return_delta": (float, -1, 1),
     "memory_replay_min_hit_rate_delta": (float, -1, 1),
+    # Broker-side bracket exit distances for stock-paper entries (0 disables
+    # that leg).  Capped at 50% so a typo cannot place a meaningless stop.
+    "position_stop_loss_pct": (float, 0, 0.5),
+    "position_take_profit_pct": (float, 0, 0.5),
 }
 
 
