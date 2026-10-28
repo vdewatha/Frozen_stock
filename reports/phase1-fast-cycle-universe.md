@@ -217,4 +217,4 @@ patch the batch pass with a per-pair double. `test_intraday_data.py` was updated
 the configured universe.
 
 Related suites (15 files): **358 passed, 54 subtests passed**.
-Full suite: see the final summary for the counts from this branch.
+Full suite (`artifacts/api-server/backend/tests`, final commit): **1641 passed, 32 skipped, 206 subtests passed, 0 failed** (7m02s).
