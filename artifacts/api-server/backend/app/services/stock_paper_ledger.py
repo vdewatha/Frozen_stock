@@ -836,6 +836,19 @@ def _is_exit_leg(order: Any) -> bool:
     return bool(getattr(order, "leg_role", None))
 
 
+def is_oco_exit_root(order: Any) -> bool:
+    """An OCO placed on an existing position: its take-profit limit is the root.
+
+    Unlike a bracket entry, the root is itself an exit (``leg_role`` set, no
+    parent) and its stop-loss child is on the same side.
+    """
+    return bool(
+        getattr(order, "order_class", None) == "oco"
+        and getattr(order, "leg_role", None)
+        and getattr(order, "parent_order_id", None) is None
+    )
+
+
 def _exit_group_key(order: StockPaperOrder) -> int | None:
     """Identify the broker OCO group an order belongs to (entry id or OCO id)."""
     if order.leg_role:
@@ -954,7 +967,12 @@ def _exit_leg_row(db: Session, parent: StockPaperOrder, raw: dict) -> StockPaper
     role = "take_profit" if order_type == "limit" else "stop_loss" if order_type in {"stop", "stop_limit"} else None
     side = str(raw.get("side") or "").lower()
     symbol = str(raw.get("symbol") or parent.symbol).strip().upper()
-    if not broker_order_id or role is None or symbol != parent.symbol or side not in {"buy", "sell"} or side == parent.side:
+    # A bracket/OTO leg closes the entry (opposite side); an OCO child is the
+    # same-side sibling of its take-profit root.
+    expected_side = parent.side if is_oco_exit_root(parent) else ("sell" if parent.side == "buy" else "buy")
+    if not broker_order_id or role is None or symbol != parent.symbol or side != expected_side:
+        return None
+    if is_oco_exit_root(parent) and broker_order_id == parent.broker_order_id:
         return None
     quantity = _decimal(raw.get("qty") or parent.quantity, "leg quantity")
     if quantity <= 0:
@@ -1201,7 +1219,10 @@ def _exit_leg_parents(db: Session, account: StockPaperAccount, rows: list[dict],
             ).one_or_none()
             if parent is not None and parent.broker_order_id not in (None, parent_broker_id):
                 parent = None
-        if parent is not None and parent.account_id == account.id and parent.source != "broker_import" and not parent.leg_role:
+        if (
+            parent is not None and parent.account_id == account.id and parent.source != "broker_import"
+            and (not parent.leg_role or is_oco_exit_root(parent))
+        ):
             result[leg_id] = parent
     return result
 
@@ -1897,9 +1918,10 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                 # Local reservations cannot exist at the broker before dispatch.
                 continue
             resolved = gateway.order_by_client_id(order.client_order_id)
-            if resolved and not order.leg_role:
-                # A bracket entry looked up by client id carries its child
-                # legs; an uncertain submission recovers its exits here.
+            if resolved and (not order.leg_role or is_oco_exit_root(order)):
+                # A bracket entry (or an OCO exit root) looked up by client id
+                # carries its child legs; an uncertain submission recovers its
+                # exits here.
                 for leg in resolved.get("legs") or []:
                     leg_id = str(leg.get("id") or "") if isinstance(leg, dict) else ""
                     if not leg_id:

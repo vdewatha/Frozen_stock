@@ -295,7 +295,9 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(self.db.query(IntradayBar).count(), 2)
 
     def test_gap_and_stale_readiness_fail_closed(self):
-        observed = datetime(2026, 9, 11, 13, 34, tzinfo=UTC)
+        # 13:36 with the default 120s publication allowance: minutes through
+        # 13:32 must be published, so 13:31-13:32 are real gaps.
+        observed = datetime(2026, 9, 11, 13, 36, tzinfo=UTC)
         session_open = datetime(2026, 9, 11, 13, 30, tzinfo=UTC)
         intraday_data.upsert_intraday_bars(
             self.db, "SPY", [bar(session_open)], ingested_at=observed,
@@ -311,7 +313,7 @@ class IntradayDataTests(unittest.TestCase):
             self.assertIn((session_open + timedelta(minutes=1)).isoformat(), status["missing_intervals"])
             self.assertEqual(
                 status["deferred_window"]["end"],
-                (observed - timedelta(minutes=1)).isoformat(),
+                (observed - timedelta(minutes=3)).isoformat(),
             )
             with self.assertRaises(UntrustedMarketData):
                 validate_intraday_readiness(self.db, "SPY", now=observed)
