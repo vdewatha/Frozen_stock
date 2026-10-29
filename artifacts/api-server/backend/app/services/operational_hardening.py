@@ -130,10 +130,109 @@ def _worker_lease_check(db: Session) -> dict:
 AUDIT_CHAIN_RECENT_WINDOW = 500
 
 
-def _audit_chain_check(db: Session, *, recent: int | None = None) -> dict:
+# The last fully verified audit link is kept in Redis (no new table: Replit
+# publish syncs the schema from the dev DB and drops un-migrated tables), so a
+# full-chain run only re-hashes rows appended since the previous clean run.
+# The key is namespaced by a digest of the database URL so disposable or
+# restored databases never share a checkpoint.
+AUDIT_CHAIN_CHECKPOINT_KEY_PREFIX = "operational_hardening:audit_chain:checkpoint:"
+AUDIT_CHAIN_CHECKPOINT_TTL_SECONDS = 30 * 24 * 60 * 60
+
+
+def _audit_chain_checkpoint_key() -> str:
+    namespace = sha256(settings.database_url.encode()).hexdigest()[:16]
+    return AUDIT_CHAIN_CHECKPOINT_KEY_PREFIX + namespace
+
+
+def _checkpoint_redis():
+    import redis
+
+    return redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1, socket_timeout=1)
+
+
+def load_audit_chain_checkpoint() -> dict | None:
+    """Return ``{"row_id", "event_sha256"}`` or None when absent/unreadable."""
+    try:
+        client = _checkpoint_redis()
+        try:
+            raw = client.get(_audit_chain_checkpoint_key())
+        finally:
+            client.close()
+        if not raw:
+            return None
+        value = json.loads(raw)
+        row_id, digest = value.get("row_id"), value.get("event_sha256")
+        if isinstance(row_id, int) and not isinstance(row_id, bool) and isinstance(digest, str) and digest:
+            return {"row_id": row_id, "event_sha256": digest}
+    except Exception:
+        return None
+    return None
+
+
+def save_audit_chain_checkpoint(row_id: int, event_sha256: str) -> bool:
+    try:
+        client = _checkpoint_redis()
+        try:
+            client.set(
+                _audit_chain_checkpoint_key(),
+                json.dumps({
+                    "row_id": row_id,
+                    "event_sha256": event_sha256,
+                    "verified_at": _now().isoformat(),
+                }),
+                ex=AUDIT_CHAIN_CHECKPOINT_TTL_SECONDS,
+            )
+        finally:
+            client.close()
+        return True
+    except Exception:
+        return False
+
+
+def _expected_event_sha256(row: AuditLog, previous: str | None) -> str:
+    return sha256(_canonical({
+        "event_type": row.event_type,
+        "entity_type": row.entity_type,
+        "entity_id": row.entity_id,
+        "action": row.action,
+        "status": row.status,
+        "message": row.message,
+        "payload": row.payload or {},
+        "previous_event_sha256": previous,
+    })).hexdigest()
+
+
+def _checkpoint_anchor(db: Session) -> tuple[AuditLog | None, str]:
+    """Return the checkpoint row when it still matches, plus why it was (not) used."""
+    checkpoint = load_audit_chain_checkpoint()
+    if checkpoint is None:
+        return None, "missing"
+    row = db.get(AuditLog, checkpoint["row_id"])
+    if row is None:
+        return None, "row_missing"
+    # The checkpoint row must still carry the verified digest and that digest
+    # must still be what its own content hashes to.
+    if (
+        row.event_sha256 != checkpoint["event_sha256"]
+        or _expected_event_sha256(row, row.previous_event_sha256) != row.event_sha256
+    ):
+        return None, "digest_mismatch"
+    return row, "used"
+
+
+def _audit_chain_check(db: Session, *, recent: int | None = None, checkpoint: bool = False) -> dict:
+    """Verify the audit digest chain.
+
+    ``recent`` verifies only the newest links. ``checkpoint`` (full scans only)
+    resumes from the last fully verified link stored in Redis and falls back
+    to a scan from row 1 when it is missing or no longer matches; a clean full
+    or incremental scan advances the checkpoint.
+    """
     previous = None
     previous_row_id = None
     event_count = 0
+    checkpoint_status = "not_used"
+    checkpoint_row_id = None
     query = select(AuditLog).order_by(AuditLog.id)
     if recent is not None:
         # Anchor on the row just before the window; its stored digest seeds
@@ -145,20 +244,18 @@ def _audit_chain_check(db: Session, *, recent: int | None = None) -> dict:
             previous = anchor.event_sha256
             previous_row_id = anchor.id
             query = query.where(AuditLog.id > anchor.id)
+    elif checkpoint:
+        anchor, checkpoint_status = _checkpoint_anchor(db)
+        if anchor is not None:
+            previous = anchor.event_sha256
+            previous_row_id = anchor.id
+            checkpoint_row_id = anchor.id
+            query = query.where(AuditLog.id > anchor.id)
     # Verify the chain without retaining every payload in each API request.
     with db.scalars(query.execution_options(yield_per=100)) as rows:
         for row in rows:
             event_count += 1
-            expected = sha256(_canonical({
-                "event_type": row.event_type,
-                "entity_type": row.entity_type,
-                "entity_id": row.entity_id,
-                "action": row.action,
-                "status": row.status,
-                "message": row.message,
-                "payload": row.payload or {},
-                "previous_event_sha256": previous,
-            })).hexdigest()
+            expected = _expected_event_sha256(row, previous)
             if row.previous_event_sha256 != previous or row.event_sha256 != expected:
                 previous_mismatch = row.previous_event_sha256 != previous
                 return _check(
@@ -179,15 +276,25 @@ def _audit_chain_check(db: Session, *, recent: int | None = None) -> dict:
                     created_at=row.created_at.isoformat() if row.created_at else None,
                     original_rows_preserved=True,
                     runtime_health_scope="current runtime probes remain separately evaluated",
+                    checkpoint_status=checkpoint_status,
+                    checkpoint_row_id=checkpoint_row_id,
                 )
             previous = row.event_sha256
             previous_row_id = row.id
+    checkpoint_saved = False
+    if recent is None and checkpoint and previous_row_id is not None and previous is not None:
+        checkpoint_saved = save_audit_chain_checkpoint(previous_row_id, previous)
+    scope = "recent" if recent is not None else "incremental" if checkpoint_row_id is not None else "full"
     return _check(
         "audit_chain",
         "clear",
         "Audit event digest chain verifies.",
         event_count=event_count,
-        scope="full" if recent is None else "recent",
+        scope=scope,
+        checkpoint_status=checkpoint_status,
+        checkpoint_row_id=checkpoint_row_id,
+        checkpoint_saved=checkpoint_saved,
+        verified_through_row_id=previous_row_id,
         incident_scope="historical_audit_integrity",
         original_rows_preserved=True,
     )
@@ -323,10 +430,21 @@ def _backup_check() -> dict:
     )
 
 
-def run_operational_hardening(db: Session, *, source: str = "operator", notify: bool = True) -> dict:
-    audit_check = _audit_chain_check(
-        db, recent=AUDIT_CHAIN_RECENT_WINDOW if source == "read" else None
-    )
+def run_operational_hardening(
+    db: Session,
+    *,
+    source: str = "operator",
+    notify: bool = True,
+    full_rescan: bool = False,
+) -> dict:
+    # Reads verify the newest links; operator runs resume from the verified
+    # checkpoint; drills (and explicit full_rescan) re-hash from row 1.
+    if source == "read":
+        audit_check = _audit_chain_check(db, recent=AUDIT_CHAIN_RECENT_WINDOW)
+    else:
+        audit_check = _audit_chain_check(
+            db, checkpoint=not (full_rescan or "drill" in source)
+        )
     checks = [
         _database_check(db),
         _scheduler_check(),

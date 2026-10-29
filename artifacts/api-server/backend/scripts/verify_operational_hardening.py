@@ -13,7 +13,11 @@ from app.services.operational_hardening import run_operational_hardening
 def main() -> int:
     db = SessionLocal()
     try:
-        result = run_operational_hardening(db, source="deployment_probe")
+        # --full re-hashes the audit chain from row 1 instead of resuming
+        # from the last verified checkpoint.
+        result = run_operational_hardening(
+            db, source="deployment_probe", full_rescan="--full" in sys.argv[1:]
+        )
         print(json.dumps(result, default=str, sort_keys=True))
         return 1 if result["status"] == "breach" else 0
     finally:

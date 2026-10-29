@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import AuditLog, IntradayBar
-from app.services.alpaca_research_data import _fetch_research_bars, collection_window
+from app.services.alpaca_research_data import (
+    _fetch_research_bars, collection_window, compact_research_audit_payload,
+)
 from app.services.audit import write_audit_log
 from app.services.intraday_data import (
     ALLOWED_SYMBOLS,
@@ -176,6 +178,14 @@ def collect_delayed_sip_history(db: Session, session_day: date, *, symbols=None,
     }
 
 
+def _compact_delayed_sip_audit(result: dict) -> dict:
+    payload = compact_research_audit_payload(result)
+    repair = result.get("history_repair")
+    if isinstance(repair, dict):
+        payload["history_repair"] = compact_research_audit_payload(repair)
+    return payload
+
+
 def collect_delayed_sip(db: Session, *, now=None):
     observed = now or datetime.now(UTC)
     symbols = sorted(ALLOWED_SYMBOLS)
@@ -205,7 +215,8 @@ def collect_delayed_sip(db: Session, *, now=None):
         result = {**base, "status": "observed" if all(row["rows_imported"] for row in results) else "sparse_or_empty",
                   "failure_class": None, "results": results, "history_repair": history_repair}
     write_audit_log(db, event_type="market_data", action="delayed_sip_collection", status=result["status"],
-                    entity_type="research_feed", message="Delayed SIP research collection; not execution data", payload=result)
+                    entity_type="research_feed", message="Delayed SIP research collection; not execution data",
+                    payload=_compact_delayed_sip_audit(result))
     return result
 
 

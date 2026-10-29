@@ -19,6 +19,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.core.config import settings
 from app.models import Asset, CorporateAction, IntradayBar, IntradayNoTradeInterval
 from app.services.audit import write_audit_log
+from app.services.market_data_audit import compact_payload
 from app.services.exchange_sessions import is_nyse_session, nyse_holidays, session_bounds
 from app.services.trading_universe import RESEARCH_CORE_SYMBOLS, intraday_symbols
 
@@ -1102,6 +1103,24 @@ def _provider_failure(exc: Exception) -> tuple[str, str]:
     return "availability", f"{provider_label} market-data service is unavailable"
 
 
+PREFLIGHT_AUDIT_DETAIL_KEYS = (
+    "symbol",
+    "status",
+    "execution_status",
+    "failure_class",
+    "unavailable_reason",
+    "historical_repair_status",
+    "rows_imported",
+)
+
+
+def _preflight_row_needs_attention(row: dict) -> bool:
+    if row.get("status") not in {"ready", "complete"}:
+        return True
+    repair = row.get("historical_repair_status")
+    return repair is not None and repair != "complete"
+
+
 def _record_preflight_audit(db: Session, result: dict, *, action: str = "sip_preflight") -> dict:
     """Persist only redacted feed evidence; broker credentials never enter the payload."""
     safe_results = []
@@ -1156,6 +1175,14 @@ def _record_preflight_audit(db: Session, result: dict, *, action: str = "sip_pre
         if key in result
     }
     payload["results"] = safe_results
+    # The audit row keeps a compact summary (counts, non-ready symbols and a
+    # digest of the full redacted result); the caller still gets the full
+    # per-symbol result.
+    payload = compact_payload(
+        payload,
+        needs_attention=_preflight_row_needs_attention,
+        detail_keys=PREFLIGHT_AUDIT_DETAIL_KEYS,
+    )
     write_audit_log(
         db,
         event_type="market_data",
