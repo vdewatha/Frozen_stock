@@ -108,13 +108,16 @@ function Workspace() {
 function ResearchOnly({ children }: { children: ReactNode }) { return <RoleGate requires="researcher">{children}</RoleGate>; }
 
 function PageContent({ page, section, dashboard, session }: { page: string; section: string; dashboard: DashboardSnapshot; session: AuthSession }) {
+  const client = useQueryClient();
+  // The kill-switch label reads the risk rule from the workspace snapshot, so refetch it after any safety action.
+  const refreshWorkspace = () => void client.invalidateQueries({ queryKey: ["workspace-session"] });
   if (page === "overview") return <Overview dashboard={dashboard} />;
   const views: Record<string, ReactNode> = {
     "markets/iex": <IexResearchPanel />, "markets/consolidated": <DelayedSipPanel />, "markets/history": <MarketLab />, "markets/context": <><RegimeMonitorLab /><EconomicContextLab /><NewsSentimentLab /></>,
     "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/scorecard": <PaperScorecardPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,
     "learning/cycles": <StockLearningCyclePanel />, "learning/training": <StockTrainingLab />, "learning/evaluation": <ForwardPaperEvaluationPanel />, "learning/performance": <ModelPerformanceLab />,
     "research/runs": <ResearchControlRoom />, "research/scalp": <ResearchOnly><ScalpResearchPanel /></ResearchOnly>, "research/experiments": <ExperimentManagerLab />, "research/library": <StrategyLibrary dashboard={dashboard} />, "research/models": <ResearchOnly><ModelLab /></ResearchOnly>, "research/signals": <ResearchOnly><PredictionScanner /><OpportunityRadar /></ResearchOnly>, "research/memory": <ResearchOnly><MemoryReplayPanel /></ResearchOnly>,
-    "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} />, "risk/broker": <><PaperVenueGovernancePanel /><BrokerSafetyLab /></>, "risk/recovery": <StockRecoveryPanel />,
+    "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} onSafetyAction={refreshWorkspace} />, "risk/broker": <><PaperVenueGovernancePanel /><BrokerSafetyLab /></>, "risk/recovery": <StockRecoveryPanel onKillSwitchChange={refreshWorkspace} />,
     "activity/notifications": <NotificationCenter />, "activity/audit": <AuditHistoryPanel />,
     "system/health": <DeploymentMonitorPanel />, "system/monitoring": <StockMonitoringPanel />, "system/hardening": <OperationalHardeningPanel />, "system/live": <><LiveOperationsPanel /><LivePilotPanel /></>, "system/access": <AccessSettings session={session} />,
   };

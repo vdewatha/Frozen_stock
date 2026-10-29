@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { RotateCcw, ShieldAlert, ShieldCheck, Square, Waves } from "lucide-react";
 
 import { RoleGate } from "@/components/access-control";
+import { SafetyControlBar } from "@/components/safety-control-bar";
 import {
   acknowledgeStockPaperAccountingReview,
   cancelStockPaperRecovery,
   getErrorMessage,
+  getRiskSettings,
   getStockPaperRecovery,
   resumeStockPaperAccount,
   rollbackStockPaperToLastKnownGood,
@@ -18,19 +20,59 @@ function formatTime(value: string | null): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-export function StockRecoveryPanel() {
+const RESUME_WAITING_STATUSES = ["cooldown", "revalidation_required", "resumable"];
+
+/**
+ * What the Recovery tab says about the global kill switch. The backend's
+ * resume_stock_paper_after_revalidation clears the kill switch itself when every
+ * gate passes, so a separate Reset is only offered once recovery is already
+ * armed/resumable but the kill switch is still on.
+ */
+export function recoveryKillSwitchGuidance(status: string | null | undefined, killSwitchEnabled: boolean | null) {
+  const canResume = !!status && RESUME_WAITING_STATUSES.includes(status);
+  const recoveryCleared = status === "armed" || status === "resumable";
+  const offerReset = killSwitchEnabled === true && recoveryCleared;
+  let hint: string;
+  if (killSwitchEnabled === null) {
+    hint = "Kill switch state is unavailable.";
+  } else if (offerReset) {
+    hint = status === "resumable"
+      ? "The global kill switch is still on. Resume clears it once every gate passes, or reset it directly with a reason."
+      : "Recovery is armed but the global kill switch is still on. Reset it with a reason to let strategies trade.";
+  } else if (killSwitchEnabled && canResume) {
+    hint = "Resume paper recovery also clears the global kill switch once every gate passes.";
+  } else if (killSwitchEnabled) {
+    hint = "The global kill switch is on. Finish the recovery steps above; resume clears it once every gate passes.";
+  } else {
+    hint = "The global kill switch is off.";
+  }
+  return { canResume, offerReset, hint };
+}
+
+export function StockRecoveryPanel({ onKillSwitchChange }: { onKillSwitchChange?: () => void } = {}) {
   const [recovery, setRecovery] = useState<StockPaperRecoveryStatus | null>(null);
+  const [killSwitchEnabled, setKillSwitchEnabled] = useState<boolean | null>(null);
   const [message, setMessage] = useState("Loading recovery state");
   const [busy, setBusy] = useState(false);
 
+  const refreshKillSwitch = useCallback(async () => {
+    try {
+      const rule = await getRiskSettings();
+      setKillSwitchEnabled(rule.value?.kill_switch_enabled === true);
+    } catch {
+      setKillSwitchEnabled(null);
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
+    void refreshKillSwitch();
     try {
       setRecovery(await getStockPaperRecovery());
       setMessage("Recovery state updated");
     } catch (error) {
       setMessage(getErrorMessage(error, "Recovery state is unavailable."));
     }
-  }, []);
+  }, [refreshKillSwitch]);
 
   useEffect(() => {
     void refresh();
@@ -57,6 +99,7 @@ export function StockRecoveryPanel() {
     try {
       await resumeStockPaperAccount();
       await refresh();
+      onKillSwitchChange?.();
       setMessage("Paper recovery resumed after all safety gates passed");
     } catch (error) {
       setMessage(getErrorMessage(error, "Paper recovery could not resume."));
@@ -71,6 +114,7 @@ export function StockRecoveryPanel() {
   const monitoringPreflight = recovery?.last_monitoring_preflight ?? null;
   const monitoringPreflightCheckedAt = monitoringPreflight?.payload.checked_at ?? monitoringPreflight?.created_at ?? null;
   const monitoringPreflightClear = monitoringPreflight?.status === "clear";
+  const killSwitchGuidance = recoveryKillSwitchGuidance(recovery?.status, killSwitchEnabled);
 
   return (
     <section className="rounded-md border border-line bg-white" data-testid="panel-stock-recovery">
@@ -177,18 +221,42 @@ export function StockRecoveryPanel() {
           <RotateCcw size={14} /> Roll back model
         </button>
       </RoleGate>
-      <RoleGate requires="admin" className="flex flex-wrap gap-2 border-t border-line p-4">
-        {recovery && ["cooldown", "revalidation_required", "resumable"].includes(recovery.status) ? (
-          <button
-            className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-mint disabled:opacity-60"
-            disabled={busy}
-            onClick={() => void resume()}
-            type="button"
+      <div className="flex flex-wrap items-center gap-3 border-t border-line p-4">
+        <RoleGate requires="admin" className="flex flex-wrap gap-2">
+          {recovery && killSwitchGuidance.canResume ? (
+            <button
+              className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-mint disabled:opacity-60"
+              disabled={busy}
+              onClick={() => void resume()}
+              type="button"
+            >
+              <ShieldCheck size={14} /> Resume paper recovery
+            </button>
+          ) : null}
+        </RoleGate>
+        <div className="grid gap-1 text-xs" data-testid="recovery-kill-switch">
+          <span
+            className={`w-fit rounded border px-2 py-1 font-semibold ${killSwitchEnabled ? "border-red-200 bg-red-50 text-coral" : "border-line bg-slate-50 text-slate-600"}`}
+            data-testid="recovery-kill-switch-state"
           >
-            <ShieldCheck size={14} /> Resume paper recovery
-          </button>
+            {killSwitchEnabled === null ? "Kill switch unknown" : killSwitchEnabled ? "Kill switch on" : "Kill switch off"}
+          </span>
+          <span className="text-slate-500">{killSwitchGuidance.hint}</span>
+        </div>
+        {killSwitchGuidance.offerReset ? (
+          <div className="w-full">
+            <SafetyControlBar
+              actions={["reset"]}
+              align="start"
+              onAction={(response) => {
+                setKillSwitchEnabled(response.kill_switch_enabled);
+                void refresh();
+                onKillSwitchChange?.();
+              }}
+            />
+          </div>
         ) : null}
-      </RoleGate>
+      </div>
       {recovery?.pause_reason ? <div className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><strong>Recovery reason:</strong> {recovery.pause_reason}</div> : null}
     </section>
   );

@@ -1,10 +1,11 @@
 
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Save, ShieldCheck } from "lucide-react";
 
-import { RiskRule, RiskSettingsUpdate, updateRiskSettings } from "@/lib/api";
+import { RiskRule, RiskSettingsUpdate, SafetyControlResponse, updateRiskSettings } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
+import { SafetyControlBar, type SafetyApi } from "@/components/safety-control-bar";
 
 export type FieldKey = Exclude<keyof RiskSettingsUpdate, "reason">;
 
@@ -105,11 +106,32 @@ export function buildRiskSettingsPayload(form: RiskForm, reason = "Risk settings
   return payload;
 }
 
-export function RiskSettingsPanel({ initialRule }: { initialRule: RiskRule | null }) {
+/** Applies a safety-control response to the locally held risk rule. */
+export function ruleAfterSafetyAction(rule: RiskRule | null, response: SafetyControlResponse): RiskRule | null {
+  if (response.risk_rule) return response.risk_rule;
+  if (!rule) return rule;
+  return { ...rule, value: { ...rule.value, kill_switch_enabled: response.kill_switch_enabled } };
+}
+
+export function RiskSettingsPanel({
+  initialRule,
+  onSafetyAction,
+  safetyApi
+}: {
+  initialRule: RiskRule | null;
+  onSafetyAction?: (response: SafetyControlResponse) => void;
+  safetyApi?: SafetyApi;
+}) {
   const [rule, setRule] = useState<RiskRule | null>(initialRule);
   const [form, setForm] = useState<RiskForm>(() => formFromRule(initialRule));
   const [status, setStatus] = useState("Risk settings ready");
   const [isSaving, setIsSaving] = useState(false);
+
+  // Keep the displayed rule (kill-switch label) in step with a refetched
+  // workspace snapshot. The editable form is left alone so in-progress edits survive.
+  useEffect(() => {
+    if (initialRule) setRule(initialRule);
+  }, [initialRule]);
 
   function setField(key: FieldKey, value: string) {
     const parsed = Number(value);
@@ -179,8 +201,15 @@ export function RiskSettingsPanel({ initialRule }: { initialRule: RiskRule | nul
         </div>
         <div className="flex items-center justify-between rounded-md border border-line bg-panel px-3 py-2 text-slate-600">
           <span>{status}</span>
-          <span>{rule?.value?.kill_switch_enabled ? "Kill switch on" : "Kill switch off"}</span>
+          <span data-testid="kill-switch-state">{rule?.value?.kill_switch_enabled ? "Kill switch on" : "Kill switch off"}</span>
         </div>
+        <SafetyControlBar
+          api={safetyApi}
+          onAction={(response) => {
+            setRule((current) => ruleAfterSafetyAction(current, response));
+            onSafetyAction?.(response);
+          }}
+        />
       </div>
     </div>
   );
