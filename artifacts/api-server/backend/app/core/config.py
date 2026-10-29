@@ -131,6 +131,20 @@ class Settings(BaseSettings):
     paper_exploration_enabled: bool = False
     paper_exploration_risk_fraction: float = Field(default=0.0025, gt=0, le=0.01)
     paper_exploration_max_positions: int = Field(default=12, ge=1, le=40)
+    # Entry protections (app/services/entry_protections.py): entry-only
+    # circuit breakers for scheduled and exploration paper BUYs.  They never
+    # block sells/exits.  A risk-rule key with the same name minus the
+    # ``paper_`` prefix overrides each value; 0 disables that protection.
+    paper_stoploss_guard_count: int = Field(default=3, ge=0, le=100)
+    paper_stoploss_guard_global_count: int = Field(default=0, ge=0, le=100)
+    paper_stoploss_guard_lookback_minutes: int = Field(default=360, ge=0, le=10080)
+    paper_stoploss_guard_pause_minutes: int = Field(default=120, ge=0, le=10080)
+    paper_exit_cooldown_minutes: int = Field(default=30, ge=0, le=10080)
+    paper_low_profit_trades: int = Field(default=4, ge=0, le=100)
+    paper_low_profit_lock_minutes: int = Field(default=1440, ge=0, le=43200)
+    paper_session_drawdown_lock_pct: float = Field(default=0.02, ge=0, le=1)
+    paper_entry_open_buffer_minutes: int = Field(default=15, ge=0, le=390)
+    paper_entry_close_buffer_minutes: int = Field(default=10, ge=0, le=390)
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # A shared workspace .env also contains frontend and provider-specific

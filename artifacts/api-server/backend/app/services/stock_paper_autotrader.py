@@ -34,6 +34,7 @@ from app.services.stock_paper_ledger import (
     release_unsubmitted_reservation,
     reserve_stock_paper_order,
 )
+from app.services.entry_protections import load_entry_protections, protective_stop_idempotency_key
 from app.services.intraday_data import session_bounds
 from app.services.stock_paper_signal_batch import generate_cycle_signals
 from app.services.trading_universe import execution_symbols, sector_group
@@ -152,7 +153,7 @@ def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
     try:
         order = reserve_stock_paper_order(
             db, symbol=symbol, side="sell", quantity=quantity, reference_price=price,
-            idempotency_key=f"scheduled-paper:{session_key}:{symbol}:protective_stop:sell",
+            idempotency_key=protective_stop_idempotency_key(session_key, symbol),
             source=SCHEDULED_SOURCE,
         )
         submitted = dispatch_reserved_order(db, order.id)
@@ -256,6 +257,10 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
     signals_done = time.perf_counter()
     sector_cap = _max_positions_per_sector(rules)
     sector_groups = _sector_exposure(db, account.id) if sector_cap else {}
+    # Entry-only circuit breakers (stop-loss guard, exit cooldown, low-profit
+    # lock, session drawdown, time of day); never consulted for sells.
+    protections = load_entry_protections(db, account, now=now, rules=rules, type_by_id=type_by_id)
+    base["entry_protections"] = protections.summary()
     results: list[dict] = []
     for symbol in symbols:
         # Phase 1: observe every strategy for this symbol before acting, so
@@ -342,6 +347,11 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         # Crossover/MACD signals are states, not events: a
                         # persistent BUY must not add a new lot every session.
                         result.update({"status": "skipped", "reason": "strategy already holds or is buying this symbol; no pyramiding on a persistent signal"})
+                        results.append(result)
+                        continue
+                    protection_block = protections.check(symbol, strategy.strategy_type)
+                    if protection_block is not None:
+                        result.update(protection_block)
                         results.append(result)
                         continue
                     group = sector_group(symbol)
