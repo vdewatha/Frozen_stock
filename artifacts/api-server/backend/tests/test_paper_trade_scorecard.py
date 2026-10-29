@@ -350,6 +350,26 @@ class StatisticsTests(unittest.TestCase):
         self.assertLessEqual(ci["expectancy"][0], stats["expectancy"])
         self.assertEqual(summarize(self.trades([1.0] * 19))["bootstrap_ci"], None)
 
+    def test_headline_leads_with_expectancy_and_flags_small_samples(self):
+        trades = self.trades([10.0] * 16 + [-5.0] * 4)
+        trades[0]["costs_known"] = False
+        stats = summarize(trades)
+        self.assertEqual(next(iter(stats)), "expectancy")
+        self.assertAlmostEqual(stats["expectancy"], 7.0)
+        self.assertAlmostEqual(stats["expectancy_known_costs"], (150.0 - 20.0) / 19, places=5)
+        self.assertAlmostEqual(stats["avg_win"], 10.0)
+        self.assertAlmostEqual(stats["avg_loss"], -5.0)
+        # Wilson 95% for 16/20 (reference: 0.5840 .. 0.9193).
+        low, high = stats["win_rate_wilson_ci"]
+        self.assertAlmostEqual(low, 0.5840, places=3)
+        self.assertAlmostEqual(high, 0.9193, places=3)
+        self.assertTrue(stats["insufficient_data"])
+        self.assertFalse(summarize(self.trades([1.0] * 30))["insufficient_data"])
+        empty = summarize([])
+        self.assertTrue(empty["insufficient_data"])
+        self.assertIsNone(empty["win_rate_wilson_ci"])
+        self.assertIsNone(empty["expectancy_known_costs"])
+
     def test_goal_progress_and_rolling_windows(self):
         goal = goal_progress(self.trades([-1.0] * 5 + [5.0] * 8 + [-1.0] * 2))
         self.assertEqual(goal["last_window_wins"], 8)

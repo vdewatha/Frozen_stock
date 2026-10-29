@@ -58,6 +58,10 @@ GOAL_WIN_RATE = 0.80
 GOAL_WINDOW = 10
 ROLLING_WINDOWS = (20, 50, 100)
 BOOTSTRAP_MIN_TRADES = 20
+# Below this many closed trades a strategy's win rate / expectancy is flagged
+# ``insufficient_data``: too few to judge an edge either way.
+MIN_TRADES_FOR_EVIDENCE = 30
+WILSON_Z_95 = 1.959963984540054
 BOOTSTRAP_RESAMPLES = 2000
 BOOTSTRAP_SEED = 20261029
 BENCHMARK_SYMBOL = "SPY"
@@ -430,8 +434,24 @@ def _bootstrap(values: list[float], *, seed: int = BOOTSTRAP_SEED) -> dict:
     }
 
 
+def wilson_interval(successes: int, trials: int, z: float = WILSON_Z_95) -> Optional[list[float]]:
+    """Wilson score interval for a binomial proportion (95% by default)."""
+    if trials <= 0:
+        return None
+    p = successes / trials
+    denominator = 1 + z * z / trials
+    centre = (p + z * z / (2 * trials)) / denominator
+    half = z * math.sqrt(p * (1 - p) / trials + z * z / (4 * trials * trials)) / denominator
+    return [_r(max(0.0, centre - half)), _r(min(1.0, centre + half))]
+
+
 def summarize(trades: list[dict]) -> dict:
-    """Win rate, payoff, expectancy and profit factor over closed trades (net)."""
+    """Expectancy, payoff, win rate and profit factor over closed trades (net).
+
+    ``expectancy`` is the mean net P&L per trade after recorded fees;
+    ``expectancy_known_costs`` restricts it to trades whose costs are fully
+    known. ``insufficient_data`` is true below ``MIN_TRADES_FOR_EVIDENCE``.
+    """
     pnls = [float(trade["net_pnl"]) for trade in trades]
     n = len(pnls)
     wins = [value for value in pnls if value > 0]
@@ -441,15 +461,21 @@ def summarize(trades: list[dict]) -> dict:
     avg_win = gross_win / len(wins) if wins else None
     avg_loss = gross_loss / len(losses) if losses else None
     returns = [trade["net_return"] for trade in trades if trade.get("net_return") is not None]
+    known = [float(trade["net_pnl"]) for trade in trades if trade.get("costs_known")]
     result = {
+        "expectancy": _r(sum(pnls) / n) if n else None,
+        "expectancy_known_costs": _r(sum(known) / len(known)) if known else None,
+        "expectancy_basis": "net_pnl_after_recorded_fees",
         "trades": n,
         "wins": len(wins),
         "losses": len(losses),
         "win_rate": _r(len(wins) / n) if n else None,
+        "win_rate_wilson_ci": wilson_interval(len(wins), n),
+        "insufficient_data": n < MIN_TRADES_FOR_EVIDENCE,
+        "min_trades_for_evidence": MIN_TRADES_FOR_EVIDENCE,
         "avg_win": _r(avg_win),
         "avg_loss": _r(avg_loss),
         "payoff_ratio": _r(avg_win / abs(avg_loss)) if avg_win is not None and avg_loss else None,
-        "expectancy": _r(sum(pnls) / n) if n else None,
         "expectancy_return": _r(sum(returns) / len(returns)) if returns else None,
         "profit_factor": _r(gross_win / abs(gross_loss)) if gross_loss < 0 else None,
         "total_pnl": _r(sum(pnls)) if n else 0.0,
@@ -787,10 +813,15 @@ def render_markdown(scorecard: dict) -> str:
         return "\n".join(lines + [f"Unavailable: {scorecard.get('reason')}", ""])
     lines += [
         "## Headline (bot trades, net of recorded fees)", "",
-        f"- Closed trades: {head['trades']} ({head['wins']} wins / {head['losses']} losses)",
-        f"- Win rate: {_pct(head['win_rate'])} (goal {_pct(goal['target_win_rate'])})",
-        f"- Expectancy per trade: {_usd(head['expectancy'])}; payoff {_num(head['payoff_ratio'])}; "
+        f"- Expectancy per trade (net of recorded fees): {_usd(head['expectancy'])}; "
+        f"avg win {_usd(head['avg_win'])} / avg loss {_usd(head['avg_loss'])}; payoff {_num(head['payoff_ratio'])}; "
         f"profit factor {_num(head['profit_factor'])}",
+        f"- Closed trades: {head['trades']} ({head['wins']} wins / {head['losses']} losses)"
+        + (f"; insufficient data (< {MIN_TRADES_FOR_EVIDENCE} trades)" if head["insufficient_data"] else ""),
+        f"- Win rate: {_pct(head['win_rate'])}"
+        + (f" [Wilson 95% {_pct(head['win_rate_wilson_ci'][0])} to {_pct(head['win_rate_wilson_ci'][1])}]"
+           if head["win_rate_wilson_ci"] else "")
+        + f" (goal {_pct(goal['target_win_rate'])})",
         f"- Total net P&L: {_usd(head['total_pnl'])} (fees {_usd(head['fees'])})",
         f"- Last {goal['window']} trades: {goal['last_window_wins']}/{goal['last_window_trades']} wins, "
         f"P&L {_usd(goal['last_window_pnl'])}; goal met: {'yes' if goal['met_last_window'] else 'no'}",
