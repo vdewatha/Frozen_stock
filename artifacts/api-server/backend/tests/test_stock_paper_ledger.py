@@ -1337,6 +1337,22 @@ class StockPaperRecoveryTests(unittest.TestCase):
             self.assertIn("broker reconciliation heartbeat is future-dated", result["reasons"])
             self.assertIn("continuous monitor heartbeat is future-dated", result["reasons"])
 
+    def test_watchdog_tolerates_a_heartbeat_written_seconds_after_its_clock_read(self):
+        from app.services.stock_recovery import _state
+
+        with patch("app.services.stock_recovery._now", return_value=RECOVERY_TEST_NOW), Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            account = db.query(StockPaperAccount).one()
+            state = _state(db)
+            account.last_reconciled_at = RECOVERY_TEST_NOW + timedelta(seconds=5)
+            state.last_monitor_heartbeat_at = RECOVERY_TEST_NOW
+            db.commit()
+
+            result = run_stock_watchdog(db)
+
+            self.assertEqual(result["status"], "clear")
+            self.assertEqual(result["reasons"], [])
+
     def test_resume_requires_cooldown_and_fresh_monitoring_evidence(self):
         with Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())

@@ -60,12 +60,18 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+# A heartbeat written between a reader's clock read and its row read is a few
+# seconds "ahead" of that reader; the watchdog paused recovery on exactly that
+# race three times on 2026-10-29. Larger skews remain rejected.
+HEARTBEAT_FUTURE_TOLERANCE = timedelta(seconds=30)
+
+
 def _heartbeat_issue(observed: datetime | None, now: datetime, label: str) -> str | None:
     """Reject both stale and future-dated evidence as a readiness signal."""
     if observed is None:
         return f"{label} is missing"
     age = now - _utc(observed)
-    if age < timedelta(0):
+    if age < -HEARTBEAT_FUTURE_TOLERANCE:
         return f"{label} is future-dated"
     if age > HEARTBEAT_TIMEOUT:
         return f"{label} is stale"
