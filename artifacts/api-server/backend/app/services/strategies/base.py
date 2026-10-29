@@ -8,6 +8,25 @@ from typing import Optional
 import pandas as pd
 
 
+@dataclass(frozen=True)
+class ExitPolicy:
+    """A strategy's own exit plan for paper execution.
+
+    ``None`` for a percentage means "use the risk-rule default"
+    (``position_stop_loss_pct`` / ``position_take_profit_pct``); ``0`` means
+    "no leg" (a stop-only entry is sent as an OTO order).  The catastrophe stop
+    is the broker-side stop leg.  ``max_holding_sessions`` is a time stop in
+    completed regular sessions since the entry session (the backtester's
+    ``max_holding_days``), and ``indicator_exit`` makes the paper cycle consult
+    :meth:`BaseStrategy.exit_signal` on completed daily bars.
+    """
+
+    stop_loss_pct: Optional[float] = None
+    take_profit_pct: Optional[float] = None
+    max_holding_sessions: Optional[int] = None
+    indicator_exit: bool = False
+
+
 @dataclass
 class StrategySignalResult:
     action: str
@@ -21,6 +40,11 @@ class StrategySignalResult:
 class BaseStrategy(ABC):
     name: str
     slug: str
+    # Strategies that declare an exit policy / symbol scope override these.
+    # ``None`` keeps today's defaults: risk-rule bracket legs, SELL-signal
+    # exits only, and the whole paper execution universe.
+    default_exit_policy: Optional[ExitPolicy] = None
+    default_symbol_scope: Optional[tuple[str, ...]] = None
 
     def __init__(self, parameters: Optional[dict] = None) -> None:
         self.parameters = parameters or {}
@@ -40,6 +64,51 @@ class BaseStrategy(ABC):
         stop only.
         """
         return None
+
+    def exit_policy(self) -> Optional[ExitPolicy]:
+        """The declared exit policy with per-row parameter overrides applied.
+
+        ``parameters`` may override ``stop_loss_pct`` (0 < x < 1),
+        ``take_profit_pct`` (>= 0; 0 = no take-profit leg) and
+        ``max_holding_sessions`` (>= 1).  Invalid overrides are ignored so a bad
+        row can never remove the declared catastrophe stop.
+        """
+        policy = self.default_exit_policy
+        if policy is None:
+            return None
+        stop = _float_param(self.parameters.get("stop_loss_pct"), lambda v: 0 < v < 1)
+        take = _float_param(self.parameters.get("take_profit_pct"), lambda v: v >= 0)
+        hold = _float_param(self.parameters.get("max_holding_sessions"), lambda v: v >= 1 and v == int(v))
+        return ExitPolicy(
+            stop_loss_pct=stop if stop is not None else policy.stop_loss_pct,
+            take_profit_pct=take if take is not None else policy.take_profit_pct,
+            max_holding_sessions=int(hold) if hold is not None else policy.max_holding_sessions,
+            indicator_exit=policy.indicator_exit,
+        )
+
+    def symbol_scope(self) -> Optional[frozenset[str]]:
+        """Symbols this strategy may trade; ``None`` = the whole universe.
+
+        ``parameters["symbol_scope"]`` (a list or a comma-separated string)
+        overrides the class default.
+        """
+        raw = self.parameters.get("symbol_scope", self.default_symbol_scope)
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            raw = raw.split(",")
+        symbols = frozenset(str(item).strip().upper() for item in raw if str(item).strip())
+        return symbols or None
+
+
+def _float_param(value, valid) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) and valid(numeric) else None
 
 
 def clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:

@@ -111,9 +111,9 @@ def test_goal_requires_win_rate_expectancy_ci_and_trade_count():
 
 # ---------------------------------------------------------------- strategies
 
-def test_new_strategies_are_registered_but_research_only():
+def test_new_strategies_are_registered_and_seeded_as_scoped_candidates():
     assert {"rsi2_pullback", "ibs_mean_reversion"} <= set(STRATEGY_REGISTRY)
-    assert RESEARCH_ONLY_STRATEGY_SLUGS == {"rsi2_pullback", "ibs_mean_reversion"}
+    assert RESEARCH_ONLY_STRATEGY_SLUGS == frozenset()
     import app.models  # noqa: F401
     import app.models.stock_paper  # noqa: F401  (all FK targets)
     from app.db.base import Base
@@ -124,9 +124,13 @@ def test_new_strategies_are_registered_but_research_only():
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         seed_defaults(db)
-        seeded = {row.strategy_type for row in db.query(Strategy).all()}
+        rows = {row.strategy_type: row for row in db.query(Strategy).all()}
+        for slug in ("rsi2_pullback", "ibs_mean_reversion"):
+            assert rows[slug].current_status == "paper_trading_candidate"
+            assert rows[slug].parameters["symbol_scope"] == ["SPY", "QQQ", "IWM", "DIA"]
+            assert get_strategy(slug, rows[slug].parameters).symbol_scope() == {"SPY", "QQQ", "IWM", "DIA"}
+        assert rows["moving_average_crossover"].current_status == "paper_trading_candidate"
     engine.dispose()
-    assert seeded and not (seeded & RESEARCH_ONLY_STRATEGY_SLUGS)
 
 
 def test_wilder_rsi_edge_cases_and_ibs():

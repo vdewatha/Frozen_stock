@@ -38,6 +38,13 @@ from app.services.entry_protections import load_entry_protections, protective_st
 from app.services.intraday_data import session_bounds
 from app.services.meta_label_shadow import resolve_runtime as resolve_meta_label_runtime
 from app.services.stock_paper_signal_batch import generate_cycle_signals
+from app.services.strategy_execution_policy import (
+    evaluate_policy_exit,
+    exit_leg_percentages,
+    exit_policy_for,
+    symbol_scope_for,
+)
+from app.services.trusted_data import trusted_history
 from app.services.trading_universe import execution_symbols, sector_group
 
 logger = logging.getLogger(__name__)
@@ -58,13 +65,19 @@ def _is_exit_leg(row) -> bool:
     return bool(getattr(row, "leg_role", None))
 
 
-def _exit_plan(rules: dict, reference_price: Decimal) -> dict | None:
-    """Broker-side stop-loss/take-profit plan for a new entry (None = disabled)."""
-    return build_exit_plan(
-        reference_price,
-        stop_loss_pct=rules.get("position_stop_loss_pct", DEFAULT_POSITION_STOP_LOSS_PCT),
-        take_profit_pct=rules.get("position_take_profit_pct", DEFAULT_POSITION_TAKE_PROFIT_PCT),
+def _exit_plan(rules: dict, reference_price: Decimal, policy=None) -> dict | None:
+    """Broker-side stop-loss/take-profit plan for a new entry (None = disabled).
+
+    A strategy's declared exit policy replaces the risk-rule percentages it
+    sets (e.g. RSI(2): 10% catastrophe stop and no take-profit leg, sent as a
+    stop-only OTO entry); strategies without a policy keep the rule defaults.
+    """
+    stop_pct, take_pct = exit_leg_percentages(
+        policy,
+        rules.get("position_stop_loss_pct", DEFAULT_POSITION_STOP_LOSS_PCT),
+        rules.get("position_take_profit_pct", DEFAULT_POSITION_TAKE_PROFIT_PCT),
     )
+    return build_exit_plan(reference_price, stop_loss_pct=stop_pct, take_profit_pct=take_pct)
 
 
 def _is_regular_session(now: datetime) -> bool:
@@ -90,12 +103,27 @@ def _pending_orders(db: Session, account_id: int, symbol: str) -> list:
     ).all()
 
 
-def _strategy_holdings(db: Session, account_id: int, symbol: str,
-                       type_by_id: dict) -> tuple[dict[str, Decimal], bool]:
-    """Net filled quantity per strategy type for ``symbol``.
+def _fill_sort_key(item: tuple[int, object]) -> tuple[datetime, int]:
+    index, fill = item
+    filled_at = getattr(fill, "filled_at", None)
+    if not isinstance(filled_at, datetime):
+        return datetime.min.replace(tzinfo=UTC), index
+    if filled_at.tzinfo is None:
+        filled_at = filled_at.replace(tzinfo=UTC)
+    return filled_at, index
 
-    Returns ``(holdings, attributed)``; ``attributed`` is False when any fill
-    for the symbol cannot be tied to a strategy-bound order.
+
+def _strategy_lots(db: Session, account_id: int, symbol: str, type_by_id: dict) -> dict:
+    """Per-strategy view of the *current* holding episode in ``symbol``.
+
+    Fills are walked in time order.  Whenever the symbol's net quantity
+    returns to zero no lot survives, so attribution restarts: an old
+    unattributed fill (an app-side sell, a broker import) no longer marks
+    every later lot as unattributed.  Returns ``holdings`` (net quantity per
+    strategy type), ``attributed`` (False when a fill in the current episode
+    cannot be tied to a strategy-bound order), ``opened_at`` (first buy fill
+    of each strategy's open lot) and ``buyers`` (strategy types that bought
+    in the current episode).
     """
     fills = db.query(StockPaperFill).filter_by(account_id=account_id, symbol=symbol).all()
     order_ids = {row.order_id for row in fills if row.order_id is not None}
@@ -103,16 +131,90 @@ def _strategy_holdings(db: Session, account_id: int, symbol: str,
         row.id: row for row in db.query(StockPaperOrder).filter(StockPaperOrder.id.in_(order_ids)).all()
     } if order_ids else {}
     holdings: dict[str, Decimal] = {}
+    opened_at: dict[str, datetime] = {}
+    buyers: set[str] = set()
     attributed = True
-    for fill in fills:
+    total = Decimal("0")
+    for _index, fill in sorted(enumerate(fills), key=_fill_sort_key):
         order = orders.get(fill.order_id)
         strategy_type = type_by_id.get(order.strategy_id) if order and order.strategy_id else None
+        sign = Decimal("1") if fill.side == "buy" else Decimal("-1")
+        total += sign * fill.quantity
         if strategy_type is None:
             attributed = False
+        else:
+            before = holdings.get(strategy_type, Decimal("0"))
+            holdings[strategy_type] = before + sign * fill.quantity
+            if fill.side == "buy":
+                buyers.add(strategy_type)
+                if before <= 0:
+                    opened_at[strategy_type] = getattr(fill, "filled_at", None)
+        if total <= 0:
+            holdings = {key: Decimal("0") for key in holdings}
+            opened_at, buyers, attributed = {}, set(), True
+    return {"holdings": holdings, "attributed": attributed, "opened_at": opened_at, "buyers": buyers}
+
+
+def _strategy_holdings(db: Session, account_id: int, symbol: str,
+                       type_by_id: dict) -> tuple[dict[str, Decimal], bool]:
+    """Net filled quantity per strategy type for ``symbol`` (current episode).
+
+    Returns ``(holdings, attributed)``; ``attributed`` is False when any fill
+    of the current holding episode cannot be tied to a strategy-bound order.
+    """
+    lots = _strategy_lots(db, account_id, symbol, type_by_id)
+    return lots["holdings"], lots["attributed"]
+
+
+def _lot_entry_times(db: Session, account_id: int, symbol: str, type_by_id: dict) -> dict:
+    lots = _strategy_lots(db, account_id, symbol, type_by_id)
+    return {"opened_at": lots["opened_at"], "buyers": lots["buyers"]}
+
+
+def _daily_frame(db: Session, symbol: str):
+    """Trusted completed daily bars (today's bar is withheld by the importer)."""
+    return trusted_history(db, symbol, require_active=False)[0]
+
+
+def _policy_exits(db: Session, account, symbol: str, now: datetime, policy_rows: list,
+                  type_by_id: dict) -> list[tuple[object, dict]]:
+    """Indicator / time-stop exits due for lots of strategies with an exit policy.
+
+    Evaluated for every held lot of a policy strategy, whether or not that
+    strategy is still in the cycle's tradeable set (an exit only reduces risk).
+    A lot qualifies when the current episode is attributed and the strategy
+    owns quantity, or when attribution is unknown but this strategy is the
+    only buyer of the open episode (so the exit cannot liquidate another
+    strategy's lot).
+    """
+    if not policy_rows:
+        return []
+    position = db.query(StockPaperPosition).filter_by(account_id=account.id, symbol=symbol).one_or_none()
+    if not position or not position.quantity or position.quantity <= 0:
+        return []
+    holdings, attributed = _strategy_holdings(db, account.id, symbol, type_by_id)
+    lots = _lot_entry_times(db, account.id, symbol, type_by_id)
+    exits: list[tuple[object, dict]] = []
+    frame = None
+    frame_loaded = False
+    for strategy in policy_rows:
+        strategy_type = strategy.strategy_type
+        owns = attributed and holdings.get(strategy_type, Decimal("0")) > 0
+        sole_buyer = not attributed and lots["buyers"] == {strategy_type}
+        opened_at = lots["opened_at"].get(strategy_type)
+        if not (owns or sole_buyer) or opened_at is None:
             continue
-        sign = Decimal("1") if fill.side == "buy" else Decimal("-1")
-        holdings[strategy_type] = holdings.get(strategy_type, Decimal("0")) + sign * fill.quantity
-    return holdings, attributed
+        if not frame_loaded:
+            frame_loaded = True
+            try:
+                frame = _daily_frame(db, symbol)
+            except Exception as exc:  # time stop still works without bars
+                logger.info("exit policy: daily bars unavailable for %s: %s", symbol, exc)
+                frame = None
+        decision = evaluate_policy_exit(strategy, symbol, frame, opened_at, now)
+        if decision is not None:
+            exits.append((strategy, decision))
+    return exits
 
 
 def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
@@ -250,7 +352,21 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
     rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
     rules = rule.value if rule else {}
     session_key = now.astimezone(ET).date().isoformat()
-    type_by_id = {row.id: row.strategy_type for row in db.query(Strategy).all()}
+    strategy_rows = db.query(Strategy).order_by(Strategy.id).all()
+    type_by_id = {row.id: row.strategy_type for row in strategy_rows}
+    # Per-strategy execution policy: symbol scope, broker exit legs and the
+    # app-side indicator/time-stop exits.  Strategies without a declared
+    # policy keep the risk-rule legs, SELL-signal exits and the full universe.
+    scope_by_type = {row.strategy_type: symbol_scope_for(row) for row in strategies}
+    policy_by_type = {row.strategy_type: exit_policy_for(row) for row in strategies}
+    cycle_rows = {row.strategy_type: row for row in strategies}
+    policy_rows: list = []
+    for row in [*strategies, *strategy_rows]:
+        if row.strategy_type in {item.strategy_type for item in policy_rows}:
+            continue
+        policy = policy_by_type.get(row.strategy_type) if row.strategy_type in cycle_rows else exit_policy_for(row)
+        if policy is not None and (policy.indicator_exit or policy.max_holding_sessions):
+            policy_rows.append(row)
     # Phase 0: every strategy signal for every symbol in one batched pass
     # (one data load per symbol, one commit).  Outcomes are the same signal
     # dicts / exceptions the per-pair create_* calls produced.
@@ -273,6 +389,9 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
         actionable: list[tuple[object, dict, dict]] = []
         observed_price: Decimal | None = None
         for strategy in strategies:
+            scope = scope_by_type.get(strategy.strategy_type)
+            if scope is not None and symbol not in scope:
+                continue  # outside this strategy's symbol scope; no signal was generated
             result = {"symbol": symbol, "strategy": strategy.strategy_type}
             try:
                 # Test doubles and older rows may omit the status field; the
@@ -318,6 +437,46 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
         stop_result = _protective_stop(db, account, symbol, observed_price, rules, session_key)
         if stop_result is not None:
             results.append(stop_result)
+        try:
+            due_exits = _policy_exits(db, account, symbol, now, policy_rows, type_by_id)
+        except Exception as exc:  # never let exit evaluation stop the cycle
+            db.rollback()
+            due_exits = []
+            results.append({"symbol": symbol, "strategy": "exit_policy", "status": "failed",
+                            "reason": f"{exc.__class__.__name__}: {exc}"})
+        for strategy, decision in due_exits:
+            strategy_type = strategy.strategy_type
+            same = [item for item in actionable if item[0].strategy_type == strategy_type]
+            if any(item[1]["signal_action"] == "SELL" for item in same):
+                # The strategy's own SELL already exits through the same path
+                # and idempotency key; just record why the policy agrees.
+                for item in same:
+                    item[2]["exit_policy"] = decision
+                continue
+            # A persistent BUY from the holding strategy is superseded by its
+            # exit (it could only be skipped as pyramiding anyway).
+            actionable = [item for item in actionable if item[0].strategy_type != strategy_type]
+            outcome = signal_outcomes.get((symbol, strategy_type))
+            signal_id = outcome.get("signal_id") if isinstance(outcome, dict) else None
+            result = {"symbol": symbol, "strategy": strategy_type, "signal_id": signal_id,
+                      "signal_action": "SELL", "exit_policy": decision}
+            if same:
+                result["superseded_signal"] = same[0][1]["signal_action"]
+            if observed_price is None:
+                result.update({"status": "blocked",
+                               "reason": "no trusted reference price this cycle; policy exit retries next cycle"})
+                results.append(result)
+                continue
+            result["reference_price"] = str(observed_price)
+            status = getattr(strategy, "current_status", "paper_trading_active")
+            if (
+                status != "paper_trading_active"
+                and settings.paper_exploration_enabled
+                and status in EXPLORATION_STRATEGY_STATUSES
+            ):
+                result["mode"] = "explore"
+            actionable.append((strategy, {"signal_id": signal_id, "signal_action": "SELL",
+                                          "reference_price": str(observed_price)}, result))
         if not actionable:
             continue
 
@@ -393,7 +552,7 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         result.update({"status": "blocked", "reason": "risk-sized quantity rounded to zero"})
                         results.append(result)
                         continue
-                    exit_plan = _exit_plan(rules, reference_price)
+                    exit_plan = _exit_plan(rules, reference_price, policy_by_type.get(strategy.strategy_type))
                     if exit_plan is not None:
                         # Alpaca only accepts bracket/OTO orders for whole
                         # shares; round down rather than enter without exits.

@@ -454,12 +454,49 @@ def readiness_snapshot(db: Session) -> dict:
 
     active_strategies = db.query(Strategy).filter(Strategy.current_status == "paper_trading_active").count()
     candidate_strategies = db.query(Strategy).filter(Strategy.current_status == "paper_trading_candidate").count()
+    # Exploration-only operation counts as available: with zero active
+    # strategies, enabled exploration still trades registered candidate /
+    # research strategies through the same reservation, dispatch, kill-switch,
+    # reconciliation, entry-protection and exploration-budget gates.  This
+    # check only reports *whether anything can trade*; it never admits an
+    # order, so it does not relax any other gate.
+    from app.services.stock_paper_ledger import EXPLORATION_STRATEGY_STATUSES
+    from app.services.strategies.registry import STRATEGY_REGISTRY
+
+    exploration_strategies = (
+        db.query(Strategy)
+        .filter(
+            Strategy.is_active.is_(True),
+            Strategy.current_status.in_(sorted(EXPLORATION_STRATEGY_STATUSES)),
+            Strategy.strategy_type.in_(sorted(STRATEGY_REGISTRY)),
+        )
+        .count()
+        if settings.paper_exploration_enabled else 0
+    )
+    if active_strategies > 0:
+        availability_status = "ready"
+        availability_message = "At least one strategy is active for paper trading."
+    elif exploration_strategies > 0:
+        availability_status = "ready"
+        availability_message = (
+            "No strategy is active; paper trading runs exploration-only "
+            f"({exploration_strategies} candidate/research strategies, tagged orders, no promotion credit)."
+        )
+    else:
+        availability_status = "warning"
+        availability_message = "No strategy is currently active for paper trading."
     checks.append(
         _check(
             "Strategy availability",
-            "ready" if active_strategies > 0 else "warning",
-            "At least one strategy is active for paper trading." if active_strategies > 0 else "No strategy is currently active for paper trading.",
-            {"active_strategies": active_strategies, "candidate_strategies": candidate_strategies},
+            availability_status,
+            availability_message,
+            {
+                "active_strategies": active_strategies,
+                "candidate_strategies": candidate_strategies,
+                "exploration_enabled": bool(settings.paper_exploration_enabled),
+                "exploration_strategies": exploration_strategies,
+                "mode": "active" if active_strategies > 0 else ("exploration_only" if exploration_strategies else "none"),
+            },
         )
     )
 
