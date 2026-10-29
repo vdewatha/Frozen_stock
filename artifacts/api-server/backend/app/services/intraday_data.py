@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
@@ -252,7 +253,14 @@ def upsert_intraday_bars(
     provider: str | None = None,
     feed_class: str | None = None,
     verify_entitlement: bool = False,
+    persisted_minutes: list[datetime] | None = None,
 ) -> dict:
+    """Store completed regular-session bars idempotently.
+
+    ``persisted_minutes``, when given, receives the opening minute of every
+    bar stored under the resolved provider, so a caller can update its own
+    view of the stored minutes without querying again.
+    """
     # Resolve provenance at call time so a configured provider change cannot
     # leave persisted bars tagged with the provider active at import time.
     provider = provider or settings.active_market_data_provider.strip().lower()
@@ -297,6 +305,11 @@ def upsert_intraday_bars(
         for row in existing_rows
     }
     new_rows = []
+    # Unchanged re-fetched bars only need fresh entitlement evidence. Refresh
+    # them with one statement: the newest-window poll re-reads an hour of bars
+    # per symbol every minute, and row-by-row updates cost ~2,600 round trips
+    # a minute across the paper universe.
+    reverified: list[datetime] = []
     for opened_at, values in sorted(deduplicated.items()):
         provenance = {
             **values,
@@ -318,13 +331,23 @@ def upsert_intraday_bars(
                     and all(getattr(row, key) == value for key, value in values.items())
                     and row.exchange_timestamp is not None
                     and _aware_utc(row.exchange_timestamp) == opened_at):
-                provenance.pop("ingested_at")
+                if verify_entitlement:
+                    reverified.append(opened_at)
+                    set_committed_value(row, "last_verified_at", observed_at)
+                continue
             for key, value in provenance.items():
                 setattr(row, key, value)
         else:
             new_rows.append(
                 IntradayBar(symbol=symbol, timeframe="1m", opened_at=opened_at, **provenance)
             )
+    if reverified:
+        db.query(IntradayBar).filter(
+            IntradayBar.symbol == symbol,
+            IntradayBar.timeframe == "1m",
+            IntradayBar.provider == provider,
+            IntradayBar.opened_at.in_(reverified),
+        ).update({"last_verified_at": observed_at}, synchronize_session=False)
     if new_rows:
         # Two scheduled collectors can legitimately fetch the same completed
         # minute at the same time.  The pre-query above avoids normal updates,
@@ -373,11 +396,44 @@ def upsert_intraday_bars(
         else:
             db.add_all(new_rows)
     db.commit()
+    if persisted_minutes is not None and provider == MARKET_DATA_PROVIDER:
+        persisted_minutes.extend(sorted(deduplicated))
     return {
         "rows_imported": len(deduplicated),
         "duplicate_bars": duplicate_count,
         "out_of_order": out_of_order,
     }
+
+
+class _MinuteIndex:
+    """One symbol's stored minutes (bars and verified no-trade markers) for a
+    single ingest pass, so gap scans need no further queries.
+
+    The owner adds every minute it persists afterwards; anything outside
+    ``[start, end)`` falls back to the database.
+    """
+
+    def __init__(self, db: Session, symbol: str, start: datetime, end: datetime):
+        self.start, self.end = start, end
+        rows = (
+            db.query(IntradayBar.opened_at)
+            .filter(
+                IntradayBar.symbol == symbol,
+                IntradayBar.timeframe == "1m",
+                IntradayBar.provider == MARKET_DATA_PROVIDER,
+                IntradayBar.opened_at >= start,
+                IntradayBar.opened_at < end,
+            )
+            .all()
+        )
+        self.present = {_aware_utc(item.opened_at) for item in rows}
+        self.present |= _verified_no_trade_minutes(db, symbol, start, end)
+
+    def covers(self, start: datetime, end: datetime) -> bool:
+        return self.start <= start and end <= self.end
+
+    def add(self, minutes) -> None:
+        self.present.update(_aware_utc(minute) for minute in minutes)
 
 
 def _session_missing(
@@ -387,20 +443,24 @@ def _session_missing(
     end: datetime,
     *,
     cap: int = 400,
+    index: _MinuteIndex | None = None,
 ) -> list[str]:
-    rows = (
-        db.query(IntradayBar.opened_at)
-        .filter(
-            IntradayBar.symbol == symbol,
-            IntradayBar.timeframe == "1m",
-            IntradayBar.provider == MARKET_DATA_PROVIDER,
-            IntradayBar.opened_at >= start,
-            IntradayBar.opened_at < end,
+    if index is not None and index.covers(start, end):
+        existing = index.present
+    else:
+        rows = (
+            db.query(IntradayBar.opened_at)
+            .filter(
+                IntradayBar.symbol == symbol,
+                IntradayBar.timeframe == "1m",
+                IntradayBar.provider == MARKET_DATA_PROVIDER,
+                IntradayBar.opened_at >= start,
+                IntradayBar.opened_at < end,
+            )
+            .all()
         )
-        .all()
-    )
-    existing = {_aware_utc(item.opened_at) for item in rows}
-    existing |= _verified_no_trade_minutes(db, symbol, start, end)
+        existing = {_aware_utc(item.opened_at) for item in rows}
+        existing |= _verified_no_trade_minutes(db, symbol, start, end)
     missing: list[str] = []
     cursor = start
     while cursor < end and len(missing) < cap:
@@ -582,9 +642,11 @@ def _bounded_missing_window(
     symbol: str,
     start: datetime,
     end: datetime,
+    *,
+    index: _MinuteIndex | None = None,
 ) -> tuple[datetime, datetime] | None:
     """Return the next missing slice without turning one poll into a full replay."""
-    missing = _session_missing(db, symbol, start, end, cap=1)
+    missing = _session_missing(db, symbol, start, end, cap=1, index=index)
     if not missing:
         return None
     window_start = datetime.fromisoformat(missing[0])
@@ -596,6 +658,8 @@ def _next_missing_window(
     symbol: str,
     ranges: list[tuple[datetime, datetime]],
     processed: list[tuple[datetime, datetime]],
+    *,
+    index: _MinuteIndex | None = None,
 ) -> tuple[datetime, datetime] | None:
     """Find the next unresolved slice across current and prior sessions.
 
@@ -606,7 +670,7 @@ def _next_missing_window(
     for range_start, range_end in ranges:
         cursor = range_start
         while cursor < range_end:
-            window = _bounded_missing_window(db, symbol, cursor, range_end)
+            window = _bounded_missing_window(db, symbol, cursor, range_end, index=index)
             if window is None:
                 break
             if window not in processed:
@@ -827,8 +891,16 @@ def ingest_intraday(
     # a long repair queue cannot starve the same tail symbols every minute.
     rotation = (observed_at.minute % len(selected)) if selected else 0
     processing_order = selected[rotation:] + selected[:rotation]
+    # Every gap scan of a symbol stays between the oldest repaired session and
+    # the end of today, so one load per symbol answers all of them.
+    index_day = local_now.date()
+    for _ in range(repair_sessions):
+        index_day = _previous_session(index_day)
+    index_start = session_bounds(index_day)[0]
+    index_end = observed_at + timedelta(days=1)
     for symbol in processing_order:
         try:
+            index = _MinuteIndex(db, symbol, index_start, index_end)
             windows: list[tuple[datetime, datetime]] = []
             target_ranges: list[tuple[datetime, datetime]] = []
             today_bounds = session_bounds(local_now.date())
@@ -850,7 +922,7 @@ def ingest_intraday(
                     windows.append((latest_start, completed_through))
                     if latest_start > today_bounds[0]:
                         backfill_window = _bounded_missing_window(
-                            db, symbol, today_bounds[0], latest_start
+                            db, symbol, today_bounds[0], latest_start, index=index
                         )
                         if backfill_window:
                             windows.append(backfill_window)
@@ -860,10 +932,10 @@ def ingest_intraday(
                 repair_day = _previous_session(repair_day)
                 repair_bounds = session_bounds(repair_day)
                 assert repair_bounds is not None
-                if _session_missing(db, symbol, repair_bounds[0], repair_bounds[1]):
+                if _session_missing(db, symbol, repair_bounds[0], repair_bounds[1], index=index):
                     target_ranges.append(repair_bounds)
                     backfill_window = _bounded_missing_window(
-                        db, symbol, repair_bounds[0], repair_bounds[1]
+                        db, symbol, repair_bounds[0], repair_bounds[1], index=index
                     )
                     if backfill_window:
                         windows.append(backfill_window)
@@ -899,42 +971,45 @@ def ingest_intraday(
                             break
                         backfill_budget -= 1
                     rows, duplicates, out_of_order = _fetch_bars(symbol, window_start, window_end)
+                stored: list[datetime] = []
                 persisted = upsert_intraday_bars(
-                    db, symbol, rows, ingested_at=observed_at, verify_entitlement=True
+                    db, symbol, rows, ingested_at=observed_at, verify_entitlement=True,
+                    persisted_minutes=stored,
                 )
+                index.add(stored)
                 # The authenticated request above succeeded (failures raise),
                 # so bar-less closed minutes in this window are provider
                 # answers, not transport gaps. Only short, bracketed runs on a
                 # partial-venue feed are recorded; outages stay missing.
                 configured_provider = settings.active_market_data_provider.strip().lower()
-                verified_no_trade.extend(
-                    record_verified_no_trade_minutes(
-                        db,
-                        symbol,
-                        window_start,
-                        window_end,
-                        observed_at=observed_at,
-                        provider=configured_provider,
-                        feed_class="iex" if configured_provider == "alpaca_iex" else "sip",
-                    )
+                newly_verified = record_verified_no_trade_minutes(
+                    db,
+                    symbol,
+                    window_start,
+                    window_end,
+                    observed_at=observed_at,
+                    provider=configured_provider,
+                    feed_class="iex" if configured_provider == "alpaca_iex" else "sip",
                 )
+                index.add(datetime.fromisoformat(minute) for minute in newly_verified)
+                verified_no_trade.extend(newly_verified)
                 saved["rows_imported"] += persisted["rows_imported"]
                 saved["duplicate_bars"] += persisted["duplicate_bars"]
                 saved["out_of_order"] = saved["out_of_order"] or persisted["out_of_order"]
                 provider_duplicates += duplicates
                 provider_out_of_order = provider_out_of_order or out_of_order
-                missing.extend(_session_missing(db, symbol, window_start, window_end))
+                missing.extend(_session_missing(db, symbol, window_start, window_end, index=index))
                 processed_windows.append((window_start, window_end))
                 if window_index + 1 < max_windows:
                     next_window = _next_missing_window(
-                        db, symbol, target_ranges, processed_windows
+                        db, symbol, target_ranges, processed_windows, index=index
                     )
                     if next_window and next_window not in windows:
                         # Put a newly discovered current-session slice ahead
                         # of any older queued repair slice.
                         windows.insert(window_index + 1, next_window)
             for target_start, target_end in target_ranges:
-                missing.extend(_session_missing(db, symbol, target_start, target_end))
+                missing.extend(_session_missing(db, symbol, target_start, target_end, index=index))
             missing = sorted(set(missing))
             deferred_window, oldest_unresolved_interval = _repair_metadata(
                 missing,
