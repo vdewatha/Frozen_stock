@@ -895,7 +895,13 @@ def paper_trade_reconciliation_job() -> dict:
 
 @celery_app.task
 def stock_paper_broker_reconciliation_job() -> dict:
-    """Refresh the broker-observed stock-paper ledger without placing orders."""
+    """Refresh the broker-observed stock-paper ledger, then re-arm broker exits.
+
+    Reconciliation itself places no orders. Afterwards the exit re-arm
+    (``stock_exit_rearm``) may place protective SELL exits (an OCO or a GTC
+    stop) for whole shares that no live broker stop covers. It never places an
+    entry, and recovery cancel/flatten blocks it.
+    """
     def work(db):
         from app.services.stock_paper_ledger import (
             active_paper_account,
@@ -919,12 +925,24 @@ def stock_paper_broker_reconciliation_job() -> dict:
                 "paper_only": True,
             }
         result = reconcile_stock_paper_account(db)
+        try:
+            from app.services.stock_exit_rearm import rearm_broker_exits
+
+            rearm = rearm_broker_exits(db)
+        except Exception as exc:  # re-arm must never break reconciliation
+            db.rollback()
+            rearm = {"status": "failed", "reason": f"{exc.__class__.__name__}: {exc}"}
         return {
             "status": "complete",
             "job": "stock_paper_broker_reconciliation_job",
             "paper_only": True,
             "account_status": result.get("account_status"),
             "reconciliation_required": result.get("reconciliation_required"),
+            "exit_rearm": {
+                key: rearm.get(key)
+                for key in ("status", "reason", "submitted_count", "cancelled_partial_entries")
+                if key in rearm
+            },
         }
 
     return _run_job("stock_paper_broker_reconciliation_job", work)
