@@ -228,7 +228,11 @@ def _run_job(job_name: str, work: Callable) -> dict:
         if db.get_bind().dialect.name == "postgresql":
             # Session.commit() returns its connection to the pool. Keep the
             # session-level advisory lock on a separately owned connection.
-            lock_connection = db.get_bind().connect()
+            # Autocommit keeps it out of a transaction: session locks do not
+            # need one, and an open transaction would sit "idle in
+            # transaction" for the whole job and trip the server's idle
+            # transaction timeout on long jobs.
+            lock_connection = db.get_bind().connect().execution_options(isolation_level="AUTOCOMMIT")
             lock_acquired = bool(lock_connection.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}))
             lock_acquisition_confirmed = True
             if not lock_acquired:

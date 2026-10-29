@@ -150,6 +150,8 @@ class Settings(BaseSettings):
     # ingestion cycle may make across all symbols. The newest window for all
     # symbols is fetched with multi-symbol requests and does not count here.
     intraday_backfill_request_budget: int = Field(default=40, ge=0, le=150)
+    # Server-side limit for sessions left idle inside a transaction (0 disables).
+    database_idle_in_transaction_timeout_seconds: int = Field(default=600, ge=0, le=3600)
     # Wall-clock cap on repair requests per minutely import. Repairs run before
     # the import reports, so 40 sequential repair requests (~160 s on the VM)
     # made every live minute arrive late; leftover gaps wait for a later cycle.
