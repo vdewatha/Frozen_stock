@@ -142,3 +142,17 @@ def equity_returns(values: Sequence[float]) -> list[float]:
         previous, current = float(previous), float(current)
         result.append(current / previous - 1 if previous else 0.0)
     return result
+
+
+def realized_drawdown(pnls: Iterable):
+    """Largest peak-to-trough drop of cumulative realized P&L (from 0); >= 0.
+
+    Type-preserving (Decimal in, Decimal out) so the paper entry protection
+    and the backtester share one rule.
+    """
+    equity = peak = worst = 0
+    for pnl in pnls:
+        equity = equity + pnl
+        peak = max(peak, equity)
+        worst = max(worst, peak - equity)
+    return worst

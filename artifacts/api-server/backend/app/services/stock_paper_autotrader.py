@@ -24,6 +24,7 @@ from app.services.stock_paper_ledger import (
     NONTERMINAL_ORDER_STATUSES,
     StockPaperError,
     active_paper_account,
+    alert_repeated_order_rejects,
     EXPLORATION_SOURCE,
     EXPLORATION_STRATEGY_STATUSES,
     broker_stop_coverage,
@@ -414,6 +415,14 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
         stale_entries = {"status": "blocked", "reason": str(exc)}
     if stale_entries:
         base["stale_entry_cancellations"] = stale_entries
+    try:
+        reject_alert = alert_repeated_order_rejects(db, account, now)
+    except Exception as exc:  # alerting must never stop the cycle
+        db.rollback()
+        logger.warning("order reject alert unavailable: %s", exc)
+        reject_alert = None
+    if reject_alert:
+        base["order_reject_alert"] = reject_alert
 
     all_strategies = (
         db.query(Strategy)
