@@ -243,8 +243,16 @@ class ExitRearmTests(unittest.TestCase):
     def test_risk_rule_and_strategy_percentages(self):
         rules = {"position_stop_loss_pct": 0.05, "position_take_profit_pct": 0.08}
         self.assertEqual(exit_percentages(rules, None), (Decimal("0.05"), Decimal("0.08")))
-        strategy = Strategy(name="x", strategy_type="rsi2", parameters={"exit_plan": {"stop_loss_pct": 0.02}})
-        self.assertEqual(exit_percentages(rules, strategy), (Decimal("0.02"), Decimal("0.08")))
+        # Re-arm resolves exits exactly like the entry path: the declared
+        # policy wins (rsi2_pullback: 10% catastrophe stop, no take-profit) ...
+        rsi2 = Strategy(name="x", strategy_type="rsi2_pullback", parameters={})
+        self.assertEqual(exit_percentages(rules, rsi2), (Decimal("0.1"), Decimal("0")))
+        # ... with row-parameter overrides applied ...
+        tuned = Strategy(name="y", strategy_type="rsi2_pullback", parameters={"stop_loss_pct": 0.05})
+        self.assertEqual(exit_percentages(rules, tuned), (Decimal("0.05"), Decimal("0")))
+        # ... and strategies without a declared policy keep the risk rules.
+        plain = Strategy(name="z", strategy_type="macd_momentum", parameters={})
+        self.assertEqual(exit_percentages(rules, plain), (Decimal("0.05"), Decimal("0.08")))
         with Session(self.engine) as db:
             self.legacy(db)
             self.set_rules(db, position_stop_loss_pct=0.05, position_take_profit_pct=0.08)

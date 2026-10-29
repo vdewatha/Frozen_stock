@@ -68,6 +68,7 @@ from app.services.stock_paper_ledger import (
     build_exit_plan,
     live_exit_orders,
 )
+from app.services.strategy_execution_policy import exit_leg_percentages, exit_policy_for
 
 UTC = timezone.utc
 WHOLE_SHARE = Decimal("1")
@@ -104,29 +105,18 @@ def is_rearm_order(order: StockPaperOrder) -> bool:
     return str(order.client_order_id or "").startswith(REARM_CLIENT_PREFIX)
 
 
-def _strategy_pct(params: dict, key: str) -> Any:
-    for container in (params.get("exit_plan"), params):
-        if isinstance(container, dict):
-            for name in (key, f"position_{key}"):
-                if container.get(name) is not None:
-                    return container[name]
-    return None
-
-
 def exit_percentages(rules: dict, strategy: Strategy | None) -> tuple[Decimal, Decimal]:
     """Stop-loss / take-profit distances for a lot.
 
-    The owning strategy's own exit settings win, if it declares
-    ``stop_loss_pct`` / ``take_profit_pct`` (flat or under ``exit_plan``).
-    Otherwise the active risk rules apply.
+    Uses the same resolution as the entry path: the owning strategy's declared
+    exit policy (with its row-parameter overrides) wins, and anything it leaves
+    unset falls back to the active risk rules. A take-profit of 0 means a
+    stop-only exit (e.g. rsi2_pullback's catastrophe stop).
     """
-    params = strategy.parameters if strategy is not None and isinstance(strategy.parameters, dict) else {}
-    stop = _strategy_pct(params, "stop_loss_pct")
-    take = _strategy_pct(params, "take_profit_pct")
-    if stop is None:
-        stop = rules.get("position_stop_loss_pct", DEFAULT_STOP_LOSS_PCT)
-    if take is None:
-        take = rules.get("position_take_profit_pct", DEFAULT_TAKE_PROFIT_PCT)
+    default_stop = rules.get("position_stop_loss_pct", DEFAULT_STOP_LOSS_PCT)
+    default_take = rules.get("position_take_profit_pct", DEFAULT_TAKE_PROFIT_PCT)
+    policy = exit_policy_for(strategy) if strategy is not None else None
+    stop, take = exit_leg_percentages(policy, default_stop, default_take)
     return Decimal(str(stop or 0)), Decimal(str(take or 0))
 
 
