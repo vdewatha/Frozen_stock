@@ -16,6 +16,17 @@ intraday reference price.  Fills therefore land near, not exactly at, the
 next open.  The time stop counts NYSE sessions from the entry session
 (inclusive) to today (exclusive), which equals the backtester's
 ``holding_days = idx - entry_idx`` and does not depend on the daily import.
+
+Entry timing (daily-bar strategies).  The backtester decides an entry on the
+completed bars through session D-1 and fills it at session D's open
+(``execution_model = "next_open_no_lookahead"``).  The paper cycle sees the
+same completed bars all through session D, so for strategies with
+``daily_bar_execution`` a BUY is allowed only in an early-session window,
+``[open + paper_daily_bar_entry_window_start_minutes,
+open + paper_daily_bar_entry_window_end_minutes)`` (clamped to the session
+close), and is withheld as a HOLD outside it.  The window and evaluation time
+are recorded in the signal's ``features["entry_timing"]``.  Exits are not
+gated.
 """
 from __future__ import annotations
 
@@ -27,8 +38,9 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from app.services.exchange_sessions import is_nyse_session
-from app.services.strategies.base import BaseStrategy, ExitPolicy
+from app.core.config import settings
+from app.services.exchange_sessions import is_nyse_session, session_bounds
+from app.services.strategies.base import BaseStrategy, ExitPolicy, neutral_signal
 from app.services.strategies.registry import get_strategy
 
 logger = logging.getLogger(__name__)
@@ -62,6 +74,69 @@ def symbol_scope_for(strategy: Any) -> frozenset[str] | None:
 def daily_bar_execution(strategy: Any) -> bool:
     instance = strategy_instance(strategy)
     return bool(instance is not None and instance.daily_bar_execution)
+
+
+def daily_bar_entry_window(now: datetime) -> tuple[datetime, datetime] | None:
+    """The ``[start, end)`` entry window for daily-bar strategies in ``now``'s session.
+
+    ``None`` on a non-session day or when the configured window is empty, so
+    callers fail closed (no entries).  The end is clamped to the session close
+    (early-close days).
+    """
+    bounds = session_bounds(now.astimezone(ET).date())
+    if bounds is None:
+        return None
+    opened, closes = bounds
+    start = opened + timedelta(minutes=int(settings.paper_daily_bar_entry_window_start_minutes))
+    end = min(opened + timedelta(minutes=int(settings.paper_daily_bar_entry_window_end_minutes)), closes)
+    if end <= start:
+        return None
+    return start, end
+
+
+def _last_bar_date(prices: Any) -> str | None:
+    try:
+        value = pd.to_datetime(prices["date"].iloc[-1], utc=True)
+    except Exception:
+        return None
+    return None if pd.isna(value) else value.date().isoformat()
+
+
+def gate_daily_bar_entry(generated: Any, now: datetime, prices: Any = None) -> Any:
+    """Apply the daily-bar entry window to a strategy's signal.
+
+    Records ``features["entry_timing"]`` on every signal; a BUY outside the
+    window becomes a HOLD (``withheld_action = "BUY"``).  Other actions are
+    returned unchanged apart from the timing record.
+    """
+    window = daily_bar_entry_window(now)
+    in_window = window is not None and window[0] <= now < window[1]
+    timing = {
+        "model": "daily_bar_next_open_window",
+        "backtest_execution_model": "next_open_no_lookahead",
+        "evaluated_at": now.astimezone(ET).isoformat(),
+        "session": now.astimezone(ET).date().isoformat(),
+        "signal_bar": _last_bar_date(prices),
+        "window_start": window[0].astimezone(ET).isoformat() if window else None,
+        "window_end": window[1].astimezone(ET).isoformat() if window else None,
+        "window_minutes_after_open": [
+            int(settings.paper_daily_bar_entry_window_start_minutes),
+            int(settings.paper_daily_bar_entry_window_end_minutes),
+        ],
+        "in_window": in_window,
+    }
+    features = dict(getattr(generated, "features", None) or {})
+    if getattr(generated, "action", None) == "BUY" and not in_window:
+        timing["withheld_action"] = "BUY"
+        if window is None:
+            where = "no daily-bar entry window this session"
+        else:
+            where = (f"outside the daily-bar entry window "
+                     f"{window[0].astimezone(ET):%H:%M}-{window[1].astimezone(ET):%H:%M} ET")
+        reason = f"BUY withheld: {where} (backtest fills at the next open). {getattr(generated, 'reason', '')}"
+        return neutral_signal(reason.strip(), {**features, "entry_timing": timing})
+    generated.features = {**features, "entry_timing": timing}
+    return generated
 
 
 def in_symbol_scope(strategy: Any, symbol: str) -> bool:

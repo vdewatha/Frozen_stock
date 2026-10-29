@@ -373,7 +373,7 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
     # Meta-label filter: "shadow" (default) only records what it would do;
     # only "enforce" (off by default) can skip a BUY.
     meta_label = resolve_meta_label_runtime()
-    signal_outcomes, signal_stats = generate_cycle_signals(db, symbols, strategies, meta_label=meta_label)
+    signal_outcomes, signal_stats = generate_cycle_signals(db, symbols, strategies, meta_label=meta_label, now=now)
     signals_done = time.perf_counter()
     sector_cap = _max_positions_per_sector(rules)
     sector_groups = _sector_exposure(db, account.id) if sector_cap else {}
