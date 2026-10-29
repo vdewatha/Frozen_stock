@@ -320,6 +320,15 @@ function startPaperWorkers(): void {
       "--queues=intraday_market_data",
       "--pool=threads", "--concurrency=1", "--prefetch-multiplier=1",
     ], "paper-intraday");
+    // Broker reconciliation is the watchdog's broker heartbeat. Queued behind
+    // minutely signal passes it ran up to ten minutes late, and every stale
+    // heartbeat re-paused recovery and re-armed the kill switch.
+    supervisePaperWorker([
+      "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
+      "--loglevel=INFO", "--hostname=paper-broker@%h",
+      "--queues=broker_reconciliation",
+      "--pool=threads", "--concurrency=1", "--prefetch-multiplier=1",
+    ], "paper-broker");
     // Recovery admission requires an independent heartbeat. Keep this
     // process outside the Celery pool so a queue backlog cannot mask a
     // stalled paper worker.
@@ -352,7 +361,7 @@ function startPaperWorkers(): void {
       "--queues=learning", `--concurrency=${learningConcurrency}`,
     ], `learning-${replica}`);
   }
-  supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=execution@%h", "--queues=paper_trading", "--concurrency=1"], "execution");
+  supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=execution@%h", "--queues=paper_trading,broker_reconciliation", "--concurrency=1"], "execution");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=risk@%h", "--queues=risk", "--concurrency=1"], "risk");
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=monitor@%h", "--queues=monitoring", "--concurrency=1"], "monitor");
   supervisePaperWorker(["scripts/run_stock_monitor_loop.py"], "direct-monitor");

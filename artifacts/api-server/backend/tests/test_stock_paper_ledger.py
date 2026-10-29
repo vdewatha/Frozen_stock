@@ -1371,6 +1371,68 @@ class StockPaperRecoveryTests(unittest.TestCase):
                     db, actor="operator-test", reason="Review fresh watchdog evidence"
                 )
 
+    def _transient_pause(self, db, *, prior_status="resumable", kill_switch=False):
+        from app.services.stock_recovery import _state
+
+        db.add(RiskRule(name="transient-heartbeat-risk", value={"kill_switch_enabled": kill_switch}))
+        db.commit()
+        initialize_stock_paper_account(db, FakeAlpaca(), activity_contract="alpaca-activities-v2")
+        account = db.query(StockPaperAccount).one()
+        state = _state(db)
+        now = datetime.now(timezone.utc)
+        state.status = prior_status
+        state.last_monitor_heartbeat_at = now
+        account.last_reconciled_at = now - timedelta(minutes=15)
+        db.commit()
+        result = run_stock_watchdog(db)
+        self.assertEqual(result["reasons"], ["broker reconciliation heartbeat is stale"])
+        db.query(StockPaperRecoveryState).one().last_monitor_heartbeat_at = datetime.now(timezone.utc)
+        db.commit()
+
+    def test_fresh_reconciliation_restores_a_transient_heartbeat_pause_on_a_flat_account(self):
+        from app.models import StockPaperRecoveryEvent
+
+        with Session(self.engine) as db:
+            self._transient_pause(db)
+            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "cooldown")
+            self.assertTrue(db.query(RiskRule).one().value["kill_switch_enabled"])
+
+            reconcile_stock_paper_account(db, FakeAlpaca())
+
+            state = db.query(StockPaperRecoveryState).one()
+            self.assertEqual(state.status, "resumable")
+            self.assertIsNone(state.cooldown_until)
+            self.assertFalse(db.query(RiskRule).one().value["kill_switch_enabled"])
+            self.assertEqual(db.query(StockPaperAccount).one().status, "reconciled")
+            self.assertEqual(db.query(StockPaperRecoveryEvent).filter_by(action="automatic_restore").count(), 1)
+
+    def test_transient_heartbeat_pause_needs_operator_when_not_previously_armed(self):
+        with Session(self.engine) as db:
+            self._transient_pause(db, prior_status="revalidation_required")
+            reconcile_stock_paper_account(db, FakeAlpaca())
+            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "revalidation_required")
+            self.assertTrue(db.query(RiskRule).one().value["kill_switch_enabled"])
+
+    def test_transient_heartbeat_pause_needs_operator_when_kill_switch_was_on(self):
+        with Session(self.engine) as db:
+            self._transient_pause(db, kill_switch=True)
+            reconcile_stock_paper_account(db, FakeAlpaca())
+            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "revalidation_required")
+
+    def test_transient_heartbeat_pause_is_not_restored_with_an_open_position(self):
+        from app.services.stock_recovery import restore_after_transient_heartbeat_pause
+
+        with Session(self.engine) as db:
+            self._transient_pause(db)
+            account = db.query(StockPaperAccount).one()
+            account.last_reconciled_at = datetime.now(timezone.utc)
+            db.add(StockPaperPosition(account_id=account.id, symbol="SPY", quantity=Decimal("1"),
+                                      average_entry_price=Decimal("100"), market_value=Decimal("100"),
+                                      observed_at=datetime.now(timezone.utc), raw_payload={}))
+            db.commit()
+            self.assertFalse(restore_after_transient_heartbeat_pause(db, account))
+            self.assertEqual(db.query(StockPaperRecoveryState).one().status, "cooldown")
+
     def test_research_only_cost_policy_allows_paper_recovery_without_claiming_costs(self):
         from app.models import StockPaperRecoveryEvent
 

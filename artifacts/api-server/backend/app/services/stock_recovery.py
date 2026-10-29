@@ -182,6 +182,7 @@ def enter_stock_recovery(
     actor: str = "system",
     flatten_policy: str = "none",
     cooldown: timedelta = RECOVERY_COOLDOWN,
+    context: dict | None = None,
 ) -> StockPaperRecoveryState:
     if not reason.strip():
         raise StockPaperError("Recovery requires a non-empty reason")
@@ -200,9 +201,86 @@ def enter_stock_recovery(
     if account:
         _halt(account, reason)
         ledger_event(db, account, "recovery_pause", "halted", reason, {"flatten_policy": flatten_policy})
-    _event(db, action="pause", status="cooldown", actor=actor, reason=reason, payload={"flatten_policy": flatten_policy, "cooldown_until": state.cooldown_until.isoformat()})
+    _event(db, action="pause", status="cooldown", actor=actor, reason=reason, payload={"flatten_policy": flatten_policy, "cooldown_until": state.cooldown_until.isoformat(), **(context or {})})
     write_audit_log(db, event_type="stock_recovery", action="pause", status="complete", message=reason, entity_type="stock_paper", payload={"flatten_policy": flatten_policy, "cooldown_until": state.cooldown_until.isoformat()})
     return state
+
+
+TRANSIENT_HEARTBEAT_RESTORABLE_STATUSES = frozenset({"armed", "resumable"})
+
+
+def restore_after_transient_heartbeat_pause(db: Session, account: StockPaperAccount) -> bool:
+    """Undo a watchdog pause caused only by late heartbeats, once fresh.
+
+    The watchdog pauses recovery (cooldown, kill switch, halted account) when
+    the broker reconciliation or monitor heartbeat is over ten minutes old. On
+    a flat account a late heartbeat is an operations delay, not exposure risk,
+    and requiring operator revalidation every time kept the bot paused all
+    session. Restore the prior tradable state only when every one holds:
+
+    * the newest pause came from the watchdog, for stale heartbeats only;
+    * recovery was armed/resumable and the kill switch off before it;
+    * no position is open and no order is in flight; and
+    * both heartbeats are fresh again (the caller just reconciled).
+
+    Anything else keeps the operator revalidation path. The caller holds the
+    account row lock, so the recovery row is read without a second row lock
+    (the watchdog takes them in the opposite order).
+    """
+    now = _now()
+    state = _state(db, for_update=False)
+    if state.status not in {"cooldown", "paused"}:
+        return False
+    pause = (
+        db.query(StockPaperRecoveryEvent)
+        .filter(StockPaperRecoveryEvent.action == "pause")
+        .order_by(StockPaperRecoveryEvent.id.desc())
+        .first()
+    )
+    payload = (pause.payload or {}) if pause is not None else {}
+    reasons = payload.get("heartbeat_reasons") or []
+    if (
+        pause is None
+        or pause.actor != "stock_watchdog"
+        or payload.get("prior_status") not in TRANSIENT_HEARTBEAT_RESTORABLE_STATUSES
+        or payload.get("prior_kill_switch") is not False
+        or not reasons
+        or not all(str(reason).endswith(" is stale") for reason in reasons)
+    ):
+        return False
+    if db.query(StockPaperPosition).filter(
+        StockPaperPosition.account_id == account.id, StockPaperPosition.quantity != 0,
+    ).count():
+        return False
+    if db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id,
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+    ).count():
+        return False
+    if _heartbeat_issue(account.last_reconciled_at, now, "broker reconciliation heartbeat") or _heartbeat_issue(
+        state.last_monitor_heartbeat_at, now, "continuous monitor heartbeat"
+    ):
+        return False
+    state.status = payload["prior_status"]
+    state.cooldown_until = None
+    state.pause_reason = None
+    state.updated_by = "stock_reconciler"
+    state.updated_at = now
+    _set_kill_switch(db, False)
+    reason = "Transient heartbeat pause cleared by fresh evidence on a flat account; prior state restored"
+    _event(
+        db,
+        action="automatic_restore",
+        status=state.status,
+        actor="stock_reconciler",
+        reason=reason,
+        payload={"pause_event_id": pause.id, "heartbeat_reasons": reasons},
+    )
+    write_audit_log(
+        db, event_type="stock_recovery", action="automatic_restore", status="complete",
+        message=reason, entity_type="stock_paper", payload={"pause_event_id": pause.id, "restored_status": state.status},
+    )
+    return True
 
 
 def record_stock_monitor_heartbeat(db: Session, *, observed_at: datetime | None = None) -> None:
@@ -1193,7 +1271,20 @@ def run_stock_watchdog(db: Session) -> dict:
         else:
             reasons.append(issue)
     if reasons and (account is None or account.status != "halted"):
-        enter_stock_recovery(db, reason="Independent watchdog: " + "; ".join(reasons + deferred), actor="stock_watchdog")
+        rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
+        enter_stock_recovery(
+            db,
+            reason="Independent watchdog: " + "; ".join(reasons + deferred),
+            actor="stock_watchdog",
+            # What was tradable before this pause, so a transient heartbeat
+            # gap can be undone once fresh evidence arrives (see
+            # restore_after_transient_heartbeat_pause).
+            context={
+                "prior_status": state.status,
+                "prior_kill_switch": bool((rule.value or {}).get("kill_switch_enabled")) if rule else None,
+                "heartbeat_reasons": reasons + deferred,
+            },
+        )
         status = "paused"
     elif deferred and (account is None or account.status != "halted"):
         record_restart_deferral(db, grace, source="stock_watchdog", deferred=deferred, now=now)

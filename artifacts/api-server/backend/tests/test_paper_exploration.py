@@ -2,7 +2,7 @@
 import tempfile
 import unittest
 from contextlib import ExitStack
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -95,6 +95,83 @@ class ExplorationLedgerTests(unittest.TestCase):
             self.assertEqual(order.source, EXPLORATION_SOURCE)
             self.assertEqual(order.strategy_id, strategy.id)
             self.assertIsNone(order.evidence_id)  # never promotion evidence
+
+    def test_launch_gates_run_before_the_account_row_lock(self):
+        from app.services import stock_paper_ledger
+
+        with Session(self.engine) as db, ExitStack() as stack:
+            for item in self.gates()[:3]:
+                stack.enter_context(item)
+            account, _strategy, signal = self.seed(db)
+            lock_calls = []
+            real_account = stock_paper_ledger.active_paper_account
+
+            def tracking_account(session, *args, **kwargs):
+                if kwargs.get("for_update"):
+                    lock_calls.append("lock")
+                return real_account(session, *args, **kwargs)
+
+            def failing_gates(_db, now):
+                self.assertEqual(lock_calls, [])  # gates see no held account lock
+                return {"recovery_state": {"status": "fail", "reason": "paused"}}
+
+            stack.enter_context(patch.object(stock_paper_ledger, "active_paper_account", side_effect=tracking_account))
+            stack.enter_context(patch("app.services.stock_learning_cycle.evaluate_launch_admission_prerequisites",
+                                      side_effect=failing_gates))
+            with self.assertRaisesRegex(StockPaperError, "launch admission"):
+                self.reserve(db, signal, self.budget_quantity(account))
+            self.assertEqual(lock_calls, [])
+
+    def test_pause_after_passing_gates_still_blocks_under_the_lock(self):
+        from app.models import StockPaperRecoveryState
+
+        with Session(self.engine) as db, ExitStack() as stack:
+            for item in self.gates():
+                stack.enter_context(item)
+            account, _strategy, signal = self.seed(db)
+            db.add(StockPaperRecoveryState(status="cooldown"))
+            db.commit()
+            with self.assertRaisesRegex(StockPaperError, "recovery is cooldown"):
+                self.reserve(db, signal, self.budget_quantity(account))
+            self.assertEqual(db.query(StockPaperOrder).count(), 0)
+
+    def late_feed(self, minutes_late):
+        latest = self.now.replace(second=0, microsecond=0) - timedelta(minutes=minutes_late)
+        return patch("app.services.stock_paper_ledger.feed_status", return_value={
+            "status": "stale", "execution_status": "stale", "exchange_timestamp": latest})
+
+    def seed_daily(self, db, strategy_type="rsi2_pullback"):
+        account, strategy, signal = self.seed(db)
+        strategy.strategy_type = strategy_type
+        db.commit()
+        return account, signal
+
+    def test_daily_bar_strategy_tolerates_a_recently_late_minute_feed(self):
+        with Session(self.engine) as db, ExitStack() as stack:
+            for item in self.gates():
+                stack.enter_context(item)
+            stack.enter_context(self.late_feed(8))
+            account, signal = self.seed_daily(db)
+            order = self.reserve(db, signal, self.budget_quantity(account))
+            self.assertEqual(order.status, "reserved")
+
+    def test_daily_bar_strategy_still_refuses_a_long_stale_feed(self):
+        with Session(self.engine) as db, ExitStack() as stack:
+            for item in self.gates():
+                stack.enter_context(item)
+            stack.enter_context(self.late_feed(25))
+            account, signal = self.seed_daily(db)
+            with self.assertRaisesRegex(StockPaperError, "stale/unavailable"):
+                self.reserve(db, signal, self.budget_quantity(account))
+
+    def test_intraday_strategy_refuses_a_late_feed(self):
+        with Session(self.engine) as db, ExitStack() as stack:
+            for item in self.gates():
+                stack.enter_context(item)
+            stack.enter_context(self.late_feed(3))
+            account, signal = self.seed_daily(db, strategy_type="macd_momentum")
+            with self.assertRaisesRegex(StockPaperError, "stale/unavailable"):
+                self.reserve(db, signal, self.budget_quantity(account))
 
     def test_exploration_is_refused_when_disabled(self):
         with Session(self.engine) as db, ExitStack() as stack, \

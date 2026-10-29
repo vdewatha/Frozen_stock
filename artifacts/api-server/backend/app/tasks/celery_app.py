@@ -16,6 +16,10 @@ INTRADAY_MARKET_DATA_QUEUE = "intraday_market_data"
 RESEARCH_MARKET_DATA_QUEUE = "research_market_data"
 SCALP_RESEARCH_QUEUE = "scalp_research"
 MONITORING_QUEUE = "monitoring"
+# The five-minute broker reconciliation is the watchdog's broker heartbeat. It
+# gets a lane of its own so the minutely signal pass cannot queue it past the
+# watchdog's ten-minute staleness limit (which re-pauses recovery).
+BROKER_RECONCILIATION_QUEUE = "broker_reconciliation"
 GENERAL_WORKER_QUEUES = frozenset({"default", "market_data", "learning", "paper_trading", "risk"})
 OBSERVATION_TASKS = frozenset({
     "app.tasks.jobs.iex_research_collection_job",
@@ -68,6 +72,7 @@ celery_app.conf.task_queues = (
     Queue("paper_trading", Exchange("paper_trading"), routing_key="paper_trading"),
     Queue("risk", Exchange("risk"), routing_key="risk"),
     Queue(MONITORING_QUEUE, Exchange(MONITORING_QUEUE), routing_key=MONITORING_QUEUE),
+    Queue(BROKER_RECONCILIATION_QUEUE, Exchange(BROKER_RECONCILIATION_QUEUE), routing_key=BROKER_RECONCILIATION_QUEUE),
 )
 celery_app.conf.task_default_queue = "default"
 celery_app.conf.worker_prefetch_multiplier = 1
@@ -94,7 +99,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.retry_failed_strategy_learning_scopes_job": {"queue": "learning"},
     "app.tasks.jobs.paper_trading_signal_job": {"queue": "paper_trading"},
     "app.tasks.jobs.paper_trade_reconciliation_job": {"queue": "paper_trading"},
-    "app.tasks.jobs.stock_paper_broker_reconciliation_job": {"queue": "paper_trading"},
+    "app.tasks.jobs.stock_paper_broker_reconciliation_job": {"queue": BROKER_RECONCILIATION_QUEUE},
     "app.tasks.jobs.memory_replay_gate_monitor_job": {"queue": "learning"},
     "app.tasks.jobs.deployment_monitor_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_promotion_job": {"queue": "risk"},
@@ -181,6 +186,8 @@ celery_app.conf.beat_schedule = {
     "stock-paper-broker-reconciliation-job": {
         "task": "app.tasks.jobs.stock_paper_broker_reconciliation_job",
         "schedule": 60 * 5,
+        # A tick that waited past the next one is dropped, not run late.
+        "options": {"expires": 4 * 60},
     },
     "memory-replay-gate-monitor-job": {"task": "app.tasks.jobs.memory_replay_gate_monitor_job", "schedule": 60 * 30},
     "deployment-monitor-job": {"task": "app.tasks.jobs.deployment_monitor_job", "schedule": 60 * 15},

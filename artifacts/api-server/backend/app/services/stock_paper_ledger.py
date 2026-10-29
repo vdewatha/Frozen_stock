@@ -1640,6 +1640,32 @@ def _strategy_owned_position_counts(db: Session, account: StockPaperAccount,
     return counts
 
 
+# A daily-bar strategy's order may use a minute feed that is late but still
+# recent: sparse IEX symbols such as DIA often print minutes apart, which kept
+# RSI(2)/IBS entries blocked although their decision uses completed daily bars.
+DAILY_BAR_MAX_MINUTE_BAR_AGE = timedelta(minutes=20)
+
+
+def _late_feed_acceptable_for_daily_bar_order(
+    db: Session, market: dict, signal_id: int | None, now: datetime,
+) -> bool:
+    """True when only lateness keeps the feed from ready and the order's
+    strategy decides on completed daily bars."""
+    if market.get("execution_status") != "stale" or market.get("status") not in {"stale", "incomplete"}:
+        return False
+    latest = market.get("exchange_timestamp")
+    if not isinstance(latest, datetime) or signal_id is None:
+        return False
+    bar_close = _utc(latest) + timedelta(minutes=1)
+    if bar_close > now or now - bar_close > DAILY_BAR_MAX_MINUTE_BAR_AGE:
+        return False
+    signal = db.get(StrategySignal, signal_id)
+    strategy = db.get(Strategy, signal.strategy_id) if signal is not None else None
+    from app.services.strategy_execution_policy import daily_bar_execution
+
+    return strategy is not None and daily_bar_execution(strategy)
+
+
 def _validate_reference_price(db: Session, symbol: str, price: Decimal) -> None:
     latest = (
         db.query(IntradayBar)
@@ -2182,7 +2208,12 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             # recovery gates remain independent and continue to fail closed.
             if account.status != "halted" or watchdog_halt or transient_provider_halt:
                 account.status, account.halt_reason = "reconciled", None
-            if watchdog_halt or transient_provider_halt:
+            restored = False
+            if watchdog_halt:
+                from app.services.stock_recovery import restore_after_transient_heartbeat_pause
+
+                restored = restore_after_transient_heartbeat_pause(db, account)
+            if (watchdog_halt or transient_provider_halt) and not restored:
                 recovery_state = db.get(StockPaperRecoveryState, 1)
                 if recovery_state and recovery_state.status in {"cooldown", "paused"}:
                     recovery_state.status = "revalidation_required"
@@ -2479,30 +2510,33 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     broker exit legs currently hold; dispatch still refuses to submit it until
     those legs are confirmed terminal, so the two can never both sell.
     """
-    account = active_paper_account(db, for_update=True)
     side, symbol = side.lower(), symbol.strip().upper()
     client_order_id = "sp-" + hashlib.sha256(idempotency_key.encode()).hexdigest()[:45]
-    existing = db.query(StockPaperOrder).filter_by(client_order_id=client_order_id).one_or_none()
-    if existing:
-        if (existing.symbol, existing.side, existing.quantity, existing.limit_price) != (symbol, side, quantity, reference_price):
+
+    def _existing_reservation() -> StockPaperOrder | None:
+        existing = db.query(StockPaperOrder).filter_by(client_order_id=client_order_id).one_or_none()
+        if existing and (existing.symbol, existing.side, existing.quantity, existing.limit_price) != (symbol, side, quantity, reference_price):
             raise StockPaperError("Idempotency key was already used for a different order")
         return existing
-    if (
-        not account
-        or account.status != "reconciled"
-        or account.reconciliation_required
-        or account.unexplained_residual
-    ):
-        raise StockPaperError("Stock paper exposure is blocked until reconciled")
-    if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
-        raise StockPaperError("Only positive long buy/sell paper orders are permitted")
+
+    existing = _existing_reservation()
+    if existing:
+        return existing
     now = datetime.now(UTC)
     if source in AUTONOMOUS_ORDER_SOURCES:
         # Scheduled execution is the autonomous path. It must satisfy the
         # same persisted qualification, recovery, notification, audit, feed,
         # and risk evidence used by the launch preflight before reserving an
         # order. Manual and recovery paths retain their separate contracts.
+        #
+        # Evaluate the gates before taking the account row lock. They read
+        # minutes of evidence (feeds, monitoring, audit chain); under the lock
+        # they held the account row through every signal pass, the broker
+        # reconciliation queued behind it for up to ten minutes, and its stale
+        # heartbeat made the watchdog re-pause recovery. Pauses and the kill
+        # switch are re-read under the lock below.
         from app.services.stock_learning_cycle import (
+            TRADABLE_RECOVERY_STATUSES,
             classify_launch_prerequisites,
             evaluate_launch_admission_prerequisites,
         )
@@ -2513,6 +2547,28 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             raise StockPaperError(
                 f"Scheduled paper execution blocked by launch admission: {reason}"
             )
+    account = active_paper_account(db, for_update=True)
+    # A concurrent reservation with the same key may have committed while the
+    # gates ran; the row lock serializes from here on.
+    existing = _existing_reservation()
+    if existing:
+        return existing
+    if (
+        not account
+        or account.status != "reconciled"
+        or account.reconciliation_required
+        or account.unexplained_residual
+    ):
+        raise StockPaperError("Stock paper exposure is blocked until reconciled")
+    if source in AUTONOMOUS_ORDER_SOURCES:
+        recovery = db.query(StockPaperRecoveryState).order_by(StockPaperRecoveryState.id).first()
+        if recovery is not None and recovery.status not in TRADABLE_RECOVERY_STATUSES:
+            raise StockPaperError(
+                "Scheduled paper execution blocked by launch admission: "
+                f"recovery is {recovery.status}"
+            )
+    if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
+        raise StockPaperError("Only positive long buy/sell paper orders are permitted")
     approved_context = None
     if trial_id:
         # Resolve the approval before any reservation is committed.  The
@@ -2541,7 +2597,10 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         market = feed_status(db, symbol, now=now)
     except ValueError as exc:
         raise StockPaperError("Stock paper order has no approved fresh market-data symbol") from exc
-    if market.get("execution_status", market["status"]) != "ready":
+    if market.get("execution_status", market["status"]) != "ready" and not (
+        source in AUTONOMOUS_ORDER_SOURCES
+        and _late_feed_acceptable_for_daily_bar_order(db, market, signal_id, now)
+    ):
         raise StockPaperError(
             "Stock paper order blocked by stale/unavailable market data: "
             f"{market.get('execution_status', market['status'])}"
@@ -2727,7 +2786,10 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
         market = feed_status(db, order.symbol, now=now)
     except ValueError as exc:
         raise StockPaperError("Reserved order has no approved fresh market-data symbol") from exc
-    if market.get("execution_status", market["status"]) != "ready":
+    if market.get("execution_status", market["status"]) != "ready" and not (
+        order.source in AUTONOMOUS_ORDER_SOURCES
+        and _late_feed_acceptable_for_daily_bar_order(db, market, order.signal_id, now)
+    ):
         raise StockPaperError(
             "Reserved order blocked by stale/unavailable market data: "
             f"{market.get('execution_status', market['status'])}"
