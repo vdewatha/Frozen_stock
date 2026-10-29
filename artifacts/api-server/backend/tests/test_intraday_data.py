@@ -202,6 +202,43 @@ class IntradayDataTests(unittest.TestCase):
         self.assertEqual(_aware_utc(row.last_verified_at), refreshed_at)
         self.assertEqual(result["entitlement_state"], "verified")
 
+    def test_identical_refetch_reverifies_every_bar_with_one_update(self):
+        from sqlalchemy import event
+
+        first_observed = datetime(2026, 9, 29, 18, 0, tzinfo=UTC)
+        refreshed_at = first_observed + timedelta(minutes=1)
+        minutes = [first_observed - timedelta(minutes=offset) for offset in range(62, 2, -1)]
+        bars = [{
+            "t": minute.isoformat().replace("+00:00", "Z"),
+            "o": 100, "h": 101, "l": 99, "c": 100.5, "v": 1000,
+        } for minute in minutes]
+        with patch.object(settings, "active_market_data_provider", "alpaca_iex"):
+            intraday_data.upsert_intraday_bars(
+                self.db, "SPY", bars, ingested_at=first_observed,
+                provider="alpaca_iex", feed_class="iex", verify_entitlement=True,
+            )
+            updates = []
+
+            def count(conn, cursor, statement, params, context, executemany):
+                if statement.lstrip().upper().startswith("UPDATE"):
+                    updates.append(len(params) if executemany else 1)
+
+            event.listen(self.db.get_bind(), "before_cursor_execute", count)
+            try:
+                result = intraday_data.upsert_intraday_bars(
+                    self.db, "SPY", bars, ingested_at=refreshed_at,
+                    provider="alpaca_iex", feed_class="iex", verify_entitlement=True,
+                )
+            finally:
+                event.remove(self.db.get_bind(), "before_cursor_execute", count)
+        self.assertEqual(updates, [1])
+        self.assertEqual(result["rows_imported"], 60)
+        self.db.expire_all()
+        rows = self.db.query(IntradayBar).all()
+        self.assertEqual(len(rows), 60)
+        self.assertTrue(all(_aware_utc(row.ingested_at) == first_observed for row in rows))
+        self.assertTrue(all(_aware_utc(row.last_verified_at) == refreshed_at for row in rows))
+
     def test_direct_fixture_import_cannot_create_entitlement_evidence(self):
         observed = datetime(2026, 9, 29, 18, 0, tzinfo=UTC)
         with patch.object(settings, "active_market_data_provider", "alpaca_iex"), patch.object(
