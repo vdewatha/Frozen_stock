@@ -39,7 +39,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.services import stock_paper_ledger as ledger
-from app.services.strategy_execution_policy import symbol_scope_for
+from app.services.strategy_execution_policy import daily_bar_execution, gate_daily_bar_entry, symbol_scope_for
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -125,6 +125,7 @@ def generate_cycle_signals(
     strategies: Iterable[Any],
     *,
     meta_label: Any = None,
+    now: datetime | None = None,
 ) -> tuple[dict[tuple[str, str], dict | BaseException], dict]:
     """Generate and persist one signal per (symbol, strategy) in one pass.
 
@@ -137,8 +138,14 @@ def generate_cycle_signals(
     ``meta_label`` (a ``meta_label_shadow.MetaLabelRuntime``) scores every
     BUY; the record is stored in the signal's ``features["meta_label"]`` and
     returned as ``outcome["meta_label"]``.  It never changes the signal.
+
+    Strategies with ``daily_bar_execution`` pass through
+    ``gate_daily_bar_entry`` at ``now`` (default: the current time): a BUY
+    outside the early-session entry window is persisted as a HOLD, and every
+    such signal records ``features["entry_timing"]``.
     """
     started = time.perf_counter()
+    evaluated_at = now or datetime.now(UTC)
     symbols = [str(symbol).strip().upper() for symbol in symbols]
     strategies = list(strategies)
     stats = {
@@ -160,6 +167,7 @@ def generate_cycle_signals(
     # 1. Resolve each strategy's bound row once per cycle.
     bound: list[tuple[str, bool, Any | BaseException]] = []
     scopes: dict[str, frozenset[str] | None] = {}
+    daily_bar: dict[str, bool] = {}
     for strategy in strategies:
         strategy_type = strategy.strategy_type
         research_only = _is_research_only(strategy)
@@ -173,6 +181,7 @@ def generate_cycle_signals(
         # Per-strategy symbol scope (e.g. RSI(2) on SPY/QQQ/IWM/DIA only):
         # out-of-scope pairs get no signal row and no outcome at all.
         scopes[strategy_type] = symbol_scope_for(row if not isinstance(row, BaseException) else strategy)
+        daily_bar[strategy_type] = daily_bar_execution(row if not isinstance(row, BaseException) else strategy)
     resolved_at = time.perf_counter()
 
     # 2. One data load per symbol, every strategy computed on that frame.
@@ -203,6 +212,10 @@ def generate_cycle_signals(
                 continue
             try:
                 generated = _generate(strategy_type, row.parameters, symbol, prices, fingerprint, stats)
+                if daily_bar.get(strategy_type):
+                    # Entry timing must match the backtester's next-open fill;
+                    # ``generated`` is a private copy, so the cache is unchanged.
+                    generated = gate_daily_bar_entry(generated, evaluated_at, prices)
             except Exception as exc:  # one strategy must not stop the fan-out
                 outcomes[(symbol, strategy_type)] = exc
                 continue
