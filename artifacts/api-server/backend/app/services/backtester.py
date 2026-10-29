@@ -11,6 +11,7 @@ from app.services.backtest_statistics import (
     block_bootstrap_ci,
     deflated_sharpe_ratio,
     equity_returns,
+    realized_drawdown,
     return_moments,
 )
 from app.services.strategies.registry import get_strategy
@@ -36,6 +37,16 @@ class BacktestConfig:
     max_participation: float = 0.01
     bootstrap_samples: int = 1000
     bootstrap_seed: int = 7
+    # Per-strategy drawdown lock (same rule as the paper entry protection in
+    # entry_protections.py): when realized drawdown over the last
+    # ``strategy_drawdown_trades`` closed trades reaches
+    # ``strategy_drawdown_lock_pct`` x ``starting_cash`` (the backtest's
+    # allocation), no new entries for ``strategy_drawdown_lock_sessions`` bars
+    # after the bar that closed the latest of those trades.  0 = off (default),
+    # so existing backtest evidence is unchanged.
+    strategy_drawdown_lock_pct: float = 0.0
+    strategy_drawdown_trades: int = 10
+    strategy_drawdown_lock_sessions: int = 3
 
 
 def normalized_score(metrics: dict) -> float:
@@ -266,7 +277,20 @@ def run_backtest(
             }
         )
         position = None
+        realized.append((idx, pnl))
         return proceeds - fee
+
+    realized: list[tuple[int, float]] = []  # (bar index of the close, raw P&L)
+    drawdown_locked_entries = 0
+
+    def drawdown_locked(bar: int) -> bool:
+        if config.strategy_drawdown_lock_pct <= 0 or config.strategy_drawdown_trades <= 0 or not realized:
+            return False
+        recent = realized[-config.strategy_drawdown_trades:]
+        if bar > recent[-1][0] + config.strategy_drawdown_lock_sessions:
+            return False
+        limit = config.strategy_drawdown_lock_pct * config.starting_cash
+        return realized_drawdown(pnl for _bar, pnl in recent) >= limit
 
     min_history = 60
     # A decision can only use the last completed bar. Execute it at the next
@@ -300,7 +324,9 @@ def run_backtest(
         # 2. New entry at the open, using only completed prior bars.
         if position is None:
             signal = strategy.generate_signal(symbol, history)
-            if signal.action == "BUY" and signal.confidence >= 0.55:
+            if signal.action == "BUY" and signal.confidence >= 0.55 and drawdown_locked(idx):
+                drawdown_locked_entries += 1
+            elif signal.action == "BUY" and signal.confidence >= 0.55:
                 # Size from the floor-cost price; impact is charged after the cap.
                 reference_price = open_ * (1 + config.slippage_bps / 10_000)
                 max_risk_dollars = cash * config.risk_per_trade
@@ -420,6 +446,13 @@ def run_backtest(
         "beats_baselines": beats,
         "statistics": statistics,
     }
+    if config.strategy_drawdown_lock_pct > 0:
+        metrics["strategy_drawdown_lock"] = {
+            "lock_pct": config.strategy_drawdown_lock_pct,
+            "lookback_trades": config.strategy_drawdown_trades,
+            "lock_sessions": config.strategy_drawdown_lock_sessions,
+            "locked_entries": drawdown_locked_entries,
+        }
     metrics["score"] = normalized_score(metrics)
     reasons = rejection_reasons(metrics)
     metrics["rejected"] = bool(reasons)

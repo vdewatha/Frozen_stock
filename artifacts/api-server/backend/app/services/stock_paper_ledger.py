@@ -2996,6 +2996,19 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     return db.get(StockPaperOrder, order_id)
 
 
+def _strategy_drawdown_locks(db: Session, account: StockPaperAccount) -> dict:
+    """Active per-strategy drawdown entry locks (read-only status view)."""
+    from app.services.entry_protections import load_entry_protections
+
+    rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
+    type_by_id = {row.id: row.strategy_type for row in db.query(Strategy).all()}
+    protections = load_entry_protections(db, account, now=datetime.now(UTC),
+                                         rules=rule.value if rule else {}, type_by_id=type_by_id)
+    if protections.load_error:
+        return {"status": "unavailable", "reason": protections.load_error, "locks": []}
+    return {"status": "ok", "entries_only": True, "locks": protections.strategy_locks()}
+
+
 def stock_paper_status(db: Session) -> dict:
     from app.services.stock_paper_performance import observed_paper_performance
     from app.services.paper_research_accounting import assess as assess_research_accounting
@@ -3039,6 +3052,7 @@ def stock_paper_status(db: Session) -> dict:
         "paper_research_accounting": assess_research_accounting(db, account),
         "paper_research_venue": research_venue_status(db, account),
         "paper_execution": broker_projection.get("paper_execution"),
+        "strategy_drawdown_locks": _strategy_drawdown_locks(db, account),
         "last_activity_reconciliation": ({"observed_at": activity_report.created_at.isoformat(),
                                            **(activity_report.payload or {})} if activity_report else None),
         "account": {"broker": account.broker, "account_id": account.broker_account_id, "currency": account.currency, "cash": money(account.cash),

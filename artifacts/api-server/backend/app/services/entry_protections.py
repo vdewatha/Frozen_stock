@@ -46,6 +46,17 @@ Protections (each disabled by a value of 0):
    after the regular-session open or the last ``entry_close_buffer_minutes``
    before the close; bounds come from the exchange calendar, so half-days
    use their early close.
+6. **Strategy drawdown lock** — when the peak-to-trough drawdown of a
+   strategy's cumulative realized P&L over its last
+   ``strategy_drawdown_trades`` closed round trips (all symbols) reaches
+   ``strategy_drawdown_lock_pct`` of the strategy's allocated notional
+   (``strategy_allocation_fraction`` x account equity), that strategy's new
+   entries are blocked for the rest of the session in which the latest of
+   those trades closed plus the next ``strategy_drawdown_lock_sessions`` NYSE
+   sessions.  The lock is anchored on the latest closed trade, so it expires
+   even without new trades and re-arms only when a new close keeps the
+   window in drawdown.  The backtester applies the same rule when
+   ``BacktestConfig.strategy_drawdown_lock_pct`` > 0 (off by default).
 
 Configuration: each key is read from the active ``RiskRule.value`` first and
 falls back to ``settings.paper_<key>``.  Unparseable or negative risk-rule
@@ -62,6 +73,8 @@ from typing import Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
+from app.services.backtest_statistics import realized_drawdown
+from app.services.exchange_sessions import is_nyse_session
 from app.services.intraday_data import session_bounds
 
 logger = logging.getLogger(__name__)
@@ -84,8 +97,10 @@ INT_KEYS = (
     "low_profit_lock_minutes",
     "entry_open_buffer_minutes",
     "entry_close_buffer_minutes",
+    "strategy_drawdown_trades",
+    "strategy_drawdown_lock_sessions",
 )
-DECIMAL_KEYS = ("session_drawdown_lock_pct",)
+DECIMAL_KEYS = ("session_drawdown_lock_pct", "strategy_drawdown_lock_pct", "strategy_allocation_fraction")
 
 
 def protective_stop_idempotency_key(session_key: str, symbol: str) -> str:
@@ -134,6 +149,10 @@ class ProtectionConfig:
     session_drawdown_lock_pct: Decimal = Decimal("0.02")
     entry_open_buffer_minutes: int = 15
     entry_close_buffer_minutes: int = 10
+    strategy_drawdown_trades: int = 10
+    strategy_drawdown_lock_sessions: int = 3
+    strategy_drawdown_lock_pct: Decimal = Decimal("0.05")
+    strategy_allocation_fraction: Decimal = Decimal("0.10")
 
     def as_dict(self) -> dict:
         return {key: (str(value) if isinstance(value, Decimal) else value) for key, value in self.__dict__.items()}
@@ -410,6 +429,59 @@ def low_profit_block(trades: Iterable[ClosedTrade], symbol: str, strategy: str |
     return None
 
 
+def strategy_lock_end(closed_at: datetime, lock_sessions: int,
+                      is_session: Callable = is_nyse_session) -> datetime:
+    """Midnight ET that ends a lock: rest of the close's session + N sessions."""
+    day = _utc(closed_at).astimezone(ET).date()
+    counted = 0
+    for _ in range(lock_sessions * 7 + 14):  # bounded walk over weekends/holidays
+        day += timedelta(days=1)
+        if is_session(day):
+            counted += 1
+            if counted > lock_sessions:
+                break
+    return datetime(day.year, day.month, day.day, tzinfo=ET).astimezone(UTC)
+
+
+def strategy_drawdown_state(trades: Iterable[ClosedTrade], strategy: str, now: datetime,
+                            config: ProtectionConfig, allocated: Decimal | None,
+                            is_session: Callable = is_nyse_session) -> dict | None:
+    """Active lock dict for ``strategy`` or None (disabled / not in drawdown)."""
+    if (not config.strategy_drawdown_trades or not config.strategy_drawdown_lock_pct
+            or not config.strategy_drawdown_lock_sessions or not allocated or allocated <= 0):
+        return None
+    now = _utc(now)
+    rows = sorted((row for row in trades if row.strategy == strategy and _utc(row.closed_at) <= now),
+                  key=lambda row: _utc(row.closed_at))
+    recent = rows[-config.strategy_drawdown_trades:]
+    if not recent:
+        return None
+    drawdown = Decimal(realized_drawdown(row.net_pnl for row in recent))
+    limit = Decimal(allocated) * config.strategy_drawdown_lock_pct
+    if drawdown < limit:
+        return None
+    until = strategy_lock_end(recent[-1].closed_at, config.strategy_drawdown_lock_sessions, is_session)
+    if now >= until:
+        return None
+    return {"strategy": strategy, "drawdown": str(drawdown.quantize(Decimal("0.01"))),
+            "limit": str(limit.quantize(Decimal("0.01"))), "trades": len(recent),
+            "locked_until": until.isoformat()}
+
+
+def strategy_drawdown_block(trades: Iterable[ClosedTrade], strategy: str | None, now: datetime,
+                            config: ProtectionConfig, allocated: Decimal | None) -> dict | None:
+    if not strategy:
+        return None
+    state = strategy_drawdown_state(trades, strategy, now, config, allocated)
+    if state is None:
+        return None
+    return _block("strategy_drawdown", (
+        f"{strategy} realized drawdown {state['drawdown']} over its last {state['trades']} closed trades "
+        f"reached the lock ({config.strategy_drawdown_lock_pct:.2%} of allocated notional = {state['limit']}); "
+        f"new entries locked for {config.strategy_drawdown_lock_sessions} sessions"
+    ), datetime.fromisoformat(state["locked_until"]))
+
+
 # --------------------------------------------------------------------------
 # per-cycle evaluator
 
@@ -422,6 +494,7 @@ class EntryProtections:
     trades: list[ClosedTrade] = field(default_factory=list)
     bounds: tuple[datetime, datetime] | None = None
     drawdown: Decimal | None = None
+    allocated_notional: Decimal | None = None
     load_error: str | None = None
 
     def check(self, symbol: str, strategy: str | None) -> dict | None:
@@ -434,6 +507,7 @@ class EntryProtections:
             stoploss_guard_block(self.events, strategy, self.now, self.config),
             cooldown_block(self.events, symbol, self.now, self.config),
             low_profit_block(self.trades, symbol, strategy, self.now, self.config),
+            strategy_drawdown_block(self.trades, strategy, self.now, self.config, self.allocated_notional),
         ):
             if outcome is not None:
                 return outcome
@@ -448,7 +522,16 @@ class EntryProtections:
             self.drawdown, self.config, self.bounds[1] if self.bounds else None)
         if cycle_wide:
             out["cycle_block"] = cycle_wide["reason"]
+        out["strategy_locks"] = self.strategy_locks()
         return out
+
+    def strategy_locks(self) -> list[dict]:
+        """Active per-strategy drawdown locks (entries blocked, exits allowed)."""
+        strategies = sorted({row.strategy for row in self.trades})
+        return [state for state in (
+            strategy_drawdown_state(self.trades, name, self.now, self.config, self.allocated_notional)
+            for name in strategies
+        ) if state is not None]
 
 
 def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
@@ -493,6 +576,9 @@ def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
                 stop_out=stop_out,
             ))
         protections.events, protections.trades = reconstruct_trades(records)
+        equity = getattr(account, "equity", None)
+        if equity is not None and Decimal(equity) > 0:
+            protections.allocated_notional = Decimal(equity) * config.strategy_allocation_fraction
         if config.session_drawdown_lock_pct and protections.bounds is not None:
             opened = _utc(protections.bounds[0])
             snapshots = [
