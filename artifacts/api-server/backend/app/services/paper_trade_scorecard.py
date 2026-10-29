@@ -141,8 +141,9 @@ class _ExitAttribution:
 
     The autotrader reserves sells with idempotency keys
     ``{scheduled|explore}-paper:{ET date}:{symbol}:{strategy_type}:sell`` and
-    ``scheduled-paper:{ET date}:{symbol}:protective_stop:sell``; sell orders do
-    not store their strategy, so the key is recomputed to recover it.
+    ``scheduled-paper:{ET date}:{symbol}:protective_stop:sell``. Newer sells
+    store the strategy of the lot they close (preferred when present); older
+    ones did not, so the key is recomputed to recover it.
     """
 
     def __init__(self, strategy_types: Iterable[str]):

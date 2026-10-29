@@ -25,9 +25,11 @@ Protections (each disabled by a value of 0):
      * the app-side protective stop sell from the autotrader, recognised by its
        deterministic idempotency key (:func:`protective_stop_idempotency_key`)
        hashed into ``client_order_id``.
-   Strategy attribution: stop legs inherit the entry's ``strategy_id``; app-side
-   protective stops carry no strategy, so they are attributed FIFO to the
-   strategy lots they closed (see :func:`reconstruct_trades`).
+   Strategy attribution: stop legs inherit the entry's ``strategy_id``; an
+   app-side protective stop carries the strategy of the lot it closes when a
+   single strategy holds the symbol, and otherwise none, in which case it is
+   attributed FIFO to the strategy lots it closed (see
+   :func:`reconstruct_trades`).
 2. **Exit cooldown** — any sell fill on a symbol (any source) blocks new
    entries on that symbol for ``exit_cooldown_minutes``.
 3. **Low-profit symbol lock** — when the last ``low_profit_trades`` closed

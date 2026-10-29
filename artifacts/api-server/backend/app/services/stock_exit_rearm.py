@@ -123,9 +123,10 @@ def exit_percentages(rules: dict, strategy: Strategy | None) -> tuple[Decimal, D
 def _owner_buckets(db: Session, account_id: int, symbol: str, position_qty: Decimal) -> tuple[dict, bool]:
     """Split the position into strategy-owned lots (``None`` = unattributed).
 
-    Returns ``(buckets, ambiguous)``. App-side sells carry no strategy, so when
-    several strategies hold the symbol and unattributed sells have reduced it,
-    the owner of the remaining shares is unknown. Those shares are then
+    Returns ``(buckets, ambiguous)``. App-side sells carry the owning lot's
+    strategy only when the owner is unambiguous, so when several strategies
+    hold the symbol and unattributed sells have reduced it, the owner of the
+    remaining shares is unknown. Those shares are then
     protected as one unattributed lot (``ambiguous``), the same fallback the
     autotrader uses for unattributed SELLs.
     """
