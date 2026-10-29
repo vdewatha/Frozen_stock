@@ -304,13 +304,22 @@ function startPaperWorkers(): void {
       "--pool=threads", "--concurrency=2", "--prefetch-multiplier=1",
     ], "paper-core");
     // Time-critical lane: long research and learning jobs must never starve
-    // the minutely intraday import, paper signals, risk or monitoring.
+    // paper signals, risk or monitoring.
     supervisePaperWorker([
       "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
       "--loglevel=INFO", "--hostname=paper-fast@%h",
-      "--queues=intraday_market_data,paper_trading,risk,monitoring",
+      "--queues=paper_trading,risk,monitoring",
       "--pool=threads", "--concurrency=2", "--prefetch-multiplier=1",
     ], "paper-fast");
+    // The minutely intraday import gets a lane of its own. Sharing paper-fast,
+    // a 20-minute signal pass and a 13-minute reconciliation held both threads
+    // and every import expired, so readiness lost the feed mid-session.
+    supervisePaperWorker([
+      "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
+      "--loglevel=INFO", "--hostname=paper-intraday@%h",
+      "--queues=intraday_market_data",
+      "--pool=threads", "--concurrency=1", "--prefetch-multiplier=1",
+    ], "paper-intraday");
     // Recovery admission requires an independent heartbeat. Keep this
     // process outside the Celery pool so a queue backlog cannot mask a
     // stalled paper worker.
