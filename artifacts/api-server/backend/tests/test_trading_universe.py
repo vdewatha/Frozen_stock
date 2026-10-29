@@ -283,6 +283,36 @@ def test_backfill_requests_share_one_bounded_budget():
         engine.dispose()
 
 
+def test_backfill_stops_at_the_time_budget():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    observed = datetime(2026, 9, 11, 18, 0, tzinfo=UTC)
+    symbols = ["AAPL", "MSFT", "NVDA", "XLE", "SPY"]
+    calls = []
+
+    def single(symbol, start, end):
+        calls.append(symbol)
+        return [], 0, False
+
+    try:
+        with patch.object(settings, "paper_execution_symbols", symbols), \
+             patch.object(settings, "active_market_data_provider", "tradier"), \
+             patch.object(settings, "intraday_backfill_chunks_per_cycle", 8), \
+             patch.object(settings, "intraday_backfill_request_budget", 40), \
+             patch.object(settings, "intraday_backfill_time_budget_seconds", 0), \
+             patch.object(intraday_data, "_fetch_bars", side_effect=single):
+            result = intraday_data.ingest_intraday(db, symbols, now=observed)
+        # A spent time budget still polls each newest window but makes no
+        # repair request, leaving the request budget untouched.
+        assert len(calls) == len(symbols)
+        assert result["backfill_requests_remaining"] == 40
+        assert all(row["status"] == "incomplete" for row in result["results"])
+    finally:
+        db.close()
+        engine.dispose()
+
+
 # --- sector / correlation cap ------------------------------------------------
 
 def _cycle(db, symbols, actions):
