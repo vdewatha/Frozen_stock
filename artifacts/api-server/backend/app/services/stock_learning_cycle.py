@@ -48,7 +48,7 @@ from app.services.stock_paper_ledger import (
 )
 from app.services.paper_venue_qualification import paper_venue_qualification_status
 from app.services.broker import stock_paper_broker_status
-from app.services.operational_hardening import _audit_chain_check
+from app.services.operational_hardening import AUDIT_CHAIN_RECENT_WINDOW, _audit_chain_check
 from app.services.portfolio_risk import portfolio_risk_snapshot
 from app.services.risk import DEFAULT_RISK_RULES
 from app.services.stock_recovery import HEARTBEAT_TIMEOUT
@@ -943,7 +943,7 @@ def evaluate_launch_admission_prerequisites(
         )
 
     try:
-        audit = _audit_chain_check(db)
+        audit = _audit_chain_check(db, recent=AUDIT_CHAIN_RECENT_WINDOW)
         audit_status = audit.get("status")
         gates["audit_chain"] = _gate(
             "pass" if audit_status == "clear" else "fail" if audit_status == "breach" else "unknown",
