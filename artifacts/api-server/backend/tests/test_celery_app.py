@@ -167,11 +167,18 @@ class CeleryConfigurationTests(unittest.TestCase):
         self.assertTrue(result["paper_only"])
         self.assertFalse(result["live_authorized"])
 
-    def test_feature_generation_refreshes_on_learning_cadence(self):
+    def test_feature_generation_runs_only_outside_market_hours(self):
         entry = celery_app.conf.beat_schedule["daily-feature-generation"]
         self.assertEqual(entry["task"], "app.tasks.jobs.daily_feature_generation")
         self.assertIsInstance(entry["schedule"], crontab)
-        self.assertEqual(entry["schedule"].hour, {2, 8, 13, 17})
+        self.assertEqual(entry["schedule"].hour, {2, 17})
+        # New York wall clock: no run may start between 07:00 and 16:00, since
+        # a run holds the CPU for over an hour and starves the intraday import.
+        self.assertFalse(entry["schedule"].hour & set(range(7, 16)))
+
+    def test_paper_signal_ticks_expire_instead_of_backlogging(self):
+        entry = celery_app.conf.beat_schedule["paper-trading-signal-job"]
+        self.assertEqual(entry["options"], {"expires": 55})
 
     def test_slow_jobs_use_wall_clock_so_restarts_cannot_starve_them(self):
         # An interval schedule restarts its countdown with every beat restart;

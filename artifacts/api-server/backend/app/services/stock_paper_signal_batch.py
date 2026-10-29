@@ -39,6 +39,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.services import stock_paper_ledger as ledger
+from app.services.strategy_execution_policy import symbol_scope_for
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -150,6 +151,7 @@ def generate_cycle_signals(
         "strategy_cache_hits": 0,
         "signals_persisted": 0,
         "commits": 0,
+        "out_of_scope_pairs": 0,
     }
     outcomes: dict[tuple[str, str], dict | BaseException] = {}
     meta_records: dict[tuple[str, str], dict] = {}
@@ -157,6 +159,7 @@ def generate_cycle_signals(
 
     # 1. Resolve each strategy's bound row once per cycle.
     bound: list[tuple[str, bool, Any | BaseException]] = []
+    scopes: dict[str, frozenset[str] | None] = {}
     for strategy in strategies:
         strategy_type = strategy.strategy_type
         research_only = _is_research_only(strategy)
@@ -167,6 +170,9 @@ def generate_cycle_signals(
             row = exc
         stats["strategy_resolutions"] += 1
         bound.append((strategy_type, research_only, row))
+        # Per-strategy symbol scope (e.g. RSI(2) on SPY/QQQ/IWM/DIA only):
+        # out-of-scope pairs get no signal row and no outcome at all.
+        scopes[strategy_type] = symbol_scope_for(row if not isinstance(row, BaseException) else strategy)
     resolved_at = time.perf_counter()
 
     # 2. One data load per symbol, every strategy computed on that frame.
@@ -179,12 +185,19 @@ def generate_cycle_signals(
         except Exception as exc:
             stats["daily_loads"] += 1
             for strategy_type, _research_only, row in bound:
+                scope = scopes.get(strategy_type)
+                if scope is not None and symbol not in scope:
+                    continue
                 # The per-pair path resolved the strategy before loading data.
                 outcomes[(symbol, strategy_type)] = row if isinstance(row, BaseException) else exc
             continue
         fingerprint = _frame_fingerprint(prices)
         symbol_start = len(pending)
         for strategy_type, research_only, row in bound:
+            scope = scopes.get(strategy_type)
+            if scope is not None and symbol not in scope:
+                stats["out_of_scope_pairs"] += 1
+                continue
             if isinstance(row, BaseException):
                 outcomes[(symbol, strategy_type)] = row
                 continue

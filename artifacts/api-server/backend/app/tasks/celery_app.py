@@ -138,10 +138,13 @@ celery_app.conf.beat_schedule = {
     },
     "daily-economic-data-import": {"task": "app.tasks.jobs.daily_economic_data_import", "schedule": crontab(minute=0, hour=7)},
     "daily-news-import": {"task": "app.tasks.jobs.daily_news_import", "schedule": crontab(minute=30, hour=7)},
-    # Re-run the corrected, trusted prediction pipeline often enough to clear
-    # transient worker failures and keep the multi-symbol research loop fresh.
-    # It remains serialized by the job lease and never authorizes orders.
-    "daily-feature-generation": {"task": "app.tasks.jobs.daily_feature_generation", "schedule": crontab(minute=45, hour="2,8,13,17")},
+    # Re-run the trusted prediction pipeline outside market hours only. A run
+    # retrains every active symbol and took ~98 minutes on the 2 vCPU VM; the
+    # 08:45 and 13:45 runs held the CPU through the open and starved the
+    # minutely intraday import. Two runs keep predictions well inside the
+    # 48-hour freshness gate. It is serialized by the job lease and never
+    # authorizes orders.
+    "daily-feature-generation": {"task": "app.tasks.jobs.daily_feature_generation", "schedule": crontab(minute=45, hour="2,17")},
     # Prediction labels mature on trading-day horizons. Re-score often enough
     # to feed the learning and monitoring views without overlapping imports.
     "model-realization-scoring": {
@@ -168,7 +171,12 @@ celery_app.conf.beat_schedule = {
     # Keep the governed paper signal lane aligned with the one-minute scalp
     # research cadence. Reservation idempotency and risk gates prevent repeat
     # submissions; outside readiness it records a safe skip instead.
-    "paper-trading-signal-job": {"task": "app.tasks.jobs.paper_trading_signal_job", "schedule": 60},
+    # Drop a tick that waited past the next one instead of queueing a backlog.
+    "paper-trading-signal-job": {
+        "task": "app.tasks.jobs.paper_trading_signal_job",
+        "schedule": 60,
+        "options": {"expires": 55},
+    },
     "paper-trade-reconciliation-job": {"task": "app.tasks.jobs.paper_trade_reconciliation_job", "schedule": 60 * 30},
     "stock-paper-broker-reconciliation-job": {
         "task": "app.tasks.jobs.stock_paper_broker_reconciliation_job",

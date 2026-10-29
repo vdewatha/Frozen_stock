@@ -99,6 +99,25 @@ class Settings(BaseSettings):
     # partial-venue feed (Alpaca IEX) may resolve as provider-verified no-trade
     # minutes. Longer runs stay missing and keep readiness fail-closed. 0 disables.
     intraday_no_trade_max_run_minutes: int = Field(default=5, ge=0, le=10)
+    # Provider publication lag tolerated by feed_status, on top of the 60-second
+    # late-trade allowance. Alpaca IEX publishes a 1-minute bar ~1-2 minutes
+    # after the minute closes, so with no extra lag readiness flipped between
+    # ready and stale every minute. With 120s, a bar is required once its
+    # minute closed more than 3 minutes ago. A feed that stops updating is still
+    # marked stale after that. 0 restores the strict boundary.
+    intraday_publication_lag_seconds: int = Field(default=120, ge=0, le=300)
+    # Broker-side exit re-arm (app/services/stock_exit_rearm.py): place an
+    # Alpaca OCO (or a stop-only GTC order) for whole shares of a long position
+    # that no live broker stop leg covers. It only adds protective sell orders,
+    # and only ever for shares the broker reports as available.
+    paper_exit_rearm_enabled: bool = True
+    # Re-arm may also run while the account is halted or the kill switch is on.
+    # Protective exits reduce risk. Recovery cancel/flatten always blocks it.
+    paper_exit_rearm_while_halted: bool = True
+    # A bracket entry that stays partially filled this long is cancelled, so its
+    # filled shares can be covered by an OCO. Bracket legs only activate on a
+    # complete fill.
+    paper_exit_rearm_partial_entry_grace_minutes: int = Field(default=5, ge=1, le=390)
     iex_research_enabled: bool = False
     delayed_sip_research_enabled: bool = False
     research_observation_only: bool = False

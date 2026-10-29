@@ -1,11 +1,17 @@
 """Short-horizon mean-reversion candidates with published, high-hit-rate rules.
 
-Both strategies are *research candidates*: they are registered so they can be
-backtested and scored, but they are not seeded into the database and are not
-part of any active or exploration set (see ``RESEARCH_ONLY_STRATEGY_SLUGS`` in
-the registry). They are long-only, buy weakness inside a long-term uptrend and
-leave via an indicator exit (``exit_signal``), a time stop and a catastrophe
-stop. The stop and time stop come from ``BacktestConfig``.
+Both strategies are seeded as ``paper_trading_candidate`` rows (see
+``app/services/seed.py``), so they trade only as small, tagged exploration
+orders until they earn forward-trial evidence through the normal promotion
+path. They are long-only, buy weakness inside a long-term uptrend and leave via
+an indicator exit (``exit_signal``), a time stop and a catastrophe stop.
+
+Exits: the backtester takes the stop and time stop from ``BacktestConfig``.
+Paper execution uses the declared ``default_exit_policy`` (10% catastrophe
+stop as the broker-side stop leg, no take-profit leg, 10-session time stop,
+indicator exit), and ``default_symbol_scope`` limits both to the index ETFs
+where the 2026-10-28 scorecard found the edge (SPY/QQQ/IWM/DIA). Both are
+overridable per Strategy row through ``parameters``.
 
 Implemented from the published rule descriptions (no third-party code):
 
@@ -41,6 +47,7 @@ import pandas as pd
 
 from app.services.strategies.base import (
     BaseStrategy,
+    ExitPolicy,
     StrategySignalResult,
     clamp,
     has_valid_history,
@@ -51,6 +58,14 @@ from app.services.strategies.base import (
 # computing on a bounded tail keeps per-bar cost O(1) without changing values
 # beyond floating-point noise (0.5 ** 300 for RSI(2)).
 _INDICATOR_TAIL = 400
+
+# Scorecard 2026-10-28: pooled SPY/QQQ/IWM/DIA is where RSI(2) keeps a positive
+# expectancy in every window; sector ETFs and single names are weaker.
+INDEX_ETF_SCOPE: tuple[str, ...] = ("SPY", "QQQ", "IWM", "DIA")
+# Scorecard geometry: 10% catastrophe stop, no target, 10-session time stop.
+SHORT_TERM_REVERSION_EXIT_POLICY = ExitPolicy(
+    stop_loss_pct=0.10, take_profit_pct=0.0, max_holding_sessions=10, indicator_exit=True,
+)
 
 
 def wilder_rsi(close: pd.Series, period: int = 2) -> pd.Series:
@@ -98,6 +113,8 @@ class RSI2PullbackStrategy(BaseStrategy):
 
     name = "RSI(2) Pullback"
     slug = "rsi2_pullback"
+    default_exit_policy = SHORT_TERM_REVERSION_EXIT_POLICY
+    default_symbol_scope = INDEX_ETF_SCOPE
 
     def _params(self) -> dict:
         return {
@@ -171,6 +188,8 @@ class IBSMeanReversionStrategy(BaseStrategy):
 
     name = "IBS Mean Reversion"
     slug = "ibs_mean_reversion"
+    default_exit_policy = SHORT_TERM_REVERSION_EXIT_POLICY
+    default_symbol_scope = INDEX_ETF_SCOPE
 
     def _params(self) -> dict:
         return {

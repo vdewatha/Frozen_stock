@@ -118,7 +118,10 @@ class SignalBatchTests(unittest.TestCase):
             return outcomes, stats, commit.call_count
 
     def test_fifty_symbols_eight_strategies_load_each_symbol_once_and_commit_once(self):
-        self.assertEqual(set(STRATEGY_STATUSES), set(STRATEGY_REGISTRY) - RESEARCH_ONLY_STRATEGY_SLUGS)
+        # The symbol-scoped RSI(2)/IBS candidates are covered by
+        # test_strategy_execution_policy; this test checks unscoped fan-out.
+        scoped = {"rsi2_pullback", "ibs_mean_reversion"}
+        self.assertEqual(set(STRATEGY_STATUSES), set(STRATEGY_REGISTRY) - RESEARCH_ONLY_STRATEGY_SLUGS - scoped)
         symbols = [f"S{index:02d}" for index in range(50)]
         data = _DataDouble(symbols)
         started = time.perf_counter()

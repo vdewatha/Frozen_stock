@@ -1664,6 +1664,10 @@ export type RiskSettingsUpdate = {
   memory_replay_min_complete_samples?: number;
   memory_replay_min_avg_return_delta?: number;
   memory_replay_min_hit_rate_delta?: number;
+  /** Broker-side stop-loss distance below the entry price (0 disables). */
+  position_stop_loss_pct?: number;
+  /** Broker-side take-profit distance above the entry price (0 disables). */
+  position_take_profit_pct?: number;
   reason?: string;
 };
 

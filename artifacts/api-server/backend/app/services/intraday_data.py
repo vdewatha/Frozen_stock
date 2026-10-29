@@ -1357,6 +1357,15 @@ def preflight_intraday(
     })
 
 
+def publication_lag_allowance() -> timedelta:
+    """Provider publication lag tolerated beyond the late-trade allowance."""
+    try:
+        seconds = int(getattr(settings, "intraday_publication_lag_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        seconds = 0
+    return timedelta(seconds=min(max(seconds, 0), 300))
+
+
 def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dict:
     symbol = _symbol(symbol)
     observed_at = _aware_utc(now or datetime.now(UTC))
@@ -1368,14 +1377,25 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
     target_bounds = session_bounds(target_day)
     assert target_bounds is not None
 
+    publication_lag = publication_lag_allowance()
     if market_open:
-        expected_end = min(
+        # ``current_end``: the newest minute that has closed and is past the
+        # late-trade allowance. A stored bar at or after it cannot be complete.
+        current_end = min(
             target_bounds[1],
             (observed_at - BAR_CADENCE - LATE_TRADE_ALLOWANCE).replace(second=0, microsecond=0)
             + BAR_CADENCE,
         )
+        # ``expected_end``: the newest minute the provider has normally
+        # published. Readiness and gap accounting use this, so a bar inside its
+        # normal publication lag is not reported as missing or stale.
+        expected_end = min(
+            current_end,
+            (observed_at - BAR_CADENCE - LATE_TRADE_ALLOWANCE - publication_lag).replace(second=0, microsecond=0)
+            + BAR_CADENCE,
+        )
     else:
-        expected_end = target_bounds[1]
+        current_end = expected_end = target_bounds[1]
     latest = (
         db.query(IntradayBar)
         .filter(
@@ -1452,6 +1472,8 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             )
         ) if expected_end > target_bounds[0] else [],
         "checked_at": observed_at,
+        "publication_lag_seconds": int(publication_lag.total_seconds()),
+        "expected_latest_open": (expected_end - BAR_CADENCE).isoformat() if market_open else None,
         "adjustment_policy": "intraday_raw; daily_adjusted_close_for_training",
     }
     if not configured:
@@ -1472,12 +1494,15 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         }
     execution_status = "market_closed"
     if market_open:
+        # Ready when the newest bar is at or past the newest normally published
+        # minute (a bar that arrived early is fine). It must still be a
+        # completed minute.
         execution_status = (
             "ready"
-            if latest and _aware_utc(latest.opened_at) == expected_end - BAR_CADENCE
+            if latest and expected_end - BAR_CADENCE <= _aware_utc(latest.opened_at) < current_end
             else "stale"
         )
-    if market_open and latest and _aware_utc(latest.opened_at) >= expected_end:
+    if market_open and latest and _aware_utc(latest.opened_at) >= current_end:
         return {
             **base,
             "status": "stale",
@@ -1511,6 +1536,9 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             "status": "stale",
             "execution_status": execution_status,
             "failure_class": "stale_data",
-            "unavailable_reason": "Latest completed bar exceeds the selected 60-second delay limit",
+            "unavailable_reason": (
+                "Latest completed bar is older than the 60-second delay limit plus the "
+                f"{int(publication_lag.total_seconds())}-second provider publication allowance"
+            ),
         }
     return {**base, "status": "ready", "execution_status": "ready", "unavailable_reason": None}
