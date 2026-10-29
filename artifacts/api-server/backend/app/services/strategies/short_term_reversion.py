@@ -62,6 +62,12 @@ _INDICATOR_TAIL = 400
 # Scorecard 2026-10-28: pooled SPY/QQQ/IWM/DIA is where RSI(2) keeps a positive
 # expectancy in every window; sector ETFs and single names are weaker.
 INDEX_ETF_SCOPE: tuple[str, ...] = ("SPY", "QQQ", "IWM", "DIA")
+# Regime filter (``trend_filter_sma``): BUY only when the last completed close
+# is above its N-day SMA (Connors' rule); 0 disables it. Per-strategy defaults
+# come from reports/regime-filter-20261029.md: on (200) for RSI(2), where it kept
+# expectancy and halved drawdown; off for IBS, where it cut expectancy.
+RSI2_DEFAULT_TREND_FILTER_SMA = 200
+IBS_DEFAULT_TREND_FILTER_SMA = 0
 # Scorecard geometry: 10% catastrophe stop, no target, 10-session time stop.
 SHORT_TERM_REVERSION_EXIT_POLICY = ExitPolicy(
     stop_loss_pct=0.10, take_profit_pct=0.0, max_holding_sessions=10, indicator_exit=True,
@@ -96,6 +102,28 @@ def _tail(data: pd.DataFrame, rows: int) -> pd.DataFrame:
     return data.iloc[-rows:] if len(data) > rows else data
 
 
+def _trend_filter_sma(parameters: dict, default: int) -> int:
+    """N-day SMA trend filter length; 0 (or negative) disables the filter.
+
+    ``trend_filter_sma`` is the documented name and wins; ``trend_window`` is
+    the older spelling kept for existing Strategy rows.
+    """
+    value = parameters.get("trend_filter_sma", parameters.get("trend_window", default))
+    return max(int(value), 0)
+
+
+def _trend_state(close: pd.Series, window: int) -> tuple[Optional[float], bool]:
+    """(SMA, uptrend) on the last completed close; a disabled filter passes."""
+    if window <= 0:
+        return None, True
+    trend = float(close.iloc[-window:].mean())
+    return trend, float(close.iloc[-1]) > trend
+
+
+def _trend_reason(window: int) -> str:
+    return f"Close above {window}-day SMA and " if window > 0 else "Trend filter off; "
+
+
 def _has_range(data: pd.DataFrame) -> bool:
     return all(column in data.columns for column in ("high", "low"))
 
@@ -103,8 +131,10 @@ def _has_range(data: pd.DataFrame) -> bool:
 class RSI2PullbackStrategy(BaseStrategy):
     """Connors RSI(2) pullback: buy short-term oversold dips in an uptrend.
 
-    Entry: close > SMA(``trend_window``) and RSI(``rsi_period``) <
-    ``entry_threshold`` on the last completed bar.
+    Entry: close > SMA(``trend_filter_sma``, default 200; 0 disables; the
+    older ``trend_window`` key is still read) and RSI(``rsi_period``) <
+    ``entry_threshold`` on the last completed bar. Too little history for the
+    SMA means no entry (fail closed).
     Exit (``exit_rule``): ``"sma"`` exits on a close above SMA(``exit_sma_window``)
     (Connors' rule); ``"up_close"`` exits on the first close above the prior
     close after entry. Time stop and catastrophe stop come from the backtest
@@ -121,7 +151,7 @@ class RSI2PullbackStrategy(BaseStrategy):
         return {
             "rsi_period": int(self.parameters.get("rsi_period", 2)),
             "entry_threshold": float(self.parameters.get("entry_threshold", 10)),
-            "trend_window": int(self.parameters.get("trend_window", 200)),
+            "trend_window": _trend_filter_sma(self.parameters, RSI2_DEFAULT_TREND_FILTER_SMA),
             "exit_rule": str(self.parameters.get("exit_rule", "sma")),
             "exit_sma_window": int(self.parameters.get("exit_sma_window", 5)),
         }
@@ -135,7 +165,7 @@ class RSI2PullbackStrategy(BaseStrategy):
                 {"required_rows": required, "rows": 0 if data is None else len(data)},
             )
         close = _tail(data, max(_INDICATOR_TAIL, required))["close"].astype(float)
-        trend = float(close.iloc[-params["trend_window"]:].mean())
+        trend, in_uptrend = _trend_state(close, params["trend_window"])
         latest_close = float(close.iloc[-1])
         latest_rsi = float(wilder_rsi(close, params["rsi_period"]).iloc[-1])
         features = {
@@ -147,7 +177,6 @@ class RSI2PullbackStrategy(BaseStrategy):
         }
         if not np.isfinite(latest_rsi):
             return neutral_signal("RSI is not defined yet.", features)
-        in_uptrend = latest_close > trend
         if in_uptrend and latest_rsi < params["entry_threshold"]:
             depth = (params["entry_threshold"] - latest_rsi) / max(params["entry_threshold"], 1e-9)
             return StrategySignalResult(
@@ -155,7 +184,7 @@ class RSI2PullbackStrategy(BaseStrategy):
                 probability_up=clamp(0.55 + depth * 0.15),
                 probability_down=clamp(0.45 - depth * 0.15),
                 confidence=clamp(0.6 + depth * 0.3),
-                reason=(f"Close above {params['trend_window']}-day SMA and RSI({params['rsi_period']}) "
+                reason=(f"{_trend_reason(params['trend_window'])}RSI({params['rsi_period']}) "
                         f"{latest_rsi:.1f} < {params['entry_threshold']:.0f}."),
                 features=features,
             )
@@ -178,10 +207,12 @@ class RSI2PullbackStrategy(BaseStrategy):
 
 
 class IBSMeanReversionStrategy(BaseStrategy):
-    """Internal-bar-strength mean reversion inside a long-term uptrend.
+    """Internal-bar-strength mean reversion, optionally inside an uptrend.
 
-    Entry: IBS < ``entry_threshold`` and close > SMA(``trend_window``) on the
-    last completed bar. Exit (``exit_rule``): ``"ibs"`` exits when IBS >
+    Entry: IBS < ``entry_threshold`` on the last completed bar, plus close >
+    SMA(``trend_filter_sma``) when that filter is on (default off: it lowered
+    net expectancy in reports/regime-filter-20261029.md; rows that set
+    ``trend_window``/``trend_filter_sma`` keep their value). Exit (``exit_rule``): ``"ibs"`` exits when IBS >
     ``exit_threshold``; ``"up_close"`` exits on the first close above the prior
     close after entry. Time stop and catastrophe stop come from the backtest
     configuration.
@@ -197,13 +228,13 @@ class IBSMeanReversionStrategy(BaseStrategy):
         return {
             "entry_threshold": float(self.parameters.get("entry_threshold", 0.2)),
             "exit_threshold": float(self.parameters.get("exit_threshold", 0.8)),
-            "trend_window": int(self.parameters.get("trend_window", 200)),
+            "trend_window": _trend_filter_sma(self.parameters, IBS_DEFAULT_TREND_FILTER_SMA),
             "exit_rule": str(self.parameters.get("exit_rule", "ibs")),
         }
 
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         params = self._params()
-        required = params["trend_window"]
+        required = max(params["trend_window"], 1)
         if not has_valid_history(data, required) or not _has_range(data):
             return neutral_signal(
                 "Insufficient history (or no high/low range) for IBS with a trend filter.",
@@ -211,12 +242,11 @@ class IBSMeanReversionStrategy(BaseStrategy):
             )
         tail = _tail(data, required)
         close = tail["close"].astype(float)
-        trend = float(close.mean())
+        trend, in_uptrend = _trend_state(close, params["trend_window"])
         latest_close = float(close.iloc[-1])
         latest_ibs = float(internal_bar_strength(tail.iloc[[-1]]).iloc[-1])
         features = {"ibs": latest_ibs, "trend_sma": trend, "close": latest_close,
                     "entry_threshold": params["entry_threshold"], "exit_rule": params["exit_rule"]}
-        in_uptrend = latest_close > trend
         if in_uptrend and latest_ibs < params["entry_threshold"]:
             depth = (params["entry_threshold"] - latest_ibs) / max(params["entry_threshold"], 1e-9)
             return StrategySignalResult(
@@ -224,8 +254,8 @@ class IBSMeanReversionStrategy(BaseStrategy):
                 probability_up=clamp(0.55 + depth * 0.1),
                 probability_down=clamp(0.45 - depth * 0.1),
                 confidence=clamp(0.6 + depth * 0.3),
-                reason=(f"IBS {latest_ibs:.2f} < {params['entry_threshold']:.2f} with close above the "
-                        f"{params['trend_window']}-day SMA."),
+                reason=(f"{_trend_reason(params['trend_window'])}IBS {latest_ibs:.2f} < "
+                        f"{params['entry_threshold']:.2f}."),
                 features=features,
             )
         return neutral_signal(f"IBS {latest_ibs:.2f}; uptrend={'yes' if in_uptrend else 'no'}.", features)

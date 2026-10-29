@@ -23,7 +23,7 @@ REVERSION_CANDIDATES = (
             "the 5-day SMA, a 10-session time stop or a 10% broker-side catastrophe stop. Index ETFs only."
         ),
         "parameters": {
-            "rsi_period": 2, "entry_threshold": 10, "trend_window": 200, "exit_rule": "sma",
+            "rsi_period": 2, "entry_threshold": 10, "trend_filter_sma": 200, "exit_rule": "sma",
             "exit_sma_window": 5, "stop_loss_pct": 0.10, "take_profit_pct": 0, "max_holding_sessions": 10,
             "symbol_scope": ["SPY", "QQQ", "IWM", "DIA"],
         },
@@ -32,11 +32,12 @@ REVERSION_CANDIDATES = (
         "name": "IBS Mean Reversion",
         "strategy_type": "ibs_mean_reversion",
         "description": (
-            "Internal bar strength below 0.1 with close above the 200-day SMA; exit when IBS exceeds 0.8, a "
+            "Internal bar strength below 0.1 (no 200-day trend filter; see reports/regime-filter-20261029.md); "
+            "exit when IBS exceeds 0.8, a "
             "10-session time stop or a 10% broker-side catastrophe stop. Index ETFs only."
         ),
         "parameters": {
-            "entry_threshold": 0.1, "exit_threshold": 0.8, "trend_window": 200, "exit_rule": "ibs",
+            "entry_threshold": 0.1, "exit_threshold": 0.8, "trend_filter_sma": 0, "exit_rule": "ibs",
             "stop_loss_pct": 0.10, "take_profit_pct": 0, "max_holding_sessions": 10,
             "symbol_scope": ["SPY", "QQQ", "IWM", "DIA"],
         },
