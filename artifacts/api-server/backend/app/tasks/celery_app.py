@@ -115,6 +115,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.stock_forward_trial_reconcile_job": {"queue": "paper_trading"},
     "app.tasks.jobs.stock_forward_trial_evaluate_job": {"queue": "paper_trading"},
     "app.tasks.jobs.paper_trade_scorecard_snapshot_job": {"queue": "learning"},
+    "app.tasks.jobs.operations_health_alert_job": {"queue": "risk"},
 }
 celery_app.conf.beat_schedule = {
     "delayed-sip-collection": {
@@ -233,6 +234,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.paper_trade_scorecard_snapshot_job",
         "schedule": crontab(minute=20, hour=16, day_of_week="mon-fri"),
         "options": {"expires": 6 * 60 * 60},
+    },
+    # Warning-only operations health alerts every five minutes through the
+    # regular session (the job checks the exact NYSE session itself and the
+    # post-close runs resolve session-only alerts).
+    "operations-health-alerts": {
+        "task": "app.tasks.jobs.operations_health_alert_job",
+        "schedule": crontab(minute="*/5", hour="9-16", day_of_week="mon-fri"),
+        "options": {"queue": "risk", "expires": 4 * 60},
     },
     "stock-forward-trial-observe": {
         "task": "app.tasks.jobs.stock_forward_trial_observe_job",

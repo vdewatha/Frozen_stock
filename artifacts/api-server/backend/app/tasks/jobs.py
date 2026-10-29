@@ -375,8 +375,20 @@ def daily_market_data_import() -> dict:
 )
 def intraday_market_data_import() -> dict:
     def work(db):
-        result = collect_scheduled_intraday(db)
-        db.commit()
+        from app.services.operations_health import record_intraday_import_run
+
+        started_at = datetime.now(timezone.utc)
+        status = "failed"
+        try:
+            result = collect_scheduled_intraday(db)
+            db.commit()
+            status = str(result.get("status") or "unknown")
+        finally:
+            # Duration evidence for the operations health alert. Advisory
+            # only: a Redis failure is logged and never fails the import.
+            record_intraday_import_run(
+                started_at=started_at, finished_at=datetime.now(timezone.utc), status=status,
+            )
         return {"job": "intraday_market_data_import", **result}
 
     return _run_job("intraday_market_data_import", work)
@@ -1391,3 +1403,14 @@ def paper_trade_scorecard_snapshot_job(days: int = 30) -> dict:
         return record_scorecard_snapshot(db, days=days)
 
     return _run_job("paper_trade_scorecard_snapshot_job", work)
+
+
+@celery_app.task(soft_time_limit=60, time_limit=90)
+def operations_health_alert_job() -> dict:
+    """Paper-only operations health warnings (feed, reconciliation, recovery)."""
+    def work(db):
+        from app.services.operations_health import run_operations_health_alerts
+
+        return run_operations_health_alerts(db)
+
+    return _run_job("operations_health_alert_job", work)

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import AuditLog, IntradayBar
 from app.services.audit import write_audit_log
+from app.services.market_data_audit import compact_payload
 from app.services.trading_universe import intraday_symbols
 from app.services.intraday_data import (
     ALLOWED_SYMBOLS, NY, _aware_utc, _parse_bar, session_bounds, upsert_intraday_bars,
@@ -156,6 +157,19 @@ def _fetch_research_bars(symbols: list[str], start: datetime, end: datetime, *, 
             client.close()
 
 
+RESEARCH_AUDIT_DETAIL_KEYS = ("symbol", "status", "rows_imported", "duplicate_bars", "out_of_order")
+
+
+def compact_research_audit_payload(result: dict) -> dict:
+    """Audit summary for research collections: symbols with no new bars are
+    listed, the rest are counted, and the full result is digested."""
+    return compact_payload(
+        result,
+        needs_attention=lambda row: not row.get("rows_imported"),
+        detail_keys=RESEARCH_AUDIT_DETAIL_KEYS,
+    )
+
+
 def collect_iex_research(db: Session, *, now: datetime | None = None) -> dict:
     observed = now or datetime.now(UTC)
     start, end = incremental_collection_window(db, observed)
@@ -201,7 +215,8 @@ def collect_iex_research(db: Session, *, now: datetime | None = None) -> dict:
     write_audit_log(
         db, event_type="market_data", action="iex_research_collection",
         status=result["status"], entity_type="research_feed",
-        message="IEX research collection; no execution eligibility granted", payload=result,
+        message="IEX research collection; no execution eligibility granted",
+        payload=compact_research_audit_payload(result),
     )
     return result
 

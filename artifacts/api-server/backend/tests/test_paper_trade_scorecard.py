@@ -418,6 +418,8 @@ class ScorecardApiAndScheduleTests(unittest.TestCase):
         self.assertEqual(body["status"], "unavailable")
         self.assertEqual(body["history"], [])
         self.assertTrue(body["paper_only"])
+        self.assertIn("paused_session_minutes", body["operations_today"])
+        self.assertIn("watchdog_pauses", body["operations_today"])
         self.assertEqual(self.client.get("/api/stock-paper/scorecard").status_code, 401)
         self.assertEqual(self.client.get("/api/stock-paper/scorecard?days=0",
                                          headers={"Authorization": "Bearer " + "v" * 32}).status_code, 422)

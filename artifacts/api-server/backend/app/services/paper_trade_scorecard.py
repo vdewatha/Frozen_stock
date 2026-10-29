@@ -692,15 +692,38 @@ def record_scorecard_snapshot(db: Session, *, days: int = 30, now: Optional[date
         return {"status": "complete", "recorded": False, "reason": "snapshot already recorded for this date",
                 "as_of_date": as_of_date, "event_id": existing[0].id, "paper_only": True, "live_authorized": False}
     scorecard = build_scorecard(db, days=days, now=now)
-    payload = _snapshot_payload(scorecard) | {"as_of_date": as_of_date}
+    payload = _snapshot_payload(scorecard) | {
+        "as_of_date": as_of_date,
+        "operations": operations_summary(db, now=now),
+    }
     row = StockPaperLedgerEvent(account_id=None, event_type=SNAPSHOT_EVENT_TYPE, status="recorded",
                                 reason=None, actor="system", payload=payload)
     db.add(row)
     db.commit()
     headline = scorecard["headline"]
+    operations = payload["operations"]
     return {"status": "complete", "recorded": True, "as_of_date": as_of_date, "event_id": row.id,
             "trades": headline["trades"], "win_rate": headline["win_rate"], "expectancy": headline["expectancy"],
+            "paused_session_minutes": operations.get("paused_session_minutes"),
+            "watchdog_pauses": operations.get("watchdog_pauses"),
             "paper_only": True, "live_authorized": False}
+
+
+def operations_summary(db: Session, *, now: Optional[datetime] = None) -> dict:
+    """Daily operations summary (pauses, watchdog pauses, SPY feed coverage).
+
+    Read-only; a failure is reported in the summary rather than blocking the
+    trade scorecard.
+    """
+    from app.services.operations_health import daily_operations_summary
+
+    try:
+        return daily_operations_summary(db, now=now)
+    except Exception as exc:
+        # Nothing is pending here (the scorecard is read-only); clear an
+        # aborted PostgreSQL transaction so the snapshot can still commit.
+        db.rollback()
+        return {"status": "unavailable", "error_type": type(exc).__name__, "paper_only": True}
 
 
 def scorecard_history(db: Session, *, limit: int = 30) -> list[dict]:
@@ -713,11 +736,17 @@ def scorecard_history(db: Session, *, limit: int = 30) -> list[dict]:
         payload = row.payload or {}
         headline = payload.get("headline") or {}
         goal = payload.get("goal") or {}
+        operations = payload.get("operations") or {}
+        feed = operations.get("intraday_feed") or {}
         history.append({
             "as_of_date": payload.get("as_of_date"), "days": payload.get("days"),
             "trades": headline.get("trades"), "win_rate": headline.get("win_rate"),
             "expectancy": headline.get("expectancy"), "total_pnl": headline.get("total_pnl"),
             "last_window_wins": goal.get("last_window_wins"), "met_last_window": goal.get("met_last_window"),
+            "paused_session_minutes": operations.get("paused_session_minutes"),
+            "pause_count": operations.get("pause_count"),
+            "watchdog_pauses": operations.get("watchdog_pauses"),
+            "spy_feed_ready_share": feed.get("ready_share"),
         })
     return history
 
