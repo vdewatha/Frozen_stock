@@ -102,6 +102,23 @@ class CeleryConfigurationTests(unittest.TestCase):
         queue.assert_not_called()
         self.assertTrue(client.closed)
 
+    def test_iex_observation_skips_feature_refresh_when_disabled(self):
+        db = Mock()
+        observed = {"status": "observed", "synthetic": False}
+        for enabled, expect_queue in ((True, True), (False, False)):
+            with self.subTest(enabled=enabled), patch.object(
+                jobs, "_run_job", side_effect=lambda _name, work: work(db)
+            ), patch.object(jobs.settings, "iex_research_enabled", True), patch.object(
+                jobs.settings, "iex_feature_refresh_enabled", enabled
+            ), patch(
+                "app.services.alpaca_research_data.collect_iex_research", return_value=dict(observed)
+            ), patch(
+                "app.services.online_research.advance_online_research", return_value={}
+            ), patch.object(jobs, "_queue_feature_refresh", return_value="refresh-1") as queue:
+                result = jobs.iex_research_collection_job()
+            self.assertEqual(queue.called, expect_queue)
+            self.assertEqual("feature_refresh_task_id" in result, expect_queue)
+
     def test_intraday_import_has_a_dedicated_queue(self):
         queues = {queue.name for queue in celery_app.conf.task_queues}
 

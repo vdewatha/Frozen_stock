@@ -400,7 +400,11 @@ def iex_research_collection_job() -> dict:
         from app.services.online_research import advance_online_research
         result["learning"] = advance_online_research(db)
         db.commit()
-        if result.get("status") == "observed" and not result.get("synthetic"):
+        if (
+            result.get("status") == "observed"
+            and not result.get("synthetic")
+            and settings.iex_feature_refresh_enabled
+        ):
             # IEX is research-only, but a successful real collection is a
             # trustworthy trigger for fresh multi-symbol predictions. The
             # feature task remains paper-only and never dispatches orders. A

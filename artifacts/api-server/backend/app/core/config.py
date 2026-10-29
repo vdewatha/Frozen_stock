@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     # complete fill.
     paper_exit_rearm_partial_entry_grace_minutes: int = Field(default=5, ge=1, le=390)
     iex_research_enabled: bool = False
+    # A successful IEX research observation may queue a full feature refresh
+    # (at most one per throttle window). Each refresh retrains every active
+    # symbol; on a small VM that pegs the CPU all session and starves the
+    # minutely intraday import, so small hosts turn this off and rely on the
+    # off-hours feature-generation crontab instead.
+    iex_feature_refresh_enabled: bool = True
     delayed_sip_research_enabled: bool = False
     research_observation_only: bool = False
     stock_training_artifact_root: str = "./stock_training_artifacts"

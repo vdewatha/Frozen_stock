@@ -71,6 +71,10 @@ PAPER_EXECUTION_SYMBOLS = "[\"SPY\", \"QQQ\", \"IWM\", \"DIA\", \"XLK\", \"XLF\"
 PAPER_BUILD_ID = "paper-slim-20261027-v1"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
+# Feature refreshes retrain every symbol (~98 minutes here); queued from IEX
+# observations they ran all session and starved the intraday import. The
+# off-hours feature-generation crontab keeps predictions fresh instead.
+IEX_FEATURE_REFRESH_ENABLED = "false"
 # These direct loops remain research-only and never create live orders.
 PAPER_DIRECT_RESEARCH_LOOP = "false"
 # One Redis-leased research loop per symbol. These loops never submit orders.
