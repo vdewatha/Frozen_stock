@@ -122,8 +122,9 @@ def _strategy_lots(db: Session, account_id: int, symbol: str, type_by_id: dict) 
     every later lot as unattributed.  Returns ``holdings`` (net quantity per
     strategy type), ``attributed`` (False when a fill in the current episode
     cannot be tied to a strategy-bound order), ``opened_at`` (first buy fill
-    of each strategy's open lot) and ``buyers`` (strategy types that bought
-    in the current episode).
+    of each strategy's open lot), ``buyers`` (strategy types that bought
+    in the current episode) and ``owner_ids`` (the strategy id of each
+    type's latest buy in the episode, used to attribute its exits).
     """
     fills = db.query(StockPaperFill).filter_by(account_id=account_id, symbol=symbol).all()
     order_ids = {row.order_id for row in fills if row.order_id is not None}
@@ -133,6 +134,7 @@ def _strategy_lots(db: Session, account_id: int, symbol: str, type_by_id: dict) 
     holdings: dict[str, Decimal] = {}
     opened_at: dict[str, datetime] = {}
     buyers: set[str] = set()
+    owner_ids: dict[str, int] = {}
     attributed = True
     total = Decimal("0")
     for _index, fill in sorted(enumerate(fills), key=_fill_sort_key):
@@ -147,12 +149,36 @@ def _strategy_lots(db: Session, account_id: int, symbol: str, type_by_id: dict) 
             holdings[strategy_type] = before + sign * fill.quantity
             if fill.side == "buy":
                 buyers.add(strategy_type)
+                owner_ids[strategy_type] = order.strategy_id
                 if before <= 0:
                     opened_at[strategy_type] = getattr(fill, "filled_at", None)
         if total <= 0:
             holdings = {key: Decimal("0") for key in holdings}
-            opened_at, buyers, attributed = {}, set(), True
-    return {"holdings": holdings, "attributed": attributed, "opened_at": opened_at, "buyers": buyers}
+            opened_at, buyers, owner_ids, attributed = {}, set(), {}, True
+    return {"holdings": holdings, "attributed": attributed, "opened_at": opened_at, "buyers": buyers,
+            "owner_ids": owner_ids}
+
+
+def _sell_owner_id(db: Session, account_id: int, symbol: str, type_by_id: dict,
+                   quantity: Decimal, strategy_type: str | None = None) -> int | None:
+    """Strategy id an app-side sell of ``quantity`` should be attributed to.
+
+    Only an unambiguous owner is returned: the current episode is fully
+    attributed and the strategy (``strategy_type``, or the only holder when
+    None) owns at least ``quantity``.  Otherwise the sell stays unattributed,
+    exactly as before, and downstream FIFO accounting handles it.
+    """
+    lots = _strategy_lots(db, account_id, symbol, type_by_id)
+    if not lots["attributed"]:
+        return None
+    held = {key: value for key, value in lots["holdings"].items() if value > 0}
+    if strategy_type is None:
+        if len(held) != 1:
+            return None
+        strategy_type = next(iter(held))
+    if held.get(strategy_type, Decimal("0")) < quantity:
+        return None
+    return lots["owner_ids"].get(strategy_type)
 
 
 def _strategy_holdings(db: Session, account_id: int, symbol: str,
@@ -218,7 +244,7 @@ def _policy_exits(db: Session, account, symbol: str, now: datetime, policy_rows:
 
 
 def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
-                     rules: dict, session_key: str) -> dict | None:
+                     rules: dict, session_key: str, type_by_id: dict | None = None) -> dict | None:
     """Exit a long whose loss from average entry breaches the stop budget.
 
     The governed stock path previously had no price-based exit at all: a
@@ -254,10 +280,11 @@ def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
     if covered > 0:
         result["broker_stop_quantity"] = str(covered)
     try:
+        owner_id = _sell_owner_id(db, account.id, symbol, type_by_id, quantity) if type_by_id else None
         order = reserve_stock_paper_order(
             db, symbol=symbol, side="sell", quantity=quantity, reference_price=price,
             idempotency_key=protective_stop_idempotency_key(session_key, symbol),
-            source=SCHEDULED_SOURCE,
+            source=SCHEDULED_SOURCE, strategy_id=owner_id,
         )
         submitted = dispatch_reserved_order(db, order.id)
     except StockPaperError as exc:
@@ -434,7 +461,7 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                 db.rollback()
                 result.update({"status": "failed", "reason": f"{exc.__class__.__name__}: {exc}"})
             results.append(result)
-        stop_result = _protective_stop(db, account, symbol, observed_price, rules, session_key)
+        stop_result = _protective_stop(db, account, symbol, observed_price, rules, session_key, type_by_id)
         if stop_result is not None:
             results.append(stop_result)
         try:
@@ -605,11 +632,20 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         # Unknown attribution: keep risk reduction available.
                         quantity = position.quantity
                     side = "sell"
+                    # Attributed exits sell at most the strategy's own lot,
+                    # so they are booked against the strategy that opened it.
+                    sell_owner = (
+                        _strategy_lots(db, account.id, symbol, type_by_id)["owner_ids"].get(strategy.strategy_type)
+                        if attributed else None
+                    )
 
                 exploring = result.get("mode") == "explore"
                 extra = {}
                 if side == "buy" and exit_plan is not None:
                     extra["exit_plan"] = exit_plan
+                if side == "sell" and sell_owner is not None:
+                    # Book the exit against the strategy whose lot it closes.
+                    extra["strategy_id"] = sell_owner
                 if side == "sell" and exit_orders:
                     # Reserve first so every gate (kill switch, session,
                     # feed, reconciliation) passes before any exit leg is
