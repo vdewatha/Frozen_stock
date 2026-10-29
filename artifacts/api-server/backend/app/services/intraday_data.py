@@ -822,6 +822,7 @@ def ingest_intraday(
             if getattr(exc, "status_code", None) == 429:
                 prefetch_rate_limited = exc
     backfill_budget = settings.intraday_backfill_request_budget
+    backfill_deadline = time.monotonic() + settings.intraday_backfill_time_budget_seconds
     # Rotate which symbols are first in line for the shared backfill budget so
     # a long repair queue cannot starve the same tail symbols every minute.
     rotation = (observed_at.minute % len(selected)) if selected else 0
@@ -891,9 +892,10 @@ def ingest_intraday(
                     rows, duplicates, out_of_order = prefetched[symbol]
                 else:
                     if window_index > 0:
-                        if backfill_budget <= 0:
-                            # Budget spent: remaining gaps stay reported as
-                            # missing and are repaired on a later cycle.
+                        if backfill_budget <= 0 or time.monotonic() >= backfill_deadline:
+                            # Request or time budget spent: remaining gaps stay
+                            # reported as missing and are repaired on a later
+                            # cycle, so the live minute is never held back.
                             break
                         backfill_budget -= 1
                     rows, duplicates, out_of_order = _fetch_bars(symbol, window_start, window_end)
