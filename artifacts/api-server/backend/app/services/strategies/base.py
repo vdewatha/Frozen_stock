@@ -45,6 +45,10 @@ class BaseStrategy(ABC):
     # exits only, and the whole paper execution universe.
     default_exit_policy: Optional[ExitPolicy] = None
     default_symbol_scope: Optional[tuple[str, ...]] = None
+    # Strategies that decide on completed daily bars only need a recent price
+    # for the limit order, so their paper orders tolerate a minute feed that is
+    # merely late (see ``stock_paper_ledger.DAILY_BAR_MAX_MINUTE_BAR_AGE``).
+    daily_bar_execution: bool = False
 
     def __init__(self, parameters: Optional[dict] = None) -> None:
         self.parameters = parameters or {}

@@ -1640,6 +1640,32 @@ def _strategy_owned_position_counts(db: Session, account: StockPaperAccount,
     return counts
 
 
+# A daily-bar strategy's order may use a minute feed that is late but still
+# recent: sparse IEX symbols such as DIA often print minutes apart, which kept
+# RSI(2)/IBS entries blocked although their decision uses completed daily bars.
+DAILY_BAR_MAX_MINUTE_BAR_AGE = timedelta(minutes=20)
+
+
+def _late_feed_acceptable_for_daily_bar_order(
+    db: Session, market: dict, signal_id: int | None, now: datetime,
+) -> bool:
+    """True when only lateness keeps the feed from ready and the order's
+    strategy decides on completed daily bars."""
+    if market.get("execution_status") != "stale" or market.get("status") not in {"stale", "incomplete"}:
+        return False
+    latest = market.get("exchange_timestamp")
+    if not isinstance(latest, datetime) or signal_id is None:
+        return False
+    bar_close = _utc(latest) + timedelta(minutes=1)
+    if bar_close > now or now - bar_close > DAILY_BAR_MAX_MINUTE_BAR_AGE:
+        return False
+    signal = db.get(StrategySignal, signal_id)
+    strategy = db.get(Strategy, signal.strategy_id) if signal is not None else None
+    from app.services.strategy_execution_policy import daily_bar_execution
+
+    return strategy is not None and daily_bar_execution(strategy)
+
+
 def _validate_reference_price(db: Session, symbol: str, price: Decimal) -> None:
     latest = (
         db.query(IntradayBar)
@@ -2182,7 +2208,12 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             # recovery gates remain independent and continue to fail closed.
             if account.status != "halted" or watchdog_halt or transient_provider_halt:
                 account.status, account.halt_reason = "reconciled", None
-            if watchdog_halt or transient_provider_halt:
+            restored = False
+            if watchdog_halt:
+                from app.services.stock_recovery import restore_after_transient_heartbeat_pause
+
+                restored = restore_after_transient_heartbeat_pause(db, account)
+            if (watchdog_halt or transient_provider_halt) and not restored:
                 recovery_state = db.get(StockPaperRecoveryState, 1)
                 if recovery_state and recovery_state.status in {"cooldown", "paused"}:
                     recovery_state.status = "revalidation_required"
@@ -2566,7 +2597,10 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         market = feed_status(db, symbol, now=now)
     except ValueError as exc:
         raise StockPaperError("Stock paper order has no approved fresh market-data symbol") from exc
-    if market.get("execution_status", market["status"]) != "ready":
+    if market.get("execution_status", market["status"]) != "ready" and not (
+        source in AUTONOMOUS_ORDER_SOURCES
+        and _late_feed_acceptable_for_daily_bar_order(db, market, signal_id, now)
+    ):
         raise StockPaperError(
             "Stock paper order blocked by stale/unavailable market data: "
             f"{market.get('execution_status', market['status'])}"
@@ -2752,7 +2786,10 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
         market = feed_status(db, order.symbol, now=now)
     except ValueError as exc:
         raise StockPaperError("Reserved order has no approved fresh market-data symbol") from exc
-    if market.get("execution_status", market["status"]) != "ready":
+    if market.get("execution_status", market["status"]) != "ready" and not (
+        order.source in AUTONOMOUS_ORDER_SOURCES
+        and _late_feed_acceptable_for_daily_bar_order(db, market, order.signal_id, now)
+    ):
         raise StockPaperError(
             "Reserved order blocked by stale/unavailable market data: "
             f"{market.get('execution_status', market['status'])}"

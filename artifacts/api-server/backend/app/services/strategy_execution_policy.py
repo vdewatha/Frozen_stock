@@ -59,6 +59,11 @@ def symbol_scope_for(strategy: Any) -> frozenset[str] | None:
     return instance.symbol_scope() if instance is not None else None
 
 
+def daily_bar_execution(strategy: Any) -> bool:
+    instance = strategy_instance(strategy)
+    return bool(instance is not None and instance.daily_bar_execution)
+
+
 def in_symbol_scope(strategy: Any, symbol: str) -> bool:
     scope = symbol_scope_for(strategy)
     return scope is None or str(symbol).strip().upper() in scope

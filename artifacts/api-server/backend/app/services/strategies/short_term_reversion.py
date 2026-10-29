@@ -115,6 +115,7 @@ class RSI2PullbackStrategy(BaseStrategy):
     slug = "rsi2_pullback"
     default_exit_policy = SHORT_TERM_REVERSION_EXIT_POLICY
     default_symbol_scope = INDEX_ETF_SCOPE
+    daily_bar_execution = True
 
     def _params(self) -> dict:
         return {
@@ -190,6 +191,7 @@ class IBSMeanReversionStrategy(BaseStrategy):
     slug = "ibs_mean_reversion"
     default_exit_policy = SHORT_TERM_REVERSION_EXIT_POLICY
     default_symbol_scope = INDEX_ETF_SCOPE
+    daily_bar_execution = True
 
     def _params(self) -> dict:
         return {
