@@ -162,6 +162,15 @@ class Settings(BaseSettings):
     paper_exploration_enabled: bool = False
     paper_exploration_risk_fraction: float = Field(default=0.0025, gt=0, le=0.01)
     paper_exploration_max_positions: int = Field(default=12, ge=1, le=40)
+    # Volatility-scaled sizing for daily-bar strategies (``daily_bar_execution``):
+    # the risk-sized notional is multiplied by target / realized volatility
+    # (annualized, from the last ``lookback`` daily close-to-close returns),
+    # capped at 1.0 (never larger than the unscaled size) and floored at
+    # ``floor``. When volatility cannot be computed the floor is used (fail
+    # closed). A target of 0 disables scaling.
+    paper_vol_target_annual: float = Field(default=0.15, ge=0, le=2)
+    paper_vol_lookback_days: int = Field(default=20, ge=5, le=252)
+    paper_vol_scale_floor: float = Field(default=0.25, gt=0, le=1)
     # Meta-label filter for BUY signals (app/services/meta_label.py).
     # "shadow" records the calibrated probability, threshold and the take/skip
     # decision it would make on every actionable BUY without changing orders;
