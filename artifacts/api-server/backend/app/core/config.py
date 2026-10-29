@@ -131,6 +131,17 @@ class Settings(BaseSettings):
     paper_exploration_enabled: bool = False
     paper_exploration_risk_fraction: float = Field(default=0.0025, gt=0, le=0.01)
     paper_exploration_max_positions: int = Field(default=12, ge=1, le=40)
+    # Meta-label filter for BUY signals (app/services/meta_label.py).
+    # "shadow" records the calibrated probability, threshold and the take/skip
+    # decision it would make on every actionable BUY without changing orders;
+    # it degrades to "off" when the model artifact is missing or invalid.
+    # "enforce" skips BUYs the filter rejects and fails closed (skips every
+    # BUY) when the artifact is unavailable. Never enable enforce without a
+    # forward paper review of the shadow records.
+    paper_meta_label_mode: str = "shadow"
+    # Empty = <backend>/stock_training_artifacts/meta_label/meta_label_model.joblib
+    # (produced by scripts/train_meta_label.py).
+    paper_meta_label_model_path: str = ""
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # A shared workspace .env also contains frontend and provider-specific
@@ -194,6 +205,8 @@ class Settings(BaseSettings):
             raise ValueError("Alpaca intraday feeds are available only for live-disabled Alpaca paper operation")
         if self.active_paper_broker not in {"tradier_sandbox", "alpaca_paper"}:
             raise ValueError("active_paper_broker must be tradier_sandbox or alpaca_paper")
+        if self.paper_meta_label_mode not in {"off", "shadow", "enforce"}:
+            raise ValueError("paper_meta_label_mode must be off, shadow, or enforce")
         return self
 
     def validate_production_configuration(self) -> list[str]:
