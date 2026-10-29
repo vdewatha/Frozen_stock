@@ -195,6 +195,12 @@ class Settings(BaseSettings):
     paper_strategy_drawdown_lock_sessions: int = Field(default=3, ge=0, le=60)
     paper_strategy_drawdown_lock_pct: float = Field(default=0.05, ge=0, le=1)
     paper_strategy_allocation_fraction: float = Field(default=0.10, ge=0, le=1)
+    # Autonomous BUY entries with no fill this long after submission (same
+    # session) are cancelled; 0 disables.  Sells/exit legs are never touched.
+    paper_stale_entry_cancel_minutes: int = Field(default=30, ge=0, le=390)
+    # Broker-rejected stock paper orders in 24h that raise one warning
+    # notification (never critical, so it cannot gate exits); 0 disables.
+    paper_order_reject_alert_count: int = Field(default=3, ge=0, le=1000)
     # Entry window for daily-bar strategies (``daily_bar_execution``, e.g.
     # RSI(2) Pullback / IBS Mean Reversion), in minutes after the session open
     # from ``exchange_sessions.session_bounds``.  The backtester fills these

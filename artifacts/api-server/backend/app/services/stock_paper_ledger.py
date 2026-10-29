@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN
 import hashlib
 import json
+import logging
 import math
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
@@ -35,6 +36,7 @@ from app.services.strategies.registry import get_strategy
 from app.services.trusted_data import UntrustedMarketData, trusted_history, trusted_intraday_observation
 from app.services import alpaca_activity_v2
 
+logger = logging.getLogger(__name__)
 ALPACA_PAPER_URL = "https://paper-api.alpaca.markets"
 TRADIER_SANDBOX_URL = "https://sandbox.tradier.com/v1"
 LEGACY_BROKER = "alpaca_paper"
@@ -1077,6 +1079,8 @@ def cancel_stale_exit_entries(db: Session, account: StockPaperAccount, now: date
     session is cancelled here (Alpaca cancels its held legs with it) instead
     of filling later on a stale signal.  Filled shares of a partially filled
     entry stay protected by the app-side protective stop if the legs go too.
+    Same-session entries left unfilled too long are then cancelled by
+    :func:`cancel_aged_open_entries`; the returned ids cover both sweeps.
     """
     bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
     if bounds is None:
@@ -1092,7 +1096,7 @@ def cancel_stale_exit_entries(db: Session, account: StockPaperAccount, now: date
         if row.broker_order_id and row.submitted_at is not None and _utc(row.submitted_at) < bounds[0]
     ]
     if not stale:
-        return []
+        return cancel_aged_open_entries(db, account, now, gateway)
     gateway = gateway or active_paper_gateway()
     cancelled = []
     for row in stale:
@@ -1102,7 +1106,102 @@ def cancel_stale_exit_entries(db: Session, account: StockPaperAccount, now: date
     _event(db, account, "stale_exit_entry_cancel", "requested",
            "Unfilled GTC bracket entry from an earlier session was cancelled", {"order_ids": cancelled})
     db.commit()
+    return cancelled + cancel_aged_open_entries(db, account, now, gateway)
+
+
+# Entry orders with no fill yet; partially filled entries are left alone (the
+# filled shares need their legs / the protective stop, not a cancel race).
+UNFILLED_ENTRY_STATUSES = frozenset({"new", "accepted", "pending_new"})
+
+
+def cancel_aged_open_entries(db: Session, account: StockPaperAccount, now: datetime,
+                             gateway: AlpacaPaperGateway | None = None,
+                             max_open_minutes: int | None = None) -> list[int]:
+    """Cancel same-session BUY entries still unfilled after N minutes.
+
+    A limit entry resting for hours can fill on a signal the strategy no
+    longer holds (DAY orders otherwise live until the close, GTC bracket
+    entries until the next cycle's prior-session sweep).  Only autonomous
+    entries with no fill are cancelled; sells and exit legs are never touched.
+    The per-session idempotency key prevents a same-session re-entry.  A
+    cancel the broker refuses is logged and left for reconciliation.
+    ``settings.paper_stale_entry_cancel_minutes`` = 0 disables this.
+    """
+    minutes = settings.paper_stale_entry_cancel_minutes if max_open_minutes is None else max_open_minutes
+    if not minutes:
+        return []
+    bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
+    if bounds is None:
+        return []
+    cutoff = now - timedelta(minutes=minutes)
+    rows = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id,
+        StockPaperOrder.side == "buy",
+        StockPaperOrder.status.in_(UNFILLED_ENTRY_STATUSES),
+    ).all()
+    aged = [
+        row for row in rows
+        if row.side == "buy" and row.status in UNFILLED_ENTRY_STATUSES and row.broker_order_id
+        and row.source in AUTONOMOUS_ORDER_SOURCES and row.parent_order_id is None
+        and row.submitted_at is not None and bounds[0] <= _utc(row.submitted_at) <= cutoff
+    ]
+    if not aged:
+        return []
+    gateway = gateway or active_paper_gateway()
+    cancelled = []
+    for row in aged:
+        try:
+            gateway.cancel_order(row.broker_order_id)
+        except Exception as exc:  # leave it for reconciliation; never block the cycle
+            logger.warning("stale entry cancel failed for order %s: %s", row.id, exc)
+            continue
+        row.status = "pending_cancel"
+        cancelled.append(row.id)
+    if cancelled:
+        _event(db, account, "stale_open_entry_cancel", "requested",
+               f"Unfilled entry still open after {minutes} minutes was cancelled", {"order_ids": cancelled})
+        db.commit()
     return cancelled
+
+
+def alert_repeated_order_rejects(db: Session, account: StockPaperAccount, now: datetime) -> dict | None:
+    """Raise one warning notification when broker rejects repeat.
+
+    Counts orders the broker reported as ``rejected`` (reconciled status) in
+    the last 24 hours.  At ``settings.paper_order_reject_alert_count`` or more
+    (0 disables) an open warning notification is created unless one from the
+    same source is already open.  Severity is ``warning`` on purpose: critical
+    notifications gate readiness, and an alert must never block an exit.
+    """
+    from app.models import Notification
+    from app.services.notifications import create_notification
+
+    threshold = settings.paper_order_reject_alert_count
+    if not threshold:
+        return None
+    since = now - timedelta(hours=24)
+    rows = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id, StockPaperOrder.status == "rejected",
+    ).all()
+    rejected = [row for row in rows if row.status == "rejected"
+                and _utc(getattr(row, "updated_at", None) or getattr(row, "created_at", None) or now) >= since]
+    if len(rejected) < threshold:
+        return None
+    source = "stock_paper_order_rejects"
+    already_open = db.query(Notification).filter(
+        Notification.source == source, Notification.status == "open",
+    ).first()
+    out = {"rejected_orders_24h": len(rejected), "threshold": threshold,
+           "order_ids": sorted(row.id for row in rejected), "alerted": already_open is None}
+    if already_open is None:
+        create_notification(
+            db, category="execution", severity="warning", source=source,
+            title="Repeated paper order rejects",
+            message=(f"The paper broker rejected {len(rejected)} orders in the last 24 hours "
+                     f"(alert threshold {threshold}); review order payloads and risk sizing."),
+            entity_type="stock_paper_account", entity_id=account.id, payload=out, commit=True,
+        )
+    return out
 
 
 def _halt(account: StockPaperAccount, reason: str, *, reconciliation_required: bool = True) -> None:
