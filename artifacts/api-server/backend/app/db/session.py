@@ -38,3 +38,11 @@ def _limit_idle_transactions(dbapi_connection, _record=None) -> None:
 
 if engine.dialect.name == "postgresql" and settings.database_idle_in_transaction_timeout_seconds > 0:
     event.listen(engine, "connect", _limit_idle_transactions)
+
+
+def get_db() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
