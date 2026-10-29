@@ -188,6 +188,41 @@ def test_ibs_buys_weak_closes_in_an_uptrend_and_exits_on_rule():
     assert up.exit_signal("X", frame, len(frame) - 2) == "first_up_close"
 
 
+def _downtrend_dip() -> pd.DataFrame:
+    frame = _uptrend_with_dip(True)
+    frame["close"] = list(np.linspace(160, 100, 260)) + [96.0, 91.0]
+    frame["high"] = frame["close"] * 1.005
+    frame["low"] = frame["close"] * 0.995
+    return frame
+
+
+def test_rsi2_trend_filter_sma_parameter():
+    # Default on (200): a dip below the 200-day SMA is not bought.
+    assert RSI2PullbackStrategy({}).generate_signal("X", _downtrend_dip()).action == "HOLD"
+    assert RSI2PullbackStrategy({"trend_filter_sma": 200}).generate_signal("X", _downtrend_dip()).action == "HOLD"
+    # 0 disables the filter; the new key wins over the legacy trend_window.
+    off = RSI2PullbackStrategy({"trend_filter_sma": 0, "trend_window": 200})
+    signal = off.generate_signal("X", _downtrend_dip())
+    assert signal.action == "BUY" and signal.features["trend_sma"] is None
+    assert "Trend filter off" in signal.reason
+    # Insufficient history for the SMA fails closed (no entry).
+    assert RSI2PullbackStrategy({"trend_filter_sma": 200}).generate_signal(
+        "X", _uptrend_with_dip(True).tail(150)).action == "HOLD"
+    assert RSI2PullbackStrategy({"trend_filter_sma": 100}).generate_signal(
+        "X", _uptrend_with_dip(True).tail(150)).action == "BUY"
+
+
+def test_ibs_trend_filter_sma_parameter():
+    weak = _downtrend_dip()
+    weak.loc[weak.index[-1], ["high", "low", "close"]] = [93.0, 90.0, 90.2]
+    # Default off (regime-filter report): weak close is bought even below the SMA.
+    assert IBSMeanReversionStrategy({}).generate_signal("X", weak).action == "BUY"
+    assert IBSMeanReversionStrategy({"trend_filter_sma": 200}).generate_signal("X", weak).action == "HOLD"
+    assert IBSMeanReversionStrategy({"trend_window": 200}).generate_signal("X", weak).action == "HOLD"
+    # Filter on with too little history: fail closed.
+    assert IBSMeanReversionStrategy({"trend_filter_sma": 200}).generate_signal("X", weak.tail(100)).action == "HOLD"
+
+
 # ---------------------------------------------------------------- backtester exit hook
 
 class _ExitAfterTwoBars(BaseStrategy):

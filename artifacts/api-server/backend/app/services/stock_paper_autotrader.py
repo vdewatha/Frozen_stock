@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 import logging
+import math
 import time
 from zoneinfo import ZoneInfo
 
@@ -23,6 +24,7 @@ from app.services.stock_paper_ledger import (
     NONTERMINAL_ORDER_STATUSES,
     StockPaperError,
     active_paper_account,
+    alert_repeated_order_rejects,
     EXPLORATION_SOURCE,
     EXPLORATION_STRATEGY_STATUSES,
     broker_stop_coverage,
@@ -41,6 +43,7 @@ from app.services.stock_paper_signal_batch import generate_cycle_signals
 from app.services.strategy_execution_policy import (
     evaluate_policy_exit,
     exit_leg_percentages,
+    daily_bar_execution,
     exit_policy_for,
     symbol_scope_for,
 )
@@ -86,13 +89,68 @@ def _is_regular_session(now: datetime) -> bool:
     return bool(bounds and bounds[0] <= now < bounds[1])
 
 
-def _quantity_for_buy(account, reference_price: Decimal, rules: dict, *, exploration: bool = False) -> Decimal:
+def _quantity_for_buy(account, reference_price: Decimal, rules: dict, *, exploration: bool = False,
+                      size_scale: Decimal = Decimal("1")) -> Decimal:
+    """Risk-fraction-sized quantity, times ``size_scale`` clamped to [0, 1].
+
+    The scale can only shrink a position; every other cap (exposure, sector,
+    ledger gates) still applies to the resulting order.
+    """
     risk_fraction = (
         Decimal(str(settings.paper_exploration_risk_fraction)) if exploration
         else Decimal(str(rules.get("max_risk_per_trade", "0.01")))
     )
-    notional = max(Decimal("0"), account.equity) * risk_fraction
+    scale = min(max(Decimal(str(size_scale)), Decimal("0")), Decimal("1"))
+    notional = max(Decimal("0"), account.equity) * risk_fraction * scale
     return (notional / reference_price).quantize(QUANTITY_INCREMENT, rounding=ROUND_DOWN)
+
+
+def realized_volatility(closes, lookback: int) -> float | None:
+    """Annualized close-to-close volatility of the last ``lookback`` daily returns.
+
+    None when there are fewer than ``lookback + 1`` positive finite closes or
+    the result is not a positive finite number.
+    """
+    values = [float(value) for value in list(closes)[-(lookback + 1):]]
+    if len(values) < lookback + 1 or any(not math.isfinite(v) or v <= 0 for v in values):
+        return None
+    returns = [math.log(values[i] / values[i - 1]) for i in range(1, len(values))]
+    mean = sum(returns) / len(returns)
+    variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    vol = math.sqrt(variance) * math.sqrt(252)
+    return vol if math.isfinite(vol) and vol > 0 else None
+
+
+def volatility_size_scale(closes) -> dict:
+    """Position-size multiplier min(1, target / realized vol), floored.
+
+    Fails closed to the floor when volatility cannot be computed.
+    """
+    target = float(settings.paper_vol_target_annual)
+    floor = float(settings.paper_vol_scale_floor)
+    lookback = int(settings.paper_vol_lookback_days)
+    if target <= 0:
+        return {"scale": 1.0, "status": "disabled"}
+    vol = None
+    try:
+        vol = realized_volatility(closes, lookback) if closes is not None else None
+    except Exception:  # bad data must not size up
+        vol = None
+    if vol is None:
+        return {"scale": floor, "status": "volatility_unavailable", "target_vol": target,
+                "lookback_days": lookback}
+    scale = min(1.0, max(floor, target / vol))
+    return {"scale": round(scale, 6), "status": "ok", "realized_vol": round(vol, 6),
+            "target_vol": target, "lookback_days": lookback}
+
+
+def _volatility_scale_for(db: Session, symbol: str) -> dict:
+    try:
+        frame = _daily_frame(db, symbol)
+        closes = frame["close"].tolist()
+    except Exception:
+        closes = None
+    return volatility_size_scale(closes)
 
 
 def _pending_orders(db: Session, account_id: int, symbol: str) -> list:
@@ -357,6 +415,14 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
         stale_entries = {"status": "blocked", "reason": str(exc)}
     if stale_entries:
         base["stale_entry_cancellations"] = stale_entries
+    try:
+        reject_alert = alert_repeated_order_rejects(db, account, now)
+    except Exception as exc:  # alerting must never stop the cycle
+        db.rollback()
+        logger.warning("order reject alert unavailable: %s", exc)
+        reject_alert = None
+    if reject_alert:
+        base["order_reject_alert"] = reject_alert
 
     all_strategies = (
         db.query(Strategy)
@@ -386,6 +452,7 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
     # policy keep the risk-rule legs, SELL-signal exits and the full universe.
     scope_by_type = {row.strategy_type: symbol_scope_for(row) for row in strategies}
     policy_by_type = {row.strategy_type: exit_policy_for(row) for row in strategies}
+    daily_bar_types = {row.strategy_type for row in strategies if daily_bar_execution(row)}
     cycle_rows = {row.strategy_type: row for row in strategies}
     policy_rows: list = []
     for row in [*strategies, *strategy_rows]:
@@ -573,8 +640,16 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         result.update({"status": "skipped", "reason": meta_reason})
                         results.append(result)
                         continue
+                    size_scale = Decimal("1")
+                    if strategy.strategy_type in daily_bar_types:
+                        # Volatility-scaled sizing (never above 1x); recorded
+                        # on the cycle result next to the order it sized.
+                        vol_scale = _volatility_scale_for(db, symbol)
+                        result["volatility_scale"] = vol_scale
+                        size_scale = Decimal(str(vol_scale["scale"]))
                     quantity = _quantity_for_buy(account, reference_price, rules,
-                                                 exploration=result.get("mode") == "explore")
+                                                 exploration=result.get("mode") == "explore",
+                                                 size_scale=size_scale)
                     if quantity <= 0:
                         result.update({"status": "blocked", "reason": "risk-sized quantity rounded to zero"})
                         results.append(result)

@@ -208,7 +208,7 @@ YESTERDAY = date(2026, 10, 27)
 
 def test_rsi2_entry_uses_oto_catastrophe_stop_and_scope_limits_symbols():
     db = _ModelDb([_MA, _rsi2()], {})
-    result, calls, signals = _cycle(db, _signal("BUY", "50"), symbols=("AAPL", "SPY"))
+    result, calls, signals = _cycle(db, _signal("BUY", "50"), symbols=("AAPL", "SPY"), frame=_calm_frame())
     # The signal double answers every pair (real batch scoping is tested
     # below); the cycle itself must ignore the out-of-scope pair.
     assert not any(row["symbol"] == "AAPL" and row["strategy"] == "rsi2_pullback" for row in result["results"])
@@ -221,6 +221,65 @@ def test_rsi2_entry_uses_oto_catastrophe_stop_and_scope_limits_symbols():
     assert rsi2_entry["quantity"] == Decimal("5")  # 0.25% exploration budget of 100k at $50, whole shares
     row = next(r for r in result["results"] if r["symbol"] == "SPY" and r["strategy"] == "rsi2_pullback")
     assert row["exit_plan"]["order_class"] == "oto" and row["exit_plan"]["take_profit_price"] is None
+    # Calm history: target/realized vol > 1, capped at 1x (never sizes up).
+    assert row["volatility_scale"]["scale"] == 1.0 and row["volatility_scale"]["status"] == "ok"
+    ma_row = next(r for r in result["results"] if r["symbol"] == "SPY" and r["strategy"] == "moving_average_crossover")
+    assert "volatility_scale" not in ma_row  # only daily-bar strategies are vol-scaled
+
+
+def _calm_frame(rows: int = 40, step: float = 0.001):
+    closes = [50.0 * (1 + (step if i % 2 else -step)) for i in range(rows)]
+    return pd.DataFrame({"close": closes})
+
+
+def _wild_frame(rows: int = 40, step: float = 0.05):
+    return _calm_frame(rows, step)
+
+
+def _rsi2_entry(calls):
+    return next(kw for _, kw in calls.reserve.call_args_list
+                if kw["side"] == "buy" and "rsi2" in kw["idempotency_key"])
+
+
+def test_rsi2_entry_volatility_scaling_shrinks_and_fails_closed():
+    # +-5% daily swings (~79% annualized) -> 0.15 / 0.79 = 0.19, floored at 0.25x:
+    # 5 shares * 0.25 = 1.25 -> 1 whole share.
+    result, calls, _ = _cycle(_ModelDb([_rsi2()], {}), _signal("BUY", "50"), frame=_wild_frame())
+    assert _rsi2_entry(calls)["quantity"] == Decimal("1")
+    row = next(r for r in result["results"] if r["strategy"] == "rsi2_pullback")
+    assert row["volatility_scale"]["scale"] == 0.25 and row["volatility_scale"]["realized_vol"] > 0.7
+    # No usable history: fail closed to the floor rather than full size.
+    result, calls, _ = _cycle(_ModelDb([_rsi2()], {}), _signal("BUY", "50"), frame=None)
+    assert _rsi2_entry(calls)["quantity"] == Decimal("1")
+    row = next(r for r in result["results"] if r["strategy"] == "rsi2_pullback")
+    assert row["volatility_scale"] == {"scale": 0.25, "status": "volatility_unavailable",
+                                      "target_vol": 0.15, "lookback_days": 20}
+
+
+def test_volatility_size_scale_bounds():
+    from app.services.stock_paper_autotrader import realized_volatility, volatility_size_scale
+
+    assert realized_volatility([1.0] * 5, 20) is None  # too short
+    assert realized_volatility([1.0] * 21, 20) is None  # zero vol is not usable
+    assert realized_volatility([1.0] * 20 + [float("nan")], 20) is None
+    mid = _calm_frame(rows=21, step=0.0075)["close"].tolist()  # ~24% annualized
+    vol = realized_volatility(mid, 20)
+    assert 0.2 < vol < 0.3
+    scaled = volatility_size_scale(mid)
+    assert scaled["status"] == "ok" and abs(scaled["scale"] - 0.15 / vol) < 1e-6
+    assert volatility_size_scale(_calm_frame()["close"])["scale"] == 1.0
+    assert volatility_size_scale(None)["scale"] == 0.25
+    with patch.object(settings, "paper_vol_target_annual", 0):
+        assert volatility_size_scale(None) == {"scale": 1.0, "status": "disabled"}
+
+
+def test_quantity_for_buy_scale_never_increases_size():
+    from app.services.stock_paper_autotrader import _quantity_for_buy
+
+    account = _account()
+    base = _quantity_for_buy(account, Decimal("50"), {}, exploration=True)
+    assert _quantity_for_buy(account, Decimal("50"), {}, exploration=True, size_scale=Decimal("3")) == base
+    assert _quantity_for_buy(account, Decimal("50"), {}, exploration=True, size_scale=Decimal("0.5")) == base / 2
 
 
 def test_signal_batch_skips_out_of_scope_pairs():
@@ -456,7 +515,8 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     db.commit()
     outcome = ensure_strategy_lineup(db)
     db.commit()
-    assert outcome == {"created": ["rsi2_pullback", "ibs_mean_reversion"], "demoted_moving_average_crossover": True}
+    assert outcome == {"created": ["rsi2_pullback", "ibs_mean_reversion"], "demoted_moving_average_crossover": True,
+                       "dropped_ibs_trend_filter": False}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     assert rows["moving_average_crossover"].current_status == "paper_trading_candidate"
     assert rows["rsi2_pullback"].current_status == "paper_trading_candidate"
@@ -471,11 +531,31 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     rows["moving_average_crossover"].current_status = "paper_trading_active"
     rows["rsi2_pullback"].current_status = "paused"
     db.commit()
-    assert ensure_strategy_lineup(db) == {"created": [], "demoted_moving_average_crossover": False}
+    assert ensure_strategy_lineup(db) == {"created": [], "demoted_moving_average_crossover": False,
+                                          "dropped_ibs_trend_filter": False}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"
     assert db.query(AuditLog).filter_by(action=SCORECARD_DEMOTION_ACTION).count() == 1
+
+
+def test_lineup_drops_the_seeded_ibs_trend_filter_once(db):
+    from app.services.seed import IBS_TREND_FILTER_ACTION, ensure_strategy_lineup
+
+    old = Strategy(name="IBS Mean Reversion", strategy_type="ibs_mean_reversion",
+                   parameters={"entry_threshold": 0.1, "trend_window": 200}, is_active=True,
+                   current_status="paper_trading_candidate")
+    db.add(old)
+    db.commit()
+    assert ensure_strategy_lineup(db)["dropped_ibs_trend_filter"] is True
+    db.commit()
+    assert old.parameters["trend_filter_sma"] == 0
+    # An operator's later choice is never overridden, and the update is one-shot.
+    old.parameters = old.parameters | {"trend_filter_sma": 200}
+    db.commit()
+    assert ensure_strategy_lineup(db)["dropped_ibs_trend_filter"] is False
+    assert old.parameters["trend_filter_sma"] == 200
+    assert db.query(AuditLog).filter_by(action=IBS_TREND_FILTER_ACTION).count() == 1
 
 
 # -------------------------------------------------------------- readiness

@@ -23,7 +23,7 @@ REVERSION_CANDIDATES = (
             "the 5-day SMA, a 10-session time stop or a 10% broker-side catastrophe stop. Index ETFs only."
         ),
         "parameters": {
-            "rsi_period": 2, "entry_threshold": 10, "trend_window": 200, "exit_rule": "sma",
+            "rsi_period": 2, "entry_threshold": 10, "trend_filter_sma": 200, "exit_rule": "sma",
             "exit_sma_window": 5, "stop_loss_pct": 0.10, "take_profit_pct": 0, "max_holding_sessions": 10,
             "symbol_scope": ["SPY", "QQQ", "IWM", "DIA"],
         },
@@ -32,11 +32,12 @@ REVERSION_CANDIDATES = (
         "name": "IBS Mean Reversion",
         "strategy_type": "ibs_mean_reversion",
         "description": (
-            "Internal bar strength below 0.1 with close above the 200-day SMA; exit when IBS exceeds 0.8, a "
+            "Internal bar strength below 0.1 (no 200-day trend filter; see reports/regime-filter-20261029.md); "
+            "exit when IBS exceeds 0.8, a "
             "10-session time stop or a 10% broker-side catastrophe stop. Index ETFs only."
         ),
         "parameters": {
-            "entry_threshold": 0.1, "exit_threshold": 0.8, "trend_window": 200, "exit_rule": "ibs",
+            "entry_threshold": 0.1, "exit_threshold": 0.8, "trend_filter_sma": 0, "exit_rule": "ibs",
             "stop_loss_pct": 0.10, "take_profit_pct": 0, "max_holding_sessions": 10,
             "symbol_scope": ["SPY", "QQQ", "IWM", "DIA"],
         },
@@ -153,11 +154,59 @@ def demote_moving_average_crossover(db: Session) -> bool:
     return changed
 
 
+IBS_TREND_FILTER_ACTION = "regime_filter_update"
+IBS_TREND_FILTER_REASON = (
+    "reports/regime-filter-20261029.md: the 200-day trend filter lowered IBS expectancy in every "
+    "window (2001+: +3.3 vs +15.3 bps/trade), so the seeded IBS row drops it."
+)
+
+
+def drop_ibs_trend_filter(db: Session) -> bool:
+    """One-time parameter correction for IBS rows seeded with the 200-day filter.
+
+    Acts only on a row still carrying the originally seeded ``trend_window:
+    200`` without an explicit ``trend_filter_sma`` (an operator choice is never
+    overridden) and with no previous correction audit event.
+    """
+    from app.services.audit import write_audit_log
+
+    changed = False
+    rows = db.query(Strategy).filter(Strategy.strategy_type == "ibs_mean_reversion").order_by(Strategy.id).all()
+    for row in rows:
+        params = dict(row.parameters or {})
+        if "trend_filter_sma" in params or params.get("trend_window") != 200:
+            continue
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance",
+            AuditLog.action == IBS_TREND_FILTER_ACTION,
+            AuditLog.entity_type == "strategy",
+            AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        row.parameters = params | {"trend_filter_sma": 0}
+        write_audit_log(
+            db,
+            event_type="strategy_governance",
+            entity_type="strategy",
+            entity_id=row.id,
+            action=IBS_TREND_FILTER_ACTION,
+            status="complete",
+            message=IBS_TREND_FILTER_REASON,
+            payload={"old_trend_filter_sma": 200, "new_trend_filter_sma": 0, "paper_only": True},
+        )
+        changed = True
+    if changed:
+        db.flush()
+    return changed
+
+
 def ensure_strategy_lineup(db: Session) -> dict:
     """Idempotent strategy lineup reconciliation run by every seed pass."""
     return {
         "created": ensure_reversion_candidates(db),
         "demoted_moving_average_crossover": demote_moving_average_crossover(db),
+        "dropped_ibs_trend_filter": drop_ibs_trend_filter(db),
     }
 
 
