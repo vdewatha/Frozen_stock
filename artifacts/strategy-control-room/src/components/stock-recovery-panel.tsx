@@ -7,7 +7,7 @@ import {
   acknowledgeStockPaperAccountingReview,
   cancelStockPaperRecovery,
   getErrorMessage,
-  getRiskSettings,
+  getActiveRiskRule,
   getStockPaperRecovery,
   resumeStockPaperAccount,
   rollbackStockPaperToLastKnownGood,
@@ -57,8 +57,8 @@ export function StockRecoveryPanel({ onKillSwitchChange }: { onKillSwitchChange?
 
   const refreshKillSwitch = useCallback(async () => {
     try {
-      const rule = await getRiskSettings();
-      setKillSwitchEnabled(rule.value?.kill_switch_enabled === true);
+      const rule = await getActiveRiskRule();
+      setKillSwitchEnabled(rule ? rule.value?.kill_switch_enabled === true : null);
     } catch {
       setKillSwitchEnabled(null);
     }

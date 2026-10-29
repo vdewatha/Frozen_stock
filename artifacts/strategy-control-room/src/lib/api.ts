@@ -2568,6 +2568,18 @@ export async function resumeStrategies(reason = "Manual resume from control room
   return postJson<SafetyControlResponse>("/safety/strategies/resume", { reason });
 }
 
+/**
+ * The active risk rule the backend's kill switch lives on (lowest id first),
+ * read from the plain list endpoint: GET /risk/settings demands write-style
+ * action confirmation in production and answers a plain read with 428.
+ */
+export async function getActiveRiskRule(): Promise<RiskRule | null> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/risk-rules`, { cache: "no-store" });
+  const rules = await handleResponse<RiskRule[]>(response);
+  const active = rules.filter((rule) => rule.is_active).sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+  return active[0] ?? null;
+}
+
 export async function getRiskSettings(): Promise<RiskRule> {
   const response = await authenticatedFetch(`${API_BASE_URL}/risk/settings`, { cache: "no-store" });
   return handleResponse<RiskRule>(response);
