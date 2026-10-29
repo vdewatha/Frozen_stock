@@ -3,7 +3,7 @@ modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 [deployment]
 router = "application"
 deploymentTarget = "vm"
-build = "pnpm --filter @workspace/api-server build && PORT=5173 BASE_PATH=/ pnpm --filter @workspace/strategy-control-room build"
+build = "python3 artifacts/api-server/backend/scripts/deploy_window_guard.py && pnpm --filter @workspace/api-server build && PORT=5173 BASE_PATH=/ pnpm --filter @workspace/strategy-control-room build"
 run = "cd artifacts/api-server && pnpm start"
 
 [packager.features]
