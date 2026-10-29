@@ -1000,7 +1000,8 @@ def _exit_leg_row(db: Session, parent: StockPaperOrder, raw: dict) -> StockPaper
     # Adopt: the leg is part of the strategy lot the entry opened.  signal_id
     # stays on the entry only (it is unique per order).
     row.source = parent.source
-    row.strategy_id = parent.strategy_id
+    if parent.strategy_id is not None or row.strategy_id is None:
+        row.strategy_id = parent.strategy_id
     row.trial_id = parent.trial_id
     row.evidence_id = parent.evidence_id
     row.order_class = parent.order_class or "bracket"
@@ -1271,6 +1272,12 @@ def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict],
                 raise StockPaperError("Broker exit leg immutable fields changed; refusing corrupted evidence")
             order.broker_order_id = broker_order_id
             order.quantity = quantity
+            if order.strategy_id is None and order.parent_order_id:
+                # A leg recorded without attribution still belongs to the lot
+                # its entry opened.
+                owner = db.get(StockPaperOrder, order.parent_order_id)
+                if owner is not None and owner.account_id == account.id and owner.strategy_id is not None:
+                    order.strategy_id = owner.strategy_id
             order.status = str(raw.get("status") or "unknown")
             order.uncertain_submission = False
             if raw.get("stop_price") is not None:
@@ -2313,7 +2320,9 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     pending = [row for row in pending if row.signal_id != signal_id]
     exposure = {row.symbol: float((row.market_value or Decimal("0")) / account.equity) for row in positions if account.equity > 0}
     for row in pending:
-        if row.strategy_id:
+        # App-side sells carry their lot's strategy for attribution; they
+        # close a position (already counted above) rather than open one.
+        if row.strategy_id and not (row.side == "sell" and not row.leg_role):
             strategy_counts[str(row.strategy_id)] = strategy_counts.get(str(row.strategy_id), 0) + 1
     daily_drawdown = float(max(Decimal("0"), (account.last_equity or account.equity) - account.equity) / (account.last_equity or account.equity))
     approved, reason = approve_trade(
@@ -2333,25 +2342,70 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
 
 
 def _open_exploration_lots(db: Session, account: StockPaperAccount, *, exclude_order_id: int | None = None) -> int:
-    """Count (strategy, symbol) exploration lots that are held or being bought."""
-    orders = db.query(StockPaperOrder).filter(
+    """Count (strategy, symbol) exploration lots that are held or being bought.
+
+    Exploration buy fills open a lot. Every sell fill of the symbol closes it,
+    whatever the sell's source: a sell attributed to the lot's strategy (an
+    app-side exit, or a broker exit leg, which inherits the entry's strategy)
+    reduces that strategy's lot first, and an unattributed sell (manual close,
+    broker import) or any remainder reduces the symbol's exploration lots in
+    opening order. A lot stays open until its whole quantity is sold, and when
+    the symbol's net filled quantity returns to zero every lot of it closes.
+    """
+    exploration_orders = db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id, StockPaperOrder.source == EXPLORATION_SOURCE
     ).all()
-    if not orders:
+    if not exploration_orders:
         return 0
-    by_id = {row.id: row for row in orders}
-    net: dict[tuple[int | None, str], Decimal] = {}
-    for fill in db.query(StockPaperFill).filter(StockPaperFill.order_id.in_(by_id)).all():
-        order = by_id[fill.order_id]
-        sign = Decimal("1") if fill.side == "buy" else Decimal("-1")
-        key = (order.strategy_id, fill.symbol)
-        net[key] = net.get(key, Decimal("0")) + sign * fill.quantity
-    lots = {key for key, quantity in net.items() if quantity > 0}
-    lots |= {
-        (row.strategy_id, row.symbol) for row in orders
+    open_lots: set[tuple[int | None, str]] = set()
+    exploration_buy_ids = {row.id for row in exploration_orders if row.side == "buy"}
+    symbols = {row.symbol for row in exploration_orders if row.side == "buy"}
+    if exploration_buy_ids:
+        fills = db.query(StockPaperFill).filter(
+            StockPaperFill.account_id == account.id, StockPaperFill.symbol.in_(symbols)
+        ).all()
+        order_ids = {row.order_id for row in fills if row.order_id is not None}
+        orders = {
+            row.id: row for row in db.query(StockPaperOrder).filter(StockPaperOrder.id.in_(order_ids)).all()
+        } if order_ids else {}
+        by_symbol: dict[str, list[StockPaperFill]] = {}
+        for fill in fills:
+            by_symbol.setdefault(fill.symbol, []).append(fill)
+        earliest = datetime.min.replace(tzinfo=UTC)
+        for symbol, rows in by_symbol.items():
+            rows.sort(key=lambda fill: (_utc(fill.filled_at) if fill.filled_at else earliest,
+                                        0 if fill.side == "buy" else 1, fill.id or 0))
+            # (owner strategy, is exploration) -> open quantity, in opening
+            # order. Non-exploration holdings are tracked too so another
+            # strategy's sell of its own shares never closes an exploration lot.
+            lots: dict[tuple[int | None, bool], Decimal] = {}
+            total = Decimal("0")
+            for fill in rows:
+                order = orders.get(fill.order_id)
+                owner = order.strategy_id if order is not None else None
+                if fill.side == "buy":
+                    total += fill.quantity
+                    key = (owner, fill.order_id in exploration_buy_ids)
+                    lots[key] = lots.get(key, Decimal("0")) + fill.quantity
+                    continue
+                total -= fill.quantity
+                remaining = fill.quantity
+                own = [key for key in lots if owner is not None and key[0] == owner]
+                for key in [*own, *(key for key in lots if key not in own)]:
+                    if remaining <= 0:
+                        break
+                    take = min(lots[key], remaining)
+                    lots[key] -= take
+                    remaining -= take
+                lots = {key: quantity for key, quantity in lots.items() if quantity > 0}
+                if total <= 0:
+                    lots = {}
+            open_lots |= {(key[0], symbol) for key in lots if key[1]}
+    open_lots |= {
+        (row.strategy_id, row.symbol) for row in exploration_orders
         if row.side == "buy" and row.status in NONTERMINAL_ORDER_STATUSES and row.id != exclude_order_id
     }
-    return len(lots)
+    return len(open_lots)
 
 
 def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: str, signal_id: int | None,
@@ -2501,7 +2555,7 @@ def create_stock_paper_research_signal(db: Session, symbol: str, strategy_slug: 
 def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: Decimal, reference_price: Decimal,
                               idempotency_key: str, source: str, signal_id: int | None = None,
                               trial_id: str | None = None, exit_plan: dict | None = None,
-                              replacing_exit_order_ids=()) -> StockPaperOrder:
+                              replacing_exit_order_ids=(), strategy_id: int | None = None) -> StockPaperOrder:
     """Commit a serialized reservation before any broker POST.
 
     ``exit_plan`` (from :func:`build_exit_plan`) turns an autonomous whole-share
@@ -2509,6 +2563,9 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     ``replacing_exit_order_ids`` lets an app-side sell reserve inventory that
     broker exit legs currently hold; dispatch still refuses to submit it until
     those legs are confirmed terminal, so the two can never both sell.
+    ``strategy_id`` attributes a sell to the strategy that owns the lot it
+    closes (a buy always takes its strategy from its signal). It is
+    bookkeeping only and changes no sell-quantity or committed-sell check.
     """
     side, symbol = side.lower(), symbol.strip().upper()
     client_order_id = "sp-" + hashlib.sha256(idempotency_key.encode()).hexdigest()[:45]
@@ -2569,6 +2626,11 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             )
     if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
         raise StockPaperError("Only positive long buy/sell paper orders are permitted")
+    if strategy_id is not None:
+        if side != "sell":
+            raise StockPaperError("A buy takes its strategy from its signal; explicit attribution is for sells")
+        if db.get(Strategy, strategy_id) is None:
+            raise StockPaperError("Sell attribution names an unknown strategy")
     approved_context = None
     if trial_id:
         # Resolve the approval before any reservation is committed.  The
@@ -2686,7 +2748,8 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         if current is None and open_count >= int(rules.get("max_open_positions", 1)):
             raise StockPaperError("Order exceeds the configured open-position risk limit")
     order = StockPaperOrder(account_id=account.id, client_order_id=client_order_id, symbol=symbol, side=side, quantity=quantity,
-        strategy_id=signal.strategy_id if signal else None, signal_id=signal.id if signal else None,
+        strategy_id=signal.strategy_id if signal else (strategy_id if side == "sell" else None),
+        signal_id=signal.id if signal else None,
         trial_id=trial_id,
         evidence_id=evidence.evidence_id if evidence else None, order_type="limit",
         time_in_force=EXIT_ENTRY_TIME_IN_FORCE if exit_plan else "day",

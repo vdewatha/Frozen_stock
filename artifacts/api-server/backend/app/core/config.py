@@ -150,6 +150,8 @@ class Settings(BaseSettings):
     # ingestion cycle may make across all symbols. The newest window for all
     # symbols is fetched with multi-symbol requests and does not count here.
     intraday_backfill_request_budget: int = Field(default=40, ge=0, le=150)
+    # Server-side limit for sessions left idle inside a transaction (0 disables).
+    database_idle_in_transaction_timeout_seconds: int = Field(default=600, ge=0, le=3600)
     # Wall-clock cap on repair requests per minutely import. Repairs run before
     # the import reports, so 40 sequential repair requests (~160 s on the VM)
     # made every live minute arrive late; leftover gaps wait for a later cycle.
@@ -185,6 +187,16 @@ class Settings(BaseSettings):
     paper_session_drawdown_lock_pct: float = Field(default=0.02, ge=0, le=1)
     paper_entry_open_buffer_minutes: int = Field(default=15, ge=0, le=390)
     paper_entry_close_buffer_minutes: int = Field(default=10, ge=0, le=390)
+    # Entry window for daily-bar strategies (``daily_bar_execution``, e.g.
+    # RSI(2) Pullback / IBS Mean Reversion), in minutes after the session open
+    # from ``exchange_sessions.session_bounds``.  The backtester fills these
+    # entries at the next session's open, so paper BUYs are allowed only in
+    # [open + start, open + end) (clamped to the session close); outside it
+    # they open no new positions.  Exits are not affected.  An empty window
+    # (end <= start) disables their entries.  The time-of-day entry protection
+    # (``paper_entry_open_buffer_minutes``) still applies on top of this.
+    paper_daily_bar_entry_window_start_minutes: int = Field(default=5, ge=0, le=390)
+    paper_daily_bar_entry_window_end_minutes: int = Field(default=45, ge=0, le=390)
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # A shared workspace .env also contains frontend and provider-specific
