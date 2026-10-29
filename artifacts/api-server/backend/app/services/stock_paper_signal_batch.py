@@ -102,10 +102,28 @@ def _is_research_only(strategy: Any) -> bool:
     return getattr(strategy, "current_status", "paper_trading_active") != "paper_trading_active"
 
 
+def _spy_loader(db: Session):
+    """Lazily load SPY's trusted daily frame once per cycle (None on failure)."""
+    cache: dict[str, Any] = {}
+
+    def load():
+        if "SPY" not in cache:
+            try:
+                cache["SPY"] = ledger.trusted_history(db, "SPY", require_active=False)[0]
+            except Exception as exc:  # regime features become missing, never fatal
+                logger.info("meta-label: SPY history unavailable: %s", exc)
+                cache["SPY"] = None
+        return cache["SPY"]
+
+    return load
+
+
 def generate_cycle_signals(
     db: Session,
     symbols: Iterable[str],
     strategies: Iterable[Any],
+    *,
+    meta_label: Any = None,
 ) -> tuple[dict[tuple[str, str], dict | BaseException], dict]:
     """Generate and persist one signal per (symbol, strategy) in one pass.
 
@@ -114,6 +132,10 @@ def generate_cycle_signals(
     ``create_stock_paper_research_signal`` returns, or the exception that call
     would have raised (``StockPaperError`` for untrusted data or an unknown
     strategy; any other exception for a strategy/persistence failure).
+
+    ``meta_label`` (a ``meta_label_shadow.MetaLabelRuntime``) scores every
+    BUY; the record is stored in the signal's ``features["meta_label"]`` and
+    returned as ``outcome["meta_label"]``.  It never changes the signal.
     """
     started = time.perf_counter()
     symbols = [str(symbol).strip().upper() for symbol in symbols]
@@ -130,6 +152,8 @@ def generate_cycle_signals(
         "commits": 0,
     }
     outcomes: dict[tuple[str, str], dict | BaseException] = {}
+    meta_records: dict[tuple[str, str], dict] = {}
+    load_spy = _spy_loader(db)
 
     # 1. Resolve each strategy's bound row once per cycle.
     bound: list[tuple[str, bool, Any | BaseException]] = []
@@ -159,6 +183,7 @@ def generate_cycle_signals(
                 outcomes[(symbol, strategy_type)] = row if isinstance(row, BaseException) else exc
             continue
         fingerprint = _frame_fingerprint(prices)
+        symbol_start = len(pending)
         for strategy_type, research_only, row in bound:
             if isinstance(row, BaseException):
                 outcomes[(symbol, strategy_type)] = row
@@ -169,6 +194,16 @@ def generate_cycle_signals(
                 outcomes[(symbol, strategy_type)] = exc
                 continue
             pending.append((symbol, strategy_type, research_only, row, generated, source, observation))
+        if meta_label is not None and getattr(meta_label, "active", False):
+            buys = [(item[1], item[4]) for item in pending[symbol_start:] if getattr(item[4], "action", None) == "BUY"]
+            if buys:
+                records = meta_label.evaluate_symbol(symbol, prices, load_spy(), buys)
+                for strategy_type, generated in buys:
+                    record = records.get(strategy_type)
+                    if record is not None:
+                        meta_records[(symbol, strategy_type)] = record
+                        # ``generated`` is a private copy (see _generate).
+                        generated.features = {**(generated.features or {}), "meta_label": record}
     computed_at = time.perf_counter()
 
     # 3. Persist every signal and its ledger event with a single commit.
@@ -192,9 +227,10 @@ def generate_cycle_signals(
         else:
             stats["signals_persisted"] = len(rows)
             for signal, (symbol, strategy_type, research_only, _row, _gen, _src, observation) in zip(rows, pending):
-                outcomes[(symbol, strategy_type)] = ledger._stock_paper_signal_result(
-                    signal, strategy_type, observation, research_only,
-                )
+                outcome = ledger._stock_paper_signal_result(signal, strategy_type, observation, research_only)
+                if (symbol, strategy_type) in meta_records:
+                    outcome["meta_label"] = meta_records[(symbol, strategy_type)]
+                outcomes[(symbol, strategy_type)] = outcome
     finished = time.perf_counter()
     stats["timing_ms"] = {
         "resolve_strategies": round((resolved_at - started) * 1000, 1),
