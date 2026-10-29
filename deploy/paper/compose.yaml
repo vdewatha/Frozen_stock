@@ -145,7 +145,7 @@ services:
 
   execution:
     <<: *runtime
-    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=execution@%h", "--queues=paper_trading", "--concurrency=1"]
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=execution@%h", "--queues=paper_trading,broker_reconciliation", "--concurrency=1"]
 
   risk:
     <<: *runtime

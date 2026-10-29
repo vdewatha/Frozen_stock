@@ -2479,30 +2479,33 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     broker exit legs currently hold; dispatch still refuses to submit it until
     those legs are confirmed terminal, so the two can never both sell.
     """
-    account = active_paper_account(db, for_update=True)
     side, symbol = side.lower(), symbol.strip().upper()
     client_order_id = "sp-" + hashlib.sha256(idempotency_key.encode()).hexdigest()[:45]
-    existing = db.query(StockPaperOrder).filter_by(client_order_id=client_order_id).one_or_none()
-    if existing:
-        if (existing.symbol, existing.side, existing.quantity, existing.limit_price) != (symbol, side, quantity, reference_price):
+
+    def _existing_reservation() -> StockPaperOrder | None:
+        existing = db.query(StockPaperOrder).filter_by(client_order_id=client_order_id).one_or_none()
+        if existing and (existing.symbol, existing.side, existing.quantity, existing.limit_price) != (symbol, side, quantity, reference_price):
             raise StockPaperError("Idempotency key was already used for a different order")
         return existing
-    if (
-        not account
-        or account.status != "reconciled"
-        or account.reconciliation_required
-        or account.unexplained_residual
-    ):
-        raise StockPaperError("Stock paper exposure is blocked until reconciled")
-    if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
-        raise StockPaperError("Only positive long buy/sell paper orders are permitted")
+
+    existing = _existing_reservation()
+    if existing:
+        return existing
     now = datetime.now(UTC)
     if source in AUTONOMOUS_ORDER_SOURCES:
         # Scheduled execution is the autonomous path. It must satisfy the
         # same persisted qualification, recovery, notification, audit, feed,
         # and risk evidence used by the launch preflight before reserving an
         # order. Manual and recovery paths retain their separate contracts.
+        #
+        # Evaluate the gates before taking the account row lock. They read
+        # minutes of evidence (feeds, monitoring, audit chain); under the lock
+        # they held the account row through every signal pass, the broker
+        # reconciliation queued behind it for up to ten minutes, and its stale
+        # heartbeat made the watchdog re-pause recovery. Pauses and the kill
+        # switch are re-read under the lock below.
         from app.services.stock_learning_cycle import (
+            TRADABLE_RECOVERY_STATUSES,
             classify_launch_prerequisites,
             evaluate_launch_admission_prerequisites,
         )
@@ -2513,6 +2516,28 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             raise StockPaperError(
                 f"Scheduled paper execution blocked by launch admission: {reason}"
             )
+    account = active_paper_account(db, for_update=True)
+    # A concurrent reservation with the same key may have committed while the
+    # gates ran; the row lock serializes from here on.
+    existing = _existing_reservation()
+    if existing:
+        return existing
+    if (
+        not account
+        or account.status != "reconciled"
+        or account.reconciliation_required
+        or account.unexplained_residual
+    ):
+        raise StockPaperError("Stock paper exposure is blocked until reconciled")
+    if source in AUTONOMOUS_ORDER_SOURCES:
+        recovery = db.query(StockPaperRecoveryState).order_by(StockPaperRecoveryState.id).first()
+        if recovery is not None and recovery.status not in TRADABLE_RECOVERY_STATUSES:
+            raise StockPaperError(
+                "Scheduled paper execution blocked by launch admission: "
+                f"recovery is {recovery.status}"
+            )
+    if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
+        raise StockPaperError("Only positive long buy/sell paper orders are permitted")
     approved_context = None
     if trial_id:
         # Resolve the approval before any reservation is committed.  The

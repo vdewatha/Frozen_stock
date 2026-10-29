@@ -193,6 +193,13 @@ class CeleryConfigurationTests(unittest.TestCase):
         # a run holds the CPU for over an hour and starves the intraday import.
         self.assertFalse(entry["schedule"].hour & set(range(7, 16)))
 
+    def test_broker_reconciliation_has_its_own_expiring_lane(self):
+        route = celery_app.conf.task_routes["app.tasks.jobs.stock_paper_broker_reconciliation_job"]
+        entry = celery_app.conf.beat_schedule["stock-paper-broker-reconciliation-job"]
+        self.assertEqual(route, {"queue": "broker_reconciliation"})
+        self.assertIn("broker_reconciliation", {queue.name for queue in celery_app.conf.task_queues})
+        self.assertEqual(entry["options"], {"expires": 4 * 60})
+
     def test_paper_signal_ticks_expire_instead_of_backlogging(self):
         entry = celery_app.conf.beat_schedule["paper-trading-signal-job"]
         self.assertEqual(entry["options"], {"expires": 55})

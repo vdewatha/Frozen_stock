@@ -127,7 +127,7 @@ def _worker_lease_check(db: Session) -> dict:
 # 2 vCPU VM inside transactions that held paper account and recovery row
 # locks, which froze the workers, monitor and watchdog. Operator and drill
 # runs still verify the whole chain.
-AUDIT_CHAIN_RECENT_WINDOW = 2000
+AUDIT_CHAIN_RECENT_WINDOW = 500
 
 
 def _audit_chain_check(db: Session, *, recent: int | None = None) -> dict:
