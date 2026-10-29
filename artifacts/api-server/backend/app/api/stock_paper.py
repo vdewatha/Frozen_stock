@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -9,6 +9,7 @@ from app.schemas.trading import PaperTradingSignalRequest, StockPaperAccountingR
 from app.services.paper_venue_qualification import authorize_paper_venue_activation, paper_venue_qualification_status, record_paper_venue_qualification
 from app.services.paper_research_venue import authorize as authorize_research_venue, record_qualification as create_research_venue_qualification, status as research_venue_status
 from app.services.paper_transport_recovery import review as review_paper_transport_recovery
+from app.services.paper_trade_scorecard import build_scorecard, scorecard_history
 from app.services.stock_paper_ledger import (
     StockPaperError,
     active_paper_broker_name,
@@ -44,6 +45,12 @@ def _attribute(db: Session, request: Request) -> None:
 @router.get("/status")
 def status(db: Session = Depends(get_db)) -> dict:
     return stock_paper_status(db)
+
+
+@router.get("/scorecard")
+def scorecard(days: int = Query(30, ge=1, le=3650), db: Session = Depends(get_db)) -> dict:
+    """Read-only scorecard of closed bot round trips (no snapshot is written)."""
+    return build_scorecard(db, days=days) | {"history": scorecard_history(db, limit=30)}
 
 
 @router.get("/venue-qualification")

@@ -1711,6 +1711,84 @@ function apiErrorMessage(status: number, detail: string | null): string {
   return detail || `Request could not be completed (${status}).`;
 }
 
+export type PaperScorecardStats = {
+  key?: string | number;
+  trades: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  payoff_ratio: number | null;
+  expectancy: number | null;
+  expectancy_return: number | null;
+  profit_factor: number | null;
+  total_pnl: number;
+  fees: number;
+  avg_holding_minutes: number | null;
+  costs_known: boolean | null;
+  bootstrap_ci: { confidence: number; win_rate: [number | null, number | null]; expectancy: [number | null, number | null] } | null;
+};
+
+export type PaperScorecardGroup = PaperScorecardStats & { key: string | number; strategy_name?: string | null; strategy_status?: string | null; sources?: string[] };
+
+export type PaperScorecardTrade = {
+  entry_order_id: number | null;
+  strategy_id: number | null;
+  strategy_name: string | null;
+  symbol: string;
+  source: string;
+  quantity: number;
+  entry_price: number;
+  exit_price: number;
+  entered_at: string;
+  exited_at: string;
+  holding_minutes: number;
+  entry_time_bucket: string;
+  exit_reason: string;
+  net_pnl: number;
+  net_return: number | null;
+  fees: number;
+  win: boolean;
+  mistakes?: { primary_mistake: string | null; mistakes: string[]; lesson: string | null };
+};
+
+export type PaperScorecardRolling = { window: number; trades: number; complete: boolean; win_rate: number | null; expectancy: number | null; total_pnl: number; profit_factor: number | null };
+
+export type PaperScorecard = {
+  version: string;
+  status: "available" | "unavailable";
+  reason?: string;
+  generated_at: string;
+  days: number;
+  headline: PaperScorecardStats;
+  goal: {
+    target_win_rate: number;
+    window: number;
+    last_window_trades: number;
+    last_window_wins: number;
+    last_window_win_rate: number | null;
+    last_window_pnl: number | null;
+    met_last_window: boolean;
+    overall_win_rate: number | null;
+    overall_expectancy: number | null;
+    making_money: boolean;
+    rolling: Record<string, PaperScorecardRolling>;
+  };
+  by_strategy?: PaperScorecardGroup[];
+  by_source?: PaperScorecardGroup[];
+  by_exit_reason?: PaperScorecardGroup[];
+  by_time_bucket?: PaperScorecardGroup[];
+  mistakes?: { losing_trades: number; primary_counts: Record<string, number>; primary_net_pnl: Record<string, number | null> };
+  open_mark_to_market?: { positions: number; unrealized_pnl: number; unmarked_positions: number; note: string };
+  benchmark?: { symbol: string; status: string; reason?: string; benchmark_return?: number | null; bot_return_on_equity?: number | null; excess_return?: number | null; start_date?: string; end_date?: string };
+  trades: PaperScorecardTrade[];
+  history?: { as_of_date: string | null; trades: number | null; win_rate: number | null; expectancy: number | null; total_pnl: number | null }[];
+  exploration_note?: string;
+  paper_only: true;
+  live_authorized: false;
+};
+
 export function getErrorMessage(error: unknown, fallback = "Something went wrong."): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error && error.message && error.message !== "[object Object]") return error.message;
@@ -1954,6 +2032,11 @@ export async function reducePaperTrade(tradeId: number, reducePct: number, reaso
 export async function getPaperTrades(): Promise<PaperTrade[]> {
   const response = await authenticatedFetch(`${API_BASE_URL}/paper-trades`, { cache: "no-store" });
   return handleResponse<PaperTrade[]>(response);
+}
+
+export async function getStockPaperScorecard(days = 30): Promise<PaperScorecard> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/scorecard?days=${encodeURIComponent(String(days))}`, { cache: "no-store" });
+  return handleResponse<PaperScorecard>(response);
 }
 
 export async function getStockPaperStatus(): Promise<StockPaperStatus> {
