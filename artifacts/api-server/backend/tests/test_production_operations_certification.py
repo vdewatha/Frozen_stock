@@ -228,6 +228,35 @@ def test_audit_chain_check_diagnoses_historical_fork_without_mutating_rows():
         db.close()
 
 
+def test_recent_audit_verification_checks_only_the_newest_links():
+    db = _db()
+    try:
+        for index in range(30):
+            write_audit_log(db, event_type="operations_probe", action="recent_scan",
+                            status="complete", message="Recent verification",
+                            payload={"sequence": index})
+            db.flush()
+        db.commit()
+        rows = db.scalars(select(AuditLog).order_by(AuditLog.id)).all()
+        old_row, recent_row = rows[2], rows[25]
+        old_row.payload = {"sequence": "tampered"}
+        db.commit()
+
+        result = _audit_chain_check(db, recent=10)
+        assert result["status"] == "clear"
+        assert result["details"]["event_count"] == 10
+        assert result["details"]["scope"] == "recent"
+        assert _audit_chain_check(db)["details"]["first_broken_row_id"] == old_row.id
+
+        recent_row.payload = {"sequence": "tampered"}
+        db.commit()
+        result = _audit_chain_check(db, recent=10)
+        assert result["status"] == "breach"
+        assert result["details"]["first_broken_row_id"] == recent_row.id
+    finally:
+        db.close()
+
+
 def test_full_audit_verification_bounds_loaded_rows_and_detects_late_tampering():
     db = _db()
     try:

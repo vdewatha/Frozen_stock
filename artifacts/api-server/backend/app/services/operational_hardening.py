@@ -122,12 +122,31 @@ def _worker_lease_check(db: Session) -> dict:
     )
 
 
-def _audit_chain_check(db: Session) -> dict:
+# Routine reads (readiness, launch gates, live-operations snapshots) verify
+# only the newest links. Re-hashing all ~43k rows took over 30 minutes on the
+# 2 vCPU VM inside transactions that held paper account and recovery row
+# locks, which froze the workers, monitor and watchdog. Operator and drill
+# runs still verify the whole chain.
+AUDIT_CHAIN_RECENT_WINDOW = 2000
+
+
+def _audit_chain_check(db: Session, *, recent: int | None = None) -> dict:
     previous = None
     previous_row_id = None
     event_count = 0
-    # Verify the full chain without retaining every payload in each API request.
-    with db.scalars(select(AuditLog).order_by(AuditLog.id).execution_options(yield_per=100)) as rows:
+    query = select(AuditLog).order_by(AuditLog.id)
+    if recent is not None:
+        # Anchor on the row just before the window; its stored digest seeds
+        # the link check for the first row inside the window.
+        anchor = db.scalars(
+            select(AuditLog).order_by(AuditLog.id.desc()).offset(recent).limit(1)
+        ).first()
+        if anchor is not None:
+            previous = anchor.event_sha256
+            previous_row_id = anchor.id
+            query = query.where(AuditLog.id > anchor.id)
+    # Verify the chain without retaining every payload in each API request.
+    with db.scalars(query.execution_options(yield_per=100)) as rows:
         for row in rows:
             event_count += 1
             expected = sha256(_canonical({
@@ -168,6 +187,7 @@ def _audit_chain_check(db: Session) -> dict:
         "clear",
         "Audit event digest chain verifies.",
         event_count=event_count,
+        scope="full" if recent is None else "recent",
         incident_scope="historical_audit_integrity",
         original_rows_preserved=True,
     )
@@ -304,7 +324,9 @@ def _backup_check() -> dict:
 
 
 def run_operational_hardening(db: Session, *, source: str = "operator", notify: bool = True) -> dict:
-    audit_check = _audit_chain_check(db)
+    audit_check = _audit_chain_check(
+        db, recent=AUDIT_CHAIN_RECENT_WINDOW if source == "read" else None
+    )
     checks = [
         _database_check(db),
         _scheduler_check(),
