@@ -305,3 +305,57 @@ def strategy_mistake_report(db: Session, *, limit_trials: int = 50) -> dict:
     for trial in trials:
         rows.extend(trial_lot_trades(db, trial))
     return aggregate_mistakes(rows) | {"trials_considered": len(trials), "trades_considered": len(rows)}
+
+
+# Exit reasons from the paper-trade scorecard that the classifier treats as a
+# stop exit (stop-slippage / premature-stop checks).
+STOP_EXIT_REASONS = frozenset({"stop_loss_leg", "protective_stop"})
+POST_EXIT_LOOKAHEAD_HOURS = 24
+
+
+def _post_exit_return(db: Session, symbol: str, exited_at: datetime, exit_price: float) -> Optional[float]:
+    """Best observed close within one day after the exit, vs the exit price."""
+    if exit_price <= 0:
+        return None
+    from datetime import timedelta
+
+    bars = db.scalars(select(IntradayBar).where(
+        IntradayBar.symbol == symbol, IntradayBar.timeframe == "1m",
+        IntradayBar.opened_at > exited_at,
+        IntradayBar.opened_at <= exited_at + timedelta(hours=POST_EXIT_LOOKAHEAD_HOURS),
+    )).all()
+    if not bars:
+        return None
+    return max(float(bar.close) for bar in bars) / exit_price - 1
+
+
+def classify_round_trip(db: Session, trip: dict) -> dict:
+    """Classify one closed scheduled/exploration round trip from the scorecard.
+
+    ``trip`` is a closed trade from :mod:`app.services.paper_trade_scorecard`
+    (entry/exit prices, quantity, recorded fees, exit reason, planned stop).
+    Excursions come from stored 1-minute bars when present; otherwise those
+    checks are skipped rather than guessed.  Read-only, hindsight evaluation.
+    """
+    entered_at = _aware(datetime.fromisoformat(trip["entered_at"]))
+    exited_at = _aware(datetime.fromisoformat(trip["exited_at"]))
+    entry_price = float(trip["entry_price"])
+    exit_price = float(trip["exit_price"])
+    mfe, mae = _excursions(db, trip["symbol"], entered_at, exited_at, entry_price)
+    reason = str(trip.get("exit_reason") or "")
+    post_exit = _post_exit_return(db, trip["symbol"], exited_at, exit_price) if reason in STOP_EXIT_REASONS else None
+    trade = {
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "quantity": float(trip["quantity"]),
+        "fees": float(trip.get("fees") or 0.0),
+        "stop_fraction": trip.get("stop_fraction"),
+        "exit_reason": "stop" if reason in STOP_EXIT_REASONS else ("horizon" if reason == "sell_signal" else reason),
+        "max_favorable_excursion": mfe,
+        "max_adverse_excursion": mae,
+        "post_exit_return": post_exit,
+        "probability": trip.get("probability"),
+        "equity_at_entry": trip.get("equity_at_entry"),
+        "risk_per_trade": trip.get("planned_risk_fraction"),
+    }
+    return classify_trade(trade)

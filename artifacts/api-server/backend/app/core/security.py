@@ -44,6 +44,7 @@ READ_PATHS = {
     "/research/agent-comparison-reports",
     "/stock/learning-cycles/launch-prerequisites",
     "/stock-paper/status",
+    "/stock-paper/scorecard",
     "/stock-paper/venue-qualification",
     "/live-broker/status",
     "/stock/forward-trials", "/stock/forward-trials/bindings/eligible",

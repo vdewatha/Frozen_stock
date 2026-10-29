@@ -1354,3 +1354,14 @@ def strategy_edge_decay_job() -> dict:
         return run_edge_decay_review(db)
 
     return _run_job("strategy_edge_decay_job", work)
+
+
+@celery_app.task
+def paper_trade_scorecard_snapshot_job(days: int = 30) -> dict:
+    """Store one read-only paper trade scorecard snapshot per New York date."""
+    def work(db):
+        from app.services.paper_trade_scorecard import record_scorecard_snapshot
+
+        return record_scorecard_snapshot(db, days=days)
+
+    return _run_job("paper_trade_scorecard_snapshot_job", work)

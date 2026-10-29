@@ -29,6 +29,7 @@ import { RegimeMonitorLab } from "@/components/regime-monitor-lab";
 import { RiskSettingsPanel } from "@/components/risk-settings-panel";
 import { StatusPill } from "@/components/status-pill";
 import { StockPaperLedgerPanel } from "@/components/stock-paper-ledger-panel";
+import { PaperScorecardPanel } from "@/components/paper-scorecard-panel";
 import { StockTrainingLab } from "@/components/stock-training-lab";
 import { StockMonitoringPanel } from "@/components/stock-monitoring-panel";
 import { StockRecoveryPanel } from "@/components/stock-recovery-panel";
@@ -110,7 +111,7 @@ function PageContent({ page, section, dashboard, session }: { page: string; sect
   if (page === "overview") return <Overview dashboard={dashboard} />;
   const views: Record<string, ReactNode> = {
     "markets/iex": <IexResearchPanel />, "markets/consolidated": <DelayedSipPanel />, "markets/history": <MarketLab />, "markets/context": <><RegimeMonitorLab /><EconomicContextLab /><NewsSentimentLab /></>,
-    "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,
+    "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/scorecard": <PaperScorecardPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,
     "learning/cycles": <StockLearningCyclePanel />, "learning/training": <StockTrainingLab />, "learning/evaluation": <ForwardPaperEvaluationPanel />, "learning/performance": <ModelPerformanceLab />,
     "research/runs": <ResearchControlRoom />, "research/scalp": <ResearchOnly><ScalpResearchPanel /></ResearchOnly>, "research/experiments": <ExperimentManagerLab />, "research/library": <StrategyLibrary dashboard={dashboard} />, "research/models": <ResearchOnly><ModelLab /></ResearchOnly>, "research/signals": <ResearchOnly><PredictionScanner /><OpportunityRadar /></ResearchOnly>, "research/memory": <ResearchOnly><MemoryReplayPanel /></ResearchOnly>,
     "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} />, "risk/broker": <><PaperVenueGovernancePanel /><BrokerSafetyLab /></>, "risk/recovery": <StockRecoveryPanel />,

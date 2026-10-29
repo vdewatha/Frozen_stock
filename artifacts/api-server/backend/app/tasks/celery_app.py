@@ -109,6 +109,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.stock_forward_trial_observe_job": {"queue": "paper_trading"},
     "app.tasks.jobs.stock_forward_trial_reconcile_job": {"queue": "paper_trading"},
     "app.tasks.jobs.stock_forward_trial_evaluate_job": {"queue": "paper_trading"},
+    "app.tasks.jobs.paper_trade_scorecard_snapshot_job": {"queue": "learning"},
 }
 celery_app.conf.beat_schedule = {
     "delayed-sip-collection": {
@@ -210,6 +211,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.stock_forward_trial_reconcile_job",
         "schedule": 60,
         "options": {"expires": 55},
+    },
+    # Read-only daily scorecard snapshot after the close (weekdays, New York
+    # wall clock) so the owner and the learning loop see each day's trades.
+    "paper-trade-scorecard-snapshot": {
+        "task": "app.tasks.jobs.paper_trade_scorecard_snapshot_job",
+        "schedule": crontab(minute=20, hour=16, day_of_week="mon-fri"),
+        "options": {"expires": 6 * 60 * 60},
     },
     "stock-forward-trial-observe": {
         "task": "app.tasks.jobs.stock_forward_trial_observe_job",
