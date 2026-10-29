@@ -515,7 +515,8 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     db.commit()
     outcome = ensure_strategy_lineup(db)
     db.commit()
-    assert outcome == {"created": ["rsi2_pullback", "ibs_mean_reversion"], "demoted_moving_average_crossover": True}
+    assert outcome == {"created": ["rsi2_pullback", "ibs_mean_reversion"], "demoted_moving_average_crossover": True,
+                       "dropped_ibs_trend_filter": False}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     assert rows["moving_average_crossover"].current_status == "paper_trading_candidate"
     assert rows["rsi2_pullback"].current_status == "paper_trading_candidate"
@@ -530,11 +531,31 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     rows["moving_average_crossover"].current_status = "paper_trading_active"
     rows["rsi2_pullback"].current_status = "paused"
     db.commit()
-    assert ensure_strategy_lineup(db) == {"created": [], "demoted_moving_average_crossover": False}
+    assert ensure_strategy_lineup(db) == {"created": [], "demoted_moving_average_crossover": False,
+                                          "dropped_ibs_trend_filter": False}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"
     assert db.query(AuditLog).filter_by(action=SCORECARD_DEMOTION_ACTION).count() == 1
+
+
+def test_lineup_drops_the_seeded_ibs_trend_filter_once(db):
+    from app.services.seed import IBS_TREND_FILTER_ACTION, ensure_strategy_lineup
+
+    old = Strategy(name="IBS Mean Reversion", strategy_type="ibs_mean_reversion",
+                   parameters={"entry_threshold": 0.1, "trend_window": 200}, is_active=True,
+                   current_status="paper_trading_candidate")
+    db.add(old)
+    db.commit()
+    assert ensure_strategy_lineup(db)["dropped_ibs_trend_filter"] is True
+    db.commit()
+    assert old.parameters["trend_filter_sma"] == 0
+    # An operator's later choice is never overridden, and the update is one-shot.
+    old.parameters = old.parameters | {"trend_filter_sma": 200}
+    db.commit()
+    assert ensure_strategy_lineup(db)["dropped_ibs_trend_filter"] is False
+    assert old.parameters["trend_filter_sma"] == 200
+    assert db.query(AuditLog).filter_by(action=IBS_TREND_FILTER_ACTION).count() == 1
 
 
 # -------------------------------------------------------------- readiness
