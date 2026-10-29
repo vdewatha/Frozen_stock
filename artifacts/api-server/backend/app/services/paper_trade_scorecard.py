@@ -45,6 +45,7 @@ from app.models.stock_paper import (
     StockPaperPosition,
 )
 from app.services.trade_mistakes import aggregate_mistakes, classify_round_trip
+from app.services.entry_protections import protective_stop_idempotency_key
 
 SCORECARD_VERSION = "paper-trade-scorecard-v1"
 SNAPSHOT_EVENT_TYPE = "paper_scorecard_snapshot"
@@ -158,7 +159,7 @@ class _ExitAttribution:
         if label not in BOT_SOURCES:
             return "other", None
         for day in _session_dates(order):
-            if order.client_order_id == _client_order_id(f"scheduled-paper:{day}:{order.symbol}:protective_stop:sell"):
+            if order.client_order_id == _client_order_id(protective_stop_idempotency_key(day, order.symbol)):
                 return "protective_stop", None
             for strategy_type in self.strategy_types:
                 for prefix in ("scheduled", "explore"):
