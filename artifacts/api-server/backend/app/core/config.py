@@ -131,6 +131,31 @@ class Settings(BaseSettings):
     paper_exploration_enabled: bool = False
     paper_exploration_risk_fraction: float = Field(default=0.0025, gt=0, le=0.01)
     paper_exploration_max_positions: int = Field(default=12, ge=1, le=40)
+    # Meta-label filter for BUY signals (app/services/meta_label.py).
+    # "shadow" records the calibrated probability, threshold and the take/skip
+    # decision it would make on every actionable BUY without changing orders;
+    # it degrades to "off" when the model artifact is missing or invalid.
+    # "enforce" skips BUYs the filter rejects and fails closed (skips every
+    # BUY) when the artifact is unavailable. Never enable enforce without a
+    # forward paper review of the shadow records.
+    paper_meta_label_mode: str = "shadow"
+    # Empty = <backend>/stock_training_artifacts/meta_label/meta_label_model.joblib
+    # (produced by scripts/train_meta_label.py).
+    paper_meta_label_model_path: str = ""
+    # Entry protections (app/services/entry_protections.py): entry-only
+    # circuit breakers for scheduled and exploration paper BUYs.  They never
+    # block sells/exits.  A risk-rule key with the same name minus the
+    # ``paper_`` prefix overrides each value; 0 disables that protection.
+    paper_stoploss_guard_count: int = Field(default=3, ge=0, le=100)
+    paper_stoploss_guard_global_count: int = Field(default=0, ge=0, le=100)
+    paper_stoploss_guard_lookback_minutes: int = Field(default=360, ge=0, le=10080)
+    paper_stoploss_guard_pause_minutes: int = Field(default=120, ge=0, le=10080)
+    paper_exit_cooldown_minutes: int = Field(default=30, ge=0, le=10080)
+    paper_low_profit_trades: int = Field(default=4, ge=0, le=100)
+    paper_low_profit_lock_minutes: int = Field(default=1440, ge=0, le=43200)
+    paper_session_drawdown_lock_pct: float = Field(default=0.02, ge=0, le=1)
+    paper_entry_open_buffer_minutes: int = Field(default=15, ge=0, le=390)
+    paper_entry_close_buffer_minutes: int = Field(default=10, ge=0, le=390)
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # A shared workspace .env also contains frontend and provider-specific
@@ -194,6 +219,8 @@ class Settings(BaseSettings):
             raise ValueError("Alpaca intraday feeds are available only for live-disabled Alpaca paper operation")
         if self.active_paper_broker not in {"tradier_sandbox", "alpaca_paper"}:
             raise ValueError("active_paper_broker must be tradier_sandbox or alpaca_paper")
+        if self.paper_meta_label_mode not in {"off", "shadow", "enforce"}:
+            raise ValueError("paper_meta_label_mode must be off, shadow, or enforce")
         return self
 
     def validate_production_configuration(self) -> list[str]:

@@ -20,7 +20,7 @@ def signal_source(research: bool = False, **mock_kwargs):
     """
     mock = MagicMock(**mock_kwargs)
 
-    def fake(db, symbols, strategies):
+    def fake(db, symbols, strategies, **_kwargs):
         outcomes = {}
         for symbol in symbols:
             for strategy in strategies:

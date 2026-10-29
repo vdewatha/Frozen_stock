@@ -76,6 +76,22 @@ STRATEGY_RESEARCH: dict[str, dict] = {
         "confirmation_rules": ["Fast EMA remains above slow EMA", "Pullback is controlled", "Model expected return stays positive"],
         "risk_notes": "Can enter too early during trend failure; paper-only sizing and stop logic limit damage.",
     },
+    "rsi2_pullback": {
+        "source_label": "Connors & Alvarez, Short Term Trading Strategies That Work (2008), 2-period RSI",
+        "source_url": None,
+        "idea": "Research-only: buy a short-term oversold RSI(2) reading while price is above its 200-day average; exit on a close above the 5-day average or the first up-close.",
+        "ideal_market": "Long-term uptrends with brief pullbacks, mainly broad index ETFs.",
+        "confirmation_rules": ["Close above 200-day SMA", "RSI(2) below entry threshold", "Time stop and catastrophe stop set"],
+        "risk_notes": "High hit rate with a fat left tail (average loss larger than average win); edge decayed after publication. Not seeded; exits need the backtester's exit hook.",
+    },
+    "ibs_mean_reversion": {
+        "source_label": "Pagonidis, The IBS Effect: Mean Reversion in Equity ETFs (NAAIM 2014)",
+        "source_url": None,
+        "idea": "Research-only: buy a close near the day's low (IBS below threshold) in an uptrend; exit when IBS is high or on the first up-close.",
+        "ideal_market": "Liquid equity index ETFs in long-term uptrends.",
+        "confirmation_rules": ["Close above 200-day SMA", "IBS below entry threshold", "Time stop and catastrophe stop set"],
+        "risk_notes": "Very short holding period makes it cost-sensitive. Not seeded; exits need the backtester's exit hook.",
+    },
 }
 
 

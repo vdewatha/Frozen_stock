@@ -288,6 +288,14 @@ def run_backtest(
                 cash += close_position(open_, "take_profit_gap", current_date, history)
             elif holding_days >= config.max_holding_days:
                 cash += close_position(open_, "max_holding_period", current_date, history)
+            else:
+                # Optional strategy indicator exit decided on the last
+                # completed bar and filled at this open (same timing as
+                # entries). Strategies without one return None.
+                exit_hook = getattr(strategy, "exit_signal", None)
+                reason = exit_hook(symbol, history, position["entry_idx"]) if callable(exit_hook) else None
+                if isinstance(reason, str) and reason:
+                    cash += close_position(open_, f"signal_exit:{reason}", current_date, history)
 
         # 2. New entry at the open, using only completed prior bars.
         if position is None:

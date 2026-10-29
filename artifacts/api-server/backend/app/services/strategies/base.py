@@ -29,6 +29,18 @@ class BaseStrategy(ABC):
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         raise NotImplementedError
 
+    def exit_signal(self, symbol: str, data: pd.DataFrame, entry_index: int) -> Optional[str]:
+        """Optional indicator exit for an open long position.
+
+        ``data`` holds completed bars only (the last row is the latest
+        completed bar) and ``entry_index`` is the positional row of the entry
+        bar inside ``data``. Return a short reason string to exit at the next
+        open, or ``None`` to keep holding. The default never exits, so
+        strategies without an indicator exit rely on the stop, target and time
+        stop only.
+        """
+        return None
+
 
 def clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
     """Bound ``value`` to ``[minimum, maximum]``.
