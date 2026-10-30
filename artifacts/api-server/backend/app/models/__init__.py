@@ -3,6 +3,13 @@ from __future__ import annotations
 from app.models.crypto_data import CryptoCandle, CollectionRun
 from app.models.online_research import OnlineResearchForecast
 from app.models import shadow, execution  # Register core priority-package tables with Base.
+from app.models.unattended_paper import (
+    NotificationDelivery,
+    StockPaperMandate,
+    StockPaperMandateApproval,
+    StockPaperMandateRevocation,
+    StockStrategyReadmission,
+)
 
 from app.models.models import (
     Asset,
@@ -107,6 +114,11 @@ def __getattr__(name: str):
     return value
 
 __all__ = [
+    "NotificationDelivery",
+    "StockPaperMandate",
+    "StockPaperMandateApproval",
+    "StockPaperMandateRevocation",
+    "StockStrategyReadmission",
     "Asset",
     "AuditLog",
     "CandidateDecisionJournal",

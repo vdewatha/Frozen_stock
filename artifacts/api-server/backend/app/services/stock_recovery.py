@@ -209,7 +209,35 @@ def enter_stock_recovery(
         ledger_event(db, account, "recovery_pause", "halted", reason, {"flatten_policy": flatten_policy})
     _event(db, action="pause", status="cooldown", actor=actor, reason=reason, payload={"flatten_policy": flatten_policy, "cooldown_until": state.cooldown_until.isoformat(), **(context or {})})
     write_audit_log(db, event_type="stock_recovery", action="pause", status="complete", message=reason, entity_type="stock_paper", payload={"flatten_policy": flatten_policy, "cooldown_until": state.cooldown_until.isoformat()})
+    _recovery_entry_alert(db, actor=actor, reason=reason)
     return state
+
+
+def _recovery_entry_alert(db: Session, *, actor: str, reason: str) -> None:
+    """Every recovery entry reaches the external alert channel (deduplicated)."""
+    from app.services.alert_delivery import queue_external_alert
+
+    dedupe_key = f"stock_recovery:pause:{actor}"
+    if actor == "stock_monitor":
+        # The monitor keeps its own in-app notification; only alert externally.
+        queue_external_alert(db, severity="critical", title="Stock paper trading paused",
+                             message=reason, dedupe_key=dedupe_key)
+        return
+    existing = db.query(Notification).filter(
+        Notification.source == "stock_recovery_pause",
+        Notification.status == "open",
+        Notification.title == f"Paper recovery entered by {actor}",
+    ).first()
+    if existing is not None:
+        existing.message = reason
+        queue_external_alert(db, severity="critical", title=existing.title, message=reason,
+                             dedupe_key=dedupe_key, notification_id=existing.id)
+        return
+    create_notification(
+        db, category="stock_recovery", severity="critical", source="stock_recovery_pause",
+        title=f"Paper recovery entered by {actor}", message=reason, entity_type="stock_paper",
+        payload={"actor": actor, "dedupe_key": dedupe_key},
+    )
 
 
 TRANSIENT_HEARTBEAT_RESTORABLE_STATUSES = frozenset({"armed", "resumable"})
@@ -287,6 +315,304 @@ def restore_after_transient_heartbeat_pause(db: Session, account: StockPaperAcco
         message=reason, entity_type="stock_paper", payload={"pause_event_id": pause.id, "restored_status": state.status},
     )
     return True
+
+
+# --- Explained-halt auto-resume -------------------------------------------
+#
+# A halt whose cause is an explained technical condition resumes without an
+# operator once the cooldown has elapsed and the same evidence a human resume
+# needs is fresh and clean.  Every other halt keeps the operator path.
+
+AUTO_RESUME_ACTOR = "stock_explained_halt_automation"
+EXPLAINED_HALT_CLASSES = {
+    "stale_heartbeat": "Worker, monitor, or reconciliation heartbeat went stale",
+    "transient_broker": "Transient broker/transport error that later reconciled clean",
+    "feed_gap_repaired": "Market-data freshness gap that has since been repaired",
+    "risk_drawdown_reset": "Daily drawdown pause whose session window has reset",
+}
+# Persistent monitor breach keys that map to an explained class.  Model,
+# execution-divergence, exposure, and concentration breaches are not here and
+# therefore always require an operator.
+MONITOR_KEY_CLASSES = {
+    "health.worker_scheduler": "stale_heartbeat",
+    "health.broker": "transient_broker",
+    "health.reconciliation": "transient_broker",
+    "data.freshness_provenance": "feed_gap_repaired",
+    "risk.daily_loss": "risk_drawdown_reset",
+}
+TRANSIENT_PROVIDER_HALT_REASON = "Alpaca paper broker is unavailable or returned invalid data"
+HALTED_RECOVERY_STATUSES = frozenset({"cooldown", "paused", "revalidation_required"})
+
+
+def _ny_date(value: datetime):
+    from app.services.intraday_data import NY
+
+    return _utc(value).astimezone(NY).date()
+
+
+def _latest_pause_event(db: Session) -> StockPaperRecoveryEvent | None:
+    return (
+        db.query(StockPaperRecoveryEvent)
+        .filter(StockPaperRecoveryEvent.action == "pause")
+        .order_by(StockPaperRecoveryEvent.id.desc())
+        .first()
+    )
+
+
+def classify_recovery_halt(
+    db: Session,
+    *,
+    state: StockPaperRecoveryState | None = None,
+    account: StockPaperAccount | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """Classify the current halt as explained-technical or operator-only.
+
+    Pure read: never mutates.  ``explained`` is true only when the newest
+    pause came from an automated detector for an explained class, recovery was
+    tradable with the kill switch off beforehand, and the account carries no
+    halt reason outside that class (residuals, ambiguous orders, incomplete
+    pagination, drift, corporate actions and manual halts are never explained).
+    """
+    now = now or _now()
+    state = state or _state(db, for_update=False)
+    if account is None:
+        account = active_paper_account(db)
+    if state.status not in HALTED_RECOVERY_STATUSES:
+        return {"halted": False, "explained": False, "class": None, "reason": "Recovery is not halted"}
+    pause = _latest_pause_event(db)
+    payload = (pause.payload or {}) if pause else {}
+    base = {
+        "halted": True,
+        "explained": False,
+        "class": None,
+        "pause_event_id": pause.id if pause else None,
+        "pause_actor": pause.actor if pause else None,
+        "paused_at": _utc(pause.created_at).isoformat() if pause and pause.created_at else None,
+    }
+
+    def unexplained(reason: str) -> dict:
+        return base | {"reason": reason}
+
+    if pause is None:
+        return unexplained("No recorded pause explains the halt")
+    if state.accounting_review_required or (account is not None and account.unexplained_residual):
+        return unexplained("An unexplained accounting residual requires operator review")
+    if payload.get("prior_status") not in TRANSIENT_HEARTBEAT_RESTORABLE_STATUSES or payload.get("prior_kill_switch") is not False:
+        return unexplained("Recovery was not tradable with the kill switch off before the pause")
+    classes: set[str] = set()
+    if pause.actor == "stock_watchdog":
+        reasons = payload.get("heartbeat_reasons") or []
+        if not reasons or not all(str(reason).endswith(" is stale") for reason in reasons):
+            return unexplained("Watchdog pause includes missing or future-dated evidence")
+        classes.add("stale_heartbeat")
+    elif pause.actor == "stock_monitor":
+        keys = [str(key) for key in payload.get("monitor_breach_keys") or []]
+        unknown = sorted(key for key in keys if key not in MONITOR_KEY_CLASSES)
+        if not keys or unknown:
+            return unexplained(
+                "Monitoring breach is not an explained technical condition: " + (", ".join(unknown) or "unrecorded")
+            )
+        classes.update(MONITOR_KEY_CLASSES[key] for key in keys)
+    else:
+        return unexplained(f"Pause by {pause.actor} requires operator revalidation")
+    if "risk_drawdown_reset" in classes and pause.created_at and _ny_date(now) <= _ny_date(pause.created_at):
+        return base | {
+            "class": "+".join(sorted(classes)),
+            "reason": "Daily drawdown window has not reset; waiting for the next New York session",
+            "explained": True,
+            "waiting": True,
+        }
+    if account is not None and account.status == "halted":
+        halt_reason = account.halt_reason or ""
+        allowed = {
+            pause.reason or "",
+            state.pause_reason or "",
+            TRANSIENT_PROVIDER_HALT_REASON,
+        }
+        if halt_reason not in allowed and not halt_reason.startswith("Independent watchdog:"):
+            return unexplained(f"Account halt is not an explained technical condition: {halt_reason or 'unrecorded'}")
+    return base | {
+        "explained": True,
+        "class": "+".join(sorted(classes)),
+        "reason": "; ".join(EXPLAINED_HALT_CLASSES[name] for name in sorted(classes)),
+    }
+
+
+def _last_auto_resume_event(db: Session) -> StockPaperRecoveryEvent | None:
+    return (
+        db.query(StockPaperRecoveryEvent)
+        .filter(StockPaperRecoveryEvent.action == "automatic_resume",
+                StockPaperRecoveryEvent.actor == AUTO_RESUME_ACTOR)
+        .order_by(StockPaperRecoveryEvent.id.desc())
+        .first()
+    )
+
+
+def _record_auto_resume_outcome(
+    db: Session, *, status: str, reason: str, classification: dict,
+) -> None:
+    """Record a non-resume outcome once per distinct pause/status/reason."""
+    last = _last_auto_resume_event(db)
+    pause_id = classification.get("pause_event_id")
+    if last is not None and last.status == status and last.reason == reason and (
+        (last.payload or {}).get("pause_event_id") == pause_id
+    ):
+        return
+    _event(db, action="automatic_resume", status=status, actor=AUTO_RESUME_ACTOR, reason=reason,
+           payload={"pause_event_id": pause_id, "halt_class": classification.get("class")})
+    if status == "needs_operator":
+        existing = db.query(Notification).filter(
+            Notification.source == AUTO_RESUME_ACTOR,
+            Notification.status == "open",
+            Notification.entity_type == "stock_paper",
+        ).first()
+        if existing is None:
+            create_notification(
+                db, category="stock_recovery", severity="critical", source=AUTO_RESUME_ACTOR,
+                title="Paper halt needs an operator",
+                message=f"Automatic resume is not permitted: {reason}",
+                entity_type="stock_paper",
+                payload={"pause_event_id": pause_id, "dedupe_key": f"auto_resume:needs_operator:{pause_id}"},
+            )
+
+
+def attempt_explained_halt_auto_resume(db: Session, *, now: datetime | None = None) -> dict:
+    """Resume an explained technical halt once every human-resume gate passes.
+
+    Gates (identical evidence to ``resume_stock_paper_after_revalidation``):
+    cooldown elapsed; a clean broker reconciliation after the pause with a
+    fresh heartbeat; complete accounting (or the explicit paper research cost
+    policy); no unexplained residual; no in-flight orders (open positions are
+    allowed); and fresh, clear monitoring generated after the pause.
+    """
+    from app.core.config import settings
+
+    now = now or _now()
+    if not settings.paper_auto_resume_enabled:
+        return {"status": "disabled"}
+    state = _state(db)
+    account = active_paper_account(db, for_update=True)
+    classification = classify_recovery_halt(db, state=state, account=account, now=now)
+    if not classification["halted"]:
+        return {"status": "not_halted"}
+    if not classification["explained"]:
+        _record_auto_resume_outcome(db, status="needs_operator", reason=classification["reason"],
+                                    classification=classification)
+        db.commit()
+        return {"status": "needs_operator", "reason": classification["reason"], "classification": classification}
+
+    def wait(reason: str) -> dict:
+        _record_auto_resume_outcome(db, status="waiting", reason=reason, classification=classification)
+        db.commit()
+        return {"status": "waiting", "reason": reason, "classification": classification}
+
+    if classification.get("waiting"):
+        return wait(classification["reason"])
+    if state.cooldown_until and _utc(state.cooldown_until) > now:
+        return wait(f"Recovery cooldown remains active until {_utc(state.cooldown_until).isoformat()}")
+    if account is None:
+        return wait("Stock paper account is not initialized")
+    pause_at = _utc(datetime.fromisoformat(classification["paused_at"])) if classification.get("paused_at") else None
+    if account.reconciliation_required or _heartbeat_issue(account.last_reconciled_at, now, "broker reconciliation heartbeat"):
+        return wait("A fresh, clean broker reconciliation is required")
+    if pause_at and (account.last_reconciled_at is None or _utc(account.last_reconciled_at) <= pause_at):
+        return wait("Broker reconciliation has not run cleanly since the pause")
+    research_policy_ready = _paper_research_policy_ready(db)
+    if account.activity_contract == "alpaca-activities-v2" and (
+        (not account.accounting_verified or not account.costs_known) and not research_policy_ready
+    ):
+        return wait("Complete broker accounting, including known costs, is required")
+    in_flight = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id,
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+    ).count()
+    if in_flight:
+        return wait("In-flight orders must be terminal before automatic resume")
+    okay, monitoring_reason = _fresh_monitoring_is_clear(db, now)
+    if not okay:
+        return wait(monitoring_reason)
+    open_positions = db.query(StockPaperPosition).filter(
+        StockPaperPosition.account_id == account.id, StockPaperPosition.quantity != 0,
+    ).count()
+    _record_monitoring_preflight_result(
+        db, actor=AUTO_RESUME_ACTOR, status="clear", reason=monitoring_reason, now=now,
+        payload={"halt_class": classification["class"]},
+    )
+    prior_halt_reason = account.halt_reason
+    state.status = "resumable"
+    state.last_revalidation_at = now
+    state.updated_by = AUTO_RESUME_ACTOR
+    state.pause_reason = None
+    state.cooldown_until = None
+    _set_kill_switch(db, False)
+    account.status, account.halt_reason, account.reconciliation_required = "reconciled", None, False
+    reason = (
+        f"Explained technical halt ({classification['class']}) auto-resumed after cooldown with fresh "
+        "clean monitoring, reconciliation, and accounting"
+    )
+    evidence = {
+        "halt_class": classification["class"],
+        "pause_event_id": classification["pause_event_id"],
+        "pause_actor": classification["pause_actor"],
+        "paused_at": classification["paused_at"],
+        "monitoring_at": now.isoformat(),
+        "reconciled_at": _utc(account.last_reconciled_at).isoformat() if account.last_reconciled_at else None,
+        "cost_policy": "research_only" if research_policy_ready else "verified_all_in",
+        "all_in_costs_verified": bool(account.accounting_verified and account.costs_known),
+        "open_positions": open_positions,
+        "flat": open_positions == 0,
+        "prior_halt_reason": prior_halt_reason,
+    }
+    _event(db, action="automatic_resume", status="revalidated", actor=AUTO_RESUME_ACTOR, reason=reason, payload=evidence)
+    ledger_event(db, account, "automatic_resume", "reconciled", reason, evidence)
+    write_audit_log(db, event_type="stock_recovery", action="automatic_resume", status="revalidated",
+                    message=reason, entity_type="stock_paper", payload={"actor": AUTO_RESUME_ACTOR, **evidence})
+    for notification in db.query(Notification).filter(
+        Notification.source.in_((AUTO_RESUME_ACTOR, "stock_recovery_pause")), Notification.status == "open",
+    ).all():
+        notification.status = "resolved"
+        notification.resolved_at = now.replace(tzinfo=None)
+        notification.updated_at = now.replace(tzinfo=None)
+    create_notification(
+        db, category="stock_recovery", severity="info", source="stock_explained_halt_resume",
+        title="Paper trading auto-resumed", message=reason, entity_type="stock_paper", payload=evidence,
+    )
+    db.commit()
+    return {"status": "resumed", "reason": reason, "classification": classification, "evidence": evidence}
+
+
+def auto_resume_projection(db: Session, *, limit: int = 10) -> dict:
+    """Read-only auto-resume policy, current classification, and history."""
+    from app.core.config import settings
+
+    history = (
+        db.query(StockPaperRecoveryEvent)
+        .filter(StockPaperRecoveryEvent.action.in_(("automatic_resume", "automatic_restore")))
+        .order_by(StockPaperRecoveryEvent.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "enabled": settings.paper_auto_resume_enabled,
+        "classes": EXPLAINED_HALT_CLASSES,
+        "operator_only": [
+            "unexplained accounting residual",
+            "ambiguous order outcome or unresolved broker order",
+            "incomplete broker pagination or other reconciliation failure",
+            "position drift, corporate action, or manual/operator halt",
+            "model, execution, exposure, or concentration breach",
+        ],
+        "current": classify_recovery_halt(db, state=_state(db, for_update=False)),
+        "history": [
+            {
+                "id": event.id, "action": event.action, "status": event.status, "actor": event.actor,
+                "reason": event.reason, "payload": event.payload,
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            }
+            for event in history
+        ],
+    }
 
 
 def record_stock_monitor_heartbeat(db: Session, *, observed_at: datetime | None = None) -> None:
@@ -1098,6 +1424,7 @@ def recovery_status(db: Session) -> dict:
         "account_halt_reason": account.halt_reason if account else "Stock paper account is not initialized",
         "accounting_verified": bool(account.accounting_verified) if account else False,
         "costs_known": bool(account.costs_known) if account else False,
+        "auto_resume": auto_resume_projection(db),
         "events": [{"id": event.id, "action": event.action, "status": event.status, "actor": event.actor, "reason": event.reason, "created_at": event.created_at.isoformat() if event.created_at else None, "payload": event.payload} for event in events],
     }
 

@@ -5,7 +5,10 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models import Notification
+
+SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
 
 
 def create_notification(
@@ -33,6 +36,11 @@ def create_notification(
         payload=payload or {},
     )
     db.add(notification)
+    if SEVERITY_ORDER.get(str(severity).lower(), 0) >= SEVERITY_ORDER.get(str(settings.alert_min_severity).lower(), 1):
+        # Warning/critical alerts also go to the external delivery outbox.
+        from app.services.alert_delivery import queue_notification
+
+        queue_notification(db, notification)
     if commit:
         db.commit()
         db.refresh(notification)

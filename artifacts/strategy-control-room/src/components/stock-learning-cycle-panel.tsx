@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, GitBranch, RefreshCw, ShieldAlert, Workflow } from "lucide-react";
 
 import { RoleGate } from "@/components/access-control";
+import { PaperMandatePanel } from "@/components/paper-mandate-panel";
 import { LaunchPrerequisiteResults } from "@/components/launch-prerequisites";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -249,6 +250,8 @@ export function StockLearningCyclePanel() {
         </button>
       </div>
 
+      <PaperMandatePanel />
+
       <RoleGate requires="operator" className="mt-4">
         <div className="rounded border border-amber-200 bg-amber-50 p-3" data-testid="stock-learning-schedule-control">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -375,6 +378,15 @@ export function StockLearningCyclePanel() {
                   <div className="mt-1 text-slate-600">
                     {cycle.handoff.approval.reason ?? "Approval matches the requested paper runtime bounds."}
                   </div>
+                  {cycle.handoff.approval_mandate_id ? (
+                    <div className="mt-1 text-emerald-800" data-testid="learning-cycle-mandate-minted">
+                      Minted automatically from standing paper mandate #{cycle.handoff.approval_mandate_id}
+                    </div>
+                  ) : cycle.handoff.mandate_reason ? (
+                    <div className="mt-1 text-amber-800" data-testid="learning-cycle-mandate-reason">
+                      Standing mandate did not cover this cycle: {cycle.handoff.mandate_reason}
+                    </div>
+                  ) : null}
                   {cycle.handoff.approval.record ? (
                     <div className="mt-1 text-slate-500">
                       {cycle.handoff.approval.record.approving_actors.join(", ")} ·{" "}

@@ -27,6 +27,95 @@ sessions, 30 closed trades, and at least 90% decision coverage. A bounded run
 must report incomplete forward evidence when that window has not elapsed. It
 must never call the run profitable or live-trading ready.
 
+## Unattended operation
+
+The paper loop can run session after session without an operator. Four
+controls make that possible; each keeps the existing bounds, audit chain and
+fail-closed behaviour.
+
+### Standing paper mandate
+
+An admin records one standing mandate (`POST /api/stock/learning-cycles/paper-mandate`):
+symbol universe, exposure caps (`max_allocated_notional`, `max_risk_per_trade`),
+loss cap, allowed triggers, remaining-position policies, sessions per cycle,
+total sessions and expiry. The mandate row is immutable and audited; a later
+mandate supersedes it and `POST .../paper-mandate/{id}/revoke` withdraws it.
+
+At handoff the scheduler mints the cycle's exact paper-run approval from the
+mandate. The minted approval carries the cycle's own runtime bounds, never the
+mandate's caps, and lists `paper_mandate:<id>` among its approving actors, so
+the approval projection and the dispatch-time recheck are unchanged.
+
+A handoff still defers, with the reason shown on the cycle and in the
+mandate panel's "next auto-minted approval", when:
+
+- no mandate exists, or it is pending, expired, revoked or out of sessions;
+- the cycle trades a symbol outside the mandate universe;
+- any exposure or loss bound exceeds the mandate cap;
+- the cycle needs more sessions than the per-cycle or remaining total limit;
+- the trigger or remaining-position policy is not covered.
+
+Revoking or expiring a mandate withdraws approvals it minted for cycles that
+have not yet started (status `mandate_withdrawn`), on the scheduled handoff and
+on operator trial starts alike. Minted approvals hash exactly like operator
+approvals, so the order-time approval fence accepts them unchanged. A warning alert fires
+`PAPER_MANDATE_EXPIRY_WARNING_HOURS` (default 48) before expiry.
+
+### Explained-halt auto-resume
+
+`explained_halt_auto_resume_job` (every 5 minutes) resumes only halts with an
+explained technical cause:
+
+| Class | Cause |
+| --- | --- |
+| `stale_heartbeat` | Watchdog stale-heartbeat pause, or monitor worker/scheduler breach |
+| `transient_broker` | Broker/transport or reconciliation breach that later reconciles clean |
+| `feed_gap_repaired` | Data freshness/provenance breach after the feed is repaired |
+| `risk_drawdown_reset` | Daily-loss/drawdown pause, only on a later New York session |
+
+Every class also requires: the pause recorded the prior state as armed or
+resumable with the kill switch off; cooldown has elapsed; a reconciliation
+newer than the pause with a fresh heartbeat; verified accounting with no
+residual; no in-flight orders (open positions are allowed); and clear fresh
+monitoring. The automation records the same revalidation evidence a human
+resume does, under the actor `stock_explained_halt_automation`.
+
+These stay with a human and raise a critical alert: unexplained accounting
+residuals, uncertain order outcomes, incomplete broker pagination, model
+performance breaches, missing (not stale) heartbeats, manual pauses, and
+legacy pauses without recorded prior state. Set `PAPER_AUTO_RESUME_ENABLED=false`
+to disable the automation.
+
+### Edge-decay re-admission
+
+A strategy suspended for edge decay is quarantined for
+`STRATEGY_READMISSION_QUARANTINE_HOURS` (default 72), then
+`strategy_readmission_job` schedules a new governed learning cycle (fresh
+holdout, new challenger, new trial). The strategy is re-admitted only when
+that cycle is promoted through the normal gates. A trained but unpromoted
+cycle counts as a failure and backs off by quarantine ×
+`STRATEGY_READMISSION_BACKOFF_FACTOR`^attempts; after
+`STRATEGY_READMISSION_MAX_ATTEMPTS` failures the strategy is retired. A cycle
+blocked before training is not counted and retries shortly after the next
+regular-session open, so an out-of-session block cannot repeat forever. Pending
+re-admissions appear in the edge-decay projection.
+
+### External alerts
+
+Warning and critical notifications are queued in a delivery outbox and sent by
+`alert_delivery_job`, outside the request transaction, with retry and a
+dedupe window. A daily digest is queued after the close. Channels are enabled
+only when configured:
+
+- webhook: `ALERT_WEBHOOK_URL`, optional `ALERT_WEBHOOK_SIGNING_SECRET`;
+- Telegram: `ALERT_TELEGRAM_BOT_TOKEN`, `ALERT_TELEGRAM_CHAT_ID`;
+- email: `ALERT_EMAIL_SMTP_HOST`, `ALERT_EMAIL_SMTP_PORT`,
+  `ALERT_EMAIL_SMTP_USERNAME`, `ALERT_EMAIL_SMTP_PASSWORD`, `ALERT_EMAIL_FROM`,
+  `ALERT_EMAIL_TO`.
+
+With no channel configured, rows are recorded as `unconfigured` and the
+notification center says so. Delivery errors are stored redacted.
+
 ## Run
 
 From `artifacts/api-server/backend`, with a PostgreSQL `DATABASE_URL` already

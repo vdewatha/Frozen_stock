@@ -37,7 +37,7 @@ READ_PATHS = {
     "/crypto/paper/external-fills",
     "/crypto/paper/performance",
     "/assets", "/strategies", "/market-regimes", "/news", "/paper-trades",
-    "/audit-logs", "/notifications", "/risk-rules",
+    "/audit-logs", "/notifications", "/notifications/delivery-status", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
     "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs", "/research/agent-runs", "/research/scalp/runs",
     "/stock/training/jobs", "/stock/training/binding", "/stock/learning-cycles",
@@ -116,6 +116,13 @@ def required_role(method: str, path: str) -> str:
         return "viewer"
     if method == "GET" and path == "/stock/learning-cycles/schedule-control":
         return "viewer"
+    if method == "GET" and path == "/stock/learning-cycles/paper-mandate":
+        return "viewer"
+    if method == "POST" and (
+        path == "/stock/learning-cycles/paper-mandate"
+        or re.fullmatch(r"/stock/learning-cycles/paper-mandate/[1-9][0-9]*/revoke", path)
+    ):
+        return "admin"
     if method == "POST" and path == "/stock/learning-cycles":
         return "researcher"
     if method == "POST" and path == "/stock/learning-cycles/schedule-control":

@@ -25,6 +25,17 @@ operator review and must not be treated as healthy.
    and roll back to the recorded last-known-good binding.
 7. Revalidate monitoring, broker, feed, worker, and scheduler evidence.
 8. Wait for the recovery cooldown, then resume only with operator approval.
+   Explained technical halts (stale heartbeat, transient broker error that
+   reconciles clean, repaired feed gap, drawdown pause after the window
+   resets) resume automatically once cooldown, reconciliation, accounting,
+   in-flight-order and monitoring gates are clear; see
+   `autonomous-paper-soak.md`. Every other halt still needs this step.
+9. If the incident calls the standing paper mandate into question, revoke it
+   (`POST /api/stock/learning-cycles/paper-mandate/{id}/revoke`). Pending
+   minted approvals are withdrawn and scheduled handoffs defer again.
+10. Confirm the incident alert reached the external channel (notification
+    center, "External alerts"). An `unconfigured` or `failed` row means the
+    alert was only visible in the app.
 
 ## Backup and restore proof
 

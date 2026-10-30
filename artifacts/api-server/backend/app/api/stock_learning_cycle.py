@@ -30,6 +30,12 @@ from app.services.stock_learning_cycle import (
     set_scheduled_learning_control,
 )
 from app.services.stock_training_jobs import enqueue_stock_training_job
+from app.services.paper_mandate import (
+    PaperMandateError,
+    create_paper_mandate,
+    paper_mandate_projection,
+    revoke_paper_mandate,
+)
 
 router = APIRouter(prefix="/stock/learning-cycles", tags=["stock learning cycles"])
 
@@ -101,6 +107,34 @@ class PaperRunApprovalBody(StrictBody):
     pending_order_treatment: str = Field(min_length=1, max_length=32)
     remaining_position_policy: str = Field(min_length=1, max_length=32)
     approving_actors: list[str] = Field(default_factory=list, max_length=10)
+
+
+class PaperMandateBody(StrictBody):
+    symbols: list[str] = Field(min_length=1, max_length=60)
+    exposure_limits: dict[str, str | int | float] = Field(min_length=1, max_length=8)
+    loss_limits: dict[str, str | int | float] = Field(min_length=1, max_length=4)
+    triggers: list[Literal["scheduled", "manual"]] = Field(default_factory=lambda: ["scheduled"], min_length=1, max_length=2)
+    stop_conditions: list[str] = Field(default_factory=list, max_length=16)
+    remaining_position_policies: list[Literal["hold", "reduce", "flatten"]] = Field(
+        default_factory=lambda: ["hold"], min_length=1, max_length=3,
+    )
+    max_sessions_per_cycle: int = Field(default=20, ge=1, le=252)
+    max_sessions: int = Field(ge=1, le=2520)
+    expires_at: datetime
+    approving_actors: list[str] = Field(default_factory=list, max_length=10)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class RevokeMandateBody(StrictBody):
+    reason: str = Field(min_length=3, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def require_non_blank_reason(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("reason must contain at least three non-whitespace characters")
+        return value
 
 
 def _audit(db: Session, request: Request, action: str, cycle_id: str, payload: dict) -> None:
@@ -193,6 +227,57 @@ def get_launch_prerequisites(
         "reason": reason,
         "gates": gates,
     }
+
+
+@router.get("/paper-mandate")
+def get_paper_mandate(db: Session = Depends(get_db)) -> dict:
+    """Read-only standing mandate status and the next auto-minted approval."""
+    return paper_mandate_projection(db)
+
+
+@router.post("/paper-mandate")
+def record_paper_mandate(
+    body: PaperMandateBody,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        create_paper_mandate(
+            db,
+            actor=request.state.actor,
+            symbols=body.symbols,
+            exposure_limits=body.exposure_limits,
+            loss_limits=body.loss_limits,
+            schedule={"triggers": body.triggers},
+            stop_conditions=body.stop_conditions,
+            remaining_position_policies=body.remaining_position_policies,
+            max_sessions_per_cycle=body.max_sessions_per_cycle,
+            max_sessions=body.max_sessions,
+            expires_at=body.expires_at,
+            approving_actors=body.approving_actors,
+            reason=body.reason,
+        )
+        db.commit()
+        return paper_mandate_projection(db)
+    except PaperMandateError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.post("/paper-mandate/{mandate_id}/revoke")
+def revoke_mandate(
+    body: RevokeMandateBody,
+    mandate_id: int = Path(..., ge=1),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        revoke_paper_mandate(db, mandate_id, actor=request.state.actor, reason=body.reason)
+        db.commit()
+        return paper_mandate_projection(db)
+    except PaperMandateError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from None
 
 
 @router.post("/schedule-control")

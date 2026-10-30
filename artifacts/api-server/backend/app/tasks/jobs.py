@@ -1393,6 +1393,66 @@ def stock_forward_trial_evaluate_job(trial_id: str) -> dict:
 
 
 @celery_app.task
+def explained_halt_auto_resume_job() -> dict:
+    """Auto-resume explained technical halts; unexplained halts stay operator-only."""
+    def work(db):
+        from app.services.risk_actions import reset_drawdown_kill_switch_after_window
+        from app.services.stock_recovery import attempt_explained_halt_auto_resume
+
+        risk_reset = reset_drawdown_kill_switch_after_window(db)
+        recovery = attempt_explained_halt_auto_resume(db)
+        return {"status": recovery.get("status"), "job": "explained_halt_auto_resume_job",
+                "recovery": recovery, "risk_kill_switch": risk_reset, "paper_only": True,
+                "live_authorized": False}
+
+    return _run_job("explained_halt_auto_resume_job", work)
+
+
+@celery_app.task
+def strategy_readmission_job() -> dict:
+    """Schedule governed re-admission cycles for edge-decay-suspended strategies."""
+    def work(db):
+        from app.services.strategy_readmission import run_strategy_readmission
+
+        return run_strategy_readmission(db)
+
+    return _run_job("strategy_readmission_job", work)
+
+
+@celery_app.task
+def alert_delivery_job() -> dict:
+    """Send pending external alerts with bounded retry."""
+    def work(db):
+        from app.services.alert_delivery import deliver_pending_alerts
+
+        return deliver_pending_alerts(db)
+
+    return _run_job("alert_delivery_job", work)
+
+
+@celery_app.task
+def alert_daily_digest_job() -> dict:
+    def work(db):
+        from app.services.alert_delivery import queue_daily_digest
+
+        return queue_daily_digest(db)
+
+    return _run_job("alert_daily_digest_job", work)
+
+
+@celery_app.task
+def paper_mandate_expiry_warning_job() -> dict:
+    def work(db):
+        from app.services.paper_mandate import warn_expiring_mandate
+
+        result = warn_expiring_mandate(db)
+        db.commit()
+        return result
+
+    return _run_job("paper_mandate_expiry_warning_job", work)
+
+
+@celery_app.task
 def strategy_edge_decay_job() -> dict:
     """Pause (paper only) trial strategies whose rolling forward edge has decayed.
 

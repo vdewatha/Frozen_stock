@@ -1089,6 +1089,15 @@ def start_trial(
             "status": "missing",
             "reason": "Paper run approval cycle is missing",
         }
+        if approval["status"] == "pass" and row.started_at is None:
+            # A revoked, expired or pending standing mandate withdraws the
+            # approvals it minted for trials that have not started yet, on
+            # every start path (scheduled handoff or operator retry).
+            from app.services.paper_mandate import mandate_withdrawal_reason
+
+            withdrawn = mandate_withdrawal_reason(db, (approval.get("record") or {}).get("id"))
+            if withdrawn:
+                approval = {**approval, "status": "mandate_withdrawn", "reason": withdrawn}
         if approval["status"] != "pass":
             row.status = "blocked"
             row.blocked_reason = approval.get("reason") or "Paper run approval is missing or mismatched"

@@ -451,7 +451,17 @@ def _pause_stock_path(db: Session, reasons: list[str], now: datetime) -> dict:
             "recovery_event_id": existing.id if existing else None,
             "deduplicated": True,
         }
-    enter_stock_recovery(db, reason=reason, actor="stock_monitor", flatten_policy="none")
+    rule = db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).first()
+    enter_stock_recovery(
+        db, reason=reason, actor="stock_monitor", flatten_policy="none",
+        # Classification evidence for explained-halt auto-resume: what was
+        # tradable before, and exactly which persistent checks breached.
+        context={
+            "prior_status": current_recovery.status if current_recovery else "armed",
+            "prior_kill_switch": bool((rule.value or {}).get("kill_switch_enabled")) if rule else None,
+            "monitor_breach_keys": list(reasons),
+        },
+    )
     # The recovery event is created by enter_stock_recovery before the
     # monitoring snapshot is written.  Expose its durable id so the cycle
     # coordinator can link both sides of the decision.

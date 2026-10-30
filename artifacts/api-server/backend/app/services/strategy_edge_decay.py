@@ -12,7 +12,9 @@ Safety contract:
   buys, so suspension blocks new entries.  Exits are untouched.
 * There is no automatic un-pause.  A suspended strategy can only trade again
   through a new governed learning cycle (fresh one-use holdout + completed
-  forward paper trial), which creates a new trial-owned strategy.
+  forward paper trial), which creates a new trial-owned strategy.  After a
+  quarantine, ``strategy_readmission`` schedules that cycle automatically,
+  with exponential backoff and retire-after-N on repeated failures.
 * It never touches bindings, kill switches, live settings, or orders.
 """
 from __future__ import annotations
@@ -186,11 +188,16 @@ def _outcomes_by_strategy(db: Session) -> dict[int, list]:
 
 def edge_decay_projection(db: Session) -> dict:
     """Read-only view of every trial strategy's rolling edge; never mutates."""
+    from app.services.strategy_readmission import readmission_by_strategy, readmission_policy
+
+    readmissions = readmission_by_strategy(db)
     rows = []
     for strategy_id, outcomes in sorted(_outcomes_by_strategy(db).items()):
         rows.append({"strategy_id": strategy_id, "assessment": assess_edge_decay(lot_returns(outcomes)),
-                     "blocked_reason": strategy_is_suspended(db, strategy_id)})
-    return {"policy": DECAY_POLICY, "strategies": rows, "paper_only": True, "live_authorized": False}
+                     "blocked_reason": strategy_is_suspended(db, strategy_id),
+                     "readmission": readmissions.get(strategy_id)})
+    return {"policy": DECAY_POLICY, "readmission_policy": readmission_policy(), "strategies": rows,
+            "paper_only": True, "live_authorized": False}
 
 
 def run_edge_decay_review(db: Session, *, now: Optional[datetime] = None) -> dict:

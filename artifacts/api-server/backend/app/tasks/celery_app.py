@@ -116,6 +116,11 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.stock_forward_trial_evaluate_job": {"queue": "paper_trading"},
     "app.tasks.jobs.paper_trade_scorecard_snapshot_job": {"queue": "learning"},
     "app.tasks.jobs.operations_health_alert_job": {"queue": "risk"},
+    "app.tasks.jobs.explained_halt_auto_resume_job": {"queue": "risk"},
+    "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
+    "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
+    "app.tasks.jobs.alert_daily_digest_job": {"queue": "risk"},
+    "app.tasks.jobs.paper_mandate_expiry_warning_job": {"queue": "learning"},
 }
 celery_app.conf.beat_schedule = {
     "delayed-sip-collection": {
@@ -226,6 +231,29 @@ celery_app.conf.beat_schedule = {
     # Paper-only demotion of trial strategies with statistically confident
     # rolling edge decay. It can only pause; reactivation needs a new cycle.
     "strategy-edge-decay": {"task": "app.tasks.jobs.strategy_edge_decay_job", "schedule": 60 * 15},
+    # Unattended paper operation: explained technical halts auto-resume once
+    # every human-resume gate passes; suspended strategies get a governed
+    # re-admission cycle after quarantine; alerts leave the app.
+    "explained-halt-auto-resume": {
+        "task": "app.tasks.jobs.explained_halt_auto_resume_job",
+        "schedule": 60 * 5,
+        "options": {"expires": 4 * 60},
+    },
+    "strategy-readmission": {"task": "app.tasks.jobs.strategy_readmission_job", "schedule": 60 * 15},
+    "alert-delivery": {
+        "task": "app.tasks.jobs.alert_delivery_job",
+        "schedule": 60,
+        "options": {"expires": 55},
+    },
+    "alert-daily-digest": {
+        "task": "app.tasks.jobs.alert_daily_digest_job",
+        "schedule": crontab(minute=0, hour=17),
+        "options": {"expires": 6 * 60 * 60},
+    },
+    "paper-mandate-expiry-warning": {
+        "task": "app.tasks.jobs.paper_mandate_expiry_warning_job",
+        "schedule": crontab(minute=5, hour="*/6"),
+    },
     "stock-forward-trial-reconcile": {
         "task": "app.tasks.jobs.stock_forward_trial_reconcile_job",
         "schedule": 60,

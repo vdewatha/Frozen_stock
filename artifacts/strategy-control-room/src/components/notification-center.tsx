@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bell, CheckCheck, ExternalLink, RefreshCw, ShieldAlert } from "lucide-react";
 
-import { NotificationItem, acknowledgeNotification, getNotifications, resolveNotification, retryStrategyLearningFailures } from "@/lib/api";
+import { AlertDeliveryStatus, NotificationItem, acknowledgeNotification, getAlertDeliveryStatus, getNotifications, resolveNotification, retryStrategyLearningFailures } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
 
 function tone(severity: string): string {
@@ -48,6 +48,13 @@ export function NotificationCenter() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [status, setStatus] = useState("Loading notifications");
   const [isBusy, setIsBusy] = useState(true);
+  const [delivery, setDelivery] = useState<AlertDeliveryStatus | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getAlertDeliveryStatus().then((value) => { if (active) setDelivery(value); }).catch(() => { if (active) setDelivery(null); });
+    return () => { active = false; };
+  }, [notifications]);
 
   const counts = useMemo(() => {
     return notifications.reduce<Record<string, number>>((memo, item) => {
@@ -192,6 +199,38 @@ export function NotificationCenter() {
           )}
         </div>
       </div>
+      <ExternalDeliverySummary delivery={delivery} />
     </section>
+  );
+}
+
+function ExternalDeliverySummary({ delivery }: { delivery: AlertDeliveryStatus | null }) {
+  if (!delivery) return null;
+  const configured = delivery.channels.length > 0;
+  return (
+    <div className="border-t border-line p-4 text-xs" data-testid="notification-external-delivery">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold">External alerts</span>
+        <span className={configured ? "rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-mint" : "rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700"}>
+          {configured ? delivery.channels.join(", ") : "no channel configured"}
+        </span>
+        <span className="text-slate-500">{delivery.min_severity} and above · repeats suppressed for {delivery.dedupe_window_minutes} min</span>
+      </div>
+      {!configured ? (
+        <p className="mt-1 text-slate-600">Warnings and critical alerts are recorded here only. Configure a webhook, Telegram or email channel so they reach someone outside the app.</p>
+      ) : null}
+      {delivery.recent.length ? (
+        <ul className="mt-2 grid gap-1">
+          {delivery.recent.slice(0, 6).map((row) => (
+            <li key={row.id} className="flex flex-wrap gap-2 text-slate-600">
+              <span className={`rounded border px-1.5 ${tone(row.severity)}`}>{row.severity}</span>
+              <span className="font-medium">{row.title}</span>
+              <span>· {row.channel} {row.status}{row.suppressed_count ? ` (+${row.suppressed_count} repeats)` : ""}</span>
+              {row.last_error ? <span className="text-coral">· {row.last_error}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }

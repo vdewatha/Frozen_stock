@@ -220,6 +220,30 @@ class Settings(BaseSettings):
     # (``paper_entry_open_buffer_minutes``) still applies on top of this.
     paper_daily_bar_entry_window_start_minutes: int = Field(default=5, ge=0, le=390)
     paper_daily_bar_entry_window_end_minutes: int = Field(default=45, ge=0, le=390)
+    # Unattended paper operation.  Explained technical halts auto-resume only
+    # after cooldown plus fresh clean evidence; 0 disables the auto-resume.
+    paper_auto_resume_enabled: bool = True
+    # Edge-decay re-admission: quarantine before the first governed retry,
+    # exponential backoff base on repeated failures, retire after N failures.
+    strategy_readmission_quarantine_hours: int = Field(default=72, ge=1, le=24 * 90)
+    strategy_readmission_backoff_factor: int = Field(default=2, ge=1, le=10)
+    strategy_readmission_max_attempts: int = Field(default=3, ge=1, le=20)
+    # Warn this long before a standing paper mandate expires.
+    paper_mandate_expiry_warning_hours: int = Field(default=48, ge=1, le=24 * 30)
+    # External alert delivery.  Channels are enabled only when configured.
+    alert_min_severity: str = "warning"
+    alert_dedupe_window_minutes: int = Field(default=60, ge=1, le=24 * 60)
+    alert_max_attempts: int = Field(default=5, ge=1, le=20)
+    alert_webhook_url: SecretStr = SecretStr("")
+    alert_webhook_signing_secret: SecretStr = SecretStr("")
+    alert_telegram_bot_token: SecretStr = SecretStr("")
+    alert_telegram_chat_id: str = ""
+    alert_email_smtp_host: str = ""
+    alert_email_smtp_port: int = Field(default=587, ge=1, le=65535)
+    alert_email_smtp_username: str = ""
+    alert_email_smtp_password: SecretStr = SecretStr("")
+    alert_email_from: str = ""
+    alert_email_to: list[str] = []
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # A shared workspace .env also contains frontend and provider-specific

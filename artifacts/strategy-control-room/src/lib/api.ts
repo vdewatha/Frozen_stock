@@ -398,7 +398,33 @@ export type StockPaperRecoveryStatus = {
     created_at: string | null;
     payload: { checked_at?: string } & Record<string, unknown>;
   } | null;
+  auto_resume?: StockAutoResumeStatus;
   events: Array<{ id: number; action: string; status: string; actor: string; reason: string; created_at: string | null; payload: Record<string, unknown> }>;
+};
+
+export type StockAutoResumeStatus = {
+  enabled: boolean;
+  classes: Record<string, string>;
+  operator_only: string[];
+  current: {
+    halted: boolean;
+    explained: boolean;
+    class: string | null;
+    reason: string;
+    waiting?: boolean;
+    pause_event_id?: number | null;
+    pause_actor?: string | null;
+    paused_at?: string | null;
+  };
+  history: Array<{
+    id: number;
+    action: string;
+    status: string;
+    actor: string;
+    reason: string;
+    created_at: string | null;
+    payload: Record<string, unknown>;
+  }>;
 };
 
 export type PricePoint = {
@@ -2367,6 +2393,102 @@ export async function updateStockLearningScheduleControl(
   return postJson<StockLearningScheduleControl>("/stock/learning-cycles/schedule-control", { action, reason });
 }
 
+export type PaperMandateRecord = {
+  id: number;
+  status: "active" | "pending" | "expired" | "revoked" | "exhausted" | string;
+  reason: string | null;
+  execution_provider: string;
+  symbols: string[];
+  exposure_limits: Record<string, string>;
+  loss_limits: Record<string, string>;
+  schedule: { triggers?: string[] } & Record<string, unknown>;
+  stop_conditions: string[];
+  remaining_position_policies: string[];
+  max_sessions_per_cycle: number;
+  max_sessions: number;
+  sessions_used: number;
+  sessions_remaining: number;
+  valid_from: string;
+  expires_at: string;
+  approving_actors: string[];
+  created_by: string;
+  reason_recorded: string;
+  mandate_sha256: string;
+  created_at: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  revocation_reason: string | null;
+};
+
+export type PaperMandateStatus = {
+  current: PaperMandateRecord | null;
+  next_auto_minted_approval: {
+    cycle_id: string;
+    cycle_status: string;
+    approval_status: string;
+    would_mint: boolean;
+    fits: boolean;
+    reasons: string[];
+    bounds: Record<string, unknown>;
+  } | null;
+  minted_approvals: Array<{ mandate_id: number; approval_id: number; cycle_id: string; duration_sessions: number; created_at: string | null }>;
+  history: PaperMandateRecord[];
+  checked_at: string;
+  paper_only: boolean;
+  live_authorized: boolean;
+};
+
+export type PaperMandateRequest = {
+  symbols: string[];
+  exposure_limits: Record<string, string>;
+  loss_limits: Record<string, string>;
+  triggers: Array<"scheduled" | "manual">;
+  remaining_position_policies: Array<"hold" | "reduce" | "flatten">;
+  max_sessions_per_cycle: number;
+  max_sessions: number;
+  expires_at: string;
+  reason: string;
+};
+
+export async function getPaperMandate(): Promise<PaperMandateStatus> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/learning-cycles/paper-mandate`, { cache: "no-store" });
+  return handleResponse<PaperMandateStatus>(response);
+}
+
+export async function createPaperMandate(body: PaperMandateRequest): Promise<PaperMandateStatus> {
+  return postJson<PaperMandateStatus>("/stock/learning-cycles/paper-mandate", body);
+}
+
+export async function revokePaperMandate(mandateId: number, reason: string): Promise<PaperMandateStatus> {
+  return postJson<PaperMandateStatus>(`/stock/learning-cycles/paper-mandate/${mandateId}/revoke`, { reason });
+}
+
+export type AlertDeliveryStatus = {
+  channels: string[];
+  min_severity: string;
+  dedupe_window_minutes: number;
+  max_attempts: number;
+  recent: Array<{
+    id: number;
+    channel: string;
+    kind: string;
+    severity: string;
+    title: string;
+    status: string;
+    attempts: number;
+    suppressed_count: number;
+    last_error: string | null;
+    notification_id: number | null;
+    created_at: string | null;
+    sent_at: string | null;
+  }>;
+};
+
+export async function getAlertDeliveryStatus(): Promise<AlertDeliveryStatus> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/notifications/delivery-status`, { cache: "no-store" });
+  return handleResponse<AlertDeliveryStatus>(response);
+}
+
 export type LearningWorkerLaunchResponse = {
   task_id: string;
   status: string;
@@ -3883,6 +4005,8 @@ export type StockLearningCycle = {
     trial_status: string | null;
     preflight: { status: string; reason?: string; evidence?: unknown } | null;
     approval: PaperRunApproval;
+    approval_mandate_id?: number | null;
+    mandate_reason?: string | null;
     reason: string | null;
     report_id: number | null;
     report_decision: string | null;

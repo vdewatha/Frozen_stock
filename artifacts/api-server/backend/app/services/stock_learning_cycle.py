@@ -39,6 +39,7 @@ from app.models import (
 )
 from app.core.config import settings
 from app.services.audit import write_audit_log
+from app.services.notifications import create_notification
 from app.services.intraday_data import NY, feed_status, session_bounds
 from app.services.readiness import _scheduler_health
 from app.services.stock_forward_trial import trial_feed_preflight
@@ -1566,9 +1567,33 @@ def _handoff_failure(
         **(evidence or {}),
         "attempted_at": _now().isoformat(),
     }
+    changed = (
+        cycle.stage != stage or cycle.status != status
+        or (cycle.last_reason or "") != reason.strip()
+    )
     cycle.stage = stage
     cycle.status = status
     cycle.last_reason = reason.strip()
+    if changed:
+        # Only a new handoff blocker raises an operator alert; unchanged
+        # retries every few minutes stay in the audit trail only.
+        create_notification(
+            db,
+            category="stock_learning_cycle",
+            severity="warning",
+            source="scheduled_paper_handoff",
+            title=f"Scheduled paper handoff {status}",
+            message=f"Cycle {cycle.cycle_id[:12]} at {stage}: {cycle.last_reason}",
+            entity_type="stock_learning_cycle",
+            payload={
+                "cycle_id": cycle.cycle_id,
+                "stage": stage,
+                "status": status,
+                "dedupe_key": f"handoff:{cycle.cycle_id}:{stage}:{status}:{_digest(cycle.last_reason)[:16]}",
+                "paper_only": True,
+                "live_authorized": False,
+            },
+        )
     _event(
         db,
         cycle=cycle,
@@ -1595,6 +1620,18 @@ def _handoff_failure(
         },
     )
     return cycle
+
+
+def _blocked_only_on_approval(cycle: StockLearningCycle) -> bool:
+    gate = (cycle.gates or {}).get("paper_run_approval") or {}
+    return (
+        cycle.status == "blocked"
+        and cycle.stage == "preflight"
+        and bool(cycle.binding_id and cycle.trial_id)
+        and gate.get("status") == "fail"
+        and bool(cycle.last_reason)
+        and gate.get("reason") == cycle.last_reason
+    )
 
 
 def admit_scheduled_learning_cycle(
@@ -1827,15 +1864,32 @@ def start_scheduled_learning_trial(
         cycle.last_reason = "Forward paper trial completed; awaiting immutable readiness evidence"
         return cycle
 
+    from app.services.paper_mandate import mandate_withdrawal_reason, mint_paper_run_approval
+
     approval = paper_run_approval_projection(db, cycle)
+    mandate_reason = None
+    if approval["status"] != "pass":
+        # A valid standing mandate mints the exact per-cycle approval; the
+        # unchanged projection below then re-verifies it like any approval.
+        minted, mandate_reason = mint_paper_run_approval(db, cycle, trial)
+        if minted is not None:
+            approval = paper_run_approval_projection(db, cycle)
+    else:
+        withdrawn = mandate_withdrawal_reason(db, (approval.get("record") or {}).get("id"))
+        if withdrawn:
+            approval = {**approval, "status": "mandate_withdrawn", "reason": withdrawn}
+    approval_reason = approval["reason"]
+    if approval["status"] != "pass" and mandate_reason:
+        approval_reason = f"{approval_reason or 'Paper run approval is missing'}; {mandate_reason}"
     cycle.gates = {
         **(cycle.gates or {}),
         "paper_run_approval": _gate(
             "pass" if approval["status"] == "pass" else "fail",
-            reason=approval["reason"],
+            reason=approval_reason,
             evidence={
                 "approval_id": (approval.get("record") or {}).get("id"),
                 "expected": approval["expected"],
+                "mandate_reason": mandate_reason,
                 "paper_only": True,
                 "live_authorized": False,
             },
@@ -1847,8 +1901,8 @@ def start_scheduled_learning_trial(
             cycle,
             stage="preflight",
             status="blocked",
-            reason=approval["reason"] or "Paper run approval is missing or mismatched",
-            evidence={"approval": approval},
+            reason=approval_reason or "Paper run approval is missing or mismatched",
+            evidence={"approval": approval, "mandate_reason": mandate_reason},
         )
 
     recovery = db.get(StockPaperRecoveryState, 1)
@@ -2564,9 +2618,16 @@ def run_scheduled_paper_trial_handoff_job(
         StockLearningCycle.trigger == "scheduled",
         StockLearningCycle.training_job_id.is_not(None),
         StockLearningCycle.status.not_in((
-            "blocked", "complete", "promoted", "demoted", "rolled_back", "failed",
+            "complete", "promoted", "demoted", "rolled_back", "failed",
         )),
     ).order_by(StockLearningCycle.created_at, StockLearningCycle.cycle_id)).all()
+    # Blocked cycles stay blocked, except a cycle blocked only on its paper
+    # run approval: a standing mandate (or a later operator approval) can
+    # clear exactly that blocker, so it is retried.
+    rows = [
+        cycle for cycle in rows
+        if cycle.status != "blocked" or _blocked_only_on_approval(cycle)
+    ]
     if pause_reason:
         for cycle in rows:
             _defer_scheduled_cycle_for_pause(
@@ -2735,6 +2796,9 @@ def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
         cycle_id=cycle.cycle_id,
     ).order_by(StockPaperPromotionDecision.id.desc()).first()
     approval = paper_run_approval_projection(db, cycle)
+    from app.services.paper_mandate import minted_mandate_for_approval
+
+    approval_mandate = minted_mandate_for_approval(db, (approval.get("record") or {}).get("id"))
     return {
         "cycle_id": cycle.cycle_id, "status": cycle.status, "stage": cycle.stage,
         "trigger": cycle.trigger, "requested_by": cycle.requested_by,
@@ -2753,6 +2817,10 @@ def cycle_projection(db: Session, cycle: StockLearningCycle) -> dict:
             "trial_status": trial.status if trial else None,
             "preflight": (cycle.gates or {}).get("preflight"),
             "approval": approval,
+            "approval_mandate_id": approval_mandate.id if approval_mandate else None,
+            "mandate_reason": ((cycle.gates or {}).get("paper_run_approval") or {}).get(
+                "evidence", {},
+            ).get("mandate_reason"),
             "reason": cycle.last_reason,
             "report_id": latest_report.id if latest_report else None,
             "report_decision": latest_report.decision if latest_report else None,

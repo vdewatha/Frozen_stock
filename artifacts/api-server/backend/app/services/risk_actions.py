@@ -169,3 +169,68 @@ def evaluate_portfolio_risk_actions(db: Session, *, require_persistence: bool = 
         "affected_strategy_ids": affected_strategy_ids,
         "snapshot": _serializable_snapshot(snapshot),
     }
+
+
+RISK_RESET_SOURCE = "risk_action_drawdown_reset"
+
+
+def _as_utc(value: datetime) -> datetime:
+    from datetime import timezone
+
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def reset_drawdown_kill_switch_after_window(db: Session, *, now: Optional[datetime] = None) -> dict:
+    """Clear a risk-action kill switch set only for drawdown, once its window resets.
+
+    Applies only when every condition holds; otherwise an operator is needed:
+
+    * the newest kill-switch change is the automated portfolio-risk enable,
+      and its persistent labels were exactly ``Drawdown`` (open-position
+      breaches never auto-reset);
+    * the newest portfolio risk evaluation after it is ``clear``;
+    * the current New York date is later than the enable's date (the daily
+      drawdown window has reset); and
+    * stock paper recovery is not halted (a recovery halt owns the switch).
+    """
+    from datetime import timezone
+
+    from app.models import StockPaperRecoveryState
+    from app.services.intraday_data import NY
+
+    now = now or datetime.now(timezone.utc)
+    rule = get_active_risk_rule(db)
+    if not bool((rule.value or {}).get("kill_switch_enabled")):
+        return {"status": "not_engaged"}
+    latest_switch = (
+        db.query(AuditLog)
+        .filter(AuditLog.event_type == "safety_control", AuditLog.action == "set_kill_switch")
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    payload = (latest_switch.payload or {}) if latest_switch else {}
+    if (
+        latest_switch is None
+        or latest_switch.status != "enabled"
+        or payload.get("source") != "portfolio_risk_actions"
+        or sorted(payload.get("persistent_labels") or []) != ["Drawdown"]
+    ):
+        return {"status": "needs_operator", "reason": "Kill switch was not engaged solely by an automated drawdown action"}
+    enabled_at = _as_utc(latest_switch.created_at)
+    if now.astimezone(NY).date() <= enabled_at.astimezone(NY).date():
+        return {"status": "waiting", "reason": "Daily drawdown window has not reset"}
+    evaluation = _latest_risk_action_audit(db)
+    if evaluation is None or evaluation.status != "clear" or _as_utc(evaluation.created_at) <= enabled_at:
+        return {"status": "waiting", "reason": "No clear portfolio risk evaluation since the drawdown action"}
+    recovery = db.get(StockPaperRecoveryState, 1)
+    if recovery is not None and recovery.status not in {"armed", "resumable"}:
+        return {"status": "waiting", "reason": f"Stock paper recovery is {recovery.status}"}
+    reason = "Drawdown kill switch reset automatically after the daily window reset with a clear risk evaluation."
+    _set_kill_switch_without_commit(db, False, reason, {
+        "source": RISK_RESET_SOURCE, "enabled_audit_id": latest_switch.id, "evaluation_audit_id": evaluation.id,
+    })
+    create_notification(db, category="risk_alert", severity="info", source=RISK_RESET_SOURCE,
+                        title="Drawdown kill switch reset", message=reason, entity_type="portfolio",
+                        payload={"enabled_audit_id": latest_switch.id})
+    db.commit()
+    return {"status": "reset", "reason": reason, "enabled_audit_id": latest_switch.id}

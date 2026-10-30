@@ -11,6 +11,7 @@ import {
   getStockPaperRecovery,
   resumeStockPaperAccount,
   rollbackStockPaperToLastKnownGood,
+  type StockAutoResumeStatus,
   type StockPaperRecoveryStatus,
 } from "@/lib/api";
 
@@ -18,6 +19,43 @@ function formatTime(value: string | null): string {
   if (!value) return "Unavailable";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function AutoResumeSection({ autoResume }: { autoResume: StockAutoResumeStatus }) {
+  const current = autoResume.current;
+  const tone = !current.halted
+    ? "border-line bg-slate-50 text-slate-700"
+    : current.explained
+      ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+      : "border-red-200 bg-red-50 text-red-950";
+  return (
+    <div className="grid gap-2 border-t border-line p-4 text-xs" data-testid="recovery-auto-resume">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold">Automatic resume</span>
+        <span className="rounded border border-line bg-slate-50 px-2 py-0.5">{autoResume.enabled ? "enabled" : "disabled"}</span>
+      </div>
+      <div className={`rounded-md border p-3 ${tone}`} data-testid="recovery-auto-resume-current">
+        {!current.halted
+          ? "No halt is waiting for recovery."
+          : current.explained
+            ? `Explained technical halt (${(current.class ?? "unknown").replaceAll("_", " ")}): resumes automatically once cooldown, reconciliation, accounting, in-flight order and monitoring gates are clear.`
+            : `Needs an operator: ${current.reason}`}
+      </div>
+      {autoResume.history.length ? (
+        <ul className="grid gap-1" data-testid="recovery-auto-resume-history">
+          {autoResume.history.slice(0, 8).map((event) => (
+            <li key={event.id} className="flex flex-wrap gap-2 text-slate-600">
+              <span className="font-semibold">{formatTime(event.created_at)}</span>
+              <span className="rounded border border-line px-1.5 capitalize">{event.status.replaceAll("_", " ")}</span>
+              <span>{event.reason}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="text-slate-500">No automatic resume decisions recorded yet.</div>
+      )}
+    </div>
+  );
 }
 
 const RESUME_WAITING_STATUSES = ["cooldown", "revalidation_required", "resumable"];
@@ -257,6 +295,7 @@ export function StockRecoveryPanel({ onKillSwitchChange }: { onKillSwitchChange?
           </div>
         ) : null}
       </div>
+      {recovery?.auto_resume ? <AutoResumeSection autoResume={recovery.auto_resume} /> : null}
       {recovery?.pause_reason ? <div className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><strong>Recovery reason:</strong> {recovery.pause_reason}</div> : null}
     </section>
   );

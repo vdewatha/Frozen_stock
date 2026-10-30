@@ -815,6 +815,14 @@ def get_notifications(
     return list_notifications(db, status=status, category=category, severity=severity, limit=limit)
 
 
+@router.get("/notifications/delivery-status")
+def get_notification_delivery_status(db: Session = Depends(get_db)) -> dict:
+    """External alert channels and recent outbox rows; never exposes secrets."""
+    from app.services.alert_delivery import alert_delivery_status
+
+    return alert_delivery_status(db)
+
+
 @router.post("/notifications/{notification_id}/acknowledge", response_model=NotificationRead)
 def acknowledge_notification_route(notification_id: int, db: Session = Depends(get_db)):
     try:
