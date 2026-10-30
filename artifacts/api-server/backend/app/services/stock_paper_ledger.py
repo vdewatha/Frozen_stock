@@ -1960,23 +1960,44 @@ def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | No
 def transition_stock_paper_account(db: Session, *, reason: str) -> dict:
     """Archive an old local ledger before initializing a different broker account.
 
-    This preserves the old account's audit rows and refuses transitions while
-    the old local ledger still has positions or nonterminal orders.
+    This preserves the old account's audit rows. A ledger with no open
+    inventory always qualifies. A ledger whose open positions and nonterminal
+    orders are exclusively broker-imported (never reserved by this database)
+    may be handed off to the deployment that owns them. Any open inventory that
+    traces to a locally reserved order, or to a fill without an order link,
+    still refuses the transition. The old account's halt state is never reset;
+    archiving it is the only way it stops being active.
     """
     if not reason.strip():
         raise StockPaperError("An account transition reason is required")
     old = active_paper_account(db, for_update=True)
     if old is None:
         raise StockPaperError("Stock paper account is not initialized")
-    open_positions = [row.symbol for row in db.query(StockPaperPosition).filter(
+    open_positions = sorted(row.symbol for row in db.query(StockPaperPosition).filter(
         StockPaperPosition.account_id == old.id, StockPaperPosition.quantity > 0
-    ).all()]
+    ).all())
     open_orders = db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == old.id,
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
-    ).count()
-    if open_positions or open_orders:
-        raise StockPaperError("Account transition requires zero local positions and terminal orders")
+    ).all()
+    if any(order.source != "broker_import" for order in open_orders):
+        raise StockPaperError("Account transition refused: a nonterminal order was reserved by this local ledger")
+    if open_positions:
+        local_orders = db.query(StockPaperOrder).filter(
+            StockPaperOrder.account_id == old.id,
+            StockPaperOrder.symbol.in_(open_positions),
+            StockPaperOrder.source != "broker_import",
+        ).count()
+        if local_orders:
+            raise StockPaperError("Account transition refused: an open position traces to a locally reserved order")
+        unlinked_fills = db.query(StockPaperFill).filter(
+            StockPaperFill.account_id == old.id,
+            StockPaperFill.symbol.in_(open_positions),
+            StockPaperFill.order_id.is_(None),
+        ).count()
+        if unlinked_fills:
+            raise StockPaperError("Account transition refused: an open position has fills without an order link")
+    handoff = bool(open_positions or open_orders)
     gateway = active_paper_gateway()
     raw_account, raw_positions, raw_orders, raw_fills, observed = _snapshot(gateway)
     values = _account_values(raw_account, observed)
@@ -1991,6 +2012,12 @@ def transition_stock_paper_account(db: Session, *, reason: str) -> dict:
         "old_account_id_sha256": hashlib.sha256(old.broker_account_id.encode()).hexdigest(),
         "new_account_id_sha256": hashlib.sha256(values["broker_account_id"].encode()).hexdigest(),
         "new_snapshot_observed_at": observed.isoformat(),
+        "handed_off_to_other_deployment": handoff,
+        "imported_open_order_count": len(open_orders),
+        "imported_open_position_count": len(open_positions),
+        "imported_open_position_symbols": open_positions,
+        "old_account_status": old.status,
+        "old_account_halt_reason": old.halt_reason,
     })
     db.flush()
     return initialize_stock_paper_account(db, gateway=gateway, activity_contract=alpaca_activity_v2.VERSION)

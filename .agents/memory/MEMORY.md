@@ -47,3 +47,4 @@
 - [Standing live mandate automation](live-mandate-automation.md) — auto renew/promote only inside a two-person mandate; human stops suspend it; loss baseline spans amendments.
 - [Overview priorities](overview-priority.md) — current broker holdings and strategy ownership come first; research and account metrics remain secondary.
 - [Paper attribution diagnostics](paper-attribution-diagnostics.md) — unattributed holdings get descriptive evidence classes only; owners are never inferred or auto-assigned.
+- [Per-environment paper account](per-environment-paper-account.md) — dev binds its own Alpaca paper account via DEV_PAPER_*; never share one account across databases.

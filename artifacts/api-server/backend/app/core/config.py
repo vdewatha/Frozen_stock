@@ -63,6 +63,18 @@ class Settings(BaseSettings):
     live_alpaca_api_secret: SecretStr = SecretStr("")
     paper_broker_account_id: str = ""
     live_broker_account_id: str = ""
+    # Development-only paper binding. Replit secrets are shared between the
+    # workspace and the published deployment, so the development database
+    # cannot bind its own paper account by overwriting the PAPER_* names
+    # without also rebinding production. These values replace the paper pair
+    # and account binding only when ``environment == "local"``; every other
+    # environment ignores them. Each database must be the sole owner of the
+    # broker account it reconciles.
+    dev_paper_alpaca_api_key: SecretStr = SecretStr("")
+    dev_paper_alpaca_api_secret: SecretStr = SecretStr("")
+    dev_paper_broker_account_id: SecretStr = SecretStr("")
+    # Derived by ``apply_development_paper_binding``; never read from the env.
+    paper_binding_source: str = "shared"
     alpaca_api_key: SecretStr = SecretStr("")
     alpaca_api_secret: SecretStr = SecretStr("")
     alpaca_data_url: str = "https://data.alpaca.markets"
@@ -335,6 +347,33 @@ class Settings(BaseSettings):
             raise ValueError("active_paper_broker must be tradier_sandbox or alpaca_paper")
         if self.paper_meta_label_mode not in {"off", "shadow", "enforce"}:
             raise ValueError("paper_meta_label_mode must be off, shadow, or enforce")
+        return self
+
+    @model_validator(mode="after")
+    def apply_development_paper_binding(self) -> "Settings":
+        """Bind the local database to its own paper account when configured.
+
+        All three development values are required together; a partial set
+        fails closed rather than mixing one account's keys with another
+        account's binding. Non-local environments never read them.
+        """
+        dev_values = (
+            self.dev_paper_alpaca_api_key.get_secret_value().strip(),
+            self.dev_paper_alpaca_api_secret.get_secret_value().strip(),
+            self.dev_paper_broker_account_id.get_secret_value().strip(),
+        )
+        self.paper_binding_source = "shared"
+        if self.environment != "local" or not any(dev_values):
+            return self
+        if not all(dev_values):
+            raise ValueError(
+                "Development paper binding requires DEV_PAPER_ALPACA_API_KEY, "
+                "DEV_PAPER_ALPACA_API_SECRET, and DEV_PAPER_BROKER_ACCOUNT_ID together"
+            )
+        self.paper_alpaca_api_key = SecretStr(dev_values[0])
+        self.paper_alpaca_api_secret = SecretStr(dev_values[1])
+        self.paper_broker_account_id = dev_values[2]
+        self.paper_binding_source = "development"
         return self
 
     def validate_production_configuration(self) -> list[str]:

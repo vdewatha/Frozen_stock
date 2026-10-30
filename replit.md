@@ -26,7 +26,8 @@ _Populate as you build — short repo map plus pointers to the source-of-truth f
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- One database per paper broker account. The workspace (development) and the published deployment each bind their own Alpaca paper account; neither reconciles an account whose orders the other places. Secrets are shared between environments, so development binds its account through `DEV_PAPER_ALPACA_API_KEY` / `DEV_PAPER_ALPACA_API_SECRET` / `DEV_PAPER_BROKER_ACCOUNT_ID` (read only when `ENVIRONMENT=local`, all three required together); production keeps `PAPER_ALPACA_API_KEY` / `PAPER_ALPACA_API_SECRET` / `PAPER_BROKER_ACCOUNT_ID`. The legacy `ALPACA_API_KEY` / `ALPACA_API_SECRET` pair is market-data only and never places or reconciles orders.
+- Switching a database to a different paper account goes through `POST /stock-paper/account-transition` (admin). It archives the old ledger with an audit event and never resets it; a fully broker-imported book may be handed off, but any open order or position that this database reserved itself blocks the transition.
 
 ## Product
 
