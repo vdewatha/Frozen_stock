@@ -48,3 +48,4 @@
 - [Overview priorities](overview-priority.md) — current broker holdings and strategy ownership come first; research and account metrics remain secondary.
 - [Paper attribution diagnostics](paper-attribution-diagnostics.md) — unattributed holdings get descriptive evidence classes only; owners are never inferred or auto-assigned.
 - [Per-environment paper account](per-environment-paper-account.md) — dev binds its own Alpaca paper account via DEV_PAPER_*; never share one account across databases.
+- [Post-merge schema ownership](post-merge-schema-ownership.md) — Alembic owns the schema; never run drizzle-kit push (empty Drizzle schema would drop every table).
