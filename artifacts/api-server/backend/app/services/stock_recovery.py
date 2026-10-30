@@ -518,7 +518,12 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
         if transitional_account_checks and key in {"health.broker", "health.reconciliation"}:
             return True
         if key == "data.freshness_provenance" and status == "warning":
-            return not (details.get("failures") or not details.get("historical_warnings"))
+            # A warning means a partial feed gap: each order re-checks its own
+            # symbol's feed and stale symbols stay blocked, while a broad
+            # outage escalates this check to breach. During the session sparse
+            # IEX symbols (ABBV, COST, DIA) nearly always lag, so treating the
+            # warning as blocking refused every in-session resume.
+            return True
         if key == "model.realized_performance" and status == "unknown":
             return int(details.get("recent_count", 0)) < 10 or int(details.get("baseline_count", 0)) < 10
         if key == "execution.fill_divergence" and status == "unknown":

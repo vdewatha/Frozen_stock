@@ -1561,6 +1561,37 @@ class StockPaperRecoveryTests(unittest.TestCase):
             resumed = resume_stock_paper_after_revalidation(db, actor="operator-test", reason="Accept fresh monitoring evidence")
             self.assertEqual(resumed["status"], "resumable")
 
+    def test_partial_feed_gap_warning_does_not_block_resume_but_breach_does(self):
+        from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
+        from app.services.stock_recovery import _fresh_monitoring_is_clear
+
+        pause_at = RECOVERY_TEST_NOW - timedelta(minutes=20)
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            enter_stock_recovery(db, reason="Partial feed gap test", actor="watchdog")
+            pause_event = db.query(StockPaperRecoveryEvent).filter_by(action="pause").order_by(StockPaperRecoveryEvent.id.desc()).one()
+            pause_event.created_at = pause_at
+            account = db.query(StockPaperAccount).one()
+            account.halted_at = pause_at
+            db.commit()
+
+            def snapshot(status, minutes_ago):
+                db.add(StockMonitoringSnapshot(
+                    monitor_key="stock_continuous_monitor",
+                    status=status,
+                    generated_at=RECOVERY_TEST_NOW - timedelta(minutes=minutes_ago),
+                    checks=[{"key": "data.freshness_provenance", "status": status,
+                             "details": {"failures": {"DIA": "stale", "ABBV": "incomplete"}}}],
+                    actions=[],
+                    source="test",
+                ))
+                db.commit()
+
+            snapshot("warning", 2)
+            self.assertEqual(_fresh_monitoring_is_clear(db, RECOVERY_TEST_NOW)[0], True)
+            snapshot("breach", 1)
+            self.assertEqual(_fresh_monitoring_is_clear(db, RECOVERY_TEST_NOW)[0], False)
+
     def test_recovery_status_projects_later_clear_monitoring_evidence(self):
         from app.models import StockMonitoringSnapshot, StockPaperRecoveryEvent
         from app.models.stock_paper import StockPaperAccount
