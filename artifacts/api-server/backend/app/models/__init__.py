@@ -10,6 +10,14 @@ from app.models.unattended_paper import (
     StockPaperMandateRevocation,
     StockStrategyReadmission,
 )
+from app.models.loss_feedback import (
+    StockAllocationWeight,
+    StockMetaLabelMode,
+    StockMetaLabelModeEvent,
+    StockParameterApplication,
+    StockParameterSet,
+    StockTradeAttribution,
+)
 
 from app.models.models import (
     Asset,
@@ -119,6 +127,12 @@ __all__ = [
     "StockPaperMandateApproval",
     "StockPaperMandateRevocation",
     "StockStrategyReadmission",
+    "StockAllocationWeight",
+    "StockMetaLabelMode",
+    "StockMetaLabelModeEvent",
+    "StockParameterApplication",
+    "StockParameterSet",
+    "StockTradeAttribution",
     "Asset",
     "AuditLog",
     "CandidateDecisionJournal",

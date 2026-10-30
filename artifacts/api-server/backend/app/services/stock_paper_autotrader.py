@@ -90,19 +90,61 @@ def _is_regular_session(now: datetime) -> bool:
 
 
 def _quantity_for_buy(account, reference_price: Decimal, rules: dict, *, exploration: bool = False,
-                      size_scale: Decimal = Decimal("1")) -> Decimal:
+                      size_scale: Decimal = Decimal("1"),
+                      allocation_weight: Decimal = Decimal("1")) -> Decimal:
     """Risk-fraction-sized quantity, times ``size_scale`` clamped to [0, 1].
 
     The scale can only shrink a position; every other cap (exposure, sector,
-    ledger gates) still applies to the resulting order.
+    ledger gates) still applies to the resulting order.  ``allocation_weight``
+    is the session's bounded performance weight of the strategy
+    (``strategy_allocation``), clamped to the configured floor/ceiling; it
+    never applies to exploration probes.
     """
-    risk_fraction = (
-        Decimal(str(settings.paper_exploration_risk_fraction)) if exploration
-        else Decimal(str(rules.get("max_risk_per_trade", "0.01")))
-    )
+    if exploration:
+        risk_fraction = Decimal(str(settings.paper_exploration_risk_fraction))
+    else:
+        from app.services.strategy_allocation import clamp
+
+        risk_fraction = Decimal(str(rules.get("max_risk_per_trade", "0.01"))) * clamp(Decimal(str(allocation_weight)))
     scale = min(max(Decimal(str(size_scale)), Decimal("0")), Decimal("1"))
     notional = max(Decimal("0"), account.equity) * risk_fraction * scale
     return (notional / reference_price).quantize(QUANTITY_INCREMENT, rounding=ROUND_DOWN)
+
+
+def _loss_feedback_context(db: Session, strategies: list, now: datetime) -> dict:
+    """Load paper loss-feedback state for one cycle.
+
+    Each piece degrades explicitly (recorded in the summary) to the neutral
+    behaviour: no overlay, shadow-only meta-label, weight 1.0.
+    """
+    out = {"overrides": {}, "enforced_types": set(), "weights": {}, "summary": {}}
+    try:
+        from app.services.parameter_application import parameter_overrides
+
+        with db.begin_nested():
+            out["overrides"] = parameter_overrides(db)
+        out["summary"]["parameter_sets"] = {key: value["version"] for key, value in out["overrides"].items()}
+    except Exception as exc:
+        out["summary"]["parameter_sets_error"] = f"{exc.__class__.__name__}: {exc}"
+    try:
+        from app.services.meta_label_modes import enforced_strategy_types
+
+        with db.begin_nested():
+            out["enforced_types"] = enforced_strategy_types(db)
+        out["summary"]["meta_label_enforced"] = sorted(out["enforced_types"])
+    except Exception as exc:
+        out["summary"]["meta_label_modes_error"] = f"{exc.__class__.__name__}: {exc}"
+    try:
+        from app.services.strategy_allocation import session_weights
+
+        active = [row.strategy_type for row in strategies if row.current_status == "paper_trading_active"]
+        with db.begin_nested():
+            out["weights"] = session_weights(db, active, session_date=now.astimezone(ET).date(), now=now)
+        out["summary"]["allocation_weights"] = {key: str(value) for key, value in out["weights"].items()}
+    except Exception as exc:
+        out["weights"] = {}
+        out["summary"]["allocation_weights_error"] = f"{exc.__class__.__name__}: {exc}"
+    return out
 
 
 def realized_volatility(closes, lookback: int) -> float | None:
@@ -446,6 +488,15 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
     rules = rule.value if rule else {}
     session_key = now.astimezone(ET).date().isoformat()
     strategy_rows = db.query(Strategy).order_by(Strategy.id).all()
+    # Paper loss feedback loop: governed parameter overlays (never in-place
+    # edits), per-strategy meta-label enforce and session allocation weights.
+    feedback = _loss_feedback_context(db, strategies, now)
+    base["loss_feedback"] = feedback["summary"]
+    if feedback["overrides"]:
+        from app.services.parameter_application import overlay
+
+        strategies = [overlay(row, feedback["overrides"]) for row in strategies]
+        strategy_rows = [overlay(row, feedback["overrides"]) for row in strategy_rows]
     type_by_id = {row.id: row.strategy_type for row in strategy_rows}
     # Per-strategy execution policy: symbol scope, broker exit legs and the
     # app-side indicator/time-stop exits.  Strategies without a declared
@@ -466,8 +517,11 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
     # dicts / exceptions the per-pair create_* calls produced.
     # Meta-label filter: "shadow" (default) only records what it would do;
     # only "enforce" (off by default) can skip a BUY.
-    meta_label = resolve_meta_label_runtime()
-    signal_outcomes, signal_stats = generate_cycle_signals(db, symbols, strategies, meta_label=meta_label, now=now)
+    meta_label = resolve_meta_label_runtime(enforced_types=feedback["enforced_types"])
+    signal_outcomes, signal_stats = generate_cycle_signals(
+        db, symbols, strategies, meta_label=meta_label, now=now,
+        parameter_overrides=feedback["overrides"] or None,
+    )
     signals_done = time.perf_counter()
     sector_cap = _max_positions_per_sector(rules)
     sector_groups = _sector_exposure(db, account.id) if sector_cap else {}
@@ -634,9 +688,10 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         result.update({"status": "skipped", "reason": "broker-side exit legs are live for this symbol; no new entry until they close"})
                         results.append(result)
                         continue
-                    meta_allowed, meta_reason = meta_label.allows_buy(signal.get("meta_label"))
+                    meta_allowed, meta_reason = meta_label.allows_buy(signal.get("meta_label"), strategy.strategy_type)
                     if not meta_allowed:
-                        # Only reachable with paper_meta_label_mode="enforce".
+                        # Global enforce, or this strategy was auto-promoted
+                        # to enforce on measured shadow precision/recall.
                         result.update({"status": "skipped", "reason": meta_reason})
                         results.append(result)
                         continue
@@ -647,9 +702,14 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         vol_scale = _volatility_scale_for(db, symbol)
                         result["volatility_scale"] = vol_scale
                         size_scale = Decimal(str(vol_scale["scale"]))
+                    exploring = result.get("mode") == "explore"
+                    allocation_weight = feedback["weights"].get(strategy.strategy_type, Decimal("1"))
+                    if not exploring:
+                        result["allocation_weight"] = str(allocation_weight)
                     quantity = _quantity_for_buy(account, reference_price, rules,
-                                                 exploration=result.get("mode") == "explore",
-                                                 size_scale=size_scale)
+                                                 exploration=exploring,
+                                                 size_scale=size_scale,
+                                                 allocation_weight=allocation_weight)
                     if quantity <= 0:
                         result.update({"status": "blocked", "reason": "risk-sized quantity rounded to zero"})
                         results.append(result)

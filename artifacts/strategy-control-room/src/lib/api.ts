@@ -4090,3 +4090,110 @@ export type StockPaperPromotionDecision = {
   live_authorized: boolean;
   created_at: string;
 };
+
+export type LossBreakdownRow = {
+  key: string;
+  trades: number;
+  losses: number;
+  loss_rate: number;
+  sum_return: number;
+  loss_return: number;
+  net_pnl_known: number;
+  costs_unknown: number;
+};
+
+export type TradeAttributionRow = {
+  id: number;
+  source: string;
+  strategy_type: string;
+  trial_id: string | null;
+  symbol: string;
+  opened_at: string;
+  closed_at: string;
+  exit_cause: string;
+  net_return: number | null;
+  gross_return: number;
+  costs_known: boolean;
+  is_loss: boolean;
+  signal_quality: { bucket?: string } | null;
+  slippage: { entry_bps?: number | null; exit_bps?: number | null } | null;
+  holding: { sessions?: number | null; rule_sessions?: number | null; relation?: string } | null;
+  regime: { trend?: string; volatility?: string } | null;
+  mistakes: { primary?: string | null } | null;
+};
+
+export type TradeAttributionProjection = {
+  as_of: string;
+  window_days: number;
+  summary: {
+    trades: number;
+    losses: number;
+    loss_rate: number | null;
+    sum_return: number;
+    loss_return: number;
+    costs_unknown: number;
+    by_strategy: LossBreakdownRow[];
+    by_symbol: LossBreakdownRow[];
+    by_exit_cause: LossBreakdownRow[];
+    by_regime: LossBreakdownRow[];
+    by_signal_quality: LossBreakdownRow[];
+    by_holding: LossBreakdownRow[];
+    primary_mistakes: Record<string, number>;
+  };
+  recent_losses: TradeAttributionRow[];
+  exit_causes: string[];
+};
+
+export type LossAgendaItem = {
+  rank: number;
+  strategy_type: string;
+  trades: number;
+  losses: number;
+  loss_return: number;
+  symbols: string[];
+  focus: string[];
+};
+
+export type ParameterApplication = {
+  id: number;
+  strategy_type: string;
+  status: string;
+  cycle_id: string | null;
+  applied_at: string | null;
+  last_reason: string | null;
+  parameter_set: { id: number; version: number; parameters: Record<string, unknown>; experiment_id: number | null; lineage: Record<string, unknown> } | null;
+};
+
+export type MetaLabelStrategyMode = {
+  strategy_type: string;
+  mode: string;
+  changed_at: string | null;
+  evidence: { reason?: string; shadow?: { samples?: number; precision?: number | null; recall?: number | null; lift?: number | null }; enforced?: { samples?: number; precision?: number | null } };
+};
+
+export type LossFeedbackState = {
+  agenda: { as_of: string; window_days: number; items: LossAgendaItem[] };
+  parameter_applications: { enabled: boolean; active: Record<string, number>; applications: ParameterApplication[] };
+  meta_label: {
+    configured_mode: string;
+    auto_enforce_enabled: boolean;
+    bar: { min_samples: number; min_precision: number; min_recall: number; min_lift: number };
+    strategies: MetaLabelStrategyMode[];
+    transitions: { id: number; strategy_type: string; from_mode: string; to_mode: string; reason: string; created_at: string | null }[];
+  };
+  allocation: {
+    enabled: boolean;
+    policy: { floor: number; ceiling: number };
+    current: { session_date: string; weights: { strategy_type: string; multiplier: number; status: string; trades: number | null }[] } | null;
+  };
+};
+
+export async function getTradeAttributions(days = 30): Promise<TradeAttributionProjection> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/learning/trade-attributions?days=${encodeURIComponent(String(days))}`, { cache: "no-store" });
+  return handleResponse<TradeAttributionProjection>(response);
+}
+
+export async function getLossFeedbackState(): Promise<LossFeedbackState> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/stock/forward-trials/learning/loss-feedback`, { cache: "no-store" });
+  return handleResponse<LossFeedbackState>(response);
+}

@@ -100,6 +100,40 @@ def strategy_mistakes(db: Session = Depends(get_db)):
     return jsonable_encoder(strategy_mistake_report(db))
 
 
+@router.get("/learning/trade-attributions")
+def trade_attributions(
+    days: int = Query(30, ge=1, le=365),
+    strategy_type: str | None = Query(None, max_length=64),
+    symbol: str | None = Query(None, max_length=32),
+    exit_cause: str | None = Query(None, max_length=32),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """Read-only loss breakdown of attributed closed paper trades."""
+    from app.services.trade_attribution import attribution_projection
+
+    return jsonable_encoder(attribution_projection(
+        db, days=days, strategy_type=strategy_type, symbol=symbol, exit_cause_filter=exit_cause, limit=limit))
+
+
+@router.get("/learning/loss-feedback")
+def loss_feedback(db: Session = Depends(get_db)):
+    """Read-only state of the paper loss feedback loop: research agenda,
+    governed parameter sets, meta-label modes and allocation weights."""
+    from app.services.meta_label_modes import meta_label_mode_projection
+    from app.services.parameter_application import build_loss_agenda, parameter_application_projection
+    from app.services.strategy_allocation import allocation_projection
+
+    return jsonable_encoder({
+        "agenda": build_loss_agenda(db),
+        "parameter_applications": parameter_application_projection(db),
+        "meta_label": meta_label_mode_projection(db),
+        "allocation": allocation_projection(db),
+        "paper_only": True,
+        "live_authorized": False,
+    })
+
+
 @router.get("/learning/edge-decay")
 def strategy_edge_decay(db: Session = Depends(get_db)):
     """Read-only rolling forward-edge assessment; demotion runs in the scheduled job."""

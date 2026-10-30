@@ -41,6 +41,7 @@ from app.models.stock_paper import StockPaperOrder, StockPaperTrialLot
 from app.services.broker import broker_status
 from app.services.deployment_monitor import deployment_monitor_snapshot
 from app.services.stock_recovery import recovery_status
+from app.services.loss_feedback import learning_from_losses_summary
 
 
 INTERRUPTION_MATRIX_NAMES = ("feed", "ledger", "worker", "beat_lease", "redis")
@@ -489,6 +490,10 @@ def build_report(
             },
         },
         "forward_evidence": forward_evidence,
+        # Auditable "learned from losses" evidence: attribution breakdown,
+        # loss-driven agenda, governed parameter sets, meta-label modes and
+        # allocation weights, scoped to the soak window and its trials.
+        "learning_from_losses": learning_from_losses_summary(db, since=since, trial_ids=trial_ids),
         "readiness": {
             "ready_for_continued_paper_operation": not readiness_blockers,
             "forward_evidence_complete": forward_evidence["complete"],

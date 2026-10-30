@@ -228,6 +228,32 @@ class Settings(BaseSettings):
     strategy_readmission_quarantine_hours: int = Field(default=72, ge=1, le=24 * 90)
     strategy_readmission_backoff_factor: int = Field(default=2, ge=1, le=10)
     strategy_readmission_max_attempts: int = Field(default=3, ge=1, le=20)
+    # Paper-only loss feedback loop (app/services/loss_feedback.py).
+    # Attribution window feeding the research agenda and weights.
+    loss_feedback_lookback_days: int = Field(default=30, ge=1, le=365)
+    loss_agenda_max_strategies: int = Field(default=3, ge=1, le=25)
+    loss_agenda_max_symbols: int = Field(default=4, ge=1, le=25)
+    # Passing experiments become versioned parameter sets that must clear a
+    # governed cycle (fresh holdout, challenger, forward trial, promotion).
+    paper_parameter_application_enabled: bool = True
+    # Meta-label auto-enforce bar (only when paper_meta_label_mode="shadow").
+    meta_label_auto_enforce_enabled: bool = True
+    meta_label_enforce_min_samples: int = Field(default=30, ge=5, le=10000)
+    meta_label_enforce_min_precision: float = Field(default=0.55, ge=0, le=1)
+    meta_label_enforce_min_recall: float = Field(default=0.5, ge=0, le=1)
+    meta_label_enforce_min_lift: float = Field(default=0.05, ge=0, le=1)
+    meta_label_demote_min_samples: int = Field(default=20, ge=5, le=10000)
+    meta_label_demote_precision: float = Field(default=0.5, ge=0, le=1)
+    # Performance-weighted paper risk fractions (bounded, shrink-first).
+    paper_allocation_weighting_enabled: bool = True
+    paper_allocation_floor: float = Field(default=0.5, gt=0, le=1)
+    paper_allocation_ceiling: float = Field(default=1.25, ge=1, le=2)
+    paper_allocation_min_trades: int = Field(default=5, ge=1, le=500)
+    paper_allocation_lookback_trades: int = Field(default=20, ge=1, le=500)
+    paper_allocation_lookback_days: int = Field(default=60, ge=1, le=365)
+    paper_allocation_return_scale: float = Field(default=0.02, gt=0, le=1)
+    paper_allocation_shrinkage_trades: int = Field(default=10, ge=0, le=500)
+    paper_allocation_max_share: float = Field(default=0.5, gt=0, le=1)
     # Warn this long before a standing paper mandate expires.
     paper_mandate_expiry_warning_hours: int = Field(default=48, ge=1, le=24 * 30)
     # External alert delivery.  Channels are enabled only when configured.

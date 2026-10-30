@@ -47,6 +47,14 @@ class MetaLabelRuntime:
     bundle: dict | None = None
     reason: str | None = None
     scored: list[dict] = field(default_factory=list)
+    # Strategy types auto-promoted to enforce by ``meta_label_modes`` while
+    # the configured mode is ``shadow``; every other strategy stays shadow.
+    enforced_types: frozenset = frozenset()
+
+    def mode_for(self, strategy_type: str | None) -> str:
+        if self.configured_mode == "shadow" and strategy_type in self.enforced_types:
+            return "enforce"
+        return self.mode
 
     @property
     def active(self) -> bool:
@@ -66,6 +74,7 @@ class MetaLabelRuntime:
             "buy_signals_evaluated": len(self.scored),
             "would_take": decisions.count("take"),
             "would_skip": sum(decision != "take" for decision in decisions),
+            "auto_enforced_strategies": sorted(self.enforced_types),
         }
 
     def evaluate_symbol(self, symbol: str, prices: Any, spy_prices: Any,
@@ -78,13 +87,13 @@ class MetaLabelRuntime:
         buys = list(buys)
         if not self.active or not buys:
             return {}
-        base = {"mode": self.mode, "threshold": (self.bundle or {}).get("threshold"),
+        base = {"threshold": (self.bundle or {}).get("threshold"),
                 "model_sha256": (self.bundle or {}).get("sha256")}
         out: dict[str, dict] = {}
         if self.bundle is None:
             for strategy_type, _generated in buys:
-                out[strategy_type] = base | {"status": "model_unavailable", "probability": None,
-                                             "decision": "skip", "reason": self.reason}
+                out[strategy_type] = base | {"mode": self.mode_for(strategy_type), "status": "model_unavailable",
+                                             "probability": None, "decision": "skip", "reason": self.reason}
         else:
             from app.services import meta_label
 
@@ -107,21 +116,22 @@ class MetaLabelRuntime:
                 except Exception as exc:
                     scored = {"status": "error", "probability": None, "decision": None,
                               "reason": f"{exc.__class__.__name__}: {exc}"}
-                if scored.get("decision") is None and self.mode == "enforce":
+                mode = self.mode_for(strategy_type)
+                if scored.get("decision") is None and mode == "enforce":
                     scored = scored | {"decision": "skip"}
-                out[strategy_type] = base | scored
+                out[strategy_type] = base | {"mode": mode} | scored
         for strategy_type, record in out.items():
             self.scored.append(record)
             logger.info(
                 "meta-label %s: symbol=%s strategy=%s status=%s probability=%s threshold=%s decision=%s",
-                self.mode, symbol, strategy_type, record.get("status"), record.get("probability"),
+                record.get("mode"), symbol, strategy_type, record.get("status"), record.get("probability"),
                 record.get("threshold"), record.get("decision"),
             )
         return out
 
-    def allows_buy(self, record: dict | None) -> tuple[bool, str | None]:
-        """Only ``enforce`` can veto; shadow and off always allow."""
-        if self.mode != "enforce":
+    def allows_buy(self, record: dict | None, strategy_type: str | None = None) -> tuple[bool, str | None]:
+        """Only ``enforce`` (global or auto-enforced strategy) can veto."""
+        if self.mode_for(strategy_type) != "enforce":
             return True, None
         if record is None:
             return False, "meta-label enforce: BUY was not scored (fail closed)"
@@ -130,9 +140,15 @@ class MetaLabelRuntime:
         return False, f"meta-label enforce: {record.get('reason') or record.get('status')}"
 
 
-def resolve_runtime() -> MetaLabelRuntime:
+def resolve_runtime(enforced_types: Iterable[str] | None = None) -> MetaLabelRuntime:
+    """``enforced_types``: strategies auto-promoted to enforce (shadow mode only).
+
+    An auto-enforced strategy fails closed like global enforce: when the model
+    is unavailable its BUYs are not scored and are skipped.
+    """
     configured = str(settings.paper_meta_label_mode or "off").strip().lower()
     path = model_path()
+    enforced = frozenset(enforced_types or ()) if configured == "shadow" else frozenset()
     if configured not in {"shadow", "enforce"}:
         return MetaLabelRuntime(configured_mode=configured, mode="off", path=str(path))
     from app.services import meta_label
@@ -145,5 +161,7 @@ def resolve_runtime() -> MetaLabelRuntime:
             logger.warning("%s; enforce mode skips every BUY (fail closed)", reason)
             return MetaLabelRuntime(configured_mode=configured, mode="enforce", path=str(path), reason=reason)
         logger.info("%s; shadow mode is off for this cycle", reason)
-        return MetaLabelRuntime(configured_mode=configured, mode="off", path=str(path), reason=reason)
-    return MetaLabelRuntime(configured_mode=configured, mode=configured, path=str(path), bundle=bundle)
+        return MetaLabelRuntime(configured_mode=configured, mode="off", path=str(path), reason=reason,
+                                enforced_types=enforced)
+    return MetaLabelRuntime(configured_mode=configured, mode=configured, path=str(path), bundle=bundle,
+                            enforced_types=enforced)

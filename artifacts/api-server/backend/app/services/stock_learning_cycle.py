@@ -1396,7 +1396,11 @@ def create_learning_cycle(
     trigger: str = "manual",
     seed: int = 42,
     paper_session_date: date | None = None,
+    lineage: dict | None = None,
 ) -> tuple[StockLearningCycle, bool]:
+    """``lineage``: optional provenance (e.g. a governed paper parameter set,
+    its experiment and the attributed losses behind it).  It is part of the
+    hashed request, so it is immutable and visible in ``evidence.request``."""
     normalized = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
     if trigger not in VALID_TRIGGERS:
         raise StockTrainingError("Only manual or scheduled learning cycles are allowed")
@@ -1411,6 +1415,7 @@ def create_learning_cycle(
         "horizon_days": horizon_days, "provider": provider,
         "trigger": trigger, "seed": seed,
         **({"paper_session_date": paper_session_date.isoformat()} if paper_session_date else {}),
+        **({"lineage": lineage} if lineage else {}),
     }
     request_sha256 = _digest(request)
     existing = db.scalar(select(StockLearningCycle).where(

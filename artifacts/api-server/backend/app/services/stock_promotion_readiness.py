@@ -1,6 +1,7 @@
 """Deterministic, read-only promotion-readiness evidence for frozen paper trials."""
 from __future__ import annotations
 
+from datetime import timezone
 from decimal import Decimal
 from typing import Any
 
@@ -356,6 +357,15 @@ def promotion_readiness_report(db: Session, trial_id: str, report_id: int) -> di
     return _report_out(report)
 
 
+def _learning_from_losses(db: Session, trial: StockPaperTrial, metric) -> dict:
+    from app.services.loss_feedback import learning_from_losses_summary
+
+    anchor = metric.as_of if metric else trial.created_at
+    if anchor is not None and anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    return learning_from_losses_summary(db, until=anchor, trial_ids=[trial.id])
+
+
 def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
     """Evaluate evidence without changing trial, model, binding, or execution state."""
     trial = db.get(StockPaperTrial, trial_id)
@@ -451,6 +461,11 @@ def evaluate_promotion_readiness(db: Session, trial_id: str) -> dict:
             "status": live_safety["status"],
             "live_orders_allowed": live_safety["live_orders_allowed"],
         },
+        # Informational, not a gate: what the paper loss feedback loop learned
+        # (attributed losses, agenda, governed parameter sets, meta-label
+        # modes, allocation weights), anchored to the metric time so the
+        # report hash stays deterministic for unchanged evidence.
+        "learning_from_losses": _learning_from_losses(db, trial, metric),
     }
     report_hash = _hash(evidence)
     existing = db.scalar(select(StockPaperPromotionReadinessReport).where(

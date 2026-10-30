@@ -536,6 +536,23 @@ def daily_market_regime_detection() -> dict:
 @celery_app.task
 def nightly_backtest_job() -> dict:
     def work(db):
+        # Loss-driven agenda first: strategies/symbols implicated by recent
+        # attributed paper losses are researched with the proposals that
+        # address their dominant loss causes; passing candidates become
+        # governed parameter sets (never in-place edits).
+        from app.services.parameter_application import run_loss_driven_experiments
+
+        loss_driven = run_loss_driven_experiments(db)
+        if loss_driven["agenda"]["items"]:
+            return {
+                "status": "complete",
+                "job": "nightly_backtest_job",
+                "mode": "loss_driven_agenda",
+                "agenda": [{key: item[key] for key in ("rank", "strategy_type", "losses", "loss_return", "symbols", "focus")}
+                           for item in loss_driven["agenda"]["items"]],
+                "experiments": loss_driven["runs"],
+            }
+        # No attributed losses yet: keep the original research-only sweep.
         strategy = db.query(Strategy).filter(Strategy.strategy_type == "moving_average_crossover").one_or_none()
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
         if not strategy:
@@ -547,6 +564,7 @@ def nightly_backtest_job() -> dict:
         return {
             "status": "complete",
             "job": "nightly_backtest_job",
+            "mode": "fixed_fallback",
             "experiments": [{"symbol": result["symbol"], "created": len(result["experiments"])} for result in results],
         }
 
@@ -700,7 +718,13 @@ def strategy_learning_scope_job(
 def strategy_learning_batch_job(limit_symbols: int = 25, limit_strategies: int = 25, max_candidates: int = 3) -> dict:
     def work(db):
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).limit(max(1, min(limit_symbols, 25))).all()
-        strategies = db.query(Strategy).order_by(Strategy.name).limit(max(1, min(limit_strategies, 25))).all()
+        from app.services.parameter_application import agenda_strategy_order
+
+        # Strategies implicated by recent attributed paper losses go first.
+        all_strategies = db.query(Strategy).order_by(Strategy.name).all()
+        by_type = {row.strategy_type: row for row in all_strategies}
+        ordered_types = agenda_strategy_order(db, [row.strategy_type for row in all_strategies])
+        strategies = [by_type[key] for key in ordered_types][: max(1, min(limit_strategies, 25))]
         batch_id = str(uuid4())
         dispatches = []
         for asset in assets:
@@ -1487,3 +1511,27 @@ def operations_health_alert_job() -> dict:
         return run_operations_health_alerts(db)
 
     return _run_job("operations_health_alert_job", work)
+
+
+@celery_app.task
+def loss_feedback_job() -> dict:
+    """Nightly paper loss feedback: attribute closed trades, review meta-label modes."""
+    def work(db):
+        from app.services.loss_feedback import run_loss_feedback
+
+        return {"job": "loss_feedback_job", **run_loss_feedback(db)}
+
+    return _run_job("loss_feedback_job", work)
+
+
+@celery_app.task
+def parameter_application_job() -> dict:
+    """Advance governed paper parameter sets through their learning cycles."""
+    def work(db):
+        from app.services.parameter_application import advance_parameter_applications
+
+        result = advance_parameter_applications(db)
+        db.commit()
+        return {"job": "parameter_application_job", **result, "paper_only": True, "live_authorized": False}
+
+    return _run_job("parameter_application_job", work)

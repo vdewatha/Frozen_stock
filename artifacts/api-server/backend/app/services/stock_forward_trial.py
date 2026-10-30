@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from decimal import ROUND_DOWN
 from uuid import uuid4
+import logging
 import hashlib
 import json
 from pathlib import Path
@@ -45,6 +46,8 @@ from app.services.intraday_data import (
     session_bounds,
 )
 from app.services.risk import DEFAULT_RISK_RULES
+
+logger = logging.getLogger(__name__)
 
 POLICY = {
     "regular_sessions": 20, "minimum_closed_trades": 30, "minimum_decision_coverage": "0.90",
@@ -1976,6 +1979,22 @@ def evaluate_trial(db: Session, trial_id: str) -> StockPaperTrialMetric:
     # The payload is the frozen aggregate snapshot embedded in versioned
     # readiness reports; keep its status aligned with the metric row.
     payload["classification"] = classification
+    _record_trade_attributions(db, trial)
     metric = StockPaperTrialMetric(trial_id=trial_id, as_of=as_of, classification=classification, payload=payload)
     db.add(metric)
     return metric
+
+
+def _record_trade_attributions(db: Session, trial: StockPaperTrial) -> None:
+    """Append attribution records for newly closed trial lots (paper only).
+
+    Attribution is hindsight evidence: a failure is logged and retried by the
+    nightly loss-feedback job, and never blocks trial evaluation.
+    """
+    from app.services.trade_attribution import attribute_trial
+
+    try:
+        with db.begin_nested():
+            attribute_trial(db, trial)
+    except Exception:
+        logger.exception("trade attribution failed for trial %s", trial.id)

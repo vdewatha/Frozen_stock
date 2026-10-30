@@ -48,6 +48,7 @@ READ_PATHS = {
     "/stock-paper/venue-qualification",
     "/live-broker/status",
     "/stock/forward-trials", "/stock/forward-trials/bindings/eligible",
+    "/stock/forward-trials/learning/trade-attributions", "/stock/forward-trials/learning/loss-feedback",
     "/trade-candidates/refresh-jobs/latest",
     "/market-data/{symbol}", "/news/{symbol}/summary", "/economic/context",
     "/learning/workers/{task_id}",

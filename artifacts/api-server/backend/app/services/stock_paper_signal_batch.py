@@ -126,6 +126,7 @@ def generate_cycle_signals(
     *,
     meta_label: Any = None,
     now: datetime | None = None,
+    parameter_overrides: dict | None = None,
 ) -> tuple[dict[tuple[str, str], dict | BaseException], dict]:
     """Generate and persist one signal per (symbol, strategy) in one pass.
 
@@ -177,6 +178,12 @@ def generate_cycle_signals(
         except Exception as exc:  # recorded per pair below
             row = exc
         stats["strategy_resolutions"] += 1
+        if parameter_overrides and not isinstance(row, BaseException) and strategy_type in parameter_overrides:
+            # Governed paper parameter set (loss feedback loop): overlay the
+            # applied parameters without editing the strategy row.
+            from app.services.parameter_application import overlay
+
+            row = overlay(row, parameter_overrides)
         bound.append((strategy_type, research_only, row))
         # Per-strategy symbol scope (e.g. RSI(2) on SPY/QQQ/IWM/DIA only):
         # out-of-scope pairs get no signal row and no outcome at all.
@@ -216,6 +223,12 @@ def generate_cycle_signals(
                     # Entry timing must match the backtester's next-open fill;
                     # ``generated`` is a private copy, so the cache is unchanged.
                     generated = gate_daily_bar_entry(generated, evaluated_at, prices)
+                if parameter_overrides and type(row).__name__ == "GovernedStrategyView":
+                    import copy
+
+                    generated = copy.copy(generated)  # never mutate the memoized output
+                    generated.features = {**(generated.features or {}), "parameter_set": {
+                        "id": row.parameter_set_id, "version": row.parameter_set_version}}
             except Exception as exc:  # one strategy must not stop the fan-out
                 outcomes[(symbol, strategy_type)] = exc
                 continue

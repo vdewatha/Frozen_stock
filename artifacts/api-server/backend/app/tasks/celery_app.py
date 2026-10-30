@@ -118,6 +118,8 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.operations_health_alert_job": {"queue": "risk"},
     "app.tasks.jobs.explained_halt_auto_resume_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
+    "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
+    "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
     "app.tasks.jobs.alert_daily_digest_job": {"queue": "risk"},
     "app.tasks.jobs.paper_mandate_expiry_warning_job": {"queue": "learning"},
@@ -240,6 +242,15 @@ celery_app.conf.beat_schedule = {
         "options": {"expires": 4 * 60},
     },
     "strategy-readmission": {"task": "app.tasks.jobs.strategy_readmission_job", "schedule": 60 * 15},
+    # Paper loss feedback loop: attribute closed trades and review per-strategy
+    # meta-label modes after the close (before the 19:00 loss-driven
+    # experiments); governed parameter sets advance with their cycles.
+    "loss-feedback": {
+        "task": "app.tasks.jobs.loss_feedback_job",
+        "schedule": crontab(minute=45, hour=16, day_of_week="mon-fri"),
+        "options": {"expires": 2 * 60 * 60},
+    },
+    "parameter-application": {"task": "app.tasks.jobs.parameter_application_job", "schedule": 60 * 15},
     "alert-delivery": {
         "task": "app.tasks.jobs.alert_delivery_job",
         "schedule": 60,

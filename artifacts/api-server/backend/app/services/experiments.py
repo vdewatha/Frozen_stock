@@ -142,8 +142,22 @@ def run_strategy_experiments(
     strategy_slug: str,
     max_candidates: int = 3,
     apply_promotions: bool = False,
+    governed: bool = False,
+    loss_focus: Optional[list] = None,
+    current_parameters_override: Optional[dict] = None,
 ) -> dict:
+    """Run parameter experiments for one strategy on one symbol.
+
+    ``governed=True`` (with ``apply_promotions``) runs the same promotion
+    validation and gates but never edits the strategy row: the best promoted
+    candidate is returned as ``promoted_candidate`` so the paper loss feedback
+    loop can version it and send it through a governed learning cycle.
+    ``loss_focus`` re-orders proposals by the dominant causes of recent
+    attributed losses; ``current_parameters_override`` is the effective
+    (governed overlay) parameter set used as the baseline.
+    """
     from app.services.backtester import BacktestConfig, run_backtest
+    from app.services.learning import rank_proposals_for_losses
 
     symbol = symbol.strip().upper()
     strategy = db.query(Strategy).filter(Strategy.strategy_type == strategy_slug).one_or_none()
@@ -156,7 +170,9 @@ def run_strategy_experiments(
     # before a later backtest insert.
     strategy_id = int(strategy.id)
     strategy_name = strategy.name
-    current_parameters = dict(strategy.parameters or {})
+    current_parameters = dict(
+        current_parameters_override if current_parameters_override is not None else (strategy.parameters or {})
+    )
 
     prices, source = trusted_history(db, symbol, 420, minimum=100)
     benchmark_prices = _benchmark_prices(db, symbol)
@@ -189,7 +205,10 @@ def run_strategy_experiments(
     # may terminate an idle transaction while a long backtest is running.
     db.commit()
 
-    proposals = propose_parameter_experiments(strategy_slug, current_parameters)[: max(1, min(max_candidates, 10))]
+    proposals = propose_parameter_experiments(strategy_slug, current_parameters)
+    if loss_focus is not None:
+        proposals = rank_proposals_for_losses(proposals, current_parameters, list(loss_focus))
+    proposals = proposals[: max(1, min(max_candidates, 10))]
     experiments = []
     promoted_candidates = []
     validation_old = validation_new = None
@@ -239,7 +258,7 @@ def run_strategy_experiments(
             decision = "needs_more_data"
             reason = "Research-only experiment; explicit promotion validation was not requested."
         if decision == "promoted":
-            promoted_candidates.append((new_result["score"], new_parameters, proposal["experiment_name"]))
+            promoted_candidates.append((new_result["score"], new_parameters, proposal["experiment_name"], None))
 
         summary = {
             "symbol": symbol,
@@ -294,13 +313,22 @@ def run_strategy_experiments(
             payload=summary,
         )
         experiments.append(experiment)
+        if decision == "promoted":
+            promoted_candidates[-1] = promoted_candidates[-1][:3] + (experiment.id,)
         # Each candidate is independent. Persist it before the next
         # backtest, which may take longer than the database idle timeout.
         db.commit()
 
     applied_parameters: Optional[dict] = None
-    if apply_promotions and promoted_candidates:
-        _score, applied_parameters, experiment_name = sorted(promoted_candidates, reverse=True, key=lambda row: row[0])[0]
+    promoted_candidate: Optional[dict] = None
+    if apply_promotions and promoted_candidates and governed:
+        score, parameters, experiment_name, experiment_id = sorted(
+            promoted_candidates, reverse=True, key=lambda row: row[0])[0]
+        promoted_candidate = {"score": score, "parameters": parameters, "experiment_name": experiment_name,
+                              "experiment_id": experiment_id, "base_parameters": current_parameters}
+    elif apply_promotions and promoted_candidates:
+        _score, applied_parameters, experiment_name, _experiment_id = sorted(
+            promoted_candidates, reverse=True, key=lambda row: row[0])[0]
         strategy = db.get(Strategy, strategy_id)
         strategy.parameters = applied_parameters
         strategy.updated_at = datetime.utcnow()
@@ -323,6 +351,9 @@ def run_strategy_experiments(
         "baseline_backtest_id": old_backtest.id,
         "baseline_score": old_result["score"],
         "applied_parameters": applied_parameters,
+        "promoted_candidate": promoted_candidate,
+        "governed": governed,
+        "loss_focus": list(loss_focus) if loss_focus is not None else None,
         "experiments": list_strategy_experiments(db, symbol=symbol, strategy_slug=strategy_slug, limit=len(experiments)),
     }
 
