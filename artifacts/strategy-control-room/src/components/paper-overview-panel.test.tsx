@@ -26,6 +26,7 @@ const overview: PaperOverview = {
     next_evaluation_at: null,
   }],
   research_count: 1,
+  equity_curve: [],
   activity: [{ id: "event-1", kind: "withheld", symbol: "AAPL", strategy: null, at: null, detail: "Entry window closed" }],
 };
 
@@ -78,4 +79,15 @@ test("invalid nullable decimal strings never become fabricated zero amounts", ()
   assert.match(html, /<td class="numeric ov-number">Unknown<\/td>/);
   assert.match(html, /class="ov-unknown">Unverified<\/strong>/);
   assert.doesNotMatch(html, /\$0\.00|\$NaN/);
+});
+
+test("equity history is empty-stated without snapshots and labelled last-known when not reconciled", () => {
+  assert.match(render(overview), /No equity history yet/);
+  const html = render({
+    ...overview,
+    account: { ...overview.account, status: "halted" },
+    equity_curve: [{ observed_at: "2026-10-30T14:00:00Z", equity: "99999.93" }, { observed_at: null, equity: "1" }, { observed_at: "2026-10-30T15:00:00Z", equity: null }],
+  });
+  assert.match(html, /Account status: halted\. Showing last known broker snapshots/);
+  assert.doesNotMatch(html, /No equity history yet/);
 });

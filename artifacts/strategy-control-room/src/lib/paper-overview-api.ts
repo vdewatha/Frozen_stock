@@ -31,6 +31,7 @@ export type PaperOverview = {
   bot: { state: string; reason: string | null; kill_switch: boolean | null; mandate_status: string | null };
   bounds: { starts_at: string | null; ends_at: string | null; max_positions: number | null; max_gross: string | null; per_symbol: string | null; stop_fraction: string | null };
   account: { status: string; last_reconciled_at: string | null; stale: boolean; equity: string | null; cash: string | null; exposure: string | null; exposure_pct: number | null; pnl_verified: boolean; realized_pl: string | null };
+  equity_curve: { observed_at: string | null; equity: string | null }[];
   positions: OverviewPosition[];
   strategies: OverviewStrategy[];
   research_count: number;

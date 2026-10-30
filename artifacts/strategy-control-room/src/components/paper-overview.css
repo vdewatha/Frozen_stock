@@ -42,6 +42,9 @@
 .ov-status-strip.is-stale .ov-state-icon.session { background: #f5ecd5; color: #9a7834; }
 .ov-positions, .ov-strategies, .ov-account, .ov-activity { background: #fff; border: 1px solid #dfe7df; border-radius: 5px; box-shadow: 0 2px 8px #293c3008; }
 .ov-positions { margin-bottom: 18px; }
+.ov-equity { margin-bottom: 18px; background: #fff; border: 1px solid #dfe7df; border-radius: 5px; box-shadow: 0 2px 8px #293c3008; }
+.ov-equity-chart { padding: 12px 14px 6px; }
+.ov-equity-chart .recharts-text { fill: #86918b; font: 500 9px "DM Mono", monospace; }
 .ov-section-head { display: flex; align-items: end; justify-content: space-between; gap: 15px; padding: 14px 16px 12px; border-bottom: 1px solid #e7ece7; }
 .ov-section-head h2 { font: 700 17px/1.2 Manrope, sans-serif; margin: 4px 0 0; color: #293a34; }
 .ov-section-head h2 span { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; margin-left: 4px; background: #eef3ee; border-radius: 12px; color: #577063; font: 500 10px "DM Mono", monospace; vertical-align: 2px; }

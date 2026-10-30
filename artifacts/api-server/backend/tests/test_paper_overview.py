@@ -243,3 +243,18 @@ def test_durable_lot_exit_metadata_and_partial_sales(book):
     ))
     db.commit()
     assert paper_overview(db, now=NOW)["positions"][0] == row
+
+
+def test_equity_curve_is_chronological_and_survives_halt(book):
+    from app.models import StockPaperEquitySnapshot
+    db, account, _ = book
+    for i, equity in enumerate(["100", "101", "99"]):
+        db.add(StockPaperEquitySnapshot(
+            account_id=account.id, cash=1, equity=Decimal(equity), buying_power=1,
+            observed_at=NOW - timedelta(hours=3 - i), raw_payload={},
+        ))
+    account.status = "halted"
+    db.commit()
+    curve = paper_overview(db, now=NOW)["equity_curve"]
+    assert [Decimal(p["equity"]) for p in curve] == [100, 101, 99]
+    assert curve[0]["observed_at"] < curve[-1]["observed_at"]

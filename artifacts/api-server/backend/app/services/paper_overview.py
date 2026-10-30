@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    RiskRule, Strategy, StrategySignal, StockPaperFill, StockPaperOrder,
+    RiskRule, Strategy, StrategySignal, StockPaperEquitySnapshot, StockPaperFill, StockPaperOrder,
     StockPaperPosition, StockPaperRecoveryState, StockPaperRunApproval,
     StockPaperTrial, StockPaperTrialLot,
 )
@@ -247,6 +247,13 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
             "detail": "BUY withheld · entry window",
         })
     activity.sort(key=lambda a: a["at"] or "", reverse=True)
+    snapshots = db.scalars(select(StockPaperEquitySnapshot).where(
+        StockPaperEquitySnapshot.account_id == account.id,
+    ).order_by(StockPaperEquitySnapshot.observed_at.desc(), StockPaperEquitySnapshot.id.desc()).limit(365)).all() if account else []
+    equity_curve = [
+        {"observed_at": _iso(s.observed_at), "equity": _money(s.equity)}
+        for s in reversed(snapshots) if s.equity is not None
+    ]
     exposure = sum((r.market_value for r in rows), ZERO) if account and all(r.market_value is not None for r in rows) else None
     equity = account.equity if account else None
     return {
@@ -274,6 +281,7 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
             "exposure_pct": float(exposure / equity * 100) if exposure is not None and equity and equity > 0 else None,
             "pnl_verified": verified, "realized_pl": None,
         },
+        "equity_curve": equity_curve,
         "positions": positions, "strategies": admitted,
         "research_count": len(strategies) - len(admitted), "activity": activity[:12],
     }

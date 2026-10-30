@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
+import { EquityChart } from "@/components/equity-chart";
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BookOpen, ChartNoAxesCombined,
   ChevronRight, CircleHelp, Clock3, FlaskConical, RefreshCw, ShieldCheck, Wallet,
@@ -211,6 +212,20 @@ function ActivityPanel({ overview }: { overview: PaperOverview }) {
   </section>;
 }
 
+function EquityPanel({ overview }: { overview: PaperOverview }) {
+  const points = overview.equity_curve.flatMap(point => {
+    const equity = decimal(point.equity);
+    return point.observed_at && equity !== null ? [{ date: point.observed_at, equity }] : [];
+  });
+  const latest = points.length ? dateTime(points[points.length - 1].date) : null;
+  const caution = overview.account.status !== "reconciled" || overview.account.stale;
+  return <section className="ov-equity">
+    <div className="ov-section-head compact"><div><div className="ov-kicker">BROKER EQUITY SNAPSHOTS</div><h2>Account equity</h2></div><span className="ov-next-eval">USD · Paper account{latest ? ` · latest ${latest}` : ""}</span></div>
+    {caution && points.length > 0 && <p className="ov-account-warning">Account status: {overview.account.status}. Showing last known broker snapshots; values may have changed.</p>}
+    {points.length ? <div className="ov-equity-chart"><EquityChart data={points} /></div> : <div className="ov-empty"><div className="ov-empty-mark"><ChartNoAxesCombined size={22} /></div><div><strong>No equity history yet</strong><p>Broker equity snapshots will appear here once recorded.</p></div></div>}
+  </section>;
+}
+
 export function PaperOverviewPanel() {
   const { data, error, isPending, refetch, isFetching } = useQuery({
     queryKey: ["paper-overview"],
@@ -226,6 +241,7 @@ export function PaperOverviewPanel() {
     {error && <div className="ov-refresh-warning" role="status">The latest refresh failed. Showing the last successfully loaded snapshot. <button type="button" onClick={() => void refetch()}>Retry</button></div>}
     <StatusStrip overview={data} />
     <PositionsPanel overview={data} />
+    <EquityPanel overview={data} />
     <div className="ov-lower-grid">
       <StrategiesPanel overview={data} />
       <aside className="ov-side-column"><AccountPanel overview={data} /><ActivityPanel overview={data} /></aside>
