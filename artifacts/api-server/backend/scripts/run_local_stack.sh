@@ -62,6 +62,42 @@ if [[ "${PAPER_WORKERS_ENABLED:-true}" == "true" ]]; then
   PYTHONPATH=. python3.11 scripts/run_stock_watchdog.py &
   pids+=("$!")
 
+  # PAPER_DIRECT_MONITOR_LOOP=true removes stock-monitoring-job from Celery
+  # beat, so the monitor must run as its own supervised process (production
+  # does this from the Node gateway). A crashed loop is relaunched here instead
+  # of stopping the whole stack; the loop itself never mutates watchdog or
+  # recovery state on failure, so recovery stays fail-closed meanwhile.
+  if [[ "${PAPER_DIRECT_MONITOR_LOOP:-false}" == "true" ]]; then
+    (
+      monitor_pid=""
+      stop_monitor() {
+        if [[ -n "$monitor_pid" ]]; then
+          kill -TERM "$monitor_pid" 2>/dev/null || true
+          wait "$monitor_pid" 2>/dev/null || true
+        fi
+        exit 0
+      }
+      trap stop_monitor TERM INT
+      while true; do
+        PYTHONPATH=. python3.11 scripts/run_stock_monitor_loop.py &
+        monitor_pid="$!"
+        monitor_status=0
+        wait "$monitor_pid" || monitor_status=$?
+        monitor_pid=""
+        echo "Direct stock monitor loop exited (status=${monitor_status}); restarting in 5s." >&2
+        sleep 5 &
+        wait "$!" || true
+      done
+    ) &
+    pids+=("$!")
+    general_queues="default,market_data,learning,paper_trading,risk"
+  else
+    # Beat owns monitoring and routes stock-monitoring-job to the monitoring
+    # queue, so a local worker must consume it or no snapshots are written.
+    echo "PAPER_DIRECT_MONITOR_LOOP is not true; Celery beat runs stock-monitoring-job."
+    general_queues="default,market_data,learning,paper_trading,risk,monitoring"
+  fi
+
   # Keep the one-minute poll independent from daily imports and feature jobs.
   # This launcher is used by both the local development workflow and the API
   # artifact's production run command, so both environments use the same queue
@@ -85,7 +121,7 @@ if [[ "${PAPER_WORKERS_ENABLED:-true}" == "true" ]]; then
   python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
     --loglevel=INFO \
     --hostname=general@%h \
-    --queues=default,market_data,learning,paper_trading,risk \
+    --queues="$general_queues" \
     --concurrency=2 &
   pids+=("$!")
 

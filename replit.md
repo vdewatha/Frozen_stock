@@ -10,6 +10,7 @@ _Replace the heading above with the project's name, and this line with one sente
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+- `PAPER_DIRECT_MONITOR_LOOP=true` means the stock monitor runs as a supervised process (`scripts/run_stock_monitor_loop.py`, every `PAPER_MONITOR_INTERVAL_SECONDS`), not as the `stock-monitoring-job` beat task. Locally the stack launcher (`run_local_stack.sh`) starts and restarts it; in production the Node gateway supervises it. With the flag off, Celery beat owns monitoring and no loop starts. `PAPER_WORKERS_ENABLED=false` skips it along with the workers.
 
 ## Stack
 
