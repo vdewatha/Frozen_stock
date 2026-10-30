@@ -1,5 +1,24 @@
 import { API_BASE_URL, authenticatedFetch, ApiError } from "./api";
 
+export type AttributionIssueCode =
+  | "external_orders" | "missing_order_link" | "unowned_fills" | "quantity_mismatch" | "no_fill_history";
+export type AttributionIssue = {
+  code: AttributionIssueCode;
+  fills: number;
+  quantity: string | null;
+  detail: string;
+  proposed_review: string;
+};
+export type AttributionEvidence = {
+  broker_quantity: string;
+  fill_count: number;
+  strategy_net_quantity: string;
+  fill_net_quantity: string;
+  unexplained_quantity: string;
+  issues: AttributionIssue[];
+  summary: string;
+  owner_assigned_automatically: false;
+};
 export type OverviewPosition = {
   symbol: string;
   quantity: string;
@@ -12,6 +31,7 @@ export type OverviewPosition = {
   attribution: "attributed" | "multiple" | "unknown";
   strategy: string | null;
   strategy_ids: number[];
+  attribution_evidence: AttributionEvidence;
   entry_at: string | null;
   sessions_held: number | null;
   horizon_sessions: number | null;

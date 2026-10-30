@@ -113,3 +113,15 @@ INTRADAY_BACKFILL_CHUNKS_PER_CYCLE = "8"
 [userenv.production]
 ENVIRONMENT = "production"
 CLERK_ROLE_MAPPINGS = "{\"user_3KQ4j0KxYM5iVpPz4Y0pnYC4mIR\":\"admin\",\"user_3KQ9CGy7ikGFcIHnxjKO2Vk89PD\":\"admin\"}"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 18936
+externalPort = 3000

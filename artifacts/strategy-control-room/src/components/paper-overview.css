@@ -232,3 +232,13 @@
   .ov-shell .workspace-footer { margin-top: 16px; font-size: 9px; line-height: 1.5; }
 }
 @media (prefers-reduced-motion: reduce) { .ov-shell * { scroll-behavior: auto !important; transition: none !important; } }
+
+/* Attribution evidence (expanded position details): descriptive, never an assignment */
+.ov-attribution-evidence { flex-basis: 100%; display: grid; gap: 4px; padding-top: 6px; border-top: 1px dashed #dde6de; color: #5c6c63; }
+.ov-attribution-evidence > span b { color: #40564a; font-weight: 600; }
+.ov-attribution-issues { margin: 0; padding-left: 16px; display: grid; gap: 4px; }
+.ov-attribution-issues li { line-height: 1.45; }
+.ov-attribution-issues li b { color: #8a5a1c; font-weight: 600; }
+.ov-attribution-issues li em { display: block; font-style: normal; color: #6b7a72; }
+.ov-attribution-evidence small { color: #8a978f; font-size: 0.95em; }
+.ov-detail .ov-attribution-evidence { border-top-color: #e3ebe4; }

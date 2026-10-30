@@ -27,6 +27,22 @@ ET = ZoneInfo("America/New_York")
 UTC = timezone.utc
 ZERO = Decimal("0")
 STALE_SECONDS = 180
+# Orders reconciliation imported from the broker because no app order claimed them.
+EXTERNAL_ORDER_SOURCE = "broker_import"
+# Nothing in this module assigns an owner. Each diagnostic names the evidence
+# that is missing and the explicit, reviewed step that could supply it.
+ATTRIBUTION_PROPOSALS = {
+    "external_orders": "Confirm who submitted these broker orders; ownership can only be added "
+                       "through an explicit, reviewed attribution record.",
+    "missing_order_link": "Locate the originating order evidence; a reviewed order link is required "
+                          "before any owner can be considered.",
+    "unowned_fills": "Review the order source and signal lineage; ownership requires an explicit "
+                     "reviewed record, never inference from later signals.",
+    "quantity_mismatch": "Compare broker activity history with the imported fill window; missing "
+                         "fills enter only through reconciliation review, never by assumption.",
+    "no_fill_history": "Compare broker activity history with the imported fill window; missing "
+                       "fills enter only through reconciliation review, never by assumption.",
+}
 
 
 def _utc(value: datetime) -> datetime:
@@ -41,6 +57,91 @@ def _money(value) -> str | None:
     return str(value) if value is not None else None
 
 
+def _signed(fill) -> Decimal:
+    return fill.quantity * (1 if fill.side == "buy" else -1)
+
+
+def _qty(value: Decimal) -> str:
+    """Human-readable share count for diagnostic text (API fields keep exact strings)."""
+    text = format(value.normalize(), "f")
+    return text if text not in {"-0", ""} else "0"
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _attribution_evidence(row, fills, orders, strategies, net, known) -> dict:
+    """Explain, from persisted evidence only, why ownership is or is not established.
+
+    Diagnostics are descriptive. They never choose an owner, never read strategy
+    signals, and never trigger any repair; each carries the explicit review step
+    that could add evidence.
+    """
+    external, unlinked, unowned = [], [], []
+    for fill in fills:
+        order = orders.get(fill.order_id)
+        if order is None or order.symbol != row.symbol:
+            unlinked.append(fill)  # No persisted order describes this fill for this symbol.
+        elif order.strategy_id is None and order.source == EXTERNAL_ORDER_SOURCE:
+            external.append(fill)
+        elif order.strategy_id not in strategies:
+            unowned.append(fill)  # App order without a (surviving) strategy owner.
+    strategy_net = sum(net.values(), ZERO)
+    total_net = sum((_signed(f) for f in fills), ZERO)
+    residual = row.quantity - total_net
+    issues = []
+
+    def issue(code, group, detail):
+        issues.append({
+            "code": code, "fills": len(group),
+            "quantity": str(sum((_signed(f) for f in group), ZERO)) if group else None,
+            "detail": detail, "proposed_review": ATTRIBUTION_PROPOSALS[code],
+        })
+
+    if external:
+        qty = sum((_signed(f) for f in external), ZERO)
+        issue("external_orders", external,
+              f"{_plural(len(external), 'fill')} netting {_qty(qty)} shares came from broker orders submitted "
+              "outside this app and imported during reconciliation; no strategy placed them.")
+    if unlinked:
+        qty = sum((_signed(f) for f in unlinked), ZERO)
+        issue("missing_order_link", unlinked,
+              f"{_plural(len(unlinked), 'fill')} netting {_qty(qty)} shares have no persisted order for this symbol.")
+    if unowned:
+        qty = sum((_signed(f) for f in unowned), ZERO)
+        issue("unowned_fills", unowned,
+              f"{_plural(len(unowned), 'fill')} netting {_qty(qty)} shares link to app orders that record no strategy owner.")
+    if fills and residual != ZERO:
+        issue("quantity_mismatch", [],
+              f"Persisted fills net {_qty(total_net)} shares but the broker reports {_qty(row.quantity)}; "
+              f"{_qty(residual)} shares are not covered by same-account fill history.")
+    elif fills and any(qty < 0 for qty in net.values()):
+        issue("quantity_mismatch", [],
+              "A strategy's fills net below zero for this symbol, so no exact owner split exists.")
+    if not fills:
+        issue("no_fill_history", [],
+              "No same-account fills are persisted for this symbol; the holding predates or falls "
+              "outside the imported activity history.")
+    if known:
+        summary = (f"{_plural(len(fills), 'fill')} from strategy orders net exactly to the broker "
+                   f"quantity of {_qty(row.quantity)}.")
+    elif issues:
+        summary = " ".join(i["detail"] for i in issues)
+    else:
+        summary = "Persisted fills do not establish an exact owner."  # Unreachable guard; stays unknown.
+    return {
+        "broker_quantity": str(row.quantity),
+        "fill_count": len(fills),
+        "strategy_net_quantity": str(strategy_net),
+        "fill_net_quantity": str(total_net),
+        "unexplained_quantity": str(residual),
+        "issues": issues,
+        "summary": summary,
+        "owner_assigned_automatically": False,
+    }
+
+
 def _position(row, fills, orders, strategies, lots, now, verified):
     # Same fail-closed attribution rule as execution's position-count gate:
     # any unowned fill or mismatched aggregate leaves the symbol unattributed.
@@ -51,12 +152,13 @@ def _position(row, fills, orders, strategies, lots, now, verified):
         if order is None or order.strategy_id not in strategies or order.symbol != row.symbol:
             unknown = True
             continue
-        net[order.strategy_id] += fill.quantity * (1 if fill.side == "buy" else -1)
+        net[order.strategy_id] += _signed(fill)
     owners = [sid for sid, qty in net.items() if qty > 0]
     known = (
         not unknown and bool(owners) and all(qty >= 0 for qty in net.values())
         and sum(net.values(), ZERO) == row.quantity
     )
+    evidence = _attribution_evidence(row, fills, orders, strategies, net, known)
     owner_lots = [
         lot for lot in lots
         if lot.symbol == row.symbol
@@ -109,6 +211,7 @@ def _position(row, fills, orders, strategies, lots, now, verified):
         "attribution": ("attributed" if len(owners) == 1 else "multiple") if known else "unknown",
         "strategy": " / ".join(strategies[sid].name for sid in sorted(owners)) if known else None,
         "strategy_ids": sorted(owners) if known else [],
+        "attribution_evidence": evidence,
         "entry_at": _iso(entry_at), "sessions_held": held,
         "horizon_sessions": lot.planned_horizon_sessions if lot else None,
         "exit_intent": intent, "stop_price": _money(stop),

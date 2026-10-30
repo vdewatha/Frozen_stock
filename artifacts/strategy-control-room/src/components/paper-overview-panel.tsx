@@ -7,7 +7,7 @@ import {
   ChevronRight, CircleHelp, Clock3, FlaskConical, RefreshCw, ShieldCheck, Wallet,
 } from "lucide-react";
 import { getErrorMessage } from "@/lib/api";
-import { getPaperOverview, type OverviewPosition, type PaperOverview } from "@/lib/paper-overview-api";
+import { getPaperOverview, type AttributionIssueCode, type OverviewPosition, type PaperOverview } from "@/lib/paper-overview-api";
 
 const numberFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const moneyFormat = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -65,8 +65,37 @@ function quantity(value: string): string {
   return parsed === null ? "Unknown" : numberFormat.format(parsed);
 }
 
+const ISSUE_LABELS: Record<AttributionIssueCode, string> = {
+  external_orders: "Imported external orders",
+  missing_order_link: "Missing order link",
+  unowned_fills: "Unowned fills",
+  quantity_mismatch: "Quantity mismatch",
+  no_fill_history: "No fill history",
+};
+
+function attributionHeadline(position: OverviewPosition, overview: PaperOverview): string {
+  if (position.attribution !== "unknown") return positionOwner(position, overview);
+  const codes = position.attribution_evidence?.issues.map(issue => ISSUE_LABELS[issue.code] ?? issue.code) ?? [];
+  return codes.length ? `Unattributed — ${codes.join(", ").toLowerCase()}` : "Unattributed — fills do not explain the broker quantity";
+}
+
+export function AttributionEvidenceBlock({ position, overview }: { position: OverviewPosition; overview: PaperOverview }) {
+  const evidence = position.attribution_evidence;
+  if (!evidence) return <span>Attribution: {attributionHeadline(position, overview)}</span>;
+  const unexplained = decimal(evidence.unexplained_quantity);
+  return <div className="ov-attribution-evidence" data-testid={`attribution-evidence-${position.symbol}`}>
+    <span>Attribution: <b>{attributionHeadline(position, overview)}</b></span>
+    <span>Evidence: {evidence.fill_count} same-account {evidence.fill_count === 1 ? "fill" : "fills"} · strategy fills net {quantity(evidence.strategy_net_quantity)} of {quantity(evidence.broker_quantity)} broker shares{unexplained !== null && unexplained !== 0 ? ` · ${quantity(evidence.unexplained_quantity)} not covered by fill history` : ""}</span>
+    {evidence.issues.length > 0 && <ul className="ov-attribution-issues">{evidence.issues.map(issue => <li key={issue.code}>
+      <b>{ISSUE_LABELS[issue.code] ?? issue.code}</b>{issue.fills > 0 ? ` (${issue.fills} ${issue.fills === 1 ? "fill" : "fills"})` : ""}: {issue.detail}
+      <em>Proposed review (not performed): {issue.proposed_review}</em>
+    </li>)}</ul>}
+    {evidence.issues.length === 0 && <span>{evidence.summary}</span>}
+    <small>No owner is inferred from signals or assigned automatically; P/L masking is unchanged.</small>
+  </div>;
+}
+
 function PositionExtraDetails({ position, overview }: { position: OverviewPosition; overview: PaperOverview }) {
-  const owner = positionOwner(position, overview);
   const risk = money(position.stop_price);
   const signal = overview.strategies
     .filter(strategy => position.strategy_ids.includes(strategy.id) && strategy.last_signal)
@@ -76,7 +105,7 @@ function PositionExtraDetails({ position, overview }: { position: OverviewPositi
     <strong>{position.symbol} position details</strong>
     <span>Latest strategy signal (not entry evidence): {signal}</span>
     <span>Risk / stop: {risk}</span>
-    <span>Attribution: {position.attribution === "unknown" ? "Unattributed — fills do not explain the broker quantity" : owner}</span>
+    <AttributionEvidenceBlock position={position} overview={overview} />
     <span>Last observed: {dateTime(position.observed_at)}</span>
   </div>;
 }
@@ -129,7 +158,7 @@ function PositionsPanel({ overview }: { overview: PaperOverview }) {
           return <Fragment key={position.symbol}>
             <tr className={isExpanded ? "is-expanded" : ""}>
               <td><button className="ov-position-button" onClick={() => setExpanded(isExpanded ? null : position.symbol)} aria-expanded={isExpanded}><span className="ov-expand">{isExpanded ? "−" : "+"}</span><span><strong>{position.symbol}</strong></span></button></td>
-               <td><strong className={unknownAttribution ? "ov-unattributed" : "ov-owner"} title={unknownAttribution ? "Ownership not confirmed: fills do not explain the broker quantity" : undefined}>{unknownAttribution && <CircleHelp size={13} />}{positionOwner(position, overview)}</strong><small className="ov-sub">{position.entry_at ? dateOnly(position.entry_at) : "Date unknown"} · {money(position.entry_price)} entry</small></td>
+               <td><strong className={unknownAttribution ? "ov-unattributed" : "ov-owner"} title={unknownAttribution ? position.attribution_evidence?.summary || "Ownership not confirmed: fills do not explain the broker quantity" : undefined}>{unknownAttribution && <CircleHelp size={13} />}{positionOwner(position, overview)}</strong><small className="ov-sub">{position.entry_at ? dateOnly(position.entry_at) : "Date unknown"} · {money(position.entry_price)} entry</small></td>
               <td className="numeric ov-number">{quantity(position.quantity)}</td>
               <td className="numeric ov-number">{money(position.current_price)}</td>
               <td className="numeric"><strong className={pnl === null ? "ov-unknown" : pnl >= 0 ? "ov-positive" : "ov-negative"}>{pnl === null ? "Unverified" : `${pnl >= 0 ? "+" : ""}${money(position.unrealized_pl)}`}</strong><small className={`ov-sub ${pnl === null ? "ov-unknown" : pnl >= 0 ? "ov-positive" : "ov-negative"}`}>{percentage(position.unrealized_pl_pct)}</small></td>
@@ -156,7 +185,7 @@ function PositionsPanel({ overview }: { overview: PaperOverview }) {
               <div><small>HORIZON</small><strong>{held === null ? "Unknown" : horizon === null ? `${held} held · Unknown horizon` : `${held} / ${horizon} sessions`}</strong>{progress !== null && <div className="ov-progress"><i style={{ width: `${progress}%` }} /></div>}</div>
               <div><small>EXIT INTENT</small><strong className="ov-card-intent">{position.exit_intent || "Unknown"}</strong></div>
             </div>
-            {isExpanded && <div className="ov-detail"><span>Latest strategy signal <b>{overview.strategies.filter(strategy => position.strategy_ids.includes(strategy.id) && strategy.last_signal).map(strategy => `${strategy.last_signal?.action} ${strategy.last_signal?.symbol}`).join(", ") || "Unknown"}</b></span><span>Risk / stop <b>{money(position.stop_price)}</b></span><span>Attribution <b>{positionOwner(position, overview)}</b></span><span>Observed <b>{dateTime(position.observed_at)}</b></span></div>}
+            {isExpanded && <div className="ov-detail"><span>Latest strategy signal <b>{overview.strategies.filter(strategy => position.strategy_ids.includes(strategy.id) && strategy.last_signal).map(strategy => `${strategy.last_signal?.action} ${strategy.last_signal?.symbol}`).join(", ") || "Unknown"}</b></span><span>Risk / stop <b>{money(position.stop_price)}</b></span><span>Observed <b>{dateTime(position.observed_at)}</b></span><AttributionEvidenceBlock position={position} overview={overview} /></div>}
           </article>;
         })}</div>
       </>}

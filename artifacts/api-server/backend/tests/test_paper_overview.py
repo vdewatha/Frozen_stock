@@ -35,7 +35,8 @@ def book():
     engine.dispose()
 
 
-def add_holding(db, account, strategy, *, shares=10, fill_shares=None, unknown=False):
+def add_holding(db, account, strategy, *, shares=10, fill_shares=None, unknown=False,
+                source="test", with_fill=True):
     position = StockPaperPosition(
         account_id=account.id, symbol="SPY", quantity=Decimal(shares),
         average_entry_price=Decimal("100"), current_price=Decimal("110"),
@@ -45,18 +46,32 @@ def add_holding(db, account, strategy, *, shares=10, fill_shares=None, unknown=F
     order = StockPaperOrder(
         account_id=account.id, strategy_id=None if unknown else strategy.id,
         client_order_id="overview-entry", symbol="SPY", side="buy", quantity=Decimal(shares),
-        status="filled", source="test",
+        status="filled", source=source,
     )
     db.add_all([position, order])
     db.flush()
-    db.add(StockPaperFill(
-        account_id=account.id, order_id=order.id, broker_activity_id="overview-fill",
-        symbol="SPY", side="buy", quantity=Decimal(fill_shares or shares),
-        price=Decimal("100"), fee=Decimal("0"), cost_known=True, filled_at=NOW,
-        raw_payload={},
-    ))
+    if with_fill:
+        db.add(StockPaperFill(
+            account_id=account.id, order_id=order.id, broker_activity_id="overview-fill",
+            symbol="SPY", side="buy", quantity=Decimal(fill_shares or shares),
+            price=Decimal("100"), fee=Decimal("0"), cost_known=True, filled_at=NOW,
+            raw_payload={},
+        ))
     db.commit()
     return position, order
+
+
+def add_fill(db, account, *, order_id, shares, activity, side="buy", symbol="SPY"):
+    db.add(StockPaperFill(
+        account_id=account.id, order_id=order_id, broker_activity_id=activity,
+        symbol=symbol, side=side, quantity=Decimal(shares), price=Decimal("100"),
+        fee=Decimal("0"), cost_known=True, filled_at=NOW, raw_payload={},
+    ))
+    db.commit()
+
+
+def evidence_codes(result):
+    return [issue["code"] for issue in result["positions"][0]["attribution_evidence"]["issues"]]
 
 
 def test_exact_fill_attribution_and_broker_values(book):
@@ -72,6 +87,11 @@ def test_exact_fill_attribution_and_broker_values(book):
     assert row["horizon_sessions"] is None  # No matching durable lot.
     assert result["strategies"][0]["open_positions"] == 1
     assert Decimal(result["account"]["exposure"]) == 1100
+    evidence = row["attribution_evidence"]
+    assert evidence["issues"] == []
+    assert Decimal(evidence["unexplained_quantity"]) == 0
+    assert evidence["owner_assigned_automatically"] is False
+    assert "net exactly" in evidence["summary"]
 
 
 @pytest.mark.parametrize("unknown,fill_shares", [(True, 10), (False, 9)])
@@ -83,6 +103,135 @@ def test_partial_or_unowned_fills_never_hide_the_broker_position(book, unknown, 
     assert result["positions"][0]["attribution"] == "unknown"
     assert result["positions"][0]["strategy"] is None
     assert result["positions"][0]["entry_at"] is None
+
+
+def test_imported_external_orders_are_explained_without_assigning_an_owner(book):
+    """The production book: every fill traces to a broker_import order with no strategy."""
+    db, account, strategy = book
+    add_holding(db, account, strategy, unknown=True, source="broker_import")
+    db.add(StrategySignal(strategy_id=strategy.id, symbol="SPY", signal_time=NOW, action="BUY",
+                          reason="latest signal must not become ownership", features={}))
+    db.commit()
+    result = paper_overview(db, now=NOW)
+    row = result["positions"][0]
+    assert row["attribution"] == "unknown" and row["strategy_ids"] == []
+    assert evidence_codes(result) == ["external_orders"]
+    issue = row["attribution_evidence"]["issues"][0]
+    assert issue["fills"] == 1 and Decimal(issue["quantity"]) == 10
+    assert "outside this app" in issue["detail"]
+    assert "explicit, reviewed attribution record" in issue["proposed_review"]
+    assert Decimal(row["attribution_evidence"]["unexplained_quantity"]) == 0
+    assert result["strategies"][0]["open_positions"] == 0
+
+
+def test_missing_order_link_and_wrong_symbol_order_are_distinguished(book):
+    db, account, strategy = book
+    position, _ = add_holding(db, account, strategy, shares=10, with_fill=False)
+    add_fill(db, account, order_id=None, shares=6, activity="orphan")
+    other = StockPaperOrder(account_id=account.id, strategy_id=strategy.id, client_order_id="qqq-entry",
+                            symbol="QQQ", side="buy", quantity=4, status="filled", source="test")
+    db.add(other)
+    db.flush()
+    add_fill(db, account, order_id=other.id, shares=4, activity="wrong-symbol-link")
+    result = paper_overview(db, now=NOW)
+    assert evidence_codes(result) == ["missing_order_link"]
+    issue = result["positions"][0]["attribution_evidence"]["issues"][0]
+    assert issue["fills"] == 2 and Decimal(issue["quantity"]) == 10
+    assert result["positions"][0]["attribution"] == "unknown"
+
+
+def test_unowned_app_fills_including_deleted_strategy_owner(book):
+    db, account, strategy = book
+    _, order = add_holding(db, account, strategy, shares=10, fill_shares=7, unknown=True, source="manual_control_room")
+    ghost = StockPaperOrder(account_id=account.id, strategy_id=999_999, client_order_id="ghost-entry",
+                            symbol="SPY", side="buy", quantity=3, status="filled", source="scheduled_paper_signal")
+    db.add(ghost)
+    db.flush()
+    add_fill(db, account, order_id=ghost.id, shares=3, activity="ghost-fill")
+    result = paper_overview(db, now=NOW)
+    assert evidence_codes(result) == ["unowned_fills"]
+    issue = result["positions"][0]["attribution_evidence"]["issues"][0]
+    assert issue["fills"] == 2 and Decimal(issue["quantity"]) == 10
+    assert "never inference from later signals" in issue["proposed_review"]
+
+
+def test_quantity_mismatch_reports_uncovered_shares(book):
+    db, account, strategy = book
+    add_holding(db, account, strategy, shares=10, fill_shares=9)
+    result = paper_overview(db, now=NOW)
+    assert evidence_codes(result) == ["quantity_mismatch"]
+    evidence = result["positions"][0]["attribution_evidence"]
+    assert Decimal(evidence["strategy_net_quantity"]) == 9
+    assert Decimal(evidence["unexplained_quantity"]) == 1
+    assert "1 shares are not covered" in evidence["issues"][0]["detail"]
+
+
+def test_oversold_strategy_net_is_a_quantity_mismatch(book):
+    db, account, strategy = book
+    _, order = add_holding(db, account, strategy, shares=10, fill_shares=10)
+    second = Strategy(name="IBS", strategy_type="ibs_mean_reversion", parameters={}, current_status="paper_trading_active")
+    db.add(second)
+    db.flush()
+    seller = StockPaperOrder(account_id=account.id, strategy_id=second.id, client_order_id="ibs-sell",
+                             symbol="SPY", side="sell", quantity=5, status="filled", source="test")
+    buyer = StockPaperOrder(account_id=account.id, strategy_id=strategy.id, client_order_id="rsi-rebuy",
+                            symbol="SPY", side="buy", quantity=5, status="filled", source="test")
+    db.add_all([seller, buyer])
+    db.flush()
+    add_fill(db, account, order_id=seller.id, shares=5, side="sell", activity="ibs-sold")
+    add_fill(db, account, order_id=buyer.id, shares=5, activity="rsi-rebought")
+    result = paper_overview(db, now=NOW)
+    assert result["positions"][0]["attribution"] == "unknown"
+    assert evidence_codes(result) == ["quantity_mismatch"]
+    assert "below zero" in result["positions"][0]["attribution_evidence"]["issues"][0]["detail"]
+
+
+def test_holding_without_any_fill_history(book):
+    db, account, strategy = book
+    add_holding(db, account, strategy, with_fill=False)
+    result = paper_overview(db, now=NOW)
+    assert evidence_codes(result) == ["no_fill_history"]
+    evidence = result["positions"][0]["attribution_evidence"]
+    assert evidence["fill_count"] == 0
+    assert Decimal(evidence["unexplained_quantity"]) == 10
+    assert result["positions"][0]["attribution"] == "unknown"
+
+
+def test_mixed_evidence_lists_every_applicable_diagnostic(book):
+    db, account, strategy = book
+    _, order = add_holding(db, account, strategy, shares=10, fill_shares=4)
+    external = StockPaperOrder(account_id=account.id, strategy_id=None, client_order_id="broker-x",
+                               symbol="SPY", side="buy", quantity=3, status="filled", source="broker_import")
+    db.add(external)
+    db.flush()
+    add_fill(db, account, order_id=external.id, shares=3, activity="external-fill")
+    add_fill(db, account, order_id=None, shares=1, activity="unlinked-fill")
+    result = paper_overview(db, now=NOW)
+    assert evidence_codes(result) == ["external_orders", "missing_order_link", "quantity_mismatch"]
+    evidence = result["positions"][0]["attribution_evidence"]
+    assert Decimal(evidence["strategy_net_quantity"]) == 4
+    assert Decimal(evidence["fill_net_quantity"]) == 8
+    assert Decimal(evidence["unexplained_quantity"]) == 2
+    assert result["positions"][0]["unrealized_pl"] is not None  # verified account keeps P/L
+
+
+def test_attribution_evidence_never_unmasks_pl_or_mutates(book):
+    db, account, strategy = book
+    add_holding(db, account, strategy, unknown=True, source="broker_import")
+    account.accounting_verified = False
+    db.commit()
+    statements = []
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    event.listen(db.bind, "before_cursor_execute", capture)
+    try:
+        result = paper_overview(db, now=NOW)
+    finally:
+        event.remove(db.bind, "before_cursor_execute", capture)
+    assert result["positions"][0]["unrealized_pl"] is None
+    assert evidence_codes(result) == ["external_orders"]
+    assert all(s.lstrip().upper().startswith("SELECT") for s in statements)
+    assert not db.new and not db.dirty and not db.deleted
 
 
 def test_unverified_account_still_shows_holdings_but_never_invents_pl(book):
