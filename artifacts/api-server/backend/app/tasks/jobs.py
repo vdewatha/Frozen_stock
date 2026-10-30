@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from hashlib import sha256
 from decimal import Decimal
 import logging
@@ -452,6 +453,18 @@ def delayed_sip_collection_job() -> dict:
 
 @celery_app.task
 def daily_feature_generation() -> dict:
+    # A run retrains every symbol (~98 minutes on the 2 vCPU host). Each deploy
+    # boots with empty Redis and queues a startup run; during the session that
+    # run would hold the CPU through the daily-bar entry window and slow the
+    # minutely import. Scheduled runs are off hours, so skip in-session runs.
+    from app.services.intraday_data import session_bounds
+
+    now = datetime.now(timezone.utc)
+    bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
+    if bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]:
+        return {"status": "skipped", "job": "daily_feature_generation",
+                "reason": "model retraining is deferred outside the regular session"}
+
     def work(db):
         # Materialize scalar symbols before releasing the read transaction.
         # Keeping expired ORM objects here makes the first later ``asset.symbol``
