@@ -41,6 +41,8 @@ import { LivePilotPanel } from "@/components/live-pilot-panel";
 import { LiveMandatePanel } from "@/components/live-mandate-panel";
 import { getAuthConfig, getAuthSession, getDashboard, getErrorMessage, setAccessToken, setAuthMode, type AuthSession, type DashboardSnapshot } from "@/lib/api";
 import { workspacePages, resolveWorkspacePage } from "@/lib/workspace-navigation";
+import { PaperOverviewPanel } from "@/components/paper-overview-panel";
+import "@/components/paper-overview.css";
 
 const icons = [LayoutDashboard, ChartNoAxesCombined, Wallet, FlaskConical, BookOpen, ShieldCheck, Activity, Settings2];
 const localPaperAuth = import.meta.env.VITE_LOCAL_PAPER_AUTH !== "false";
@@ -82,7 +84,8 @@ function Workspace() {
   const resolved = resolveWorkspacePage(location);
   const page = resolved?.page;
   const title = page?.label ?? "Page not found";
-  return <div className="workspace control-room">
+  const isOverview = page?.id === "overview";
+  return <div className={`workspace control-room${isOverview ? " ov-shell" : ""}`}>
     {menuOpen && <button className="nav-backdrop" aria-label="Close navigation" onClick={() => setMenuOpen(false)} />}
     <aside className={`workspace-sidebar ${menuOpen ? "is-open" : ""}`} aria-label="Workspace navigation">
       <Link href="/" className="workspace-brand"><span className="brand-icon"><ChartNoAxesCombined size={23} /></span><span>Frozen<span className="brand-light"> Stock</span><small>RESEARCH WORKSPACE</small></span></Link>
@@ -96,11 +99,11 @@ function Workspace() {
     </aside>
     <div className="workspace-body">
       <header className="workspace-topbar"><div className="breadcrumb"><button className="mobile-menu icon-button" aria-label="Open navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Menu size={20} /></button><span>Workspace</span><ChevronRight size={14} /><strong>{title}</strong></div><div className="topbar-actions"><span className="paper-label"><ShieldCheck size={14} />Paper only</span><Link href="/activity" className="icon-button" aria-label="Notifications" title="Notifications"><Bell size={18} /></Link></div></header>
-      <main id="main-content" className="workspace-content">
-        <div className="page-heading"><div><div className="eyebrow">FROZEN STOCK / WORKSPACE</div><h1>{title}</h1><p>{page?.description ?? "This page is not available."}</p></div><button className="icon-button refresh-button" aria-label="Refresh data" title="Refresh data" disabled={isFetching} onClick={() => void client.invalidateQueries()}><RefreshCw size={18} className={isFetching ? "animate-spin" : ""} /></button></div>
+       <main id="main-content" className={`workspace-content${isOverview ? " ov-content" : ""}`}>
+         {!isOverview && <div className="page-heading"><div><div className="eyebrow">FROZEN STOCK / WORKSPACE</div><h1>{title}</h1><p>{page?.description ?? "This page is not available."}</p></div><button className="icon-button refresh-button" aria-label="Refresh data" title="Refresh data" disabled={isFetching} onClick={() => void client.invalidateQueries()}><RefreshCw size={18} className={isFetching ? "animate-spin" : ""} /></button></div>}
         {page && page.tabs.length > 0 && <nav className="page-tabs" aria-label={`${page.label} sections`}>{page.tabs.map(tab => <Link key={tab.id} href={`${page.path}/${tab.id}`} aria-current={resolved?.section === tab.id ? "page" : undefined} className={resolved?.section === tab.id ? "selected" : ""}>{tab.label}</Link>)}</nav>}
         {error && <div className="workspace-error" role="alert">{getErrorMessage(error, "Workspace unavailable")} <button onClick={() => void refetch()}>Retry</button></div>}
-        {!page ? <Link className="text-link" href="/">Return to overview <ArrowRight size={16} /></Link> : !data ? !error && <div className="loading-grid" aria-label="Loading workspace">{[0, 1, 2].map(i => <div key={i} className="loading-block" />)}</div> : <AccessRoleProvider role={data.session.role}><div className="page-panels" key={`${page.id}/${resolved?.section}`}><PageContent page={page.id} section={resolved?.section ?? ""} dashboard={data.dashboard} session={data.session} /></div></AccessRoleProvider>}
+         {!page ? <Link className="text-link" href="/">Return to overview <ArrowRight size={16} /></Link> : !data ? !error && <div className="loading-grid" aria-label="Loading workspace">{[0, 1, 2].map(i => <div key={i} className="loading-block" />)}</div> : <AccessRoleProvider role={data.session.role}><div className={`page-panels${isOverview ? " ov-page-panels" : ""}`} key={`${page.id}/${resolved?.section}`}><PageContent page={page.id} section={resolved?.section ?? ""} dashboard={data.dashboard} session={data.session} /></div></AccessRoleProvider>}
         <footer className="workspace-footer"><span>Frozen Stock</span><span>{data ? `Snapshot ${new Date(data.dashboard.generated_at).toLocaleString()}` : "Connecting to local service"}</span></footer>
       </main>
     </div>
@@ -113,7 +116,7 @@ function PageContent({ page, section, dashboard, session }: { page: string; sect
   const client = useQueryClient();
   // The kill-switch label reads the risk rule from the workspace snapshot, so refetch it after any safety action.
   const refreshWorkspace = () => void client.invalidateQueries({ queryKey: ["workspace-session"] });
-  if (page === "overview") return <Overview dashboard={dashboard} />;
+  if (page === "overview") return <PaperOverviewPanel />;
   const views: Record<string, ReactNode> = {
     "markets/iex": <IexResearchPanel />, "markets/consolidated": <DelayedSipPanel />, "markets/history": <MarketLab />, "markets/context": <><RegimeMonitorLab /><EconomicContextLab /><NewsSentimentLab /></>,
     "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/scorecard": <PaperScorecardPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,

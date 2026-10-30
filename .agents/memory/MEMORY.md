@@ -45,3 +45,4 @@
 - [Unattended paper operation](unattended-paper-operation.md) — mandate mints exact cycle bounds; auto-resume is an allow-list; alerts send only from the job.
 - [Loss feedback loop](loss-feedback-loop.md) — losses change paper behaviour only via governed parameter sets, bounded per-session weights and evidence-gated meta-label modes.
 - [Standing live mandate automation](live-mandate-automation.md) — auto renew/promote only inside a two-person mandate; human stops suspend it; loss baseline spans amendments.
+- [Overview priorities](overview-priority.md) — current broker holdings and strategy ownership come first; research and account metrics remain secondary.

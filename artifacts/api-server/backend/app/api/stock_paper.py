@@ -47,6 +47,12 @@ def status(db: Session = Depends(get_db)) -> dict:
     return stock_paper_status(db)
 
 
+@router.get("/overview")
+def overview(db: Session = Depends(get_db)) -> dict:
+    from app.services.paper_overview import paper_overview
+    return paper_overview(db)
+
+
 @router.get("/scorecard")
 def scorecard(days: int = Query(30, ge=1, le=3650), db: Session = Depends(get_db)) -> dict:
     """Read-only scorecard of closed bot round trips (no snapshot is written)."""
