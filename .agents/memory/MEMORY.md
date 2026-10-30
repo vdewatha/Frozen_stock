@@ -41,3 +41,4 @@
 - [Production Clerk gateway](production-clerk-gateway.md) — Clerk sessions enter FastAPI only through a loopback gateway; new users remain read-only unless explicitly mapped.
 - [Artifact mount health probes](artifact-mount-health-probes.md) — keep root and mount probes, but inspect backend startup errors when the gateway exits.
 - [Publish schema preflight](publish-schema-preflight.md) — an empty dev-to-production diff does not prove the development schema matches the checked-out migrations.
+- [Daily-bar entry window](daily-bar-entry-window.md) — RSI(2)/IBS may enter all session (until 3:45 PM); late fills are judged against next-open backtest.

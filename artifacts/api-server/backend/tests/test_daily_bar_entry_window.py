@@ -26,6 +26,14 @@ OPEN = datetime(2026, 10, 29, 13, 30, tzinfo=UTC)
 RSI2_PARAMS = {"symbol_scope": ["SPY", "QQQ", "IWM", "DIA"]}
 
 
+@pytest.fixture(autouse=True)
+def _default_window():
+    """Pin the code default (5-45 min) so these tests ignore the deployed setting."""
+    with patch.object(settings, "paper_daily_bar_entry_window_start_minutes", 5), \
+         patch.object(settings, "paper_daily_bar_entry_window_end_minutes", 45):
+        yield
+
+
 def _buy(reason="always buy"):
     return StrategySignalResult(action="BUY", probability_up=0.7, probability_down=0.3,
                                 confidence=0.8, reason=reason, features={"rsi": 3.0})
@@ -34,8 +42,35 @@ def _buy(reason="always buy"):
 # ----------------------------------------------------------------- window
 
 def test_window_defaults_to_open_plus_5_to_45_minutes():
+    from app.core.config import Settings
+
+    fields = Settings.model_fields
+    assert fields["paper_daily_bar_entry_window_start_minutes"].default == 5
+    assert fields["paper_daily_bar_entry_window_end_minutes"].default == 45
     assert daily_bar_entry_window(OPEN + timedelta(hours=3)) == (
         OPEN + timedelta(minutes=5), OPEN + timedelta(minutes=45))
+
+
+# The deployed setting widens the window to open + 375 min (15:45 ET).
+@pytest.mark.parametrize("minutes,action", [
+    (4, "HOLD"), (5, "BUY"), (120, "BUY"), (300, "BUY"), (374, "BUY"), (375, "HOLD"), (385, "HOLD"),
+])
+def test_full_session_window_allows_entries_until_1545(minutes, action):
+    with patch.object(settings, "paper_daily_bar_entry_window_end_minutes", 375):
+        gated = gate_daily_bar_entry(_buy(), OPEN + timedelta(minutes=minutes))
+    assert gated.action == action
+    timing = gated.features["entry_timing"]
+    assert timing["window_end"].startswith("2026-10-29T15:45")
+    assert timing["window_minutes_after_open"] == [5, 375]
+    assert timing["in_window"] is (action == "BUY")
+
+
+def test_full_session_window_is_clamped_to_an_early_close():
+    with patch.object(settings, "paper_daily_bar_entry_window_end_minutes", 375):
+        _start, end = daily_bar_entry_window(datetime(2026, 11, 27, 15, 0, tzinfo=UTC))
+        late = gate_daily_bar_entry(_buy(), datetime(2026, 11, 27, 17, 59, tzinfo=UTC))
+    assert end == datetime(2026, 11, 27, 18, 0, tzinfo=UTC)  # 13:00 ET close
+    assert late.action == "BUY"
 
 
 def test_no_window_on_a_holiday():

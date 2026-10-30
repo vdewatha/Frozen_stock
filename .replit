@@ -53,6 +53,10 @@ packages = ["glibcLocales", "libxcrypt", "postgresql", "redis"]
 
 [userenv.shared]
 ALLOW_LIVE_TRADING = "false"
+# Daily-bar strategies (RSI(2), IBS) may enter from open+5 min until open+375 min
+# (3:45 PM ET; clamped to early closes) so a late resume or feed hiccup does not
+# cost the day's trade. Fills after the open are tracked against the next-open backtest.
+PAPER_DAILY_BAR_ENTRY_WINDOW_END_MINUTES = "375"
 ALLOW_ANONYMOUS_VIEWER = "true"
 VITE_LOCAL_PAPER_AUTH = "true"
 VITE_LOCAL_AUTO_VIEW = "true"
@@ -68,7 +72,7 @@ PAPER_LEARNING_CONCURRENCY = "1"
 # a stale symbol blocks only itself unless >20% of symbols or SPY/QQQ are stale.
 PAPER_EXECUTION_SYMBOLS = "[\"SPY\", \"QQQ\", \"IWM\", \"DIA\", \"XLK\", \"XLF\", \"XLE\", \"XLV\", \"XLY\", \"XLP\", \"XLI\", \"XLU\", \"XLB\", \"XLRE\", \"XLC\", \"SMH\", \"AAPL\", \"MSFT\", \"NVDA\", \"AMZN\", \"GOOGL\", \"META\", \"TSLA\", \"AVGO\", \"JPM\", \"V\", \"MA\", \"UNH\", \"XOM\", \"LLY\", \"COST\", \"HD\", \"PG\", \"JNJ\", \"ABBV\", \"MRK\", \"PEP\", \"KO\", \"BAC\", \"WMT\", \"NFLX\", \"AMD\", \"CRM\", \"ORCL\", \"ADBE\"]"
 # Updated for each deployable release so hosted readiness can be verified.
-PAPER_BUILD_ID = "paper-slim-20261027-v1"
+PAPER_BUILD_ID = "paper-entry-window-20261030-v1"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 # Feature refreshes retrain every symbol (~98 minutes here); queued from IEX
