@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, JSON, Numeric, String, Text, CheckConstraint, func
+from sqlalchemy import Boolean, DateTime, Integer, JSON, Numeric, String, Text, CheckConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -32,6 +32,9 @@ class LivePilot(Base):
     observation_window_sessions: Mapped[int] = mapped_column(nullable=False, default=5)
     rollback_target: Mapped[str] = mapped_column(String(16), nullable=False, default="paper")
     model_run_id: Mapped[Optional[str]] = mapped_column(String(64))
+    # Set only when the scheduler minted or renewed this window inside a
+    # standing two-person live mandate; manual pilots leave it empty.
+    mandate_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
     paper_expectations: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     launch_checklist: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     primary_approval_actor: Mapped[Optional[str]] = mapped_column(String(128))

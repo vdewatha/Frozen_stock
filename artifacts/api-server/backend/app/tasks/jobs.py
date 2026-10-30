@@ -1477,6 +1477,37 @@ def paper_mandate_expiry_warning_job() -> dict:
 
 
 @celery_app.task
+def live_mandate_job() -> dict:
+    """Operate the live pilot inside the standing two-person live mandate.
+
+    Revocation triggers are evaluated first; renewal, promotion and activation
+    happen only while every launch gate is green.  Without a mandate this is a
+    no-op, so manual two-person pilots are unaffected.
+    """
+    def work(db):
+        from app.services.live_mandate import run_live_mandate_cycle
+
+        result = run_live_mandate_cycle(db)
+        db.commit()
+        return result
+
+    return _run_job("live_mandate_job", work)
+
+
+@celery_app.task
+def paper_graduation_auto_review_job() -> dict:
+    """Auto-approve fully resolved paper graduation packages; never grants live authority."""
+    def work(db):
+        from app.services.stock_paper_graduation import auto_review_graduation_packages
+
+        result = auto_review_graduation_packages(db)
+        db.commit()
+        return result
+
+    return _run_job("paper_graduation_auto_review_job", work)
+
+
+@celery_app.task
 def strategy_edge_decay_job() -> dict:
     """Pause (paper only) trial strategies whose rolling forward edge has decayed.
 

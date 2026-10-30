@@ -382,6 +382,8 @@ def _pilot_out(pilot: LivePilot, *, include_events: list[dict] | None = None) ->
         "observation_window_sessions": pilot.observation_window_sessions,
         "rollback_target": pilot.rollback_target,
         "model_run_id": pilot.model_run_id,
+        "mandate_id": pilot.mandate_id,
+        "authority": "mandate" if pilot.mandate_id is not None else "manual",
         "paper_expectations": pilot.paper_expectations or {},
         "launch_checklist": pilot.launch_checklist or {},
         "primary_approval_actor": pilot.primary_approval_actor,
@@ -456,8 +458,17 @@ def activate_live_pilot(
     model_run_id: str,
     paper_expectations: dict,
     checklist: dict,
+    executed_by: str | None = None,
+    mandate_id: int | None = None,
 ) -> dict:
+    """Activate a bounded canary under two named approvers.
+
+    A manual activation is executed by the primary approver.  The standing
+    live-mandate scheduler passes the mandate approvers as the authority, its
+    automation identity as ``executed_by`` and the ``mandate_id``.
+    """
     actor, secondary_actor, reason, model_run_id = actor.strip(), secondary_actor.strip(), reason.strip(), model_run_id.strip()
+    executor = (executed_by or actor).strip()
     if len(reason) < 3:
         raise LivePilotError("Pilot activation requires a reason")
     normalized, starts_at, expires_at = _validate_pilot_inputs(
@@ -474,8 +485,9 @@ def activate_live_pilot(
         raise LivePilotError("Live pilot activation requires shadow mode")
     launch = evaluate_live_pilot_launch(db, model_run_id=model_run_id, checklist=checklist)
     if launch["status"] != "pass":
-        _write_event(db, action="activate", status="blocked", actor=actor, secondary_actor=secondary_actor,
-                     reason="Live pilot activation denied by the launch gate", payload={"launch": launch})
+        _write_event(db, action="activate", status="blocked", actor=executor, secondary_actor=secondary_actor,
+                     reason="Live pilot activation denied by the launch gate",
+                     payload={"launch": launch, "mandate_id": mandate_id, "approval_actor": actor})
         raise LivePilotError("Live pilot launch gate is not complete")
     pilot.status = "canary"
     pilot.symbols = normalized
@@ -495,7 +507,8 @@ def activate_live_pilot(
     pilot.approved_at = _now()
     pilot.stopped_at = None
     pilot.stopped_reason = None
-    pilot.updated_by = actor
+    pilot.mandate_id = mandate_id
+    pilot.updated_by = executor
     # transition_live_safety's persisted approval gate is intentionally populated
     # by this same two-person record before it evaluates the canary transition.
     safety.approval_actor = actor
@@ -505,19 +518,24 @@ def activate_live_pilot(
     from app.services.live_safety import transition_live_safety
     try:
         transition_live_safety(
-            db, target_mode="canary-live", actor=actor, reason=reason,
+            db, target_mode="canary-live", actor=executor, reason=reason,
             approval_actor=actor, secondary_approval_actor=secondary_actor,
-            evidence={"pilot_launch": launch},
+            evidence={"pilot_launch": launch, "mandate_id": mandate_id},
         )
     except Exception as exc:
         from app.services.live_safety import LiveSafetyError
         if isinstance(exc, LiveSafetyError):
             pilot.status = "inactive"
+            pilot.mandate_id = None
             raise LivePilotError(str(exc)) from exc
         pilot.status = "inactive"
+        pilot.mandate_id = None
         raise
-    _write_event(db, action="activate", status="canary", actor=actor, secondary_actor=secondary_actor,
-                 reason=reason, payload={"model_run_id": model_run_id, "launch": launch})
+    _write_event(db, action="activate", status="canary", actor=executor, secondary_actor=secondary_actor,
+                 reason=reason, payload={
+                     "model_run_id": model_run_id, "launch": launch, "mandate_id": mandate_id,
+                     "approval_actor": actor, "secondary_approval_actor": secondary_actor,
+                 })
     return live_pilot_status(db)
 
 
@@ -569,7 +587,12 @@ def stop_live_pilot(db: Session, *, actor: str, reason: str) -> dict:
     pilot.stopped_at = _now()
     pilot.stopped_reason = reason.strip()
     pilot.updated_by = actor.strip()
-    _write_event(db, action="stop", status="halted", actor=actor.strip(), reason=reason.strip())
+    _write_event(db, action="stop", status="halted", actor=actor.strip(), reason=reason.strip(),
+                 payload={"mandate_id": pilot.mandate_id})
+    # An emergency stop always suspends the standing mandate behind the pilot;
+    # two distinct approvers must reset the stop and then reinstate it.
+    from app.services.live_mandate import suspend_for_pilot_action
+    suspend_for_pilot_action(db, pilot.mandate_id, trigger="emergency_stop", reason=reason.strip())
     return live_pilot_status(db)
 
 
@@ -601,7 +624,12 @@ def rollback_live_pilot(
     pilot.stopped_at = _now()
     pilot.stopped_reason = reason.strip()
     pilot.updated_by = actor.strip()
-    _write_event(db, action="rollback", status="complete", actor=actor.strip(), reason=reason.strip(), payload=evidence)
+    _write_event(db, action="rollback", status="complete", actor=actor.strip(), reason=reason.strip(),
+                 payload={**evidence, "mandate_id": pilot.mandate_id})
+    # A human rollback of a mandate-minted pilot must not be undone by the
+    # scheduler re-minting a window; the mandate waits for two-person reinstatement.
+    from app.services.live_mandate import suspend_for_pilot_action
+    suspend_for_pilot_action(db, pilot.mandate_id, trigger="operator_rollback", reason=reason.strip())
     return live_pilot_status(db)
 
 
@@ -697,6 +725,11 @@ def pilot_order_decision(
         return {"allowed": False, "reason": "live pilot is not active", "pilot_status": pilot.status}
     if not starts or not expires or not (starts <= observed < expires):
         return {"allowed": False, "reason": "live pilot observation window is not active", "pilot_status": pilot.status}
+    if pilot.mandate_id is not None:
+        from app.services.live_mandate import mandate_allows_orders
+        fence = mandate_allows_orders(db, pilot.mandate_id, now=observed)
+        if not fence.get("allowed"):
+            return {"allowed": False, "reason": fence["reason"], "pilot_status": pilot.status}
     if pilot.session_policy != "regular":
         return {"allowed": False, "reason": "live pilot requires regular sessions"}
     bounds = session_bounds(observed.astimezone(NY).date())

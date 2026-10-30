@@ -15,6 +15,19 @@ The redacted machine-readable record is:
 
 `backend/reports/live-compliance-readiness-20260915.json`
 
+## Standing live mandate
+
+A standing two-person live mandate (see `live-safety-contract.md`) embeds the
+compliance record above. A mandate cannot be approved unless that record
+passes, and every automatic renewal, promotion and activation re-evaluates it.
+If the record stops passing, or any operator records that compliance status
+has changed to blocked (`/system/live-pilot/mandate/compliance-block`), the
+mandate is suspended and live authority lapses to the rollback target. Only two
+distinct admins can reinstate it, which records their human determination that
+compliance is no longer blocked. The mandate does not change the current
+disposition: compliance readiness is still a human determination and remains
+**Blocked** until the reviews below are signed off.
+
 ## Required inventory
 
 - Account owner and organizational entity

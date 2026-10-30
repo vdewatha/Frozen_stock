@@ -44,3 +44,4 @@
 - [Daily-bar entry window](daily-bar-entry-window.md) — RSI(2)/IBS may enter all session (until 3:45 PM); late fills are judged against next-open backtest.
 - [Unattended paper operation](unattended-paper-operation.md) — mandate mints exact cycle bounds; auto-resume is an allow-list; alerts send only from the job.
 - [Loss feedback loop](loss-feedback-loop.md) — losses change paper behaviour only via governed parameter sets, bounded per-session weights and evidence-gated meta-label modes.
+- [Standing live mandate automation](live-mandate-automation.md) — auto renew/promote only inside a two-person mandate; human stops suspend it; loss baseline spans amendments.

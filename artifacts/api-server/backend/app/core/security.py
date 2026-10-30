@@ -39,7 +39,7 @@ READ_PATHS = {
     "/assets", "/strategies", "/market-regimes", "/news", "/paper-trades",
     "/audit-logs", "/notifications", "/notifications/delivery-status", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
-    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs", "/research/agent-runs", "/research/scalp/runs",
+    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/live-pilot/mandate", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs", "/research/agent-runs", "/research/scalp/runs",
     "/stock/training/jobs", "/stock/training/binding", "/stock/learning-cycles",
     "/research/agent-comparison-reports",
     "/stock/learning-cycles/launch-prerequisites",
@@ -192,10 +192,13 @@ def required_role(method: str, path: str) -> str:
         return "operator"
     if method == "POST" and path in {
         "/system/live-pilot/stop", "/system/live-pilot/rollback", "/system/live-pilot/review",
+        "/system/live-pilot/mandate/compliance-block",
     }:
         return "operator"
     if method == "POST" and path in {
         "/system/live-pilot/activate", "/system/live-pilot/promote", "/system/live-pilot/limits",
+        "/system/live-pilot/mandate", "/system/live-pilot/mandate/amend",
+        "/system/live-pilot/mandate/revoke", "/system/live-pilot/mandate/reinstate",
     }:
         return "admin"
     if method == "POST" and (

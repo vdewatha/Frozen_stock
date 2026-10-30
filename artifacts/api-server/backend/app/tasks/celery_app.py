@@ -123,6 +123,8 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
     "app.tasks.jobs.alert_daily_digest_job": {"queue": "risk"},
     "app.tasks.jobs.paper_mandate_expiry_warning_job": {"queue": "learning"},
+    "app.tasks.jobs.live_mandate_job": {"queue": "risk"},
+    "app.tasks.jobs.paper_graduation_auto_review_job": {"queue": "learning"},
 }
 celery_app.conf.beat_schedule = {
     "delayed-sip-collection": {
@@ -260,6 +262,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.alert_daily_digest_job",
         "schedule": crontab(minute=0, hour=17),
         "options": {"expires": 6 * 60 * 60},
+    },
+    "live-mandate": {
+        "task": "app.tasks.jobs.live_mandate_job",
+        "schedule": 300,
+        "options": {"expires": 240},
+    },
+    "paper-graduation-auto-review": {
+        "task": "app.tasks.jobs.paper_graduation_auto_review_job",
+        "schedule": 1800,
+        "options": {"expires": 1500},
     },
     "paper-mandate-expiry-warning": {
         "task": "app.tasks.jobs.paper_mandate_expiry_warning_job",

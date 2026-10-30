@@ -11,6 +11,17 @@ from app.schemas.trading import (
     LivePilotActivationRequest,
     LivePilotLimitChangeRequest,
     LivePilotPromotionRequest,
+    LiveMandateActionRequest,
+    LiveMandateComplianceBlockRequest,
+    LiveMandateRequest,
+)
+from app.services.live_mandate import (
+    LiveMandateError,
+    create_live_mandate,
+    live_mandate_projection,
+    record_compliance_block,
+    reinstate_live_mandate,
+    revoke_live_mandate,
 )
 from app.services.live_pilot import (
     LivePilotError,
@@ -31,7 +42,10 @@ def _actor(request: Request) -> str:
 
 
 def _secondary(request: Request, claimed_actor: str | None, minimum_role: str) -> str:
-    if settings.environment != "production":
+    # Every environment that can hold live or production authority (production
+    # and the approved-live runtime) must verify the second identity; a named
+    # actor in the request body is only accepted for local compatibility.
+    if not settings.production_identity_required:
         return (claimed_actor or "").strip()
     try:
         evidence = secondary_approval_identity(request, minimum_role=minimum_role)
@@ -168,4 +182,91 @@ def review(
         return result
     except LivePilotError as exc:
         db.commit()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+@router.get("/mandate")
+def mandate_status(db: Session = Depends(get_db)) -> dict:
+    return live_mandate_projection(db)
+
+
+def _mandate_write(request: Request, payload: LiveMandateRequest, db: Session, *, amend: bool) -> dict:
+    try:
+        create_live_mandate(
+            db,
+            actor=_actor(request),
+            secondary_actor=_secondary(request, payload.secondary_approval_actor, "admin"),
+            reason=payload.reason,
+            symbols=payload.symbols,
+            max_notional=payload.max_notional,
+            max_order_notional=payload.max_order_notional,
+            max_pilot_days=payload.max_pilot_days,
+            renewal_lead_hours=payload.renewal_lead_hours,
+            observation_window_sessions=payload.observation_window_sessions,
+            max_cumulative_loss=payload.max_cumulative_loss,
+            max_drawdown=payload.max_drawdown,
+            rollback_target=payload.rollback_target,
+            model_run_id=payload.model_run_id,
+            checklist=payload.checklist,
+            paper_expectations=payload.paper_expectations,
+            valid_from=payload.valid_from,
+            expires_at=payload.expires_at,
+            amend=amend,
+        )
+        db.commit()
+        return live_mandate_projection(db)
+    except LiveMandateError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/mandate")
+def create_mandate(payload: LiveMandateRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    return _mandate_write(request, payload, db, amend=False)
+
+
+@router.post("/mandate/amend")
+def amend_mandate(payload: LiveMandateRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    return _mandate_write(request, payload, db, amend=True)
+
+
+@router.post("/mandate/revoke")
+def revoke_mandate(payload: LiveMandateActionRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    try:
+        revoke_live_mandate(
+            db, actor=_actor(request),
+            secondary_actor=_secondary(request, payload.secondary_approval_actor, "admin"),
+            reason=payload.reason,
+        )
+        db.commit()
+        return live_mandate_projection(db)
+    except LiveMandateError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/mandate/reinstate")
+def reinstate_mandate(payload: LiveMandateActionRequest, request: Request, db: Session = Depends(get_db)) -> dict:
+    try:
+        reinstate_live_mandate(
+            db, actor=_actor(request),
+            secondary_actor=_secondary(request, payload.secondary_approval_actor, "admin"),
+            reason=payload.reason,
+        )
+        db.commit()
+        return live_mandate_projection(db)
+    except LiveMandateError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/mandate/compliance-block")
+def compliance_block(
+    payload: LiveMandateComplianceBlockRequest, request: Request, db: Session = Depends(get_db),
+) -> dict:
+    try:
+        record_compliance_block(db, actor=_actor(request), reason=payload.reason)
+        db.commit()
+        return live_mandate_projection(db)
+    except LiveMandateError as exc:
+        db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc

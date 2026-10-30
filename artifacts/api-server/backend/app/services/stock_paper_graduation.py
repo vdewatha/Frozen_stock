@@ -551,3 +551,81 @@ def graduation_package(db: Session, trial_id: str, package_id: int) -> dict:
     if not row or row.trial_id != trial_id:
         raise PaperGraduationError("Paper graduation package not found")
     return graduation_package_out(row)
+
+GRADUATION_AUTOMATION_ACTOR = "graduation_automation"
+
+
+def auto_review_graduation_packages(db: Session, *, limit: int = 20) -> dict:
+    """Auto-approve fresh twenty-session packages whose evidence is fully resolved.
+
+    For each trial, only the newest passing promotion-readiness report is a
+    candidate, and only when no graduation package already references it.  A
+    candidate with any blocker (unresolved finding, residual, missing soak or
+    accuracy evidence) is left for a human reviewer; nothing is persisted for
+    it.  Approved packages keep ``paper_only=True`` and ``live_authorized=False``:
+    automatic graduation never grants live authority.
+    """
+    latest_ids = db.scalars(
+        select(func.max(StockPaperPromotionReadinessReport.id))
+        .group_by(StockPaperPromotionReadinessReport.trial_id)
+    ).all()
+    approved: list[dict] = []
+    held: list[dict] = []
+    skipped = 0
+    soak_report, soak_name, soak_hash = None, None, None
+    soak_loaded = False
+    for readiness_id in sorted(latest_ids, reverse=True)[:limit]:
+        readiness = db.get(StockPaperPromotionReadinessReport, readiness_id)
+        if readiness is None or readiness.decision != "pass":
+            continue
+        if db.scalar(select(StockPaperGraduationPackage.id).where(
+            StockPaperGraduationPackage.readiness_report_id == readiness.id,
+        ).limit(1)):
+            skipped += 1
+            continue
+        trial = db.get(StockPaperTrial, readiness.trial_id)
+        if trial is None:
+            continue
+        if not soak_loaded:
+            try:
+                soak_report, soak_name, soak_hash = _load_soak_report(None)
+            except PaperGraduationError:
+                soak_report, soak_name, soak_hash = None, None, None
+            soak_loaded = True
+        _, blockers, _ = build_graduation_evidence(
+            db, trial=trial, readiness=readiness, soak_report=soak_report,
+            soak_report_name=soak_name, soak_report_hash=soak_hash,
+        )
+        if blockers:
+            held.append({
+                "trial_id": trial.id,
+                "readiness_report_id": readiness.id,
+                "blocker_count": len(blockers),
+                "blocker_keys": sorted({f"{row.get('category')}:{row.get('key')}" for row in blockers})[:20],
+                "reason": "unresolved evidence waits for a human reviewer",
+            })
+            continue
+        package = create_graduation_package(
+            db,
+            trial_id=trial.id,
+            readiness_report_id=readiness.id,
+            decision="approved",
+            reason="Automatic graduation: every evidence check in the frozen package is resolved with no residuals",
+            actor=GRADUATION_AUTOMATION_ACTOR,
+            authorization={
+                "mode": "automatic",
+                "rule": "zero_blockers",
+                "paper_only": True,
+                "live_authorized": False,
+            },
+            soak_report_name=soak_name,
+            soak_report=soak_report,
+            soak_report_hash=soak_hash,
+        )
+        approved.append({"trial_id": trial.id, "readiness_report_id": readiness.id, "package_id": package.get("id")})
+    return {
+        "approved": approved,
+        "held_for_human": held,
+        "already_reviewed": skipped,
+        "live_authorized": False,
+    }

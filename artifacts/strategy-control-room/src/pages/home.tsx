@@ -38,6 +38,7 @@ import { StockLearningCyclePanel } from "@/components/stock-learning-cycle-panel
 import { OperationalHardeningPanel } from "@/components/operational-hardening-panel";
 import { LiveOperationsPanel } from "@/components/live-operations-panel";
 import { LivePilotPanel } from "@/components/live-pilot-panel";
+import { LiveMandatePanel } from "@/components/live-mandate-panel";
 import { getAuthConfig, getAuthSession, getDashboard, getErrorMessage, setAccessToken, setAuthMode, type AuthSession, type DashboardSnapshot } from "@/lib/api";
 import { workspacePages, resolveWorkspacePage } from "@/lib/workspace-navigation";
 
@@ -120,7 +121,7 @@ function PageContent({ page, section, dashboard, session }: { page: string; sect
     "research/runs": <ResearchControlRoom />, "research/scalp": <ResearchOnly><ScalpResearchPanel /></ResearchOnly>, "research/experiments": <ExperimentManagerLab />, "research/library": <StrategyLibrary dashboard={dashboard} />, "research/models": <ResearchOnly><ModelLab /></ResearchOnly>, "research/signals": <ResearchOnly><PredictionScanner /><OpportunityRadar /></ResearchOnly>, "research/memory": <ResearchOnly><MemoryReplayPanel /></ResearchOnly>,
     "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} onSafetyAction={refreshWorkspace} />, "risk/broker": <><PaperVenueGovernancePanel /><BrokerSafetyLab /></>, "risk/recovery": <StockRecoveryPanel onKillSwitchChange={refreshWorkspace} />,
     "activity/notifications": <NotificationCenter />, "activity/audit": <AuditHistoryPanel />,
-    "system/health": <DeploymentMonitorPanel />, "system/monitoring": <StockMonitoringPanel />, "system/hardening": <OperationalHardeningPanel />, "system/live": <><LiveOperationsPanel /><LivePilotPanel /></>, "system/access": <AccessSettings session={session} />,
+    "system/health": <DeploymentMonitorPanel />, "system/monitoring": <StockMonitoringPanel />, "system/hardening": <OperationalHardeningPanel />, "system/live": <><LiveOperationsPanel /><LivePilotPanel /><LiveMandatePanel /></>, "system/access": <AccessSettings session={session} />,
   };
   return views[`${page}/${section}`] ?? <p role="status">Section not found.</p>;
 }

@@ -2617,6 +2617,58 @@ class ForwardTrialTests(unittest.TestCase):
             self.assertEqual(db.query(StockPaperGraduationPackage).count(), 0)
             self.assertEqual(row.status, "completed")
 
+    def _passing_readiness(self, db, row, digest: str):
+        report = StockPaperPromotionReadinessReport(
+            trial_id=row.id,
+            report_hash=digest * 64,
+            decision="pass",
+            gates={},
+            lineage=row.lineage,
+            policy=row.policy,
+            report_version=1,
+            evidence={},
+            paper_only=True,
+            live_authorized=False,
+        )
+        db.add(report)
+        db.flush()
+        return report
+
+    def test_auto_graduation_holds_packages_with_unresolved_findings(self):
+        from app.services.stock_paper_graduation import auto_review_graduation_packages
+
+        with Session(self.engine) as db:
+            row = self.trial(db, status="completed")
+            self._passing_readiness(db, row, "b")
+            result = auto_review_graduation_packages(db)
+            self.assertEqual(result["approved"], [])
+            self.assertEqual(len(result["held_for_human"]), 1)
+            self.assertGreater(result["held_for_human"][0]["blocker_count"], 0)
+            self.assertFalse(result["live_authorized"])
+            self.assertEqual(db.query(StockPaperGraduationPackage).count(), 0)
+
+    def test_auto_graduation_approves_fully_resolved_package_without_live_authority(self):
+        from app.services.stock_paper_graduation import auto_review_graduation_packages
+
+        with Session(self.engine) as db:
+            row = self.trial(db, status="completed")
+            report = self._passing_readiness(db, row, "c")
+            with patch(
+                "app.services.stock_paper_graduation.build_graduation_evidence",
+                return_value=({"resolved": True}, [], None),
+            ):
+                result = auto_review_graduation_packages(db)
+                again = auto_review_graduation_packages(db)
+            self.assertEqual(len(result["approved"]), 1)
+            self.assertEqual(again["approved"], [])
+            self.assertEqual(again["already_reviewed"], 1)
+            package = db.query(StockPaperGraduationPackage).one()
+            self.assertEqual(package.decision, "approved")
+            self.assertEqual(package.readiness_report_id, report.id)
+            self.assertEqual(package.reviewer_actor, "graduation_automation")
+            self.assertTrue(package.paper_only)
+            self.assertFalse(package.live_authorized)
+
     def test_graduation_routes_have_explicit_roles(self):
         trial_id = "00000000-0000-0000-0000-000000000001"
         self.assertEqual(required_role("GET", f"/stock/forward-trials/{trial_id}/graduation-packages"), "viewer")

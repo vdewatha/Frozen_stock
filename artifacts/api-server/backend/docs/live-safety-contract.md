@@ -121,6 +121,76 @@ approval of stale evidence. Mitigations: least privilege, dual approval for
 approved-live, bounded evidence timestamps, explicit reasons, audit review,
 and automatic demotion/blocking on any gate regression.
 
+## Standing two-person live mandate
+
+Live authority can be held in one of two ways: a manual two-person pilot
+(`/system/live-pilot/activate`, unchanged) or a **standing live mandate** that
+two distinct admin identities approve once. The mandate moves the human gate up
+one level; it does not remove any gate.
+
+The mandate is an immutable row (`live_mandates`) containing the symbol
+allowlist, total and per-order budgets, limit-only orders, the maximum pilot
+window per renewal (≤ 30 days), a hard outer expiry (≤ 180 days), the maximum
+cumulative live loss, a drawdown cap, the renewal lead time, the canary
+observation window, the rollback target (`paper` or `shadow`), the bound model
+run and the human-determined launch checklist including the compliance record.
+Creation requires every operational drill and a passing compliance record.
+Creation, amendment (a new superseding row), revocation and reinstatement each
+require two distinct admin identities and are recorded as append-only
+`live_mandate_events` plus audit-chain entries. In production and the
+approved-live runtime the second admin is verified from their own signed
+identity assertion (`X-Secondary-Authorization`); a name typed into the request
+is only accepted for local paper compatibility.
+
+While the newest mandate is `active`, the `live_mandate_job` (every 5 minutes)
+does the following, in this order, attributing authority to the two mandate
+approvers and recording `live_mandate_automation` only as the executor:
+
+1. **Revocation triggers.** Cumulative live loss at or above the cap (measured
+   from the first reconciled equity snapshot after the original mandate in the
+   amendment chain, so amendments never reset it), drawdown at or above the
+   cap (drawdown is derived from durable reconciled equity snapshots — peak
+   since the mandate chain began and since the New York day start — and is
+   `unknown` until a snapshot exists), an uncertain or unknown live order, a halted / reconciliation-required /
+   residual live account, an engaged emergency stop, or a compliance record
+   that no longer passes (or a recorded compliance block) **suspend** the
+   mandate and send a critical external alert. Market-risk and broker-truth
+   triggers engage the emergency stop; a compliance block lapses the pilot to
+   the rollback target. A manual emergency stop or manual rollback of a
+   mandate pilot also suspends that mandate and every amendment of it, so the
+   scheduler cannot undo a human stop.
+2. **Canary promotion.** After the configured number of completed NYSE
+   sessions since canary approval, with no rejected or uncertain live orders,
+   exposure inside the budget and every launch gate green, the canary is
+   promoted through the same `promote_live_pilot` path as a human promotion
+   (the mandate's second approver is the recorded reviewer). Rejections,
+   uncertainty or over-budget exposure roll the canary back; red gates hold it
+   in canary.
+3. **Renewal.** Within the renewal lead time before the window expires, the
+   full launch evaluation (environment, paper evidence, model binding, broker,
+   monitoring, recovery, drills, compliance) is re-run together with the
+   mandate window, loss and drawdown gates. All green mints a new bounded
+   window `now → min(now + max_pilot_days, mandate expiry)`. Anything not green
+   records `renewal_blocked` and a warning alert; at window expiry live
+   authority **lapses** to the rollback target with a critical alert. Missing
+   evidence is `unknown`, which blocks renewal.
+4. **Activation.** From `shadow`, with no pilot, all gates green mints a
+   bounded canary inside the mandate.
+
+A suspended mandate never re-mints authority. Reinstatement requires two
+distinct admins, a cleared emergency stop (which itself still requires the
+existing two-person reset) and no active trigger. A revoked, expired or
+superseded mandate ends any pilot it minted. Order-time checks also deny live
+orders from a mandate pilot whose mandate is not `active`.
+
+Paper graduation packages may now be auto-approved by
+`paper_graduation_auto_review_job` only when the frozen twenty-session
+package has zero blockers; any unresolved finding leaves it for a human.
+Graduation still persists `paper_only=true` and `live_authorized=false`; only
+the manual pilot or the mandate renewal path above grants live authority.
+`ALLOW_LIVE_TRADING` and the approved-live environment remain explicit
+deployment decisions, and compliance readiness remains a human determination.
+
 ## Launch checklist
 
 No live launch may proceed until every item has a durable, reviewable answer:

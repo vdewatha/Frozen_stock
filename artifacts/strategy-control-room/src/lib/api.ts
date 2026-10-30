@@ -183,6 +183,8 @@ export type LivePilot = {
   observation_window_sessions: number;
   rollback_target: string;
   model_run_id: string | null;
+  mandate_id: number | null;
+  authority: "mandate" | "manual";
   paper_expectations: Record<string, unknown>;
   launch_checklist: Record<string, unknown>;
   primary_approval_actor: string | null;
@@ -1974,10 +1976,10 @@ export async function startScalpResearch(symbols: string[]): Promise<ScalpResear
   return postJson<ScalpResearchRun>("/research/scalp/runs", { symbols });
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function postJson<T>(path: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
   const response = await authenticatedFetch(`${API_BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...extraHeaders },
     body: JSON.stringify(body)
   });
   return handleResponse<T>(response);
@@ -2342,6 +2344,113 @@ export async function rollbackLivePilot(reason: string, secondary_approval_actor
 
 export async function reviewLivePilot(reason: string): Promise<LivePilot> {
   return postJson<LivePilot>("/system/live-pilot/review", { reason });
+}
+
+export type LiveMandateEvent = {
+  id: number;
+  mandate_id: number;
+  action: string;
+  status: string;
+  actor: string;
+  secondary_actor: string | null;
+  reason: string;
+  created_at: string | null;
+  evaluation_status: string | null;
+  gates: Record<string, { status: string; reason: string | null }> | null;
+  failing_gates: string[] | null;
+  triggers: string[] | null;
+};
+
+export type LiveMandateRecord = {
+  id: number;
+  state: "active" | "pending" | "suspended" | "revoked" | "expired" | "superseded";
+  state_reason: string | null;
+  mandate_sha256: string;
+  supersedes_mandate_id: number | null;
+  primary_approval_actor: string;
+  secondary_approval_actor: string;
+  reason: string;
+  created_at: string | null;
+  symbols: string[];
+  max_notional: string;
+  max_order_notional: string;
+  allowed_order_types: string[];
+  max_pilot_days: number;
+  renewal_lead_hours: number;
+  observation_window_sessions: number;
+  max_cumulative_loss: string;
+  max_drawdown: string;
+  rollback_target: string;
+  model_run_id: string;
+  valid_from: string | null;
+  expires_at: string | null;
+};
+
+export type LiveMandateSnapshot = {
+  current: LiveMandateRecord | null;
+  pilot: {
+    status: string;
+    mandate_id: number | null;
+    starts_at: string | null;
+    expires_at: string | null;
+    approved_at: string | null;
+    completed_observation_sessions: number | null;
+  };
+  next_renewal_at: string | null;
+  evaluation_cadence_minutes: number;
+  last_renewal_evaluation: LiveMandateEvent | null;
+  active_triggers: Array<{ trigger: string; reason: string }>;
+  cumulative_loss: { status: string; loss?: string; cap: string; reason?: string } | null;
+  drawdown: { status: string; worst?: string; cap: string; reason?: string } | null;
+  revocation_history: LiveMandateEvent[];
+  history: LiveMandateRecord[];
+  contract: Record<string, boolean>;
+};
+
+export type LiveMandateRequest = {
+  symbols: string[];
+  max_notional: string;
+  max_order_notional: string;
+  max_pilot_days: number;
+  renewal_lead_hours: number;
+  observation_window_sessions: number;
+  max_cumulative_loss: string;
+  max_drawdown: string;
+  rollback_target: string;
+  model_run_id: string;
+  paper_expectations: Record<string, unknown>;
+  checklist: Record<string, unknown>;
+  expires_at: string;
+  secondary_approval_actor: string;
+  reason: string;
+};
+
+export async function getLiveMandate(): Promise<LiveMandateSnapshot> {
+  const response = await authenticatedFetch(`${API_BASE_URL}/system/live-pilot/mandate`, { cache: "no-store" });
+  return handleResponse<LiveMandateSnapshot>(response);
+}
+
+// Production and approved-live verify the second approver from their own
+// signed identity assertion; the typed name alone is only accepted locally.
+function secondaryHeaders(secondaryAssertion?: string): Record<string, string> {
+  const token = secondaryAssertion?.trim();
+  return token ? { "X-Secondary-Authorization": `Bearer ${token}` } : {};
+}
+
+export async function createLiveMandate(body: LiveMandateRequest, amend = false, secondaryAssertion?: string): Promise<LiveMandateSnapshot> {
+  return postJson<LiveMandateSnapshot>(amend ? "/system/live-pilot/mandate/amend" : "/system/live-pilot/mandate", body, secondaryHeaders(secondaryAssertion));
+}
+
+export async function revokeLiveMandate(body: { secondary_approval_actor: string; reason: string }, secondaryAssertion?: string): Promise<LiveMandateSnapshot> {
+  return postJson<LiveMandateSnapshot>("/system/live-pilot/mandate/revoke", body, secondaryHeaders(secondaryAssertion));
+}
+
+export async function reinstateLiveMandate(body: { secondary_approval_actor: string; reason: string }, secondaryAssertion?: string): Promise<LiveMandateSnapshot> {
+  return postJson<LiveMandateSnapshot>("/system/live-pilot/mandate/reinstate", body, secondaryHeaders(secondaryAssertion));
+}
+
+export async function recordLiveMandateComplianceBlock(reason: string): Promise<LiveMandateSnapshot> {
+  return postJson<LiveMandateSnapshot>("/system/live-pilot/mandate/compliance-block", { reason });
 }
 
 export async function getStockMonitoring(): Promise<StockMonitoringSnapshot> {

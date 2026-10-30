@@ -18,6 +18,7 @@ from app.models.loss_feedback import (
     StockParameterSet,
     StockTradeAttribution,
 )
+from app.models.live_mandate import LiveMandate, LiveMandateEvent
 
 from app.models.models import (
     Asset,
