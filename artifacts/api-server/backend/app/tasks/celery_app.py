@@ -159,7 +159,10 @@ celery_app.conf.beat_schedule = {
         # hour of their next trusted daily bar, without creating any orders.
         "schedule": crontab(minute=50),
     },
-    "trade-candidate-scan-job": {"task": "app.tasks.jobs.trade_candidate_scan_job", "schedule": crontab(minute=0, hour="3,9,14,18")},
+    # The scanner fits models and runs backtests for every symbol and strategy;
+    # its 09:00 and 14:00 runs competed for the CPU with the session's
+    # minutely import and signal pass. It is research-only, so it runs off hours.
+    "trade-candidate-scan-job": {"task": "app.tasks.jobs.trade_candidate_scan_job", "schedule": crontab(minute=0, hour="3,18")},
     "daily-market-regime-detection": {"task": "app.tasks.jobs.daily_market_regime_detection", "schedule": crontab(minute=0, hour=18)},
     "nightly-backtest-job": {"task": "app.tasks.jobs.nightly_backtest_job", "schedule": crontab(minute=0, hour=19)},
     "nightly-learning-job": {"task": "app.tasks.jobs.nightly_strategy_learning_job", "schedule": crontab(minute=30, hour=19)},

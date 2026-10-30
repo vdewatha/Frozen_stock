@@ -200,6 +200,15 @@ class CeleryConfigurationTests(unittest.TestCase):
         self.assertIn("broker_reconciliation", {queue.name for queue in celery_app.conf.task_queues})
         self.assertEqual(entry["options"], {"expires": 4 * 60})
 
+    def test_heavy_research_jobs_never_start_during_the_session(self):
+        # New York wall clock: model-fitting jobs hold the 2 vCPU host for a
+        # long time and must not start between 07:00 and 16:00.
+        for name in ("daily-feature-generation", "trade-candidate-scan-job"):
+            with self.subTest(job=name):
+                schedule = celery_app.conf.beat_schedule[name]["schedule"]
+                self.assertIsInstance(schedule, crontab)
+                self.assertFalse(schedule.hour & set(range(7, 16)))
+
     def test_paper_signal_ticks_expire_instead_of_backlogging(self):
         entry = celery_app.conf.beat_schedule["paper-trading-signal-job"]
         self.assertEqual(entry["options"], {"expires": 55})
