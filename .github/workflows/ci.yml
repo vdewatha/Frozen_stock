@@ -31,7 +31,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest==9.1.1
-      # SQLite fixtures only: no database, Redis, broker or market-data access.
+      # The Celery crash-recovery integration tests start their own redis-server
+      # and refuse to skip without it.
+      - name: Install redis-server
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q redis-server
+      # Otherwise SQLite fixtures only: no database, broker or market-data access.
       - name: Run tests
         run: PYTHONPATH=. python -m pytest -q -p no:warnings tests
 
