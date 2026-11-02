@@ -261,6 +261,44 @@ def test_long_only_metrics_ignore_short_signals():
     assert short_only["trades"] > 0
 
 
+def test_one_minute_metrics_exclude_overnight_returns():
+    from app.services.scalp_research import _strategy_metrics
+    start = datetime(2026, 9, 28, 19, 0, tzinfo=timezone.utc)
+    timestamps = [start + timedelta(minutes=index) for index in range(60)]
+    timestamps += [datetime(2026, 9, 29, 13, 30, tzinfo=timezone.utc) + timedelta(minutes=index)
+                   for index in range(60)]
+    closes = [100.0] * 60 + [200.0] * 60
+    result = _strategy_metrics(closes, lambda _values, _index: 1, timestamps=timestamps)
+    assert result["trades"] == 68
+    assert result["net_return"] < 0
+    assert result["skipped_noncontiguous_pairs"] == 1
+    assert result["session_boundaries_enforced"] is True
+
+
+def test_one_minute_metrics_exclude_missing_minute_returns():
+    from app.services.scalp_research import _strategy_metrics
+    start = datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc)
+    stamps = [start + timedelta(minutes=index) for index in range(80)]
+    stamps[60:] = [stamp + timedelta(minutes=2) for stamp in stamps[60:]]
+    closes = [100.0] * 60 + [200.0] * 20
+    result = _strategy_metrics(closes, lambda _values, _index: 1, timestamps=stamps)
+    assert result["trades"] == 28
+    assert result["net_return"] < 0
+
+
+def test_scalp_validation_preserves_holdout_timestamps():
+    start = datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc)
+    stamps = [start + timedelta(minutes=index) for index in range(120)]
+    stamps += [datetime(2026, 9, 29, 13, 30, tzinfo=timezone.utc) + timedelta(minutes=index)
+               for index in range(480)]
+    values = [100 + index * .05 for index in range(600)]
+    result = _validation_metrics(values, timestamps=stamps)
+    assert all(row["session_boundaries_enforced"] for row in result["strategies"].values())
+    assert all(row["session_boundaries_enforced"] for row in result["candidate_strategies"].values())
+    assert all(row["session_boundaries_enforced"]
+               for fold in result["walk_forward"] for row in fold["strategies"].values())
+
+
 def test_long_only_shadow_simulation_is_explicitly_non_executable():
     bars = _research_bars(datetime(2026, 9, 28, 13, 30, tzinfo=timezone.utc), 120)
     result = _long_only_shadow_simulation(bars, _strategy_signals()["ema_momentum"])

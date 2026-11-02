@@ -291,7 +291,7 @@ test.beforeEach(async ({ page }) => {
 
 for (const role of ["viewer", "operator", "admin"] as TrialRole[]) {
   test(`${role} can inspect session evidence without receiving authorization`, async ({ page, authenticateAs }) => {
-    await authenticateAs(role);
+    await authenticateAs(role, "/learning/evaluation");
     await page.getByTestId(`forward-trial-row-${trialId}`).click();
 
     const detail = page.getByTestId(`forward-trial-detail-${trialId}`);
@@ -313,7 +313,7 @@ for (const role of ["viewer", "operator", "admin"] as TrialRole[]) {
 }
 
 test("decision and metric histories load older pages on demand", async ({ page, authenticateAs }) => {
-  await authenticateAs("viewer");
+  await authenticateAs("viewer", "/learning/evaluation");
   await page.getByTestId(`forward-trial-row-${trialId}`).click();
 
   const detail = page.getByTestId(`forward-trial-detail-${trialId}`);
@@ -329,11 +329,11 @@ test("decision and metric histories load older pages on demand", async ({ page, 
 });
 
 test("report download retrieves the selected immutable version", async ({ page, authenticateAs }) => {
-  await authenticateAs("viewer");
+  await authenticateAs("viewer", "/learning/evaluation");
   await page.getByTestId(`forward-trial-row-${trialId}`).click();
 
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId(`button-download-forward-trial-report-${trialId}-${reportId}`).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe(`promotion-readiness-${reportId}.json`);
+  expect(download.suggestedFilename()).toBe(`forward-trial-${trialId}-report-${reportId}.json`);
 });

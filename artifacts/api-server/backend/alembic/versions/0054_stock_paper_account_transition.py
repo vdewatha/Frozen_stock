@@ -26,7 +26,9 @@ def upgrade():
     # Drop a publish-preapplied unique index outside batch mode. SQLite's
     # batch table rebuild can otherwise copy the index back into the rebuilt
     # table even when drop_index is requested inside the batch.
-    legacy_index_present = legacy_identity in index_names
+    # PostgreSQL reflects a unique constraint's backing index as well. Drop
+    # the constraint in that case; DROP INDEX cannot remove an owned index.
+    legacy_index_present = legacy_identity in index_names and legacy_identity not in constraint_names
     if legacy_index_present:
         op.drop_index(legacy_identity, table_name="stock_paper_accounts")
 

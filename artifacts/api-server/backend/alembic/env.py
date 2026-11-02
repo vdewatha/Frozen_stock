@@ -5,7 +5,7 @@ from sqlalchemy import engine_from_config, pool, text
 
 from app.core.config import settings
 from app.db.base import Base
-from app.models import models  # noqa: F401
+from app.models import live_broker, live_pilot, models, stock_paper  # noqa: F401
 
 config = context.config
 if not config.get_main_option("sqlalchemy.url"):

@@ -9,21 +9,25 @@ const secretNames: Record<TrialRole, string> = {
   admin: "AUTH_ADMIN_KEY",
 };
 
-async function authenticate(page: Page, role: TrialRole) {
+async function authenticate(page: Page, role: TrialRole, destination: string) {
   const secretName = secretNames[role];
   const credential = process.env[secretName];
   if (!credential) throw new Error(`${secretName} must be provided to the test process`);
 
-  await page.goto("/");
-  await page.getByLabel("Access key").fill(credential);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByText(new RegExp(`\\b${role}\\b`, "i")).first()).toBeVisible();
-  await expect(page.getByLabel("Access key")).toHaveCount(0);
+  await page.goto("/system/access");
+  await page.getByLabel("Role access key", { exact: true }).fill(credential);
+  await page.getByRole("button", { name: "Apply key", exact: true }).click();
+  await expect(page.locator(".access-details")).toContainText(role);
+  await expect(page.getByLabel("Role access key", { exact: true })).toHaveValue("");
+  // Client navigation preserves the intentionally memory-only role credential.
+  const root = `/${destination.split("/")[1]}`;
+  await page.locator(`nav[aria-label="Main navigation"] a[href="${root}"]`).click();
+  if (destination !== root) await page.locator(`.page-tabs a[href="${destination}"]`).click();
 }
 
-export const test = base.extend<{ authenticateAs: (role: TrialRole) => Promise<void> }>({
+export const test = base.extend<{ authenticateAs: (role: TrialRole, destination: string) => Promise<void> }>({
   authenticateAs: async ({ page }, use) => {
-    await use((role) => authenticate(page, role));
+    await use((role, destination) => authenticate(page, role, destination));
   },
 });
 

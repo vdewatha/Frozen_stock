@@ -47,7 +47,7 @@ test("operator keeps the persisted blocked monitoring notice after refresh", asy
     });
   });
 
-  await authenticateAs("operator");
+  await authenticateAs("operator", "/risk/recovery");
 
   const panel = page.getByTestId("panel-stock-recovery");
   const notice = panel.getByTestId("monitoring-preflight-block");
@@ -92,7 +92,7 @@ test("operator sees persisted clear monitoring evidence after refresh", async ({
     });
   });
 
-  await authenticateAs("operator");
+  await authenticateAs("operator", "/risk/recovery");
 
   const panel = page.getByTestId("panel-stock-recovery");
   const notice = panel.getByTestId("monitoring-preflight-clear");

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 
 from app.db.session import get_db
 from app.schemas.trading import StockPaperAccountTransitionRequest, StockPaperInitializeRequest
@@ -28,9 +32,31 @@ from app.services.stock_paper_ledger import (
 )
 from app.services.stock_recovery import acknowledge_stock_paper_accounting_review, cancel_open_stock_orders, recovery_evidence, recovery_status, rollback_to_last_known_good
 from app.services.stock_training_jobs import StockTrainingError
+from app.services.paper_short_simulation import ShortSimulationConfig, simulate_short_history
 from app.tasks.jobs import paper_trading_signal_job
 
 router = APIRouter(prefix="/stock-paper", tags=["stock-paper"])
+
+
+class ShortSimulationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(pattern=r"^[A-Z][A-Z0-9.\-]{0,14}$")
+    source: Literal["yfinance", "yahoo_chart", "alpaca_iex_daily"] = "alpaca_iex_daily"
+    limit: int = Field(default=1000, ge=5, le=5000)
+    config: ShortSimulationConfig = Field(default_factory=ShortSimulationConfig)
+
+
+@router.post("/short-simulation")
+def short_simulation(payload: ShortSimulationRequest, db: Session = Depends(get_db)) -> dict:
+    """Replay a separate short candidate on stored data; never submit orders."""
+    from app.services.market_data import get_price_history
+    frame, _ = get_price_history(db, payload.symbol, limit=payload.limit,
+                                 auto_seed=False, source_filter=payload.source)
+    try:
+        return simulate_short_history(frame, symbol=payload.symbol, source=payload.source,
+                                      config=payload.config)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 def _attribute(db: Session, request: Request) -> None:
     db.info["stock_paper_actor"] = getattr(request.state, "actor", "unknown")

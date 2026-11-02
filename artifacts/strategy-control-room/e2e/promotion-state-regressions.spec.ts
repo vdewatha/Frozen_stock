@@ -304,16 +304,45 @@ test("operator sees pending, blocked, promoted, recovery, and live-disabled prom
   authenticateAs,
 }) => {
   await page.route("**/api/stock/learning-cycles*", route => {
+    if (new URL(route.request().url()).pathname !== "/api/stock/learning-cycles") return route.fallback();
     if (route.request().method() !== "GET") {
       throw new Error(`Unsafe learning-cycle mutation attempted: ${route.request().method()}`);
     }
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(cycles),
+      body: JSON.stringify(cycles.map(cycle => ({
+        ...cycle,
+        position_handling: {
+          approved_policy: null, stop_status: "not_approved", stop_reason: null,
+          stopped_at: null, new_entries_stopped: true, handling_status: "unknown",
+          remaining_positions: [], managed_lots: [], has_exit_intent: false,
+          reconciliation: { status: "unknown", reconciliation_required: true, last_reconciled_at: null },
+        },
+        handoff: { ...cycle.handoff, approval: {
+          status: "missing", reason: "No paper run approval recorded", record: null,
+          paper_only: true, live_authorized: false,
+          expected: {
+            environment: "paper", execution_provider: "alpaca_paper", provider_switch: null,
+            symbols: cycle.symbols, exposure_limits: { max_order_notional: "2500" },
+            loss_limits: { max_loss: "0.02", unit: "fraction_of_baseline_equity" },
+            duration_sessions: 1, schedule: {}, stop_conditions: ["operator_stop"],
+            stop_authority: "operator_and_system", pending_order_treatment: "cancel",
+            remaining_position_policy: "hold",
+          },
+        } },
+      }))),
     });
   });
 
-  await authenticateAs("operator");
+  await page.route("**/api/stock/learning-cycles/launch-prerequisites**", route => route.fulfill({
+    json: {
+      cycle_id: new URL(route.request().url()).searchParams.get("cycle_id"),
+      checked_at: "2026-09-10T15:00:00Z", status: "blocked", eligible_for_approval: false,
+      reason: "Browser fixture: launch remains blocked", gates: {},
+    },
+  }));
+
+  await authenticateAs("operator", "/learning/cycles");
 
   const panel = page.getByTestId("stock-learning-cycle-panel");
   await expect(panel.getByText("Cycle evidence refreshed")).toBeVisible();
@@ -332,7 +361,7 @@ test("operator sees pending, blocked, promoted, recovery, and live-disabled prom
   await expect(blocked.getByText("promotion", { exact: true }).first()).toBeVisible();
   await expect(blocked).toContainText("Fresh monitoring evidence is required before promotion");
   await expect(blocked).toContainText("Automatic paper promotion");
-  await expect(blocked.getByText("blocked", { exact: true })).toHaveCount(3);
+  await expect(blocked.getByText("blocked", { exact: true })).toHaveCount(4);
   await expect(blocked).not.toContainText("missing evidence is not a pass");
 
   const promoted = panel.getByTestId(`stock-learning-cycle-${"c".repeat(64)}`);

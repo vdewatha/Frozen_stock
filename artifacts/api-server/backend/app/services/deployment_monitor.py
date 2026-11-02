@@ -152,14 +152,21 @@ def _check_celery_workers() -> dict:
         # briefly occupied by a market-data task. Keep the probe bounded, but
         # allow enough time for a real ping instead of recording a false
         # zero-worker result during normal queue activity.
-        inspector = celery_app.control.inspect(timeout=5)
-        responses = inspector.ping() or {}
-        workers = sorted(
-            name for name, response in responses.items()
-            if isinstance(response, dict) and response.get("ok") == "pong"
-        )
-        active_queues = inspector.active_queues() or {}
-        registered_responses = inspector.registered() or {}
+        # Inspect's timeout only bounds replies, not Redis connection retries.
+        # A health-page request must fail promptly when the broker is offline.
+        with celery_app.connection_for_read(
+            connect_timeout=2,
+            transport_options={"socket_connect_timeout": 2, "socket_timeout": 2},
+        ) as connection:
+            connection.ensure_connection(max_retries=0)
+            inspector = celery_app.control.inspect(timeout=5, connection=connection)
+            responses = inspector.ping() or {}
+            workers = sorted(
+                name for name, response in responses.items()
+                if isinstance(response, dict) and response.get("ok") == "pong"
+            )
+            active_queues = (inspector.active_queues() or {}) if workers else {}
+            registered_responses = (inspector.registered() or {}) if workers else {}
     except Exception as exc:
         return {
             "name": "Celery workers",

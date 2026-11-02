@@ -354,11 +354,22 @@ def _bar_lineage(
 
 
 def _strategy_metrics(
-    closes: list[float], signal_fn, *, start: int = 50, long_only: bool = False
+    closes: list[float], signal_fn, *, start: int = 50, long_only: bool = False,
+    timestamps: list[datetime] | None = None,
 ) -> dict:
+    if timestamps is not None and len(timestamps) != len(closes):
+        raise ValueError("Scalp timestamps must align with closes")
     returns = []
     gross_returns = []
+    skipped_pairs = 0
     for index in range(start, len(closes) - 1):
+        # The next retained bar may belong to tomorrow or follow a data hole.
+        # Neither return is a one-minute scalp outcome.
+        if timestamps is not None and (
+            _aware(timestamps[index + 1]) - _aware(timestamps[index]) != timedelta(minutes=1)
+        ):
+            skipped_pairs += 1
+            continue
         signal = signal_fn(closes, index)
         if long_only and signal < 0:
             continue
@@ -393,6 +404,9 @@ def _strategy_metrics(
         # simulator has no quote-level spread, latency, or partial-fill data.
         "execution_model": "next_close_single_bar_with_modeled_costs",
         "long_only": long_only,
+        "session_boundaries_enforced": timestamps is not None,
+        "skipped_noncontiguous_pairs": skipped_pairs,
+        "metrics_version": "contiguous_minute_pairs_v2",
         "modeled_cost_sensitivity": sensitivity,
         "profitable_under_modeled_costs": modeled_positive,
         # Keep the legacy field for existing consumers while making the
@@ -474,8 +488,9 @@ def _strategy_signals():
     }
 
 
-def _metrics(closes: list[float]) -> dict:
-    return {name: _strategy_metrics(closes, signal) for name, signal in _strategy_signals().items()}
+def _metrics(closes: list[float], *, timestamps: list[datetime] | None = None) -> dict:
+    return {name: _strategy_metrics(closes, signal, timestamps=timestamps)
+            for name, signal in _strategy_signals().items()}
 
 
 def _long_only_shadow_simulation(bars: list[IntradayBar], signal_fn) -> dict:
@@ -520,21 +535,24 @@ def _long_only_shadow_simulation(bars: list[IntradayBar], signal_fn) -> dict:
     }
 
 
-def _validation_metrics(closes: list[float]) -> dict:
+def _validation_metrics(closes: list[float], *, timestamps: list[datetime] | None = None) -> dict:
     """Evaluate untouched trailing data so in-sample winners cannot self-promote."""
+    if timestamps is not None and len(timestamps) != len(closes):
+        raise ValueError("Scalp timestamps must align with closes")
     if len(closes) < 120:
         return {"status": "insufficient_data", "holdout_bars": 0, "strategies": {}, "paper_candidate": None}
     split = max(60, int(len(closes) * 0.7))
     holdout = closes[split:]
+    holdout_stamps = timestamps[split:] if timestamps is not None else None
     directional_results = {
-        name: _strategy_metrics(holdout, signal)
+        name: _strategy_metrics(holdout, signal, timestamps=holdout_stamps)
         for name, signal in _strategy_signals().items()
     }
     # Candidate qualification uses the same long-only side restriction as the
     # paper shadow lane. Keep the directional view above for research, but do
     # not let short signals qualify a long-only paper candidate.
     candidate_results = {
-        name: _strategy_metrics(holdout, signal, long_only=True)
+        name: _strategy_metrics(holdout, signal, long_only=True, timestamps=holdout_stamps)
         for name, signal in _strategy_signals().items()
     }
     # Evaluate later, non-overlapping windows immediately before the untouched
@@ -548,12 +566,13 @@ def _validation_metrics(closes: list[float]) -> dict:
     for fold_number in range(fold_count):
         start = validation_start + fold_number * fold_size
         fold = closes[start:start + fold_size]
+        fold_stamps = timestamps[start:start + fold_size] if timestamps is not None else None
         walk_forward.append({
             "start_index": start,
             "bars": len(fold),
             "end_index": start + len(fold),
             "strategies": {
-                name: _strategy_metrics(fold, signal, long_only=True)
+                name: _strategy_metrics(fold, signal, long_only=True, timestamps=fold_stamps)
                 for name, signal in _strategy_signals().items()
             },
         })
@@ -661,11 +680,12 @@ def run_scalp_research(db: Session, run_id: str) -> dict:
                 }
                 continue
             closes = [float(bar.close) for bar in bars]
-            validation = _validation_metrics(closes)
+            timestamps = [_aware(bar.exchange_timestamp) for bar in bars]
+            validation = _validation_metrics(closes, timestamps=timestamps)
             strategies = _strategy_signals()
             metrics[symbol] = {
                 "status": "complete" if validation["status"] == "complete" else "blocked",
-                "strategies": _metrics(closes),
+                "strategies": _metrics(closes, timestamps=timestamps),
                 "validation": validation,
                 "shadow_simulations": {
                     name: _long_only_shadow_simulation(bars, signal)

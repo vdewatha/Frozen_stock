@@ -21,6 +21,9 @@ class MonitorSecurityTests(unittest.TestCase):
             "alpaca_paper",
         )
         self.active_broker_patch.start()
+        connection_patch = patch.object(deployment_monitor.celery_app, "connection_for_read")
+        self.connection_factory = connection_patch.start()
+        self.addCleanup(connection_patch.stop)
 
     def tearDown(self):
         self.active_broker_patch.stop()
@@ -79,6 +82,29 @@ class MonitorSecurityTests(unittest.TestCase):
             result = deployment_monitor._check_celery_workers()
             self.assertEqual(result["status"], "blocked")
             self.assertEqual(result["details"]["workers"], [])
+
+    def test_worker_probe_connection_is_bounded_and_closed(self):
+        connection = self.connection_factory.return_value.__enter__.return_value
+        connection.ensure_connection.side_effect = ConnectionError("offline")
+        with patch.object(deployment_monitor.celery_app.control, "inspect") as inspect:
+            result = deployment_monitor._check_celery_workers()
+        self.assertEqual(result["status"], "blocked")
+        self.connection_factory.assert_called_once_with(
+            connect_timeout=2,
+            transport_options={"socket_connect_timeout": 2, "socket_timeout": 2},
+        )
+        connection.ensure_connection.assert_called_once_with(max_retries=0)
+        inspect.assert_not_called()
+        self.connection_factory.return_value.__exit__.assert_called_once()
+
+    def test_no_ping_responses_skip_two_more_reply_timeouts(self):
+        inspector = MagicMock()
+        inspector.ping.return_value = {}
+        with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):
+            result = deployment_monitor._check_celery_workers()
+        self.assertEqual(result["status"], "blocked")
+        inspector.active_queues.assert_not_called()
+        inspector.registered.assert_not_called()
 
     def test_worker_evidence_distinguishes_intraday_and_general_queues(self):
         inspector = MagicMock()

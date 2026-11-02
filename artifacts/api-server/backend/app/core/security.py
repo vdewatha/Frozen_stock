@@ -98,6 +98,8 @@ ADMIN_POSTS = {
 
 
 def required_role(method: str, path: str) -> str:
+    if method == "POST" and path == "/stock-paper/short-simulation":
+        return "researcher"
     if method == "GET" and re.fullmatch(r"/crypto/bindings/[1-9][0-9]*/evidence", path):
         return "viewer"
     if method == "POST" and re.fullmatch(r"/crypto/bindings/[1-9][0-9]*/observe", path):
@@ -454,6 +456,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                         auth_evidence = {"method": "local_role_key", "role": role}
             if (
                 actor == "anonymous"
+                and "authorization" not in request.headers
                 and self.configuration.allow_anonymous_viewer
                 and request.method == "GET"
                 and required == "viewer"

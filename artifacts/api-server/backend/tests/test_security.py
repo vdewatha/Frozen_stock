@@ -93,6 +93,14 @@ class SecurityTests(unittest.TestCase):
                     response = client.request(method, path, headers=self.headers(role))
                     self.assertEqual(response.status_code, 200 if level >= required else 403)
 
+    def test_public_viewer_never_downgrades_invalid_credentials(self):
+        client = self.make_client(allow_anonymous_viewer=True)
+        self.assertEqual(client.get("/dashboard").status_code, 200)
+        for value in ("Bearer bogus", "Basic invalid", "Bearer ", ""):
+            with self.subTest(value=value):
+                self.assertEqual(client.get("/dashboard", headers={"Authorization": value}).status_code, 401)
+        self.assertEqual(client.get("/dashboard", headers=self.headers("viewer")).status_code, 200)
+
     def test_authenticated_role_is_available_without_credential_material(self):
         from starlette.requests import Request
 
