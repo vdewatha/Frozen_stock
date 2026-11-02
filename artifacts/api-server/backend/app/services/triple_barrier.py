@@ -249,3 +249,52 @@ def average_uniqueness(starts: Sequence[int], ends: Sequence[int], groups: Seque
         cumulative = np.concatenate([[0.0], np.cumsum(inverse)])
         weights[mask] = (cumulative[e + 1] - cumulative[s]) / (e - s + 1)
     return weights
+
+
+def label_open_session(prices: pd.DataFrame, event_positions: Iterable[int], stop_loss_pct: float,
+                       config: BarrierConfig | None = None) -> pd.DataFrame:
+    """Same-session labels for buys at the open of ``event_positions`` (an opening-gap fade).
+
+    Entry at the open of bar ``t`` plus the cost estimated from bars ``< t``.
+    The target is the prior close (the gap filled), the stop is
+    ``stop_loss_pct`` below the cost-inclusive entry, and anything still open
+    exits at the close of bar ``t``.  When one bar touches both, the stop is
+    assumed first.  An entry with no gap below the prior close is skipped.
+    Same ``LABEL_COLUMNS`` as ``label_events``, with ``event_idx == entry_idx
+    == exit_idx`` and ``barrier`` in ``take_profit / stop_loss / close``.
+    """
+    config = config or BarrierConfig()
+    if not 0 < stop_loss_pct < 1:
+        raise ValueError("stop_loss_pct must be in (0, 1)")
+    frame = prices.reset_index(drop=True)
+    opens = pd.to_numeric(frame["open"], errors="coerce").to_numpy(float)
+    closes = pd.to_numeric(frame["close"], errors="coerce").to_numpy(float)
+    highs = pd.to_numeric(frame["high"], errors="coerce").to_numpy(float)
+    lows = pd.to_numeric(frame["low"], errors="coerce").to_numpy(float)
+    dates = frame["date"].astype(str).to_numpy()
+    sigma_bps, adv = prior_liquidity(frame, config.volatility_lookback)
+    fee = config.fees_bps / 10_000
+    rows = []
+    for raw in event_positions:
+        t = int(raw)
+        if t < 1 or t >= len(frame):
+            continue
+        open_, target = opens[t], closes[t - 1]
+        if not (math.isfinite(open_) and math.isfinite(target) and 0 < open_ < target):
+            continue
+        quantity = config.position_notional / open_
+        entry_price = open_ * (1 + side_cost_bps(sigma_bps[t], adv[t], quantity, config) / 10_000)
+        stop_level = entry_price * (1 - stop_loss_pct)
+        low = lows[t] if math.isfinite(lows[t]) else min(open_, closes[t])
+        high = highs[t] if math.isfinite(highs[t]) else max(open_, closes[t])
+        if low <= stop_level:
+            exit_raw, barrier = stop_level, "stop_loss"
+        elif high >= target:
+            exit_raw, barrier = target, "take_profit"
+        else:
+            exit_raw, barrier = closes[t], "close"
+        exit_price = exit_raw * (1 - side_cost_bps(sigma_bps[t], adv[t], quantity, config) / 10_000)
+        net = (exit_price * (1 - fee)) / (entry_price * (1 + fee)) - 1
+        rows.append((t, t, t, dates[t], dates[t], dates[t], entry_price, exit_price, target / open_ - 1,
+                     stop_loss_pct, barrier, 0, exit_raw / open_ - 1, net, int(net > 0)))
+    return pd.DataFrame(rows, columns=LABEL_COLUMNS)

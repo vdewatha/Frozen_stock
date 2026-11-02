@@ -7,13 +7,16 @@ survives costs and selection.  This module looks for new ones:
 1. ``candidate_library`` enumerates long-only daily-bar hypotheses from the
    published anomaly literature (short-term pullbacks, N-day lows, down
    streaks, turn of the month, Bollinger lows, weekly reversals, breakouts,
-   gap-down recoveries, calm-market dips), each over three universes (index
-   ETFs, sector ETFs, single stocks).  Every candidate is a declarative
-   ``strategies.rules`` rule plus a stop / target / time stop.
+   gap-down recoveries, calm-market dips, post-earnings drift on single
+   stocks, same-session opening-gap fills), each over the universes it applies
+   to (index ETFs, sector ETFs, single stocks).  Every candidate is a
+   declarative ``strategies.rules`` rule plus a stop / target / time stop.
 2. ``evaluate_candidate`` replays it over adjusted daily history exactly as the
    backtester trades: decision on the close, fill at the next open with
    volatility-scaled costs on both sides, stop first inside a bar, gaps fill at
    the open, indicator exit at the next open, one position per symbol.
+   Open-timed rules (gap fills) buy at the open and are flat by the close
+   (``triple_barrier.label_open_session``).
 3. ``gate`` applies a pass/fail bar that is fixed in advance (``GATE``):
    on the discovery window (everything before the last ``HOLDOUT_YEARS``),
    enough trades, a positive month-clustered bootstrap lower bound on net
@@ -29,7 +32,8 @@ survives costs and selection.  This module looks for new ones:
    ``rule_<id>`` Strategy rows with status ``paper_trading_candidate``: they
    trade only as small, tagged exploration until the normal forward-trial /
    promotion gates say otherwise.  A discovered candidate that later stops
-   qualifying is retired.
+   qualifying is retired.  Open-timed candidates are graded and reported but
+   never admitted: the daily paper path cannot place an order at the open.
 
 Re-running the same library on more data is not a new trial; growing the
 library is, and ``trials`` grows with it.  The holdout is re-read on every
@@ -50,12 +54,13 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from app.services import earnings_history
 from app.services.backtest_statistics import deflated_sharpe_ratio, return_moments
 from app.services.strategies import rules
 from app.services.strategies.rules import RULE_SLUG_PREFIX
 from app.services.strategy_scorecard import trade_statistics
 from app.services.trading_universe import ETF_SYMBOLS
-from app.services.triple_barrier import BarrierConfig, label_events
+from app.services.triple_barrier import BarrierConfig, label_events, label_open_session
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -93,6 +98,11 @@ TREND = [_c("dist_sma_200", ">", 0)]
 FIRST_UP_CLOSE = [_c("ret_1", ">", 0)]
 ABOVE_SMA5 = [_c("dist_sma_5", ">", 0)]
 SHORT_EXITS = {"first_up_close": FIRST_UP_CLOSE, "close_above_sma5": ABOVE_SMA5}
+
+
+# Families that only make sense on some universes (ETFs have no earnings).
+FAMILY_UNIVERSES = {"earnings_drift": frozenset({"single_stocks"})}
+GAP_FLOOR = -0.03  # bigger opening gaps are news, not noise, and rarely fill the same day
 
 
 def _families() -> Iterable[tuple[str, str, dict, dict]]:
@@ -133,6 +143,16 @@ def _families() -> Iterable[tuple[str, str, dict, dict]]:
         yield ("calm_market_dip", "Dips revert more reliably when volatility is below its norm.",
                {"entry": [*TREND, _c("vol_ratio_20_100", "<", 1.0), _c("rsi_2", "<", level)], "exit": exit_rule},
                reversion)
+    for surprise, reaction, trend, hold in product((0, 5, 10), (None, 0.02), (True, False), (20, 40)):
+        yield ("earnings_drift", "Prices keep drifting the way of an earnings surprise for weeks (PEAD).",
+               {"entry": [*(TREND if trend else []), _c("earn_surprise", ">", surprise),
+                          *([_c("ret_1", ">", reaction)] if reaction is not None else [])], "exit": []},
+               {"stop_loss_pct": 0.10, "take_profit_pct": 0.0, "max_holding_sessions": hold})
+    filters = {"none": [], "trend": TREND, "calm": [_c("vol_ratio_20_100", "<", 1.0)]}
+    for gap, (filter_name, conditions), stop in product((-0.003, -0.005, -0.01), filters.items(), (0.01, 0.03)):
+        yield ("opening_gap_fill", "Small opening gaps down fill back to the prior close within the session.",
+               {"timing": "open", "entry": [*conditions, _c("gap", "<", gap), _c("gap", ">", GAP_FLOOR)]},
+               {"stop_loss_pct": stop, "take_profit_pct": 0.0, "max_holding_sessions": 1})
 
 
 def universes(symbols: Iterable[str]) -> dict[str, tuple[str, ...]]:
@@ -155,6 +175,8 @@ def candidate_library(symbols: Iterable[str]) -> list[dict]:
     for family, hypothesis, rule, plan in _families():
         rules.validate_rule(rule)
         for universe, members in groups.items():
+            if universe not in FAMILY_UNIVERSES.get(family, groups):
+                continue
             out.append({"id": candidate_id(rule, plan, universe), "family": family, "hypothesis": hypothesis,
                         "rule": rule, "universe": universe, "symbols": list(members), **plan})
     return out
@@ -210,7 +232,11 @@ def evaluate_candidate(candidate: Mapping, frames: Mapping[str, pd.DataFrame],
         entries = np.flatnonzero(rules.entry_signals(frame, candidate["rule"], cache))
         if not len(entries):
             continue
-        labels = label_events(frame, entries, barrier, exit_signals=rules.exit_signals(frame, candidate["rule"], cache))
+        if rules.timing(candidate["rule"]) == "open":
+            labels = label_open_session(frame, entries, float(candidate["stop_loss_pct"]))
+        else:
+            labels = label_events(frame, entries, barrier,
+                                  exit_signals=rules.exit_signals(frame, candidate["rule"], cache))
         if labels.empty:
             continue
         labels = _executable(labels)
@@ -324,7 +350,13 @@ def strategy_parameters(row: dict, *, now: datetime) -> dict:
     }
 
 
+def paper_executable(row: dict) -> bool:
+    return rules.timing(row["rule"]) != "open"
+
+
 def admissible(row: dict, *, require_proven: bool) -> bool:
+    if not paper_executable(row):
+        return False
     return row["gate"]["tier"] == "proven" or (not require_proven and row["gate"]["tier"] == "explore")
 
 
@@ -384,8 +416,13 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
 
 # ---------------------------------------------------------------- scheduled run
 
-def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optional[str] = None) -> tuple[dict, list]:
-    """Adjusted daily bars per symbol (shared cache with the meta-label retrainer)."""
+def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optional[str] = None,
+                earnings_loader=None) -> tuple[dict, list]:
+    """Adjusted daily bars per symbol (shared cache with the meta-label retrainer).
+
+    Single stocks also get the ``earn_surprise`` column; a missing earnings
+    history leaves it empty rather than dropping the symbol.
+    """
     from app.services.meta_label_learning import history_dir
     from app.services.strategy_scorecard import load_daily_history, normalize_prices
 
@@ -399,6 +436,14 @@ def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optiona
             logger.warning("discovery history unavailable for %s: %s", symbol, exc)
             missing.append(symbol)
             continue
+        if symbol not in ETF_SYMBOLS:
+            try:
+                events = earnings_loader(symbol) if earnings_loader else earnings_history.load_surprises(
+                    symbol, history_dir(), download=True)
+            except Exception as exc:
+                logger.warning("discovery earnings history unavailable for %s: %s", symbol, exc)
+                events = None
+            frame = earnings_history.attach_surprises(frame, events)
         if len(frame) > rules.MAX_RULE_LOOKBACK:
             frames[symbol] = frame
         else:
@@ -412,6 +457,7 @@ def report_rows(rows: list[dict], limit: int = 20) -> list[dict]:
         net, excess = row["discovery"]["net"], row["discovery"]["excess_over_drift"]
         out.append({"id": row["id"], "family": row["family"], "universe": row["universe"],
                     "description": row["description"], "tier": row["gate"]["tier"],
+                    "paper_executable": paper_executable(row),
                     "failed_checks": [k for k, v in row["gate"]["checks"].items() if not v],
                     "trades": net["trades"], "win_rate": net["win_rate"], "expectancy_bps": net["expectancy_bps"],
                     "expectancy_ci_bps": net.get("expectancy_ci_bps"),
@@ -422,7 +468,8 @@ def report_rows(rows: list[dict], limit: int = 20) -> list[dict]:
     return out
 
 
-def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loader=None) -> dict:
+def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loader=None,
+                           earnings_loader=None) -> dict:
     """Evaluate the library on fresh history and admit/retire paper candidates (paper only)."""
     from app.core.config import settings
     from app.services.audit import write_audit_log
@@ -432,7 +479,8 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
     if not settings.strategy_discovery_enabled:
         return base | {"status": "disabled"}
     symbols = sorted({s.upper() for s in settings.paper_execution_symbols})
-    frames, missing = load_frames(symbols, loader=loader, start=settings.strategy_discovery_history_start)
+    frames, missing = load_frames(symbols, loader=loader, start=settings.strategy_discovery_history_start,
+                                  earnings_loader=earnings_loader)
     if not frames:
         return base | {"status": "blocked", "reason": "no price history", "missing_symbols": missing}
     result = run_discovery(frames, frames.keys())
