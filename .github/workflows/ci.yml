@@ -32,11 +32,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest==9.1.1 pytest-timeout==2.4.0
       # The Celery crash-recovery integration tests start their own redis-server
-      # and refuse to skip without it.
+      # and refuse to skip without it. apt also starts a system service on 6379;
+      # stop it so the other tests see no broker (as on a dev machine) instead of
+      # waiting on Celery workers that never answer.
       - name: Install redis-server
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q redis-server
+          sudo systemctl stop redis-server
+          sudo systemctl disable redis-server
       # Otherwise SQLite fixtures only: no database, broker or market-data access.
       - name: Run tests
         # A hung test fails with its stack instead of stalling the job.
