@@ -122,6 +122,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
     "app.tasks.jobs.meta_label_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
+    "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
     "app.tasks.jobs.alert_daily_digest_job": {"queue": "risk"},
@@ -267,6 +268,12 @@ celery_app.conf.beat_schedule = {
     "strategy-discovery": {
         "task": "app.tasks.jobs.strategy_discovery_job",
         "schedule": crontab(minute=0, hour=10, day_of_week="sun"),
+        "options": {"expires": 12 * 60 * 60},
+    },
+    # Weekly paper performance report, Saturday morning after the week closes.
+    "weekly-performance-report": {
+        "task": "app.tasks.jobs.weekly_performance_report_job",
+        "schedule": crontab(minute=7, hour=14, day_of_week="sat"),
         "options": {"expires": 12 * 60 * 60},
     },
     "parameter-application": {"task": "app.tasks.jobs.parameter_application_job", "schedule": 60 * 15},

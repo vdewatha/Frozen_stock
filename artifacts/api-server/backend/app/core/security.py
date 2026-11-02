@@ -46,6 +46,7 @@ READ_PATHS = {
     "/stock-paper/status",
     "/stock-paper/overview",
     "/stock-paper/scorecard",
+    "/stock-paper/weekly-report",
     "/stock-paper/venue-qualification",
     "/live-broker/status",
     "/stock/forward-trials", "/stock/forward-trials/bindings/eligible",

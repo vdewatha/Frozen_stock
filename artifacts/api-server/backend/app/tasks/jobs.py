@@ -1609,6 +1609,17 @@ def strategy_discovery_job() -> dict:
 
 
 @celery_app.task
+def weekly_performance_report_job() -> dict:
+    """Store the weekend paper performance report (read-only on strategies)."""
+    def work(db):
+        from app.services.weekly_report import record_weekly_report
+
+        return {"job": "weekly_performance_report_job", **record_weekly_report(db), "paper_only": True}
+
+    return _run_job("weekly_performance_report_job", work)
+
+
+@celery_app.task
 def parameter_application_job() -> dict:
     """Advance governed paper parameter sets through their learning cycles."""
     def work(db):

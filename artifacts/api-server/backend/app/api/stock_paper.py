@@ -138,6 +138,14 @@ def scorecard(days: int = Query(30, ge=1, le=3650), db: Session = Depends(get_db
     }
 
 
+@router.get("/weekly-report")
+def weekly_report(db: Session = Depends(get_db)) -> dict:
+    """Latest stored weekly report, plus a live preview of the current week."""
+    from app.services.weekly_report import build_weekly_report, latest_weekly_report
+
+    return {"latest": latest_weekly_report(db), "preview": build_weekly_report(db)}
+
+
 @router.get("/venue-qualification")
 def venue_qualification_status(db: Session = Depends(get_db)) -> dict:
     return paper_venue_qualification_status(db, active_paper_broker_name())
