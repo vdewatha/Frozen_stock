@@ -2152,6 +2152,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
         ]
         is_v2 = account.activity_contract == alpaca_activity_v2.VERSION
         adapter_repair_resolved = False
+        v2_replay_matched = False
         residual_resolved = _enriched_fill_resolves_residual(
             db,
             account,
@@ -2204,6 +2205,21 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                 )
                 adapter_repair_resolved = bool(
                     cleanup_was_recorded and report.get("status") == "matched"
+                )
+                # Exact means no rounding: cent-level residuals that a cash
+                # policy rounds to "matched" keep their dedicated review flow.
+                try:
+                    exact_cash = (
+                        Decimal(str(report.get("unrounded_cash_residual", report.get("cash_residual")))) == 0
+                        and Decimal(str(report.get("cash_rounding_adjustment") or "0")) == 0
+                    )
+                except (InvalidOperation, ValueError, TypeError):
+                    exact_cash = False
+                v2_replay_matched = bool(
+                    report.get("status") == "matched"
+                    and report.get("cash_equation_matches") is True
+                    and report.get("inventory_equation_matches") is True
+                    and exact_cash
                 )
             except ValueError as exc:
                 raise StockPaperError(str(exc)) from exc
@@ -2327,6 +2343,29 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                     "resolved",
                     "Stale residual resolved after exact v2 replay following SSE duplicate cleanup",
                     {"removed_sse_duplicates": removed_sse_duplicates},
+                )
+            elif v2_replay_matched and account.halt_reason in {
+                ACCOUNTING_RESIDUAL_REVIEW_REASON,
+                "Broker cash or inventory does not reconcile to the frozen activity baseline",
+            }:
+                # The full activity journal now replays exactly from the frozen
+                # baseline (cash and inventory) with every order accounted for:
+                # the earlier mismatch was a transient view, e.g. a FEE activity
+                # posted after the positions it belongs to (2026-10-31). The
+                # owner chose to clear on an exact replay rather than keep the
+                # account halted until manual review. Costs stay unverified;
+                # this only lets paper trading continue.
+                account.unexplained_residual = False
+                account.reconciliation_required = False
+                account.status = "reconciled"
+                account.halt_reason = None
+                _event(
+                    db,
+                    account,
+                    "accounting_residual_reclassified",
+                    "resolved",
+                    "Stale residual resolved by an exact v2 activity replay from the frozen baseline",
+                    {"activity_count": len(raw_fills)},
                 )
             elif legacy_cash_halt_resolved:
                 # Older deployments halted on supported cash activity because

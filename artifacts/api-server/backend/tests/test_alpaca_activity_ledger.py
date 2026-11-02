@@ -384,7 +384,7 @@ def test_invalid_provider_evidence_halts_and_does_not_rebase(ledger, change):
 
 
 @pytest.mark.parametrize("kind", ["cash", "inventory"])
-def test_unexplained_residual_is_sticky(ledger, kind):
+def test_unexplained_residual_persists_until_an_exact_replay(ledger, kind):
     db, broker = ledger
     initialize(db, broker)
     if kind == "cash":
@@ -396,9 +396,16 @@ def test_unexplained_residual_is_sticky(ledger, kind):
         assert result["status"] == "halted"
         assert result["account"]["unexplained_residual"]
         assert report(db)["status"] == "mismatch"
+    # An exact, unrounded replay from the frozen baseline with every order
+    # accounted for clears the stale residual (owner decision, 2026-11-02);
+    # it never verifies costs.
     broker.cash, broker.position_rows = "1000", []
-    assert reconcile_stock_paper_account(db, broker)["status"] == "halted"
+    result = reconcile_stock_paper_account(db, broker)
     assert report(db)["status"] == "matched"
+    assert result["status"] == "reconciled"
+    assert not result["account"]["unexplained_residual"]
+    assert not result["costs_known"] and not result["account"]["accounting_verified"]
+    assert db.query(StockPaperLedgerEvent).filter_by(event_type="accounting_residual_reclassified").count() == 1
 
 
 def test_late_fee_enrichment_cannot_qualify_v2(ledger):
@@ -411,7 +418,8 @@ def test_late_fee_enrichment_cannot_qualify_v2(ledger):
     broker.rows[-1]["commission"] = "1"
     result = reconcile_stock_paper_account(db, broker)
     assert report(db)["status"] == "matched"
-    assert result["status"] == "halted"
+    # The exact replay clears the residual halt, but costs stay unverified.
+    assert result["status"] == "reconciled"
     assert not result["costs_known"] and not result["account"]["accounting_verified"]
     assert attempt_automatic_stock_recovery(db, candidate=True, evidence={"enriched_activity_ids": ["fill"]})["status"] == "blocked"
 
