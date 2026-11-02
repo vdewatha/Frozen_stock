@@ -201,12 +201,127 @@ def drop_ibs_trend_filter(db: Session) -> bool:
     return changed
 
 
+SCORECARD_RETIREMENT_ACTION = "scorecard_retirement"
+# Strategy scorecard 2026-10-28, best variant per family, net bps per trade
+# [95% CI] over 45 symbols: both lose on the full history and their 37% win
+# rate is the 3%/6% bracket's break-even, so exploring them only costs money.
+SCORECARD_RETIREMENTS = {
+    "macd_momentum": {"all": [-15.6, -30.0, -1.0], "post2015": [14.3, -10.8, 40.6], "post2020": [12.6, -20.2, 42.4]},
+    "moving_average_crossover": {"all": [-10.6, -22.3, 1.2], "post2015": [4.8, -15.8, 26.2],
+                                 "post2020": [-2.6, -31.8, 24.1]},
+}
+
+
+def retire_scorecard_losers(db: Session) -> list[str]:
+    """One-time retirement of families with negative full-history expectancy.
+
+    Acts only on exploration rows (candidate/research) with no previous
+    retirement audit event, so an operator's later choice, or a strategy that
+    re-earned a status through a new governed research cycle, is never
+    overridden. Retired rows leave the signal cycle; open lots keep their
+    broker exit legs and the protective stop. Returns the retired types.
+    """
+    from app.services.audit import write_audit_log
+
+    retired = []
+    rows = db.query(Strategy).filter(Strategy.strategy_type.in_(tuple(SCORECARD_RETIREMENTS))).order_by(Strategy.id).all()
+    for row in rows:
+        if row.current_status not in {"paper_trading_candidate", "research"}:
+            continue
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance",
+            AuditLog.action == SCORECARD_RETIREMENT_ACTION,
+            AuditLog.entity_type == "strategy",
+            AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        old_status, row.current_status = row.current_status, "retired"
+        evidence = SCORECARD_RETIREMENTS[row.strategy_type]
+        write_audit_log(
+            db,
+            event_type="strategy_governance",
+            entity_type="strategy",
+            entity_id=row.id,
+            action=SCORECARD_RETIREMENT_ACTION,
+            status="complete",
+            message=(f"{SCORECARD_REPORT}: {row.strategy_type} loses money on the full history "
+                     f"({evidence['all'][0]:+.1f} bps per trade); retired from paper exploration."),
+            payload={
+                "old_status": old_status, "new_status": "retired", "source": SCORECARD_REPORT,
+                "expectancy_bps": {window: values[0] for window, values in evidence.items()},
+                "expectancy_ci_bps": {window: values[1:] for window, values in evidence.items()},
+                "paper_only": True,
+            },
+        )
+        retired.append(row.strategy_type)
+    if retired:
+        db.flush()
+    return retired
+
+
+RSI2_SCOPE_REPORT = "reports/rsi2-scope-20261102.md"
+RSI2_SCOPE_ACTION = "rsi2_scope_update"
+RSI2_SEEDED_SCOPE = ("SPY", "QQQ", "IWM", "DIA")
+# Index ETFs plus the single stocks of the paper universe. Sector ETFs stay
+# out: with production settings they earn +1 to +11 bps per trade.
+RSI2_WIDENED_SCOPE = RSI2_SEEDED_SCOPE + (
+    "AAPL", "ABBV", "ADBE", "AMD", "AMZN", "AVGO", "BAC", "COST", "CRM", "GOOGL", "HD", "JNJ", "JPM",
+    "KO", "LLY", "MA", "META", "MRK", "MSFT", "NFLX", "NVDA", "ORCL", "PEP", "PG", "TSLA", "UNH",
+    "V", "WMT", "XOM",
+)
+
+
+def widen_rsi2_scope(db: Session) -> bool:
+    """One-time widening of RSI(2) Pullback from the index ETFs to single stocks.
+
+    Acts only on a row whose scope is still the seeded index list and with no
+    previous update event, so an operator's own scope is never overridden.
+    Stocks keep the RSI < 10 entry: RSI < 5 did not improve the recent windows.
+    """
+    from app.services.audit import write_audit_log
+
+    changed = False
+    for row in db.query(Strategy).filter(Strategy.strategy_type == "rsi2_pullback").order_by(Strategy.id).all():
+        params = dict(row.parameters or {})
+        scope = params.get("symbol_scope")
+        if scope is not None and sorted(scope) != sorted(RSI2_SEEDED_SCOPE):
+            continue
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance",
+            AuditLog.action == RSI2_SCOPE_ACTION,
+            AuditLog.entity_type == "strategy",
+            AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        row.parameters = params | {"symbol_scope": list(RSI2_WIDENED_SCOPE)}
+        write_audit_log(
+            db,
+            event_type="strategy_governance",
+            entity_type="strategy",
+            entity_id=row.id,
+            action=RSI2_SCOPE_ACTION,
+            status="complete",
+            message=(f"{RSI2_SCOPE_REPORT}: RSI(2) < 10 on single stocks earns +16.6 bps per trade since 2015 "
+                     "(index ETFs +13.7) on 6.6x the trades; scope widened from the index ETFs."),
+            payload={"old_symbol_scope": list(RSI2_SEEDED_SCOPE), "new_symbol_scope": list(RSI2_WIDENED_SCOPE),
+                     "source": RSI2_SCOPE_REPORT, "paper_only": True},
+        )
+        changed = True
+    if changed:
+        db.flush()
+    return changed
+
+
 def ensure_strategy_lineup(db: Session) -> dict:
     """Idempotent strategy lineup reconciliation run by every seed pass."""
     return {
         "created": ensure_reversion_candidates(db),
         "demoted_moving_average_crossover": demote_moving_average_crossover(db),
         "dropped_ibs_trend_filter": drop_ibs_trend_filter(db),
+        "retired_scorecard_losers": retire_scorecard_losers(db),
+        "widened_rsi2_scope": widen_rsi2_scope(db),
     }
 
 

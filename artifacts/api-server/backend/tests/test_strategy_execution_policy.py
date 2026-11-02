@@ -516,9 +516,11 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     outcome = ensure_strategy_lineup(db)
     db.commit()
     assert outcome == {"created": ["rsi2_pullback", "ibs_mean_reversion"], "demoted_moving_average_crossover": True,
-                       "dropped_ibs_trend_filter": False}
+                       "dropped_ibs_trend_filter": False, "retired_scorecard_losers": ["moving_average_crossover"],
+                       "widened_rsi2_scope": True}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
-    assert rows["moving_average_crossover"].current_status == "paper_trading_candidate"
+    # Demoted from active, then retired from exploration on the same evidence.
+    assert rows["moving_average_crossover"].current_status == "retired"
     assert rows["rsi2_pullback"].current_status == "paper_trading_candidate"
     assert rows["ibs_mean_reversion"].parameters["entry_threshold"] == 0.1
     audit = db.query(AuditLog).filter_by(action=SCORECARD_DEMOTION_ACTION).one()
@@ -532,7 +534,8 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     rows["rsi2_pullback"].current_status = "paused"
     db.commit()
     assert ensure_strategy_lineup(db) == {"created": [], "demoted_moving_average_crossover": False,
-                                          "dropped_ibs_trend_filter": False}
+                                          "dropped_ibs_trend_filter": False, "retired_scorecard_losers": [],
+                                          "widened_rsi2_scope": False}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"
@@ -586,3 +589,45 @@ def test_readiness_with_zero_active_strategies(db):
 
 def test_readiness_with_no_strategies_at_all_stays_a_warning(db):
     assert _availability(db, True)["status"] == "warning"
+
+
+def test_lineup_retires_losing_families_from_exploration_once(db):
+    from app.services.seed import SCORECARD_RETIREMENT_ACTION, ensure_strategy_lineup
+
+    macd = Strategy(name="MACD Momentum", strategy_type="macd_momentum", parameters={},
+                    is_active=True, current_status="paper_trading_candidate")
+    bollinger = Strategy(name="Bollinger Mean Reversion", strategy_type="bollinger_mean_reversion",
+                         parameters={}, is_active=True, current_status="research")
+    db.add_all([macd, bollinger])
+    db.commit()
+    assert ensure_strategy_lineup(db)["retired_scorecard_losers"] == ["macd_momentum"]
+    db.commit()
+    assert macd.current_status == "retired" and bollinger.current_status == "research"
+    audit = db.query(AuditLog).filter_by(action=SCORECARD_RETIREMENT_ACTION).one()
+    assert audit.entity_id == macd.id and audit.payload["expectancy_bps"]["all"] == -15.6
+    # One-shot: a later governed choice is never overridden.
+    macd.current_status = "paper_trading_candidate"
+    db.commit()
+    assert ensure_strategy_lineup(db)["retired_scorecard_losers"] == []
+    assert macd.current_status == "paper_trading_candidate"
+
+
+def test_lineup_widens_seeded_rsi2_scope_to_single_stocks_once(db):
+    from app.services.seed import RSI2_SCOPE_ACTION, RSI2_WIDENED_SCOPE, ensure_strategy_lineup
+    from app.services.strategy_execution_policy import symbol_scope_for
+
+    seeded = Strategy(name="RSI(2) Pullback", strategy_type="rsi2_pullback", is_active=True,
+                      parameters={"entry_threshold": 10, "symbol_scope": ["SPY", "QQQ", "IWM", "DIA"]},
+                      current_status="paper_trading_candidate")
+    db.add(seeded)
+    db.commit()
+    assert ensure_strategy_lineup(db)["widened_rsi2_scope"] is True
+    db.commit()
+    scope = symbol_scope_for(seeded)
+    assert {"SPY", "AAPL", "NVDA"} <= scope and "XLK" not in scope and len(scope) == len(RSI2_WIDENED_SCOPE)
+    assert seeded.parameters["entry_threshold"] == 10
+    # An operator's narrower scope is never overridden, and the update is one-shot.
+    seeded.parameters = seeded.parameters | {"symbol_scope": ["SPY", "QQQ", "IWM", "DIA"]}
+    db.commit()
+    assert ensure_strategy_lineup(db)["widened_rsi2_scope"] is False
+    assert db.query(AuditLog).filter_by(action=RSI2_SCOPE_ACTION).count() == 1

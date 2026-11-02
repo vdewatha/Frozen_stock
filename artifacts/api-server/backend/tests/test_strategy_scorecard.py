@@ -127,9 +127,14 @@ def test_new_strategies_are_registered_and_seeded_as_scoped_candidates():
         rows = {row.strategy_type: row for row in db.query(Strategy).all()}
         for slug in ("rsi2_pullback", "ibs_mean_reversion"):
             assert rows[slug].current_status == "paper_trading_candidate"
-            assert rows[slug].parameters["symbol_scope"] == ["SPY", "QQQ", "IWM", "DIA"]
-            assert get_strategy(slug, rows[slug].parameters).symbol_scope() == {"SPY", "QQQ", "IWM", "DIA"}
-        assert rows["moving_average_crossover"].current_status == "paper_trading_candidate"
+        ibs = rows["ibs_mean_reversion"]
+        assert ibs.parameters["symbol_scope"] == ["SPY", "QQQ", "IWM", "DIA"]
+        assert get_strategy("ibs_mean_reversion", ibs.parameters).symbol_scope() == {"SPY", "QQQ", "IWM", "DIA"}
+        # reports/rsi2-scope-20261102.md: RSI(2) also trades single stocks, never sector ETFs.
+        rsi2_scope = get_strategy("rsi2_pullback", rows["rsi2_pullback"].parameters).symbol_scope()
+        assert {"SPY", "QQQ", "IWM", "DIA", "AAPL", "NVDA"} <= rsi2_scope and "XLK" not in rsi2_scope
+        # reports/strategy-scorecard-20261028.md: losing families leave exploration.
+        assert rows["moving_average_crossover"].current_status == "retired"
     engine.dispose()
 
 
