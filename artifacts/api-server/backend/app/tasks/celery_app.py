@@ -121,6 +121,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
     "app.tasks.jobs.meta_label_retrain_job": {"queue": "learning"},
+    "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
     "app.tasks.jobs.alert_daily_digest_job": {"queue": "risk"},
@@ -260,6 +261,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.meta_label_retrain_job",
         "schedule": crontab(minute=15, hour=20),
         "options": {"expires": 6 * 60 * 60},
+    },
+    # Strategy discovery: test the rule library on fresh history every Sunday
+    # and admit/retire exploration-only paper candidates.
+    "strategy-discovery": {
+        "task": "app.tasks.jobs.strategy_discovery_job",
+        "schedule": crontab(minute=0, hour=10, day_of_week="sun"),
+        "options": {"expires": 12 * 60 * 60},
     },
     "parameter-application": {"task": "app.tasks.jobs.parameter_application_job", "schedule": 60 * 15},
     "alert-delivery": {

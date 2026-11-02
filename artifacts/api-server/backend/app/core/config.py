@@ -272,6 +272,15 @@ class Settings(BaseSettings):
     meta_label_history_start: str = "2008-06-01"
     # Empty = <backend>/stock_training_artifacts/meta_label/history
     meta_label_history_dir: str = ""
+    # Strategy discovery: weekly off-hours test of the rule-candidate library;
+    # admissible candidates become rule_<id> paper_trading_candidate rows
+    # (exploration only).  require_proven also demands the deflated Sharpe.
+    strategy_discovery_enabled: bool = True
+    strategy_discovery_admission_enabled: bool = True
+    strategy_discovery_require_proven: bool = False
+    strategy_discovery_max_new: int = Field(default=3, ge=0, le=20)
+    strategy_discovery_max_live: int = Field(default=10, ge=0, le=50)
+    strategy_discovery_history_start: str = "2000-01-01"
     # Performance-weighted paper risk fractions (bounded, shrink-first).
     paper_allocation_weighting_enabled: bool = True
     paper_allocation_floor: float = Field(default=0.5, gt=0, le=1)

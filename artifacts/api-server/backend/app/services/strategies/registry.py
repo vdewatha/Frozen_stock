@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from app.services.strategies.base import BaseStrategy
+from app.services.strategies.rules import RULE_SLUG_PREFIX, RuleStrategy
 from app.services.strategies.short_term_reversion import IBSMeanReversionStrategy, RSI2PullbackStrategy
 from app.services.strategies.technical import (
     BollingerMeanReversionStrategy,
@@ -37,7 +38,14 @@ STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
 RESEARCH_ONLY_STRATEGY_SLUGS: frozenset[str] = frozenset()
 
 
+def is_known_strategy(slug: str) -> bool:
+    """A registry slug or a discovered rule (``rule_<id>``, resolved from its parameters)."""
+    return slug in STRATEGY_REGISTRY or (isinstance(slug, str) and slug.startswith(RULE_SLUG_PREFIX))
+
+
 def get_strategy(slug: str, parameters: Optional[dict] = None) -> BaseStrategy:
+    if isinstance(slug, str) and slug.startswith(RULE_SLUG_PREFIX):
+        return RuleStrategy(parameters, slug=slug)
     try:
         return STRATEGY_REGISTRY[slug](parameters)
     except KeyError as exc:
