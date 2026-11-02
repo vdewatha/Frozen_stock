@@ -5,7 +5,7 @@ import { expect, test } from "./fixtures/authenticated";
 // Authentication and the viewer denial use the real API. Research responses
 // are deterministic fixtures; no provider, Celery, broker or trading writes.
 const endpoint = "/api/research/agent-runs";
-const heading = "TradingAgents Shadow Research";
+const heading = "Pipeline and symbol investigation";
 const completedResult = {
   recommendation: "HOLD" as const,
   confidence: 0.55,
@@ -39,10 +39,12 @@ function panel(page: Page) {
 }
 
 async function expectResearchOnly(section: Locator, canRun: boolean) {
-  await expect(section).toContainText("no broker, order, risk, approval, or model-promotion authority");
+  await expect(section).toContainText("Research-only; order path disabled");
+  await expect(section).toContainText("Broker authority");
+  await expect(section).toContainText("Not eligible");
   // An allowlist catches newly introduced execution actions, not only names
   // of today's buttons. Submission is the panel's only permitted action.
-  await expect(section.getByRole("button")).toHaveCount(canRun ? 1 : 0);
+  await expect(section.getByRole("button")).toHaveCount(canRun ? 6 : 5);
   if (canRun) await expect(section.getByRole("button", { name: "Run research", exact: true })).toBeVisible();
   await expect(section.getByRole("link")).toHaveCount(0);
   await expect(section.getByRole("checkbox")).toHaveCount(0);
@@ -83,9 +85,10 @@ async function mockResearch(page: Page, initial: AgentResearchRun[] = []) {
 
 test("managed viewer can inspect results but cannot submit or create a shadow run", async ({ page, authenticateAs }) => {
   const fixture = await mockResearch(page, [run("completed")]);
-  await authenticateAs("viewer");
+  await authenticateAs("viewer", "/research/runs");
   const section = panel(page);
-  await expect(section.getByText("Complete", { exact: true })).toBeVisible();
+  await section.getByRole("button", { name: /^MSFT/ }).click();
+  await expect(section.getByRole("button", { name: /^MSFT/ })).toContainText("completed");
   await expect(section).toContainText(completedResult.rationale);
   await expect(section).toContainText("Requires Researcher access");
   await expect(section.getByLabel("Symbol", { exact: true })).toHaveCount(0);
@@ -96,14 +99,15 @@ test("managed viewer can inspect results but cannot submit or create a shadow ru
   // The extra field is forbidden by the real request schema: if authorization
   // regresses this returns 422, not a provider job in the shared database.
   const headers = { Authorization: `Bearer ${process.env.AUTH_VIEWER_KEY!}` };
-  const before = await page.request.get(endpoint, { headers });
+  const apiEndpoint = `${process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:8120/api"}/research/agent-runs`;
+  const before = await page.request.get(apiEndpoint, { headers });
   expect(before.status()).toBe(200);
   const beforePage = await before.json();
-  const denied = await page.request.post(endpoint, {
+  const denied = await page.request.post(apiEndpoint, {
     headers, data: { symbol: "MSFT", eligible_for_trading: false },
   });
   expect(denied.status()).toBe(403);
-  const after = await page.request.get(endpoint, { headers });
+  const after = await page.request.get(apiEndpoint, { headers });
   expect(after.status()).toBe(200);
   const afterPage = await after.json();
   expect(afterPage.total).toBe(beforePage.total);
@@ -115,16 +119,18 @@ test("managed viewer can inspect results but cannot submit or create a shadow ru
 test("managed researcher queues an approved symbol and sees the polling lifecycle without execution controls", async ({ page, authenticateAs }) => {
   const fixture = await mockResearch(page);
   await page.clock.install();
-  await authenticateAs("researcher");
+  await authenticateAs("researcher", "/research/runs");
   const section = panel(page);
-  await expect(section.getByLabel("Symbol", { exact: true }).locator("option")).toHaveText(["AAPL", "MSFT", "QQQ", "SPY"]);
+  for (const symbol of ["AAPL", "MSFT", "QQQ", "SPY"]) {
+    await expect(section.getByRole("button", { name: new RegExp(`^${symbol}`) })).toBeVisible();
+  }
   await expectResearchOnly(section, true);
-  await section.getByLabel("Symbol", { exact: true }).selectOption("MSFT");
+  await section.getByRole("button", { name: /^MSFT/ }).click();
   await section.getByRole("button", { name: "Run research", exact: true }).click();
-  const card = section.getByRole("article");
-  await expect(card.getByText("Queued", { exact: true })).toBeVisible();
+  const card = section;
+  await expect(section.getByRole("button", { name: /^MSFT/ })).toContainText("queued");
   expect(fixture.submissions).toEqual([{ symbol: "MSFT" }]);
-  await expect(card).toContainText("The bounded run is queued");
+  await expect(card).toContainText("This symbol is currently being processed");
   await expect(card).not.toContainText("Recommendation:");
   await expectResearchOnly(section, true);
 
@@ -133,15 +139,15 @@ test("managed researcher queues an approved symbol and sees the polling lifecycl
     const previousReads = fixture.reads();
     await page.clock.fastForward(15_000);
     await expect.poll(fixture.reads).toBeGreaterThan(previousReads);
-    await expect(card.getByText(label, { exact: true })).toBeVisible();
+    await expect(section.getByRole("button", { name: /^MSFT/ })).toContainText(status);
     await expectResearchOnly(section, true);
-    await expect(card).toContainText("Not eligible for trading");
+    await expect(card).toContainText("Not eligible");
     if (status === "running") await expect(card).not.toContainText("Recommendation:");
   }
-  await expect(card).toContainText("Recommendation: HOLD");
-  await expect(card).toContainText("self-reported confidence 55% (not a calibrated probability)");
-  await expect(card).toContainText("Forward evaluation: pending");
-  await expect(card).toContainText("Baseline comparison: pending");
+  await expect(card).toContainText("HOLD");
+  await expect(card).toContainText("55% self-reported confidence");
+  await expect(card).toContainText("Waiting for future observations");
+  await expect(card).toContainText("pending");
   expect(fixture.submissions).toHaveLength(1);
   expect(fixture.unexpectedWrites).toEqual([]);
 });
@@ -153,27 +159,28 @@ for (const failure of [
   test(`researcher sees ${failure.status} with no fabricated recommendation, including after reload`, async ({ page, authenticateAs }) => {
     const fixture = await mockResearch(page);
     await page.clock.install();
-    await authenticateAs("researcher");
+    await authenticateAs("researcher", "/research/runs");
     const section = panel(page);
-    await section.getByLabel("Symbol", { exact: true }).selectOption("MSFT");
+    await section.getByRole("button", { name: /^MSFT/ }).click();
     await section.getByRole("button", { name: "Run research", exact: true }).click();
-    await expect(section.getByText("Queued", { exact: true })).toBeVisible();
+    await expect(section.getByRole("button", { name: /^MSFT/ })).toContainText("queued");
     fixture.setRun({ ...run(failure.status), error: failure.error });
     await page.clock.fastForward(15_000);
 
     async function expectFailure() {
-      const card = section.getByRole("article");
-      await expect(card.getByText(failure.label, { exact: true })).toBeVisible();
+      const card = section;
+      await expect(section.getByRole("button", { name: /^MSFT/ })).toContainText(failure.status);
       await expect(card).toContainText(failure.error);
       await expect(card).not.toContainText("Recommendation:");
       await expect(card).not.toContainText("self-reported confidence");
-      await expect(card).toContainText("Not eligible for trading");
+      await expect(card).toContainText("Not eligible");
       await expectResearchOnly(section, true);
     }
     await expectFailure();
     // Local role keys intentionally live only in memory, so a new navigation
     // requires real sign-in again rather than persisting secrets in storage.
-    await authenticateAs("researcher");
+    await authenticateAs("researcher", "/research/runs");
+    await section.getByRole("button", { name: /^MSFT/ }).click();
     await expectFailure();
     expect(fixture.submissions).toEqual([{ symbol: "MSFT" }]);
     expect(fixture.unexpectedWrites).toEqual([]);

@@ -2,6 +2,7 @@
 import pytest
 
 from app.core.config import settings
+from app.db import schema  # Register the complete FK graph for isolated DB fixtures.
 
 
 @pytest.fixture(autouse=True)

@@ -183,9 +183,10 @@ test("authenticated monitoring keeps stopped entries and reconciliation disposit
         }),
       });
     }
-    throw new Error(`Unexpected learning-cycle read: ${pathname}`);
+    return route.fallback();
   });
   await page.route("**/api/stock/learning-cycles*", route => {
+    if (new URL(route.request().url()).pathname !== "/api/stock/learning-cycles") return route.fallback();
     if (route.request().method() !== "GET") {
       throw new Error(`Unsafe learning-cycle mutation attempted: ${route.request().method()}`);
     }
@@ -195,7 +196,7 @@ test("authenticated monitoring keeps stopped entries and reconciliation disposit
     });
   });
 
-  await authenticateAs("viewer");
+  await authenticateAs("viewer", "/learning/cycles");
 
   const panel = page.getByTestId("stock-learning-cycle-panel");
   const card = panel.getByTestId(`stock-learning-cycle-${cycleId}`);

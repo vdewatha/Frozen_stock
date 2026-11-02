@@ -6,9 +6,26 @@ type EquityChartProps = {
   data: { date: string; value?: number; equity?: number }[];
 };
 
+export function equityDateLabel(value: string, detail = false): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "Unknown date";
+  const daily = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  return date.toLocaleString("en-US", {
+    month: "short", day: "numeric", timeZone: daily ? "UTC" : "America/New_York",
+    ...(detail && !daily ? { hour: "numeric", minute: "2-digit", timeZoneName: "short" } as const : {}),
+  });
+}
+
+export function equityChartPoints(data: EquityChartProps["data"]) {
+  return data.flatMap(point => {
+    const value = point.value ?? point.equity;
+    return typeof value === "number" && Number.isFinite(value) ? [{ date: point.date, value }] : [];
+  });
+}
+
 export function EquityChart({ data }: EquityChartProps) {
-  if (data.length === 0) return <p className="p-8 text-sm text-slate-500">Equity history is unavailable until reconciled account snapshots have been recorded.</p>;
-  const chartData = data.map((point) => ({ date: point.date, value: point.value ?? point.equity ?? 0 }));
+  const chartData = equityChartPoints(data);
+  if (chartData.length === 0) return <p className="p-8 text-sm text-slate-500">Equity history is unavailable until reconciled account snapshots have been recorded.</p>;
   return (
     <div className="h-72 w-full">
       <ResponsiveContainer>
@@ -20,9 +37,11 @@ export function EquityChart({ data }: EquityChartProps) {
             </linearGradient>
           </defs>
           <CartesianGrid stroke="#d9dee7" strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={36} />
+          <XAxis dataKey="date" tickFormatter={value => equityDateLabel(String(value))} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={36} />
           <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} domain={["dataMin - 500", "dataMax + 500"]} width={68} />
-          <Tooltip formatter={(value) => [`$${Number(value).toLocaleString()}`, "Equity"]} />
+          <Tooltip position={{ x: 0, y: 0 }} wrapperStyle={{ maxWidth: "100%", whiteSpace: "normal" }}
+            labelFormatter={value => equityDateLabel(String(value), true)}
+            formatter={(value) => [`$${Number(value).toLocaleString()}`, "Equity"]} />
           <Area type="monotone" dataKey="value" stroke="#0f8b6f" strokeWidth={2} fill="url(#equityFill)" />
         </AreaChart>
       </ResponsiveContainer>

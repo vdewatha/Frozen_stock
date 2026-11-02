@@ -35,6 +35,13 @@ def test_populated_interim_stock_schema_repairs_through_head_with_audit_triggers
             # This initial-schema table predates interim 0010 and is referenced
             # by the later live-order migration, even when it contains no rows.
             connection.execute(text("CREATE TABLE strategy_signals (id serial PRIMARY KEY)"))
+            # Prediction history also predates interim 0010. The populated
+            # repair fixture must retain it for the later identity migration.
+            from app.models import MarketPrice, ModelPrediction, Notification, Strategy
+            ModelPrediction.__table__.create(connection)
+            MarketPrice.__table__.create(connection)
+            Strategy.__table__.create(connection)
+            Notification.__table__.create(connection)
             scripts = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "alembic"))
             with Operations.context(MigrationContext.configure(connection)):
                 scripts.get_revision("0009_intraday_alpaca").module.upgrade()

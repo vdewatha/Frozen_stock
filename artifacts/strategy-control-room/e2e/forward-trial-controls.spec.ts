@@ -116,7 +116,7 @@ test.beforeEach(async ({ page }) => {
 
 for (const role of ["viewer", "operator", "admin"] as TrialRole[]) {
   test(`${role} sees the paused evidence and only permitted controls`, async ({ page, authenticateAs }) => {
-    await authenticateAs(role);
+    await authenticateAs(role, "/learning/evaluation");
     await page.getByTestId(`forward-trial-row-${trialId}`).click();
 
     const detail = page.getByTestId(`forward-trial-detail-${trialId}`);
