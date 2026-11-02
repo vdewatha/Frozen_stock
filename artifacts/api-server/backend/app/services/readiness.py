@@ -7,7 +7,7 @@ import time
 from typing import Optional
 
 import redis
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models import Asset, MarketPrice, ModelPrediction, Notification, RiskRule, Strategy
@@ -462,13 +462,15 @@ def readiness_snapshot(db: Session) -> dict:
     # order, so it does not relax any other gate.
     from app.services.stock_paper_ledger import EXPLORATION_STRATEGY_STATUSES
     from app.services.strategies.registry import STRATEGY_REGISTRY
+    from app.services.strategies.rules import RULE_SLUG_PREFIX
 
     exploration_strategies = (
         db.query(Strategy)
         .filter(
             Strategy.is_active.is_(True),
             Strategy.current_status.in_(sorted(EXPLORATION_STRATEGY_STATUSES)),
-            Strategy.strategy_type.in_(sorted(STRATEGY_REGISTRY)),
+            or_(Strategy.strategy_type.in_(sorted(STRATEGY_REGISTRY)),
+                Strategy.strategy_type.like(f"{RULE_SLUG_PREFIX}%")),
         )
         .count()
         if settings.paper_exploration_enabled else 0

@@ -133,7 +133,7 @@ from app.services.risk_settings import get_active_risk_rule, update_risk_setting
 from app.services.safety_controls import disable_kill_switch, enable_kill_switch, pause_all_strategies, resume_candidate_strategies
 from app.services.scanner_refresh_jobs import create_scanner_refresh_job, latest_scanner_refresh_job, run_scanner_refresh_job
 from app.services.strategy_improvement import strategy_improvement_queue
-from app.services.strategies.registry import STRATEGY_REGISTRY, get_strategy
+from app.services.strategies.registry import STRATEGY_REGISTRY, get_strategy, is_known_strategy
 from app.services.trade_candidates import get_trade_candidate_snapshot
 from app.services.trade_scorecard import predictive_trade_scorecard
 from app.services.watchlist_discovery import discover_watchlist_candidates, import_watchlist_candidates
@@ -595,7 +595,7 @@ def _research_prices(db, symbol, limit, minimum):
 def generate_signal(payload: SignalRequest, db: Session = Depends(get_db)) -> SignalResponse:
     strategy_row = db.query(Strategy).filter(Strategy.strategy_type == payload.strategy).one_or_none()
     parameters = strategy_row.parameters if strategy_row else {}
-    if payload.strategy not in STRATEGY_REGISTRY:
+    if not is_known_strategy(payload.strategy) or (payload.strategy not in STRATEGY_REGISTRY and not strategy_row):
         raise HTTPException(status_code=404, detail="Unknown strategy.")
     prices, _source = _research_prices(db, payload.symbol, 260, 60)
     signal = get_strategy(payload.strategy, parameters).generate_signal(payload.symbol.upper(), prices)
