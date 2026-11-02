@@ -12,6 +12,18 @@ time stop are the usual ``stop_loss_pct`` / ``take_profit_pct`` /
 ``max_holding_sessions`` parameters, so the paper path and the backtester
 handle them exactly as for the hand-written strategies.
 
+A rule with ``"timing": "open"`` is a same-session trade instead: it buys at the
+open of bar t when the ``gap`` condition holds on bar t and every other
+condition held on the close of bar t-1, and it exits at the prior close
+(gap filled), the stop, or the close of bar t.  Discovery evaluates these, but
+the daily paper path cannot place an order at the open, so ``RuleStrategy``
+never fires one and discovery does not admit them.
+
+``earn_surprise`` is the EPS surprise (percent) of a report the market first
+traded on that bar, NaN on every other bar; it comes from an
+``earn_surprise`` column (``earnings_history.attach_surprises``) and is NaN
+when the frame has none.
+
 Every feature is a trailing window (or the trading calendar, which is known in
 advance), so ``rule_frame`` over a whole history equals the value computed on
 each prefix: discovery evaluates rules vectorised over decades of bars and the
@@ -31,6 +43,8 @@ from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
 
+from app.services import earnings_history
+from app.services.earnings_history import SURPRISE_COLUMN
 from app.services.strategies.base import (
     BaseStrategy,
     ExitPolicy,
@@ -47,6 +61,9 @@ MAX_RULE_LOOKBACK = 252
 _RUNTIME_TAIL = 400
 _OPS: dict[str, Callable] = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge,
                              "==": operator.eq}
+TIMINGS = frozenset({"close", "open"})
+# Features known at the open of their own bar (everything else is shifted a bar for open-timed rules).
+_OPEN_FEATURES = frozenset({"gap"})
 _FEATURE = re.compile(r"^(?P<name>[a-z_]+?)(?:_(?P<n>\d+))?(?:_(?P<m>\d+))?$")
 
 
@@ -73,7 +90,7 @@ def feature(frame: pd.DataFrame, name: str, cache: Optional[dict] = None) -> pd.
     ``dist_sma_N``, ``at_low_N`` / ``at_high_N`` (close is the N-bar
     min / max), ``down_streak`` / ``up_streak``, ``ibs``, ``gap``,
     ``bb_pctb_N``, ``atr_pct_N``, ``vol_ratio_N_M`` (N- over M-bar realised
-    volatility), ``tdom``, ``tdays_left``, ``dow``.
+    volatility), ``tdom``, ``tdays_left``, ``dow``, ``earn_surprise``.
     """
     if cache is not None and name in cache:
         return cache[name]
@@ -121,6 +138,9 @@ def feature(frame: pd.DataFrame, name: str, cache: Optional[dict] = None) -> pd.
         value = log_returns.rolling(n).std() / log_returns.rolling(m).std()
     elif kind in {"tdom", "tdays_left", "dow"} and n is None:
         value = _calendar(frame)[kind].astype(float)
+    elif kind == "earn_surprise" and n is None:
+        value = pd.to_numeric(frame[kind], errors="coerce").astype(float).reset_index(drop=True) \
+            if kind in frame.columns else pd.Series(np.nan, index=close.index)
     else:
         raise ValueError(f"Unknown rule feature: {name}")
     value = value.reset_index(drop=True).astype(float)
@@ -137,13 +157,25 @@ def _lookback(name: str) -> int:
 
 def rule_lookback(rule: dict) -> int:
     names = [c["f"] for c in [*rule.get("entry", []), *rule.get("exit", [])]]
-    return max((_lookback(name) for name in names), default=2)
+    return max((_lookback(name) for name in names), default=2) + (1 if timing(rule) == "open" else 0)
+
+
+def timing(rule: dict) -> str:
+    return rule.get("timing") or "close"
+
+
+def uses_feature(rule: dict, name: str) -> bool:
+    return any(c["f"] == name for c in [*rule.get("entry", []), *rule.get("exit", [])])
 
 
 def validate_rule(rule: Any) -> dict:
     """Return the rule if every condition names a known feature and operator; raise otherwise."""
     if not isinstance(rule, dict) or not rule.get("entry"):
         raise ValueError("a rule needs at least one entry condition")
+    if timing(rule) not in TIMINGS:
+        raise ValueError(f"unknown rule timing: {rule.get('timing')}")
+    if timing(rule) == "open" and (rule.get("exit") or not uses_feature(rule, "gap")):
+        raise ValueError("an open-timed rule needs a gap condition and no exit conditions")
     probe = pd.DataFrame({"date": pd.bdate_range("2020-01-01", periods=3).strftime("%Y-%m-%d"),
                           "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0})
     for condition in [*rule["entry"], *rule.get("exit", [])]:
@@ -155,20 +187,25 @@ def validate_rule(rule: Any) -> dict:
     return rule
 
 
-def _all(frame: pd.DataFrame, conditions: list[dict], cache: Optional[dict], default: bool) -> np.ndarray:
+def _all(frame: pd.DataFrame, conditions: list[dict], cache: Optional[dict], default: bool,
+         at_open: bool = False) -> np.ndarray:
     if not conditions:
         return np.full(len(frame), default, dtype=bool)
     out = np.ones(len(frame), dtype=bool) if default else np.zeros(len(frame), dtype=bool)
     for condition in conditions:
-        values = feature(frame, condition["f"], cache).to_numpy()
+        values = feature(frame, condition["f"], cache)
+        values = (values.shift(1) if at_open and condition["f"] not in _OPEN_FEATURES else values).to_numpy()
         hit = np.isfinite(values) & _OPS[condition["op"]](values, float(condition["v"]))
         out = (out & hit) if default else (out | hit)
     return out
 
 
 def entry_signals(frame: pd.DataFrame, rule: dict, cache: Optional[dict] = None) -> np.ndarray:
-    """Per-bar entry decision (all entry conditions), False before the lookback is filled."""
-    entries = _all(frame, rule["entry"], cache, default=True)
+    """Per-bar entry decision (all entry conditions), False before the lookback is filled.
+
+    For an open-timed rule, True on bar t means buy at bar t's open.
+    """
+    entries = _all(frame, rule["entry"], cache, default=True, at_open=timing(rule) == "open")
     entries[: rule_lookback(rule) - 1] = False
     return entries
 
@@ -183,6 +220,9 @@ def describe_rule(rule: dict) -> str:
         return " and ".join(f"{c['f']} {c['op']} {c['v']:g}" for c in conditions)
 
     exit_text = text(rule.get("exit", [])).replace(" and ", " or ")
+    if timing(rule) == "open":
+        return (f"BUY at the open when {text(rule['entry'])} (gap today, the rest at yesterday's close); "
+                "sell at yesterday's close or at today's close")
     return f"BUY when {text(rule['entry'])}" + (f"; exit when {exit_text}" if exit_text else "")
 
 
@@ -214,7 +254,16 @@ class RuleStrategy(BaseStrategy):
         if not has_valid_history(data, required):
             return neutral_signal(f"Insufficient history for the rule ({required} bars).",
                                   {"required_rows": required, "rows": 0 if data is None else len(data)})
+        if timing(self.rule) == "open":
+            return neutral_signal(f"Rule {self.slug} trades at the open; the daily paper path cannot place it.",
+                                  {"rule": describe_rule(self.rule), "timing": "open"})
         frame = self._frame(data)
+        if uses_feature(self.rule, SURPRISE_COLUMN) and SURPRISE_COLUMN not in frame.columns:
+            events = earnings_history.runtime_surprises(symbol)
+            if events is None:
+                return neutral_signal(f"Rule {self.slug}: earnings history unavailable.",
+                                      {"rule": describe_rule(self.rule)})
+            frame = earnings_history.attach_surprises(frame, events)
         cache: dict = {}
         fire = bool(entry_signals(frame, self.rule, cache)[-1])
         features = {c["f"]: (None if not np.isfinite(v := float(feature(frame, c["f"], cache).iloc[-1])) else v)
