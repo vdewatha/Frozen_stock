@@ -46,6 +46,15 @@ UNKNOWN_COSTS_REASON = "Broker-reported commissions/spread/slippage are incomple
 ACCOUNTING_RESIDUAL_REVIEW_REASON = "Prior unexplained cash or position residual requires manual accounting review"
 PROBE_HALT = "Paper integration probe reserved; broker reconciliation and recovery review required"
 RECONCILIATION_OVERLAP = timedelta(minutes=10)
+# Alpaca's by-client-id lookup can lag a just-sent order; after this grace an
+# explicit "no such order" for an entry that never got a broker id is final.
+UNSUBMITTED_ORDER_GRACE = timedelta(minutes=5)
+# Halts that only mean "an order outcome was uncertain"; a reconciliation that
+# accounts for every order clears them.
+UNCERTAIN_ORDER_HALT_REASONS = frozenset({
+    "Order submission outcome is uncertain; read-only broker lookup/reconciliation required",
+    "Nonterminal client order has no broker lookup result",
+})
 NONTERMINAL_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
 ALLOWED_ORDER_SOURCES = frozenset({
     "manual_control_room", "manual_close", "manual_reduce", "recovery_flatten",
@@ -2023,6 +2032,21 @@ def transition_stock_paper_account(db: Session, *, reason: str) -> dict:
     return initialize_stock_paper_account(db, gateway=gateway, activity_contract=alpaca_activity_v2.VERSION)
 
 
+def _never_reached_broker(order: StockPaperOrder, observed: datetime) -> bool:
+    """An uncertain Alpaca entry with no broker id that Alpaca still doesn't know."""
+    if active_paper_broker_name() != LEGACY_BROKER:
+        return False  # only Alpaca's lookup distinguishes "not found" from failure
+    attempted = order.submission_attempted_at or order.created_at
+    return bool(
+        order.uncertain_submission
+        and not order.broker_order_id
+        and order.submitted_at is None
+        and order.status == "unknown"
+        and attempted is not None
+        and _utc(observed) - _utc(attempted) >= UNSUBMITTED_ORDER_GRACE
+    )
+
+
 def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None) -> dict:
     """Reconcile the broker account and preserve the automatic-recovery contract.
 
@@ -2093,6 +2117,17 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                 raw_orders.append(resolved)
                 known_broker_ids.add(str(resolved.get("id") or ""))
             elif not resolved and (not order.broker_order_id or order.broker_order_id not in known_broker_ids):
+                if _never_reached_broker(order, observed):
+                    # The POST failed before Alpaca returned an id and Alpaca
+                    # still has no order with this client id: it was never
+                    # placed. Close it so it cannot halt the account forever;
+                    # if it ever appears, the client-id import adopts it.
+                    order.status, order.uncertain_submission = "rejected", False
+                    order.reserved_cash = Decimal("0")
+                    _event(db, account, "order_resolution", "rejected",
+                           "Uncertain submission never reached the broker",
+                           {"client_order_id": order.client_order_id, "order_id": order.id})
+                    continue
                 unresolved_nonterminal.append(order.client_order_id)
         values = _account_values(raw_account, observed)
         configured_id = (
@@ -2333,7 +2368,12 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             )
             transient_provider_halt = (
                 account.status == "halted"
-                and account.halt_reason == "Alpaca paper broker is unavailable or returned invalid data"
+                and (
+                    account.halt_reason == "Alpaca paper broker is unavailable or returned invalid data"
+                    # Every order is accounted for in this snapshot, so an
+                    # uncertain-order halt has been answered.
+                    or account.halt_reason in UNCERTAIN_ORDER_HALT_REASONS
+                )
             )
             account.reconciliation_required = False
             # A fully matched Alpaca activity snapshot is sufficient to clear

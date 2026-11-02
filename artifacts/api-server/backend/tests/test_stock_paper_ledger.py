@@ -631,6 +631,41 @@ class StockPaperLedgerTests(unittest.TestCase):
             self.assertEqual(gateway.calls, 1)
             self.assertEqual(stock_paper_status(db)["status"], "halted")
 
+    def _stuck_uncertain_entry(self, db, minutes_ago, *, lookup=None):
+        from app.models.stock_paper import StockPaperAccount, StockPaperOrder
+        from app.services.stock_paper_ledger import _halt
+
+        initialize_stock_paper_account(db, FakeAlpaca())
+        account = db.query(StockPaperAccount).one()
+        attempted = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+        order = StockPaperOrder(account_id=account.id, client_order_id="sp-stuck-entry", symbol="JNJ", side="buy",
+                                quantity=Decimal("3"), order_type="limit", time_in_force="gtc",
+                                limit_price=Decimal("276.775"), order_class="bracket", reserved_cash=Decimal("830.325"),
+                                status="unknown", uncertain_submission=True, submission_attempted_at=attempted,
+                                source="scheduled_paper")
+        db.add(order)
+        _halt(account, "Nonterminal client order has no broker lookup result")
+        db.commit()
+        reconcile_stock_paper_account(db, FakeAlpaca(lookup_rows=lookup or {}))
+        db.expire_all()
+        return db.get(StockPaperOrder, order.id), db.query(StockPaperAccount).one()
+
+    def test_uncertain_entry_the_broker_never_received_is_closed_and_unhalts(self):
+        with Session(self.engine) as db:
+            order, account = self._stuck_uncertain_entry(db, minutes_ago=10)
+            self.assertEqual(order.status, "rejected")
+            self.assertFalse(order.uncertain_submission)
+            self.assertEqual(order.reserved_cash, Decimal("0"))
+            self.assertEqual(account.status, "reconciled")
+            self.assertIsNone(account.halt_reason)
+
+    def test_uncertain_entry_inside_the_lookup_grace_stays_halted(self):
+        with Session(self.engine) as db:
+            order, account = self._stuck_uncertain_entry(db, minutes_ago=1)
+            self.assertEqual(order.status, "unknown")
+            self.assertEqual(account.status, "halted")
+            self.assertEqual(account.halt_reason, "Nonterminal client order has no broker lookup result")
+
     def test_submitting_recovery_uses_lookup_and_never_repeats_post(self):
         raw_order = {"id": "recovered-1", "client_order_id": "submitting-1", "symbol": "SPY", "side": "sell",
                      "qty": "1", "type": "limit", "time_in_force": "day", "limit_price": "100", "status": "accepted"}
