@@ -289,6 +289,9 @@ def restore_after_transient_heartbeat_pause(db: Session, account: StockPaperAcco
     if db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id,
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+        # Resting broker exits (bracket/OCO legs, re-armed stops) protect open
+        # positions by design; only entries and app-side sells are in flight.
+        StockPaperOrder.leg_role.is_(None),
     ).count():
         return False
     if _heartbeat_issue(account.last_reconciled_at, now, "broker reconciliation heartbeat") or _heartbeat_issue(
@@ -526,6 +529,9 @@ def attempt_explained_halt_auto_resume(db: Session, *, now: datetime | None = No
     in_flight = db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id,
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+        # Resting broker exits (bracket/OCO legs, re-armed stops) protect open
+        # positions by design; only entries and app-side sells are in flight.
+        StockPaperOrder.leg_role.is_(None),
     ).count()
     if in_flight:
         return wait("In-flight orders must be terminal before automatic resume")
@@ -971,6 +977,9 @@ def resume_stock_paper_after_revalidation(
     if db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id,
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+        # Resting broker exits (bracket/OCO legs, re-armed stops) protect open
+        # positions by design; only entries and app-side sells are in flight.
+        StockPaperOrder.leg_role.is_(None),
     ).count():
         raise StockPaperError("In-flight orders must be terminal before recovery can resume")
     okay, monitoring_reason = _fresh_monitoring_is_clear(db, now)
@@ -1199,6 +1208,9 @@ def attempt_automatic_stock_recovery(
     if db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id,
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+        # Resting broker exits (bracket/OCO legs, re-armed stops) protect open
+        # positions by design; only entries and app-side sells are in flight.
+        StockPaperOrder.leg_role.is_(None),
     ).count():
         reason = "In-flight orders must be terminal before recovery can resume"
         _halt(account, reason, reconciliation_required=False)

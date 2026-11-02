@@ -119,3 +119,40 @@ def test_real_gates_re_arm_and_clear_the_kill_switch(db):
     db.expire_all()
     assert db.query(StockPaperRecoveryState).one().status == "resumable"
     assert db.query(RiskRule).one().value["kill_switch_enabled"] is False
+
+
+def _order(db, **fields):
+    from decimal import Decimal
+    from app.models.stock_paper import StockPaperAccount, StockPaperOrder
+
+    account = db.query(StockPaperAccount).one()
+    values = dict(account_id=account.id, symbol="SPY", side="sell", quantity=Decimal("1"), order_type="stop",
+                  time_in_force="gtc", limit_price=Decimal("90"), reserved_cash=Decimal("0"), status="held",
+                  source="scheduled_paper")
+    values.update(fields)
+    db.add(StockPaperOrder(**values))
+    db.commit()
+
+
+def _real_gates(db):
+    with patch("app.services.stock_recovery._paper_research_policy_ready", return_value=True), \
+         patch.object(auto, "_fresh_monitoring_is_clear", return_value=(True, "fresh")), \
+         patch("app.services.stock_recovery._fresh_monitoring_is_clear", return_value=(True, "fresh")):
+        return auto.run_auto_revalidation(db, now=NOW)
+
+
+def test_resting_broker_exit_legs_do_not_block_the_re_arm(db):
+    _pause(db, actor="stock_watchdog")
+    reconcile_stock_paper_account(db, FakeAlpaca())
+    _order(db, client_order_id="leg-stop-1", leg_role="stop_loss", order_class="bracket", parent_order_id=1)
+    assert _real_gates(db)["status"] == "resumed"
+
+
+def test_an_unfilled_entry_still_blocks_the_re_arm(db):
+    _pause(db, actor="stock_watchdog")
+    reconcile_stock_paper_account(db, FakeAlpaca())
+    _order(db, client_order_id="entry-1", side="buy", order_type="limit", time_in_force="day",
+           limit_price=__import__("decimal").Decimal("100"), status="new")
+    result = _real_gates(db)
+    assert result["status"] == "blocked"
+    assert "In-flight orders" in result["reason"]
