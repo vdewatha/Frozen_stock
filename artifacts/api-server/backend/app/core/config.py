@@ -163,6 +163,10 @@ class Settings(BaseSettings):
     # symbols is fetched with multi-symbol requests and does not count here.
     intraday_backfill_request_budget: int = Field(default=40, ge=0, le=150)
     # Server-side limit for sessions left idle inside a transaction (0 disables).
+    # Re-arm paper trading automatically once a system pause has cleared every
+    # recovery gate (see app/services/auto_revalidation.py); never for live.
+    paper_auto_revalidation_enabled: bool = True
+    paper_auto_revalidation_max_per_day: int = Field(default=6, ge=0, le=50)
     database_idle_in_transaction_timeout_seconds: int = Field(default=600, ge=0, le=3600)
     # Wall-clock cap on repair requests per minutely import. Repairs run before
     # the import reports, so 40 sequential repair requests (~160 s on the VM)

@@ -1534,6 +1534,17 @@ def paper_trade_scorecard_snapshot_job(days: int = 30) -> dict:
 
 
 @celery_app.task(soft_time_limit=60, time_limit=90)
+def paper_auto_revalidation_job() -> dict:
+    """Re-arm paper trading once a system pause has cleared every gate."""
+    def work(db):
+        from app.services.auto_revalidation import run_auto_revalidation
+
+        return run_auto_revalidation(db)
+
+    return _run_job("paper_auto_revalidation_job", work)
+
+
+@celery_app.task(soft_time_limit=60, time_limit=90)
 def operations_health_alert_job() -> dict:
     """Paper-only operations health warnings (feed, reconciliation, recovery)."""
     def work(db):

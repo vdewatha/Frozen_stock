@@ -116,6 +116,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.stock_forward_trial_evaluate_job": {"queue": "paper_trading"},
     "app.tasks.jobs.paper_trade_scorecard_snapshot_job": {"queue": "learning"},
     "app.tasks.jobs.operations_health_alert_job": {"queue": "risk"},
+    "app.tasks.jobs.paper_auto_revalidation_job": {"queue": "risk"},
     "app.tasks.jobs.explained_halt_auto_resume_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
@@ -292,6 +293,13 @@ celery_app.conf.beat_schedule = {
     # Warning-only operations health alerts every five minutes through the
     # regular session (the job checks the exact NYSE session itself and the
     # post-close runs resolve session-only alerts).
+    # Self-sufficient re-arm: retries every two minutes until a system pause
+    # passes every recovery gate (paper only, bounded per day).
+    "paper-auto-revalidation": {
+        "task": "app.tasks.jobs.paper_auto_revalidation_job",
+        "schedule": 120,
+        "options": {"queue": "risk", "expires": 110},
+    },
     "operations-health-alerts": {
         "task": "app.tasks.jobs.operations_health_alert_job",
         "schedule": crontab(minute="*/5", hour="9-16", day_of_week="mon-fri"),
