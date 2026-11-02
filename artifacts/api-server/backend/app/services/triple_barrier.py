@@ -12,6 +12,11 @@ would execute it:
   causal daily volatility at decision time;
 * a vertical barrier after ``max_holding_days`` bars, exited at that bar's
   open, mirroring the backtester's ``max_holding_period`` exit;
+* optionally a strategy indicator exit decided on a bar's close and filled at
+  the next open (the backtester's ``signal_exit``), checked after the gap and
+  vertical exits exactly as the backtester orders them.  A fixed
+  ``take_profit_pct`` of 0 means no upper barrier (stop, time and indicator
+  exits only), which is the RSI(2)/IBS paper exit policy;
 * gaps through a level fill at the open (never at the better level price);
   when one bar touches both levels the stop is assumed to have been hit first.
 
@@ -67,8 +72,8 @@ class BarrierConfig:
             raise ValueError("max_holding_days must be >= 1")
         if self.volatility_lookback < 2:
             raise ValueError("volatility_lookback must be >= 2")
-        if not self.volatility_scaled and (self.take_profit_pct <= 0 or not 0 < self.stop_loss_pct < 1):
-            raise ValueError("fixed barriers must be positive (stop below 100%)")
+        if not self.volatility_scaled and (self.take_profit_pct < 0 or not 0 < self.stop_loss_pct < 1):
+            raise ValueError("fixed barriers must be positive (stop below 100%; take-profit 0 disables it)")
         if self.volatility_scaled and (self.take_profit_sigma <= 0 or self.stop_loss_sigma <= 0):
             raise ValueError("volatility multipliers must be positive")
         if not 0 < self.min_barrier_pct <= self.max_barrier_pct < 1:
@@ -142,12 +147,13 @@ LABEL_COLUMNS = [
 
 
 def label_events(prices: pd.DataFrame, event_positions: Iterable[int],
-                 config: BarrierConfig | None = None) -> pd.DataFrame:
+                 config: BarrierConfig | None = None, exit_signals: Sequence[bool] | None = None) -> pd.DataFrame:
     """Triple-barrier labels for decisions made on the close of ``event_positions``.
 
     ``prices`` must be one symbol's daily bars in ascending date order with
-    ``date, open, high, low, close`` (``volume`` optional).  Returns one row
-    per *resolved* event (see ``LABEL_COLUMNS``).
+    ``date, open, high, low, close`` (``volume`` optional).  ``exit_signals``
+    (one bool per bar) is a strategy indicator exit decided on that bar's
+    close.  Returns one row per *resolved* event (see ``LABEL_COLUMNS``).
     """
     config = config or BarrierConfig()
     frame = prices.reset_index(drop=True)
@@ -168,6 +174,9 @@ def label_events(prices: pd.DataFrame, event_positions: Iterable[int],
     take_widths, stop_widths = barrier_widths(frame, config)
     fee = config.fees_bps / 10_000
     horizon = config.max_holding_days
+    indicator = None if exit_signals is None else np.asarray(exit_signals, dtype=bool)
+    if indicator is not None and len(indicator) != n:
+        raise ValueError("exit_signals must have one value per bar")
     rows = []
     for raw in event_positions:
         t = int(raw)
@@ -181,7 +190,7 @@ def label_events(prices: pd.DataFrame, event_positions: Iterable[int],
         quantity = config.position_notional / open_entry
         entry_price = open_entry * (1 + side_cost_bps(sigma_bps[entry], adv[entry], quantity, config) / 10_000)
         stop_level = entry_price * (1 - stop_pct)
-        target_level = entry_price * (1 + take_pct)
+        target_level = entry_price * (1 + take_pct) if take_pct > 0 else math.inf
         exit_idx = exit_raw = barrier = None
         for idx in range(entry, min(entry + horizon, n - 1) + 1):
             if idx > entry:
@@ -192,6 +201,8 @@ def label_events(prices: pd.DataFrame, event_positions: Iterable[int],
                     exit_idx, exit_raw, barrier = idx, open_, "take_profit_gap"
                 elif idx - entry >= horizon:
                     exit_idx, exit_raw, barrier = idx, open_, "vertical"
+                elif indicator is not None and indicator[idx - 1]:
+                    exit_idx, exit_raw, barrier = idx, open_, "indicator"
                 if exit_idx is not None:
                     break
             if lows[idx] <= stop_level:

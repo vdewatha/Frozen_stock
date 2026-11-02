@@ -260,6 +260,18 @@ class Settings(BaseSettings):
     meta_label_enforce_min_lift: float = Field(default=0.05, ge=0, le=1)
     meta_label_demote_min_samples: int = Field(default=20, ge=5, le=10000)
     meta_label_demote_precision: float = Field(default=0.5, ge=0, le=1)
+    # Meta-label threshold: maximise validation expectancy subject to this
+    # win-rate floor (an 80% floor was never reachable out of sample).
+    meta_label_min_win_rate: float = Field(default=0.60, ge=0, le=1)
+    # Self-retraining off hours on replayed history plus closed paper round
+    # trips; each realised paper outcome weighs this many replayed events.
+    meta_label_retrain_enabled: bool = True
+    meta_label_retrain_max_age_days: int = Field(default=7, ge=1, le=365)
+    meta_label_retrain_min_new_outcomes: int = Field(default=10, ge=1, le=10000)
+    meta_label_paper_outcome_weight: float = Field(default=3.0, ge=0, le=100)
+    meta_label_history_start: str = "2008-06-01"
+    # Empty = <backend>/stock_training_artifacts/meta_label/history
+    meta_label_history_dir: str = ""
     # Performance-weighted paper risk fractions (bounded, shrink-first).
     paper_allocation_weighting_enabled: bool = True
     paper_allocation_floor: float = Field(default=0.5, gt=0, le=1)

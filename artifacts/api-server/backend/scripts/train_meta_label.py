@@ -83,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=None, help="artifact path (default: the runtime model path)")
     parser.add_argument("--model-kind", default="gradient_boosting", choices=["gradient_boosting", "logistic_regression"])
     parser.add_argument("--calibration", default="isotonic", choices=["isotonic", "platt"])
-    parser.add_argument("--min-win-rate", type=float, default=0.80)
+    parser.add_argument("--min-win-rate", type=float, default=meta_label.DEFAULT_MIN_WIN_RATE)
     parser.add_argument("--min-trades", type=int, default=30)
     parser.add_argument("--objective", default="expectancy", choices=["expectancy", "total"])
     parser.add_argument("--volatility-scaled", action="store_true", help="1-sigma*sqrt(H) barriers instead of fixed 3%%/3%%")

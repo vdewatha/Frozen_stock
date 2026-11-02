@@ -10,6 +10,10 @@ the real strategy classes on sampled prefixes.
 
 ``model_predictive_long`` is not replayed: it re-fits a random forest on every
 call, which is infeasible per bar over this history.
+
+RSI(2) pullback and IBS mean reversion are replayed at their seeded default
+parameters, and also expose their indicator exits (``replay_exit_signals``)
+so their labels follow the exit rule the paper path actually uses.
 """
 from __future__ import annotations
 
@@ -17,8 +21,16 @@ import numpy as np
 import pandas as pd
 
 from app.services.strategies.base import rsi as compute_rsi
+from app.services.strategies.short_term_reversion import (
+    IBS_DEFAULT_TREND_FILTER_SMA,
+    RSI2_DEFAULT_TREND_FILTER_SMA,
+    internal_bar_strength,
+    wilder_rsi,
+)
 
-REPLAYABLE_STRATEGIES = (
+# The ``buy_consensus`` feature counts BUYs across these seven; it is fixed so
+# adding a replayable strategy does not change an existing feature's meaning.
+CONSENSUS_STRATEGIES = (
     "moving_average_crossover",
     "rsi_mean_reversion",
     "macd_momentum",
@@ -27,6 +39,7 @@ REPLAYABLE_STRATEGIES = (
     "channel_breakout",
     "trend_pullback",
 )
+REPLAYABLE_STRATEGIES = (*CONSENSUS_STRATEGIES, "rsi2_pullback", "ibs_mean_reversion")
 
 
 def _clamp(values) -> np.ndarray:
@@ -140,6 +153,52 @@ def trend_pullback(prices: pd.DataFrame, fast_ema: int = 20, slow_ema: int = 100
                   _valid_history(close, max(fast_ema, slow_ema, 15)))
 
 
+def _trend_ok(close: pd.Series, window: int) -> np.ndarray:
+    """Vector ``_trend_state``: close above its ``window``-day SMA (0 disables)."""
+    if window <= 0:
+        return np.ones(len(close), dtype=bool)
+    sma = close.rolling(window).mean().to_numpy()
+    return np.isfinite(sma) & (close.to_numpy() > sma)
+
+
+def rsi2_pullback(prices: pd.DataFrame, rsi_period: int = 2, entry_threshold: float = 10,
+                  trend_window: int = RSI2_DEFAULT_TREND_FILTER_SMA) -> pd.DataFrame:
+    close = prices["close"].astype(float)
+    value = wilder_rsi(close, rsi_period).to_numpy()
+    buy = _trend_ok(close, trend_window) & np.isfinite(value) & (value < entry_threshold)
+    depth = np.where(buy, (entry_threshold - value) / max(entry_threshold, 1e-9), 0.0)
+    return _frame(np.where(buy, "BUY", "HOLD"), np.where(buy, _clamp(0.6 + depth * 0.3), 0.5),
+                  np.where(buy, _clamp(0.55 + depth * 0.15), 0.5),
+                  _valid_history(close, max(trend_window, rsi_period + 1)))
+
+
+def ibs_mean_reversion(prices: pd.DataFrame, entry_threshold: float = 0.2,
+                       trend_window: int = IBS_DEFAULT_TREND_FILTER_SMA) -> pd.DataFrame:
+    close = prices["close"].astype(float)
+    if not {"high", "low"}.issubset(prices.columns):
+        return _frame(np.full(len(close), "HOLD"), np.full(len(close), 0.5), np.full(len(close), 0.5),
+                      np.zeros(len(close), dtype=bool))
+    ibs = internal_bar_strength(prices).to_numpy()
+    buy = _trend_ok(close, trend_window) & (ibs < entry_threshold)
+    depth = np.where(buy, (entry_threshold - ibs) / max(entry_threshold, 1e-9), 0.0)
+    return _frame(np.where(buy, "BUY", "HOLD"), np.where(buy, _clamp(0.6 + depth * 0.3), 0.5),
+                  np.where(buy, _clamp(0.55 + depth * 0.1), 0.5), _valid_history(close, max(trend_window, 1)))
+
+
+def rsi2_exit(prices: pd.DataFrame, exit_sma_window: int = 5) -> np.ndarray:
+    """``RSI2PullbackStrategy.exit_signal`` (rule ``sma``) on the close of each bar."""
+    close = prices["close"].astype(float)
+    sma = close.rolling(exit_sma_window).mean().to_numpy()
+    return np.isfinite(sma) & (close.to_numpy() > sma)
+
+
+def ibs_exit(prices: pd.DataFrame, exit_threshold: float = 0.8) -> np.ndarray:
+    """``IBSMeanReversionStrategy.exit_signal`` (rule ``ibs``) on the close of each bar."""
+    if not {"high", "low"}.issubset(prices.columns):
+        return np.zeros(len(prices), dtype=bool)
+    return internal_bar_strength(prices).to_numpy() > exit_threshold
+
+
 _REPLAY = {
     "moving_average_crossover": moving_average_crossover,
     "rsi_mean_reversion": rsi_mean_reversion,
@@ -148,10 +207,19 @@ _REPLAY = {
     "bollinger_mean_reversion": bollinger_mean_reversion,
     "channel_breakout": channel_breakout,
     "trend_pullback": trend_pullback,
+    "rsi2_pullback": rsi2_pullback,
+    "ibs_mean_reversion": ibs_mean_reversion,
 }
+_EXITS = {"rsi2_pullback": rsi2_exit, "ibs_mean_reversion": ibs_exit}
 
 
 def replay_signals(prices: pd.DataFrame, strategies: tuple[str, ...] = REPLAYABLE_STRATEGIES) -> dict[str, pd.DataFrame]:
     """Per-bar ``action/confidence/probability_up`` for each strategy (default parameters)."""
     frame = prices.reset_index(drop=True)
     return {slug: _REPLAY[slug](frame) for slug in strategies}
+
+
+def replay_exit_signals(prices: pd.DataFrame, strategy: str) -> np.ndarray | None:
+    """Per-bar indicator exit decided on that bar's close, or None when the strategy has none."""
+    exit_rule = _EXITS.get(strategy)
+    return None if exit_rule is None else exit_rule(prices.reset_index(drop=True))

@@ -120,6 +120,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.explained_halt_auto_resume_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
+    "app.tasks.jobs.meta_label_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
     "app.tasks.jobs.alert_daily_digest_job": {"queue": "risk"},
@@ -252,6 +253,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.loss_feedback_job",
         "schedule": crontab(minute=45, hour=16, day_of_week="mon-fri"),
         "options": {"expires": 2 * 60 * 60},
+    },
+    # The meta-label filter retrains itself when due (missing, a week old, or
+    # enough new closed paper trades); the job itself skips the session.
+    "meta-label-retrain": {
+        "task": "app.tasks.jobs.meta_label_retrain_job",
+        "schedule": crontab(minute=15, hour=20),
+        "options": {"expires": 6 * 60 * 60},
     },
     "parameter-application": {"task": "app.tasks.jobs.parameter_application_job", "schedule": 60 * 15},
     "alert-delivery": {

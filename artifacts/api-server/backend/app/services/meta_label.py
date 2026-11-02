@@ -5,7 +5,17 @@ estimates the probability that the candidate trade, labelled with the
 triple-barrier method in ``triple_barrier``, ends with a positive return after
 costs.  Probabilities are calibrated on a held-out fold, and a threshold is
 chosen on a later, separate validation fold to maximise net expectancy subject
-to a minimum win rate (default 80%) and a minimum trade count.
+to a minimum win rate (default 60%, ``DEFAULT_MIN_WIN_RATE``), a minimum trade
+count and positive expectancy.  An 80% floor was the original default; no
+validation year reached it out of sample (reports/meta-label-20261028.md), so
+the threshold was always null and the filter never took a trade.
+
+Labels follow each strategy's real paper exit: the 3%/3% bracket for the
+technical strategies, and the 10% stop, no target, 10-session time stop and
+indicator exit for RSI(2)/IBS (``STRATEGY_BARRIERS``).  Closed paper round
+trips (``merge_paper_outcomes``) replace the simulated label of the same
+decision with the realised net result and carry extra weight, so the model
+learns from the bot's own fills and costs.
 
 Pipeline (offline, ``scripts/train_meta_label.py``):
 
@@ -43,7 +53,12 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 import pandas as pd
 
-from app.services.meta_label_primary import REPLAYABLE_STRATEGIES, replay_signals
+from app.services.meta_label_primary import (
+    CONSENSUS_STRATEGIES,
+    REPLAYABLE_STRATEGIES,
+    replay_exit_signals,
+    replay_signals,
+)
 from app.services.strategies.base import rsi as compute_rsi
 from app.services.triple_barrier import BarrierConfig, average_uniqueness, label_events
 from app.services.trading_universe import ETF_SYMBOLS, SECTOR_NAMES, sector_group
@@ -59,6 +74,14 @@ MARKET_FEATURES = (
     "buy_consensus",
 )
 MAX_FEATURE_LOOKBACK = 252
+DEFAULT_MIN_WIN_RATE = 0.60
+# RSI(2)/IBS paper exit policy (SHORT_TERM_REVERSION_EXIT_POLICY): 10% stop, no
+# target, 10 sessions, plus the indicator exit from ``replay_exit_signals``.
+REVERSION_BARRIER = BarrierConfig(take_profit_pct=0.0, stop_loss_pct=0.10, max_holding_days=10)
+STRATEGY_BARRIERS: dict[str, BarrierConfig] = {
+    "rsi2_pullback": REVERSION_BARRIER,
+    "ibs_mean_reversion": REVERSION_BARRIER,
+}
 
 
 def feature_names(strategies: Iterable[str] = REPLAYABLE_STRATEGIES) -> list[str]:
@@ -149,7 +172,7 @@ def _market_and_signals(prices: pd.DataFrame, spy_prices: pd.DataFrame | None) -
         for column in spy_columns:
             out[column] = np.nan
     signals = replay_signals(frame)
-    out["buy_consensus"] = sum((signals[slug]["action"] == "BUY").astype(float) for slug in REPLAYABLE_STRATEGIES)
+    out["buy_consensus"] = sum((signals[slug]["action"] == "BUY").astype(float) for slug in CONSENSUS_STRATEGIES)
     return out, signals
 
 
@@ -176,9 +199,16 @@ def _design_rows(market: pd.DataFrame, symbol: str, strategy: str, confidence, p
 def build_events(prices_by_symbol: Mapping[str, pd.DataFrame], spy_prices: pd.DataFrame,
                  barrier: BarrierConfig | None = None,
                  strategies: tuple[str, ...] = REPLAYABLE_STRATEGIES,
-                 start_date: str | None = None) -> pd.DataFrame:
-    """One labelled row per primary BUY (decision on the close of bar t)."""
+                 start_date: str | None = None,
+                 strategy_barriers: Mapping[str, BarrierConfig] | None = None) -> pd.DataFrame:
+    """One labelled row per primary BUY (decision on the close of bar t).
+
+    ``barrier`` labels every strategy without an entry in ``strategy_barriers``
+    (default ``STRATEGY_BARRIERS``); strategies with an indicator exit also
+    exit on it.
+    """
     barrier = barrier or BarrierConfig()
+    strategy_barriers = STRATEGY_BARRIERS if strategy_barriers is None else strategy_barriers
     names = feature_names(strategies)
     parts = []
     for symbol, prices in sorted(prices_by_symbol.items()):
@@ -190,7 +220,8 @@ def build_events(prices_by_symbol: Mapping[str, pd.DataFrame], spy_prices: pd.Da
             positions = np.flatnonzero(signal["action"].to_numpy() == "BUY")
             if start_date is not None:
                 positions = positions[market["date"].to_numpy()[positions] >= np.datetime64(start_date)]
-            labels = label_events(frame, positions, barrier)
+            labels = label_events(frame, positions, strategy_barriers.get(slug, barrier),
+                                  exit_signals=replay_exit_signals(frame, slug))
             if labels.empty:
                 continue
             design = _design_rows(market, symbol, slug, signal["confidence"], signal["probability_up"], strategies)
@@ -209,11 +240,107 @@ def build_events(prices_by_symbol: Mapping[str, pd.DataFrame], spy_prices: pd.Da
         if symbol_parts:
             events = pd.concat(symbol_parts, ignore_index=True)
             events["uniqueness"] = average_uniqueness(events["entry_idx"], events["exit_idx"])
+            events["weight"] = events["uniqueness"]
+            events["source"] = "replay"
             parts.append(events)
     if not parts:
-        return pd.DataFrame(columns=[*names, "symbol", "strategy", "t0", "t1", "label", "net_return", "uniqueness"])
+        return pd.DataFrame(columns=[*names, "symbol", "strategy", "t0", "t1", "label", "net_return", "uniqueness",
+                                     "weight", "source"])
     events = pd.concat(parts, ignore_index=True).sort_values(["t0", "symbol", "strategy"]).reset_index(drop=True)
     return events
+
+
+def merge_paper_outcomes(events: pd.DataFrame, outcomes: Iterable[Mapping[str, Any]],
+                         prices_by_symbol: Mapping[str, pd.DataFrame], spy_prices: pd.DataFrame | None,
+                         strategies: tuple[str, ...] = REPLAYABLE_STRATEGIES,
+                         weight: float = 3.0) -> tuple[pd.DataFrame, dict]:
+    """Fold closed paper round trips into ``events`` as realised labels.
+
+    Each outcome needs ``symbol``, ``strategy``, ``opened_at``, ``closed_at``,
+    ``net_return`` and optionally ``confidence`` / ``probability_up``.  The
+    decision bar is the last completed bar before the entry's session, so the
+    features are exactly what the paper cycle saw.  A replayed event for the
+    same (symbol, strategy, decision bar) is replaced, keeping its uniqueness;
+    otherwise the row is appended with uniqueness 1.  The label is the
+    realised net return > 0, and the row's weight is ``weight`` x uniqueness.
+    """
+    names = feature_names(strategies)
+    events = events.copy()
+    if "weight" not in events:
+        events["weight"] = events["uniqueness"]
+    if "source" not in events:
+        events["source"] = "replay"
+    summary = {"paper_outcomes": 0, "replaced": 0, "appended": 0, "skipped": {}}
+
+    def skip(reason: str) -> None:
+        summary["skipped"][reason] = summary["skipped"].get(reason, 0) + 1
+
+    markets: dict[str, tuple[pd.DataFrame, pd.DataFrame, dict]] = {}
+    rows = []
+    for outcome in outcomes:
+        symbol = str(outcome.get("symbol") or "").upper()
+        strategy = str(outcome.get("strategy") or "")
+        net = outcome.get("net_return")
+        if strategy not in strategies:
+            skip("unsupported_strategy")
+            continue
+        if net is None or not np.isfinite(float(net)):
+            skip("missing_return")
+            continue
+        if symbol not in prices_by_symbol:
+            skip("no_price_history")
+            continue
+        if symbol not in markets:
+            frame = prices_by_symbol[symbol].sort_values("date").reset_index(drop=True)
+            market, signals = _market_and_signals(frame, spy_prices)
+            markets[symbol] = (frame, market, signals)
+        frame, market, signals = markets[symbol]
+        dates = market["date"].to_numpy()
+        opened = _normalize_dates([outcome["opened_at"]]).iloc[0]
+        closed = _normalize_dates([outcome["closed_at"]]).iloc[0]
+        t = int(np.searchsorted(dates, np.datetime64(opened), side="left")) - 1
+        exit_idx = int(np.searchsorted(dates, np.datetime64(closed), side="right")) - 1
+        # The decision bar must be the session right before entry, not a stale
+        # bar from a history that ends before the trade.
+        if t < 0 or np.datetime64(opened) - dates[t] > np.timedelta64(7, "D"):
+            skip("outside_price_history")
+            continue
+        confidence = outcome.get("confidence")
+        probability_up = outcome.get("probability_up")
+        confidence = float(signals[strategy]["confidence"].iloc[t]) if confidence is None else float(confidence)
+        probability_up = (float(signals[strategy]["probability_up"].iloc[t]) if probability_up is None
+                          else float(probability_up))
+        design = _design_rows(market.iloc[[t]].reset_index(drop=True), symbol, strategy, [confidence],
+                              [probability_up], strategies)
+        if design[list(MARKET_FEATURES)].isna().any(axis=None):
+            skip("missing_features")
+            continue
+        row = design.iloc[0].to_dict()
+        net = float(net)
+        row.update({"symbol": symbol, "strategy": strategy, "event_idx": t, "entry_idx": t + 1,
+                    "exit_idx": max(exit_idx, t + 1), "barrier": "paper", "net_return": net, "label": int(net > 0),
+                    "t0": pd.Timestamp(dates[t]), "t1": closed, "source": "paper"})
+        rows.append(row)
+    if not rows:
+        return events, summary
+    paper = pd.DataFrame(rows)
+    key = ["symbol", "strategy", "event_idx"]
+    paper = paper.drop_duplicates(subset=key, keep="last").reset_index(drop=True)
+    replayed = events.reset_index().merge(paper[key], on=key, how="inner")
+    matched = replayed["index"].to_numpy()
+    uniqueness = {tuple(row[:3]): float(row[3]) for row in replayed[[*key, "uniqueness"]].itertuples(index=False)}
+    paper["uniqueness"] = [uniqueness.get(tuple(k), 1.0) for k in paper[key].itertuples(index=False)]
+    paper["weight"] = paper["uniqueness"] * float(weight)
+    summary["paper_outcomes"] = int(len(paper))
+    summary["replaced"], summary["appended"] = int(len(matched)), int(len(paper) - len(matched))
+    columns = list(dict.fromkeys([*names, *events.columns]))
+    merged = pd.concat([events.drop(index=matched), paper.reindex(columns=columns)], ignore_index=True)
+    merged = merged.sort_values(["t0", "symbol", "strategy"]).reset_index(drop=True)
+    return merged, summary
+
+
+def _weights(frame: pd.DataFrame) -> np.ndarray:
+    return (frame["weight"] if "weight" in frame else frame["uniqueness"]).to_numpy(dtype=float)
 
 
 # ---------------------------------------------------------------- models
@@ -291,7 +418,7 @@ def trade_metrics(net_returns: np.ndarray) -> dict:
 
 @dataclass(frozen=True)
 class ThresholdPolicy:
-    min_win_rate: float = 0.80
+    min_win_rate: float = DEFAULT_MIN_WIN_RATE
     min_trades: int = 30
     # "expectancy" maximises mean net return per trade; "total" maximises the
     # sum (expectancy x trades).  Both require win rate >= min_win_rate,
@@ -415,10 +542,10 @@ def fit_fold(training: pd.DataFrame, calibration: pd.DataFrame, validation: pd.D
     if training["label"].nunique() < 2 or calibration["label"].nunique() < 2:
         raise ValueError("training and calibration folds need both classes")
     model = _fit(make_classifier(config.model_kind, config.seed), training[names], training["label"].to_numpy(),
-                 training["uniqueness"].to_numpy())
+                 _weights(training))
     raw_calibration = model.predict_proba(calibration[names])[:, 1]
     calibrator = fit_calibrator(raw_calibration, calibration["label"].to_numpy(),
-                                calibration["uniqueness"].to_numpy(), config.calibration)
+                                _weights(calibration), config.calibration)
     validation_probability = apply_calibrator(calibrator, model.predict_proba(validation[names])[:, 1])
     selection = select_threshold(validation_probability, validation["net_return"].to_numpy(), config.policy)
     return {"model": model, "calibrator": calibrator, "selection": selection,
@@ -534,6 +661,7 @@ def fit_final_model(events: pd.DataFrame, config: WalkForwardConfig | None = Non
         "feature_names": names,
         "strategies": list(strategies),
         "barrier": (barrier or BarrierConfig()).to_dict(),
+        "strategy_barriers": {slug: STRATEGY_BARRIERS[slug].to_dict() for slug in strategies if slug in STRATEGY_BARRIERS},
         "policy": {"min_win_rate": config.policy.min_win_rate, "min_trades": config.policy.min_trades,
                    "objective": config.policy.objective},
         "threshold": selection["threshold"],
@@ -637,7 +765,8 @@ def score_buy_signal(bundle: dict, symbol: str, strategy: str, confidence: float
     probability = float(predict_probability(bundle, rows)[0])
     threshold = bundle.get("threshold")
     decision = "take" if threshold is not None and probability >= threshold else "skip"
-    reason = ("no validated threshold met the win-rate target; every signal is skipped" if threshold is None
+    reason = ("no validated threshold had positive expectancy at the win-rate floor; every signal is skipped"
+              if threshold is None
               else f"calibrated probability {probability:.3f} {'>=' if decision == 'take' else '<'} threshold {threshold:.3f}")
     feature_date = market["date"].iloc[-1]
     return result | {"status": "scored", "probability": round(probability, 6), "decision": decision, "reason": reason,

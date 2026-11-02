@@ -1567,6 +1567,27 @@ def loss_feedback_job() -> dict:
 
 
 @celery_app.task
+def meta_label_retrain_job() -> dict:
+    """Retrain the meta-label BUY filter off hours when due (paper only)."""
+    from app.services.intraday_data import session_bounds
+
+    now = datetime.now(timezone.utc)
+    bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
+    if bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]:
+        return {"status": "skipped", "job": "meta_label_retrain_job",
+                "reason": "model retraining is deferred outside the regular session"}
+
+    def work(db):
+        from app.services.meta_label_learning import retrain_meta_label
+
+        result = retrain_meta_label(db, now=now)
+        db.commit()
+        return {"job": "meta_label_retrain_job", **result}
+
+    return _run_job("meta_label_retrain_job", work)
+
+
+@celery_app.task
 def parameter_application_job() -> dict:
     """Advance governed paper parameter sets through their learning cycles."""
     def work(db):
