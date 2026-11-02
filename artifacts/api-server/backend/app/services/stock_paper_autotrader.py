@@ -36,6 +36,7 @@ from app.services.stock_paper_ledger import (
     release_unsubmitted_reservation,
     reserve_stock_paper_order,
 )
+from app.services.earnings_calendar import earnings_blackout, earnings_known
 from app.services.entry_protections import load_entry_protections, protective_stop_idempotency_key
 from app.services.intraday_data import session_bounds
 from app.services.meta_label_shadow import resolve_runtime as resolve_meta_label_runtime
@@ -427,6 +428,46 @@ def _sector_exposure(db: Session, account_id: int) -> dict[str, set[str]]:
     return groups
 
 
+BUY_OUTCOME_ACTION = "buy_signal_outcomes"
+
+
+def _record_buy_outcomes(db: Session, results: list[dict], now: datetime) -> None:
+    """Audit what happened to every BUY signal, only when that picture changes.
+
+    State signals repeat every minute; recording each repeat would flood the
+    audit log, so a row is written only when the set of outcomes differs from
+    the previous one. This is the evidence for why signals did not trade.
+    """
+    from app.models import AuditLog
+    from app.services.audit import write_audit_log
+
+    outcomes = sorted(
+        (
+            {"symbol": item.get("symbol"), "strategy": item.get("strategy"),
+             "mode": item.get("mode", "governed"), "status": item.get("status"),
+             "reason": item.get("reason")}
+            for item in results if item.get("signal_action") == "BUY"
+        ),
+        key=lambda row: (str(row["symbol"]), str(row["strategy"])),
+    )
+    if not outcomes:
+        return
+    previous = db.query(AuditLog).filter(
+        AuditLog.event_type == "stock_paper", AuditLog.action == BUY_OUTCOME_ACTION,
+    ).order_by(AuditLog.id.desc()).first()
+    if previous is not None and (previous.payload or {}).get("outcomes") == outcomes:
+        return
+    counts: dict[str, int] = {}
+    for row in outcomes:
+        counts[row["status"] or "unknown"] = counts.get(row["status"] or "unknown", 0) + 1
+    write_audit_log(
+        db, event_type="stock_paper", action=BUY_OUTCOME_ACTION, status="recorded",
+        message="BUY signal outcomes changed",
+        payload={"observed_at": now.isoformat(), "counts": counts, "outcomes": outcomes, "paper_only": True},
+    )
+    db.commit()
+
+
 def run_stock_paper_signal_cycle(db: Session) -> dict:
     """Run one bounded multi-symbol/multi-strategy paper execution cycle.
 
@@ -667,6 +708,13 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         result.update(protection_block)
                         results.append(result)
                         continue
+                    earnings_block = earnings_blackout(symbol, now)
+                    if earnings_block is not None:
+                        result.update(earnings_block)
+                        results.append(result)
+                        continue
+                    if not earnings_known(symbol):
+                        result["earnings_unknown"] = True
                     group = sector_group(symbol)
                     group_symbols = sector_groups.get(group, set())
                     if sector_cap and symbol not in group_symbols and len(group_symbols) >= sector_cap:
@@ -840,6 +888,11 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
 
     submitted = sum(item.get("status") == "submitted" for item in results)
     blocked = sum(item.get("status") in {"blocked", "failed"} for item in results)
+    try:
+        _record_buy_outcomes(db, results, now)
+    except Exception as exc:  # evidence only; never fail the cycle
+        db.rollback()
+        logger.info("buy outcome record unavailable: %s", exc.__class__.__name__)
     finished = time.perf_counter()
     timing = {
         "signals_ms": round((signals_done - cycle_started) * 1000, 1),

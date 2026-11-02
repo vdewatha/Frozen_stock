@@ -212,6 +212,11 @@ class Settings(BaseSettings):
     # Empty = <backend>/stock_training_artifacts/meta_label/meta_label_model.joblib
     # (produced by scripts/train_meta_label.py).
     paper_meta_label_model_path: str = ""
+    # Earnings blackout (app/services/earnings_calendar.py): skip new paper
+    # BUYs when an earnings report falls within this many sessions (today
+    # included), so a lot is not held through the gap. Funds are unaffected
+    # and an unavailable calendar does not block. 0 disables.
+    paper_earnings_blackout_sessions: int = Field(default=10, ge=0, le=60)
     # Entry protections (app/services/entry_protections.py): entry-only
     # circuit breakers for scheduled and exploration paper BUYs.  They never
     # block sells/exits.  A risk-rule key with the same name minus the

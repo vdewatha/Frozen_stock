@@ -16,3 +16,12 @@ def _wall_clock_independent_entry_window(monkeypatch):
     """
     monkeypatch.setattr(settings, "paper_entry_open_buffer_minutes", 0)
     monkeypatch.setattr(settings, "paper_entry_close_buffer_minutes", 0)
+
+
+@pytest.fixture(autouse=True)
+def _no_network_earnings_calendar(monkeypatch):
+    """The earnings blackout fetches from yfinance; tests never hit the network.
+
+    Tests that exercise the blackout set the window and inject a fetch.
+    """
+    monkeypatch.setattr(settings, "paper_earnings_blackout_sessions", 0)
