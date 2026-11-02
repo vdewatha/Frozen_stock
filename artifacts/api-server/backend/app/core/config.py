@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     dev_paper_broker_account_id: SecretStr = SecretStr("")
     # Derived by ``apply_development_paper_binding``; never read from the env.
     paper_binding_source: str = "shared"
+    # Separate, operator-driven short pilot. Never used by deployed/live lanes.
+    dev_paper_shorts_enabled: bool = False
+    dev_paper_shorts_automation_enabled: bool = False
+    paper_workers_enabled: bool = True
     alpaca_api_key: SecretStr = SecretStr("")
     alpaca_api_secret: SecretStr = SecretStr("")
     alpaca_data_url: str = "https://data.alpaca.markets"

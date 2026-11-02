@@ -32,15 +32,10 @@ class ShortSimulationConfig(BaseModel):
     annual_borrow_rate: float = Field(default=0.03, ge=0, le=1)
 
 
-def simulate_short_history(frame: pd.DataFrame, *, symbol: str, source: str,
-                           config: ShortSimulationConfig | None = None) -> dict:
-    """RSI(2) overbought bounces below SMA; next-open entries and covers.
-
-    One whole-share short at a time. Sale proceeds are restricted collateral,
-    never reusable buying power. Borrow cost accrues over calendar days. Stops
-    use adverse gap opens and intrabar highs, including the entry session.
-    Costs/borrowability/dividends are not broker-verified; no promotion allowed.
-    """
+def validated_short_history(frame: pd.DataFrame, *, source: str,
+                            config: ShortSimulationConfig | None = None,
+                            completed_before=None):
+    """Shared dated OHLC validation for research and the paper-only scheduler."""
     config = config or ShortSimulationConfig()
     if source not in {"yfinance", "yahoo_chart", "alpaca_iex_daily"}:
         raise ValueError("Short simulation requires one supported real historical data source")
@@ -57,7 +52,7 @@ def simulate_short_history(frame: pd.DataFrame, *, symbol: str, source: str,
         raise ValueError("Daily dates must be unique and strictly increasing")
     if (dates != dates.dt.normalize()).any():
         raise ValueError("Expected daily session dates, not intraday bars")
-    if (dates.dt.date >= datetime.now(timezone.utc).date()).any():
+    if (dates.dt.date >= (completed_before or datetime.now(timezone.utc).date())).any():
         raise ValueError("Only completed historical sessions are supported")
     prices = data[["open", "high", "low", "close"]]
     if prices.map(lambda value: isinstance(value, (bool, np.bool_))).any().any():
@@ -79,6 +74,18 @@ def simulate_short_history(frame: pd.DataFrame, *, symbol: str, source: str,
             expected.append(day.date())
     if list(dates.dt.date) != expected:
         raise ValueError("Daily history has missing or non-session dates")
+    return data, dates, values
+
+
+def simulate_short_history(frame: pd.DataFrame, *, symbol: str, source: str,
+                           config: ShortSimulationConfig | None = None) -> dict:
+    """Next-open short research with restricted proceeds and modeled costs.
+
+    Broker capabilities, borrow/dividends, and all-in costs remain unverified.
+    Stops include adverse opening gaps and the entry session's high.
+    """
+    config = config or ShortSimulationConfig()
+    data, dates, values = validated_short_history(frame, source=source, config=config)
     close = values.close.astype(float)
     rsi = wilder_rsi(close, 2)
     sma = close.rolling(config.trend_window).mean()

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from typing import Literal
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Literal
 
 from app.db.session import get_db
 from app.schemas.trading import StockPaperAccountTransitionRequest, StockPaperInitializeRequest
@@ -16,6 +16,7 @@ from app.services.paper_transport_recovery import review as review_paper_transpo
 from app.services.paper_trade_scorecard import build_scorecard, operations_summary, scorecard_history
 from app.services.stock_paper_ledger import (
     StockPaperError,
+    StockPaperUnavailable,
     active_paper_broker_name,
     create_stock_paper_signal,
     dispatch_reserved_order,
@@ -33,9 +34,58 @@ from app.services.stock_paper_ledger import (
 from app.services.stock_recovery import acknowledge_stock_paper_accounting_review, cancel_open_stock_orders, recovery_evidence, recovery_status, rollback_to_last_known_good
 from app.services.stock_training_jobs import StockTrainingError
 from app.services.paper_short_simulation import ShortSimulationConfig, simulate_short_history
+from app.services import paper_short_pilot
 from app.tasks.jobs import paper_trading_signal_job
 
 router = APIRouter(prefix="/stock-paper", tags=["stock-paper"])
+
+
+def _short_pilot_action(action, db: Session, http_request: Request, **kwargs):
+    try:
+        return action(db, actor=getattr(http_request.state, "actor", "unknown"), **kwargs)
+    except StockPaperUnavailable as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Development paper broker unavailable") from exc
+    except (StockPaperError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/short-pilot")
+def short_pilot_status(db: Session = Depends(get_db)):
+    return paper_short_pilot.pilot_status(db)
+
+
+@router.post("/short-pilot/authorize")
+def authorize_short_pilot(payload: paper_short_pilot.PilotAuthorization, request: Request, db: Session = Depends(get_db)):
+    return _short_pilot_action(paper_short_pilot.authorize_pilot, db, request, request=payload)
+
+
+@router.post("/short-pilot/orders")
+def submit_short_pilot_order(payload: paper_short_pilot.PilotOrderRequest, request: Request, db: Session = Depends(get_db)):
+    return _short_pilot_action(paper_short_pilot.submit_pilot_order, db, request, request=payload)
+
+
+@router.post("/short-pilot/reconcile")
+def reconcile_short_pilot(request: Request, db: Session = Depends(get_db)):
+    return _short_pilot_action(paper_short_pilot.reconcile_pilot, db, request)
+
+
+class ShortPilotPauseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=10, max_length=500)
+
+
+@router.post("/short-pilot/pause")
+def pause_short_pilot(payload: ShortPilotPauseRequest, request: Request, db: Session = Depends(get_db)):
+    return _short_pilot_action(paper_short_pilot.pause_pilot, db, request, reason=payload.reason)
+
+
+@router.post("/short-pilot/orders/{client_id}/cancel")
+def cancel_short_pilot_order(client_id: str, request: Request, db: Session = Depends(get_db)):
+    if not re.fullmatch(r"dps-[0-9a-f]{48}", client_id):
+        raise HTTPException(status_code=422, detail="Invalid pilot client order ID")
+    return _short_pilot_action(paper_short_pilot.cancel_pilot_order, db, request, client_id=client_id)
 
 
 class ShortSimulationRequest(BaseModel):

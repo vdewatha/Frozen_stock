@@ -98,6 +98,13 @@ ADMIN_POSTS = {
 
 
 def required_role(method: str, path: str) -> str:
+    if path == "/stock-paper/short-pilot" and method == "GET":
+        return "viewer"
+    if path == "/stock-paper/short-pilot/authorize" and method == "POST":
+        return "admin"
+    if method == "POST" and (path in {"/stock-paper/short-pilot/orders", "/stock-paper/short-pilot/reconcile", "/stock-paper/short-pilot/pause"}
+                            or re.fullmatch(r"/stock-paper/short-pilot/orders/dps-[0-9a-f]{48}/cancel", path)):
+        return "operator"
     if method == "POST" and path == "/stock-paper/short-simulation":
         return "researcher"
     if method == "GET" and re.fullmatch(r"/crypto/bindings/[1-9][0-9]*/evidence", path):

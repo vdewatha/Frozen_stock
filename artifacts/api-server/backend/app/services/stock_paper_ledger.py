@@ -1894,6 +1894,10 @@ def initialize_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | No
         raise StockPaperError("Alpaca activity contract requires the Alpaca paper provider")
     gateway = gateway or active_paper_gateway()
     raw_account, raw_positions, raw_orders, raw_fills, observed = _snapshot(gateway)
+    from app.models.paper_short_pilot import PaperShortPilot
+    short_pilot = db.get(PaperShortPilot, 1)
+    if short_pilot and short_pilot.account_sha256 == hashlib.sha256(str(raw_account.get("id", "")).encode()).hexdigest():
+        raise StockPaperError("Account is owned by the isolated short pilot; long-only initialization is blocked")
     if is_v2:
         first_key = _v2_snapshot_key((raw_account, raw_positions, raw_orders, raw_fills, observed))
         second = _snapshot(gateway)

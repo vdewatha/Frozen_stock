@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.models import paper_short_pilot  # Register the isolated development pilot.
+
 from app.models.crypto_data import CryptoCandle, CollectionRun
 from app.models.online_research import OnlineResearchForecast
 from app.models import shadow, execution  # Register core priority-package tables with Base.

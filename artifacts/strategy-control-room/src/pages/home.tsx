@@ -29,6 +29,7 @@ import { RegimeMonitorLab } from "@/components/regime-monitor-lab";
 import { RiskSettingsPanel } from "@/components/risk-settings-panel";
 import { StatusPill } from "@/components/status-pill";
 import { StockPaperLedgerPanel } from "@/components/stock-paper-ledger-panel";
+import { ShortPilotMonitor, ShortPilotNotice } from "@/components/short-pilot-monitor";
 import { PaperScorecardPanel } from "@/components/paper-scorecard-panel";
 import { LossFeedbackPanel } from "@/components/loss-feedback-panel";
 import { StockTrainingLab } from "@/components/stock-training-lab";
@@ -116,10 +117,10 @@ function PageContent({ page, section, dashboard, session }: { page: string; sect
   const client = useQueryClient();
   // The kill-switch label reads the risk rule from the workspace snapshot, so refetch it after any safety action.
   const refreshWorkspace = () => void client.invalidateQueries({ queryKey: ["workspace-session"] });
-  if (page === "overview") return <PaperOverviewPanel />;
+  if (page === "overview") return <><ShortPilotNotice /><PaperOverviewPanel /></>;
   const views: Record<string, ReactNode> = {
     "markets/iex": <IexResearchPanel />, "markets/consolidated": <DelayedSipPanel />, "markets/history": <MarketLab />, "markets/context": <><RegimeMonitorLab /><EconomicContextLab /><NewsSentimentLab /></>,
-    "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/scorecard": <PaperScorecardPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,
+    "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/shorts": <ShortPilotMonitor />, "portfolio/scorecard": <PaperScorecardPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,
     "learning/cycles": <StockLearningCyclePanel />, "learning/training": <StockTrainingLab />, "learning/evaluation": <ForwardPaperEvaluationPanel />, "learning/performance": <ModelPerformanceLab />, "learning/losses": <LossFeedbackPanel />,
     "research/runs": <ResearchControlRoom />, "research/scalp": <ResearchOnly><ScalpResearchPanel /></ResearchOnly>, "research/experiments": <ExperimentManagerLab />, "research/library": <StrategyLibrary dashboard={dashboard} />, "research/models": <ResearchOnly><ModelLab /></ResearchOnly>, "research/signals": <ResearchOnly><PredictionScanner /><OpportunityRadar /></ResearchOnly>, "research/memory": <ResearchOnly><MemoryReplayPanel /></ResearchOnly>,
     "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} onSafetyAction={refreshWorkspace} />, "risk/broker": <><PaperVenueGovernancePanel /><BrokerSafetyLab /></>, "risk/recovery": <StockRecoveryPanel onKillSwitchChange={refreshWorkspace} />,

@@ -5,6 +5,13 @@ redis_port="${REDIS_PORT:-6379}"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:${redis_port}/0}"
 export ALLOW_LIVE_TRADING="false"
 
+if [[ "${DEV_PAPER_SHORTS_AUTOMATION_ENABLED:-false}" == "true" ]]; then
+  if [[ "${ENVIRONMENT:-local}" != "local" || "${PAPER_WORKERS_ENABLED:-true}" != "false" ]]; then
+    echo "Short automation requires an exclusive local paper database and shared workers disabled." >&2
+    exit 1
+  fi
+fi
+
 pids=()
 cleanup() {
   trap - EXIT INT TERM
@@ -129,6 +136,11 @@ if [[ "${PAPER_WORKERS_ENABLED:-true}" == "true" ]]; then
   pids+=("$!")
 else
   echo "PAPER_WORKERS_ENABLED=false; skipping watchdog, Celery workers, and beat."
+fi
+
+if [[ "${DEV_PAPER_SHORTS_AUTOMATION_ENABLED:-false}" == "true" ]]; then
+  python3.11 -m scripts.run_paper_short_automation &
+  pids+=("$!")
 fi
 
 python3.11 -m uvicorn app.main:app \
