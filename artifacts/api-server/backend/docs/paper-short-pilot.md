@@ -71,6 +71,20 @@ still matter. A 24/7 host/process supervisor is required for 24/7 operation.
 Nothing here deploys the worker, establishes profitability, or makes the fixed
 strategy self-modifying. Live and production gates are unchanged.
 
+## Hosted Deployment
+
+The published app runs the same worker as a supervised `short-pilot` lane when
+`DEV_PAPER_SHORTS_AUTOMATION_ENABLED=true`. Hosted mode needs its own paper
+account through the `SHORT_PAPER_ALPACA_API_KEY`, `SHORT_PAPER_ALPACA_API_SECRET`
+and `SHORT_PAPER_BROKER_ACCOUNT_ID` secrets; it refuses the long lane's account
+and shares only the database, kill switch, and recovery state with it.
+
+With `SHORT_PILOT_AUTO_AUTHORIZE=true` the worker grants itself a 29-day
+automated policy from `SHORT_PILOT_SYMBOLS`, `SHORT_PILOT_MAX_ORDER_NOTIONAL`
+(default $1,000) and `SHORT_PILOT_MAX_GROSS_NOTIONAL` (default $3,000), and
+renews it within two days of expiry while the account is flat. It never
+replaces a manual grant or lifts an operator pause. The hard caps above still apply.
+
 ## Isolation
 
 - Off by default: `DEV_PAPER_SHORTS_ENABLED=false`.

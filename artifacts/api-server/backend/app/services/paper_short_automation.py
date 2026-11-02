@@ -134,11 +134,42 @@ def _record(db, result, now):
     return result
 
 
+POLICY_ACTOR = "deployment-policy"
+POLICY_DAYS, POLICY_RENEW_BEFORE = 29, timedelta(days=2)
+
+
+def ensure_standing_policy(db: Session, gateway, now: datetime):
+    """Grant or renew the deployment-configured policy while the account is flat.
+
+    Only a policy this function created is renewed. Manual grants are never
+    promoted and an operator pause is never lifted.
+    """
+    grant = db.get(PaperShortPilot, 1)
+    if not settings.short_pilot_auto_authorize or not settings.dev_paper_shorts_automation_enabled:
+        return grant
+    if grant is not None and (grant.authorized_by != POLICY_ACTOR or not grant.automated or grant.status != "active"
+                              or now < pilot._utc(grant.expires_at) - POLICY_RENEW_BEFORE):
+        return grant
+    try:
+        pilot.authorize_pilot(db, pilot.PilotAuthorization(
+            symbols=settings.short_pilot_symbols,
+            max_order_notional=settings.short_pilot_max_order_notional,
+            max_gross_notional=settings.short_pilot_max_gross_notional,
+            expires_at=now + timedelta(days=POLICY_DAYS), automated=True,
+            reason="Standing short policy from deployment configuration"),
+            actor=POLICY_ACTOR, gateway=gateway, now=now)
+    except Exception:
+        # Renewal needs a flat account and a reachable broker; covers continue
+        # under the existing grant and this retries on the next cycle.
+        db.rollback()
+    return db.get(PaperShortPilot, 1)
+
+
 def run_short_automation_cycle(db: Session, *, gateway=None, now=None, refresh=True) -> dict:
     """One deterministic cycle; production safety and broker gates remain in dispatch."""
     injected_clock = now is not None
     now, gateway = now or datetime.now(UTC), gateway or pilot.ShortPilotGateway()
-    grant = db.get(PaperShortPilot, 1)
+    grant = ensure_standing_policy(db, gateway, now)
     if not settings.dev_paper_shorts_automation_enabled or grant is None or not grant.automated:
         return {"status": "disabled", "paper_only": True, "live_trading": False}
     try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hmac
 import re
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -75,9 +76,18 @@ class Settings(BaseSettings):
     dev_paper_broker_account_id: SecretStr = SecretStr("")
     # Derived by ``apply_development_paper_binding``; never read from the env.
     paper_binding_source: str = "shared"
-    # Separate, operator-driven short pilot. Never used by deployed/live lanes.
+    # Separate short pilot. Locally it uses the DEV_PAPER_* account; a hosted
+    # deployment uses its own SHORT_PAPER_* paper account, never the long one.
     dev_paper_shorts_enabled: bool = False
     dev_paper_shorts_automation_enabled: bool = False
+    short_paper_alpaca_api_key: SecretStr = SecretStr("")
+    short_paper_alpaca_api_secret: SecretStr = SecretStr("")
+    short_paper_broker_account_id: SecretStr = SecretStr("")
+    # Standing policy the hosted worker grants itself (and renews) while flat.
+    short_pilot_auto_authorize: bool = False
+    short_pilot_symbols: list[str] = ["AAPL", "MSFT", "SPY", "QQQ"]
+    short_pilot_max_order_notional: Decimal = Decimal("1000")
+    short_pilot_max_gross_notional: Decimal = Decimal("3000")
     paper_workers_enabled: bool = True
     alpaca_api_key: SecretStr = SecretStr("")
     alpaca_api_secret: SecretStr = SecretStr("")
@@ -523,6 +533,20 @@ class Settings(BaseSettings):
             self.paper_alpaca_api_key.get_secret_value(),
             self.paper_alpaca_api_secret.get_secret_value(),
         )
+
+    def short_paper_hosted(self) -> bool:
+        return self.environment != "local" and all(v.get_secret_value().strip() for v in (
+            self.short_paper_alpaca_api_key, self.short_paper_alpaca_api_secret,
+            self.short_paper_broker_account_id))
+
+    def short_paper_credentials(self) -> tuple[str, str, str]:
+        """Key, secret and account for the short pilot; never the long lane's pair when hosted."""
+        if self.environment == "local":
+            key, secret = self.paper_broker_credentials()
+            return key, secret, self.dev_paper_broker_account_id.get_secret_value().strip()
+        return (self.short_paper_alpaca_api_key.get_secret_value().strip(),
+                self.short_paper_alpaca_api_secret.get_secret_value().strip(),
+                self.short_paper_broker_account_id.get_secret_value().strip())
 
     def research_alpaca_credentials(self) -> tuple[str, str]:
         """Return credentials scoped to read-only Alpaca market-data research.

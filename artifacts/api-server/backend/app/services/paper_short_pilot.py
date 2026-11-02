@@ -65,6 +65,12 @@ class PilotOrderRequest(BaseModel):
 
 
 class ShortPilotGateway(AlpacaPaperClient):
+    def _headers(self) -> dict[str, str]:
+        if not settings.short_paper_hosted():
+            return super()._headers()
+        key, secret, _ = settings.short_paper_credentials()
+        return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret, "Accept": "application/json"}
+
     def clock(self) -> dict:
         return self._request("GET", "/v2/clock")
 
@@ -99,16 +105,22 @@ def _decimal(value, name: str, *, signed=False) -> Decimal:
 
 
 def _binding(gateway, *, entry=False) -> str:
-    if (settings.environment != "local" or settings.allow_live_trading
-            or settings.paper_binding_source != "development" or settings.paper_workers_enabled
-            or settings.active_paper_broker != "alpaca_paper"):
+    if settings.allow_live_trading or settings.active_paper_broker != "alpaca_paper":
+        raise StockPaperError("Short pilot requires paper-only Alpaca mode")
+    hosted = settings.short_paper_hosted()
+    if not hosted and (settings.environment != "local" or settings.paper_binding_source != "development"
+                       or settings.paper_workers_enabled):
         raise StockPaperError("Short pilot requires exclusive local development paper mode with workers off")
     if entry and not settings.dev_paper_shorts_enabled:
         raise StockPaperError("Development paper short pilot is disabled")
     if getattr(gateway, "base_url", None) != ALPACA_PAPER_URL:
         raise StockPaperError("Only the immutable Alpaca paper endpoint is permitted")
-    bound = settings.dev_paper_broker_account_id.get_secret_value().strip()
-    if not bound or bound != settings.paper_broker_account_id or bound == settings.live_broker_account_id:
+    bound = settings.short_paper_credentials()[2]
+    if hosted:
+        # Hosted shorts share the database with the long lane, never its account.
+        if not bound or bound == settings.paper_broker_account_id or bound == settings.live_broker_account_id:
+            raise StockPaperError("Hosted short pilot requires its own dedicated paper account")
+    elif not bound or bound != settings.paper_broker_account_id or bound == settings.live_broker_account_id:
         raise StockPaperError("Dedicated development paper account binding is required")
     return sha256(bound.encode()).hexdigest()
 

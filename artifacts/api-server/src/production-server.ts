@@ -293,6 +293,11 @@ function startPaperWorkers(): void {
     workersStartedAt = new Date().toISOString();
     runtimeEnv.PAPER_WORKERS_STARTED_AT = workersStartedAt;
   }
+  // The short pilot trades its own paper account. It reconciles around the
+  // clock and only enters or covers during the regular session.
+  if (process.env.DEV_PAPER_SHORTS_AUTOMATION_ENABLED === "true") {
+    supervisePaperWorker(["-m", "scripts.run_paper_short_automation"], "short-pilot");
+  }
   if (compactPaperWorker) {
     supervisePaperWorker([
       "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",

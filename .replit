@@ -72,7 +72,7 @@ PAPER_LEARNING_CONCURRENCY = "1"
 # a stale symbol blocks only itself unless >20% of symbols or SPY/QQQ are stale.
 PAPER_EXECUTION_SYMBOLS = "[\"SPY\", \"QQQ\", \"IWM\", \"DIA\", \"XLK\", \"XLF\", \"XLE\", \"XLV\", \"XLY\", \"XLP\", \"XLI\", \"XLU\", \"XLB\", \"XLRE\", \"XLC\", \"SMH\", \"AAPL\", \"MSFT\", \"NVDA\", \"AMZN\", \"GOOGL\", \"META\", \"TSLA\", \"AVGO\", \"JPM\", \"V\", \"MA\", \"UNH\", \"XOM\", \"LLY\", \"COST\", \"HD\", \"PG\", \"JNJ\", \"ABBV\", \"MRK\", \"PEP\", \"KO\", \"BAC\", \"WMT\", \"NFLX\", \"AMD\", \"CRM\", \"ORCL\", \"ADBE\"]"
 # Updated for each deployable release so hosted readiness can be verified.
-PAPER_BUILD_ID = "paper-entry-window-20261030-v1"
+PAPER_BUILD_ID = "paper-hosted-shorts-20261102-v1"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 # Feature refreshes retrain every symbol (~98 minutes here); queued from IEX
@@ -112,4 +112,10 @@ INTRADAY_BACKFILL_CHUNKS_PER_CYCLE = "8"
 
 [userenv.production]
 ENVIRONMENT = "production"
+# Short pilot on its own paper account (SHORT_PAPER_* secrets). It grants and
+# renews its own bounded 29-day policy while flat, trades AAPL/MSFT/SPY/QQQ
+# in the regular session (9:30-4:00 ET), and holds up to five sessions.
+DEV_PAPER_SHORTS_ENABLED = "true"
+DEV_PAPER_SHORTS_AUTOMATION_ENABLED = "true"
+SHORT_PILOT_AUTO_AUTHORIZE = "true"
 CLERK_ROLE_MAPPINGS = "{\"user_3KQ4j0KxYM5iVpPz4Y0pnYC4mIR\":\"admin\",\"user_3KQ9CGy7ikGFcIHnxjKO2Vk89PD\":\"admin\"}"

@@ -2,6 +2,7 @@
 from datetime import timedelta
 from contextlib import nullcontext
 from decimal import Decimal
+from hashlib import sha256
 import importlib.util
 import os
 from pathlib import Path
@@ -11,9 +12,10 @@ from threading import Event
 import numpy as np
 import pandas as pd
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 
-from test_paper_short_pilot import setup, Broker, NOW, authorization, order
+from test_paper_short_pilot import ACCOUNT as ACCOUNT_ID, setup, Broker, NOW, authorization, order
 from app.models import IntradayBar, RiskRule, StockPaperRecoveryState
 from app.models.paper_short_pilot import PaperShortPilot
 from app.services import paper_short_automation as auto, paper_short_pilot as pilot
@@ -480,3 +482,67 @@ def test_automated_authority_cannot_extend_beyond_thirty_days(setup):
         pilot.authorize_pilot(db, authorization(automated=True, expires_at=NOW + timedelta(days=31)),
                               actor="admin:test", gateway=broker, now=NOW)
     assert not broker.posts
+
+
+@pytest.fixture
+def hosted(setup, monkeypatch):
+    """Production-like settings: shared workers on, shorts on their own account."""
+    db, broker = setup
+    for name, value in {
+        "environment": "production", "paper_binding_source": "shared", "paper_workers_enabled": True,
+        "paper_broker_account_id": "long-lane-account", "dev_paper_broker_account_id": SecretStr(""),
+        "short_paper_alpaca_api_key": SecretStr("key"), "short_paper_alpaca_api_secret": SecretStr("secret"),
+        "short_paper_broker_account_id": SecretStr(ACCOUNT_ID),
+        "dev_paper_shorts_automation_enabled": True, "short_pilot_auto_authorize": True,
+        "short_pilot_symbols": ["AAPL"], "short_pilot_max_order_notional": Decimal("250"),
+        "short_pilot_max_gross_notional": Decimal("1000"),
+    }.items():
+        monkeypatch.setattr(pilot.settings, name, value)
+    monkeypatch.setattr(auto, "daily_signal", lambda *a, **kw: signal())
+    return db, broker
+
+
+def test_hosted_binding_uses_its_own_account_beside_long_workers(hosted, monkeypatch):
+    db, broker = hosted
+    assert pilot._binding(broker) == sha256(ACCOUNT_ID.encode()).hexdigest()
+    assert pilot.ShortPilotGateway()._headers()["APCA-API-KEY-ID"] == "key"
+    monkeypatch.setattr(pilot.settings, "paper_broker_account_id", ACCOUNT_ID)
+    with pytest.raises(pilot.StockPaperError, match="its own dedicated paper account"):
+        pilot._binding(broker)
+    monkeypatch.setattr(pilot.settings, "short_paper_broker_account_id", SecretStr(""))
+    with pytest.raises(pilot.StockPaperError, match="exclusive local development"):
+        pilot._binding(broker)
+
+
+def test_hosted_worker_grants_its_own_policy_and_trades_without_clicks(hosted):
+    db, broker = hosted
+    result = cycle(db, broker)
+    grant = db.get(PaperShortPilot, 1)
+    assert grant.automated and grant.authorized_by == auto.POLICY_ACTOR and grant.symbols == ["AAPL"]
+    assert result["action"] == "open_short" and broker.posts[0]["position_intent"] == "sell_to_open"
+
+
+def test_standing_policy_renews_only_its_own_active_flat_grant(hosted):
+    db, broker = hosted
+    auto.ensure_standing_policy(db, broker, OPEN)
+    first = pilot._utc(db.get(PaperShortPilot, 1).expires_at)
+    later = OPEN + timedelta(days=auto.POLICY_DAYS) - timedelta(days=1)
+    auto.ensure_standing_policy(db, broker, later)
+    assert pilot._utc(db.get(PaperShortPilot, 1).expires_at) > first
+    pilot.pause_pilot(db, actor="admin:test", reason="Operator pause of paper short entries")
+    auto.ensure_standing_policy(db, broker, later + timedelta(days=28))
+    assert db.get(PaperShortPilot, 1).status == "paused"
+
+
+def test_standing_policy_never_replaces_a_manual_grant(hosted):
+    db, broker = hosted
+    pilot.authorize_pilot(db, authorization(), actor="admin:test", gateway=broker, now=NOW)
+    auto.ensure_standing_policy(db, broker, NOW + timedelta(hours=3))
+    grant = db.get(PaperShortPilot, 1)
+    assert not grant.automated and grant.authorized_by == "admin:test"
+
+
+def test_standing_policy_off_by_default(setup, monkeypatch):
+    db, broker = setup
+    monkeypatch.setattr(pilot.settings, "dev_paper_shorts_automation_enabled", True)
+    assert auto.ensure_standing_policy(db, broker, OPEN) is None

@@ -74,7 +74,13 @@ def main():
     if not settings.dev_paper_shorts_automation_enabled:
         logger.info("Paper short automation is disabled by deployment policy")
         return
-    _binding(ShortPilotGateway())
+    try:
+        _binding(ShortPilotGateway())
+    except Exception as exc:
+        # A supervisor restarts this process; back off instead of spinning.
+        logger.error("Paper short automation is not configured: %s", exc)
+        Event().wait(300)
+        return
     assert_schema_current(engine)
     stop = Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
