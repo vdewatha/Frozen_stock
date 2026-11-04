@@ -26,7 +26,9 @@ DEFAULT_RISK_RULES = {
     "min_confidence": 0.58,
     "max_daily_drawdown": 0.03,
     "max_strategy_drawdown": 0.10,
-    "max_open_positions": 10,
+    # 20 matches the exploration lot cap (PAPER_EXPLORATION_MAX_POSITIONS);
+    # each lot is ~1% of equity, so 20 open is about 20% exposure.
+    "max_open_positions": 20,
     "max_open_positions_per_strategy": 5,
     "max_symbol_exposure": 0.10,
     # Live execution uses these only when explicitly enabled.  The defaults

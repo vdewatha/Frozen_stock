@@ -631,3 +631,25 @@ def test_lineup_widens_seeded_rsi2_scope_to_single_stocks_once(db):
     db.commit()
     assert ensure_strategy_lineup(db)["widened_rsi2_scope"] is False
     assert db.query(AuditLog).filter_by(action=RSI2_SCOPE_ACTION).count() == 1
+
+
+def test_open_position_limit_is_raised_once_from_the_old_default(db):
+    from app.models import RiskRule
+    from app.services.seed import OPEN_POSITION_LIMIT_ACTION, raise_open_position_limit
+
+    old = RiskRule(name="default_paper_risk", value={"max_open_positions": 10, "max_open_positions_per_strategy": 5,
+                                                     "max_risk_per_trade": 0.01}, is_active=True)
+    custom = RiskRule(name="operator_rule", value={"max_open_positions": 7}, is_active=True)
+    db.add_all([old, custom])
+    db.commit()
+    assert raise_open_position_limit(db) is True
+    db.commit()
+    assert old.value["max_open_positions"] == 20
+    assert old.value["max_open_positions_per_strategy"] == 5 and old.value["max_risk_per_trade"] == 0.01
+    assert custom.value["max_open_positions"] == 7  # an operator's own value is never overridden
+    # One-shot: lowering it again afterwards sticks.
+    old.value = old.value | {"max_open_positions": 10}
+    db.commit()
+    assert raise_open_position_limit(db) is False
+    assert old.value["max_open_positions"] == 10
+    assert db.query(AuditLog).filter_by(action=OPEN_POSITION_LIMIT_ACTION).count() == 1

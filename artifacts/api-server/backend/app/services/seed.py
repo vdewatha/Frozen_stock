@@ -314,6 +314,47 @@ def widen_rsi2_scope(db: Session) -> bool:
     return changed
 
 
+OPEN_POSITION_LIMIT_ACTION = "open_position_limit_update"
+PREVIOUS_MAX_OPEN_POSITIONS = 10
+
+
+def raise_open_position_limit(db: Session) -> bool:
+    """One-time raise of ``max_open_positions`` from the old default to the new one.
+
+    The 2026-11-04 exploration cap raise (12 -> 20 lots) was blocked by this
+    risk rule at 10 open positions. Acts only on an active rule still at the
+    old default with no previous update event, so an operator's own value is
+    never overridden. Every other limit is unchanged.
+    """
+    from app.services.audit import write_audit_log
+
+    new_limit = DEFAULT_RISK_RULES["max_open_positions"]
+    changed = False
+    for rule in db.query(RiskRule).filter(RiskRule.is_active.is_(True)).order_by(RiskRule.id).all():
+        value = dict(rule.value or {})
+        if value.get("max_open_positions") != PREVIOUS_MAX_OPEN_POSITIONS or new_limit <= PREVIOUS_MAX_OPEN_POSITIONS:
+            continue
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "risk_governance", AuditLog.action == OPEN_POSITION_LIMIT_ACTION,
+            AuditLog.entity_type == "risk_rule", AuditLog.entity_id == rule.id,
+        ).first()
+        if already:
+            continue
+        rule.value = value | {"max_open_positions": new_limit}
+        write_audit_log(
+            db, event_type="risk_governance", entity_type="risk_rule", entity_id=rule.id,
+            action=OPEN_POSITION_LIMIT_ACTION, status="complete",
+            message=(f"Open-position limit raised from {PREVIOUS_MAX_OPEN_POSITIONS} to {new_limit} to match the "
+                     "exploration lot cap; per-strategy, exposure and risk-per-trade limits are unchanged."),
+            payload={"old_max_open_positions": PREVIOUS_MAX_OPEN_POSITIONS, "new_max_open_positions": new_limit,
+                     "paper_only": True},
+        )
+        changed = True
+    if changed:
+        db.flush()
+    return changed
+
+
 def ensure_strategy_lineup(db: Session) -> dict:
     """Idempotent strategy lineup reconciliation run by every seed pass."""
     return {
@@ -403,4 +444,6 @@ def seed_defaults(db: Session) -> None:
     ensure_paper_execution_assets(db)
     if not db.query(RiskRule).first():
         db.add(RiskRule(name="default_paper_risk", value=DEFAULT_RISK_RULES, is_active=True))
+    db.flush()
+    raise_open_position_limit(db)
     db.commit()
