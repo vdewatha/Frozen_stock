@@ -1602,9 +1602,13 @@ def run_stock_watchdog(db: Session) -> dict:
         record_restart_deferral,
     )
 
-    now = _now()
     state = _state(db)
     account = active_paper_account(db)
+    # Read the clock after the evidence. ``_state`` waits for the recovery
+    # row lock; on a loaded VM that wait exceeded the future-date tolerance
+    # while reconciliation wrote a newer heartbeat, and the watchdog paused on
+    # a "future-dated" heartbeat after each boot (2026-11-02, 2026-11-04 twice).
+    now = _now()
     # Decide (once per supervised boot) before this run refreshes the watchdog
     # heartbeat, so the previous generation's heartbeat is the evidence used.
     grace = open_restart_grace(

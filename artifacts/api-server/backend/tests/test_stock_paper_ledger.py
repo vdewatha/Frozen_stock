@@ -1450,6 +1450,35 @@ class StockPaperRecoveryTests(unittest.TestCase):
             self.assertEqual(result["status"], "clear")
             self.assertEqual(result["reasons"], [])
 
+    def test_watchdog_reads_its_clock_after_waiting_for_the_recovery_lock(self):
+        # 2026-11-04 18:12: the watchdog read its clock, waited over 30 s for the
+        # recovery row lock while reconciliation wrote a newer heartbeat, then
+        # paused on a "future-dated" heartbeat.
+        from app.services import stock_recovery
+        from app.services.stock_recovery import _state
+
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            account = db.query(StockPaperAccount).one()
+            state = _state(db)
+            state.last_monitor_heartbeat_at = RECOVERY_TEST_NOW + timedelta(seconds=90)
+            db.commit()
+            clock = {"now": RECOVERY_TEST_NOW}
+            real_state = stock_recovery._state
+
+            def slow_lock(session, **kwargs):
+                row = real_state(session, **kwargs)
+                clock["now"] = RECOVERY_TEST_NOW + timedelta(seconds=95)  # the 95 s lock wait
+                account.last_reconciled_at = RECOVERY_TEST_NOW + timedelta(seconds=90)
+                return row
+
+            with patch.object(stock_recovery, "_state", side_effect=slow_lock), \
+                 patch.object(stock_recovery, "_now", side_effect=lambda: clock["now"]):
+                result = run_stock_watchdog(db)
+
+            self.assertEqual(result["reasons"], [])
+            self.assertEqual(result["status"], "clear")
+
     def test_resume_requires_cooldown_and_fresh_monitoring_evidence(self):
         with Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())
