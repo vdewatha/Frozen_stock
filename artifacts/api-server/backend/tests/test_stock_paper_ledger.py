@@ -631,6 +631,68 @@ class StockPaperLedgerTests(unittest.TestCase):
             self.assertEqual(gateway.calls, 1)
             self.assertEqual(stock_paper_status(db)["status"], "halted")
 
+    def _dispatch_with(self, db, failure):
+        from app.models.stock_paper import StockPaperAccount, StockPaperPosition
+
+        initialize_stock_paper_account(db, FakeAlpaca())
+        account = db.query(StockPaperAccount).one()
+        db.add(StockPaperPosition(account_id=account.id, symbol="SPY", quantity=Decimal("1"),
+               observed_at=datetime.now(timezone.utc), raw_payload={}))
+        db.commit()
+        now = datetime.now(timezone.utc)
+        gateway = FakeAlpaca()
+
+        def refuse(payload):
+            gateway.calls += 1
+            raise failure
+
+        gateway.submit_order = refuse
+        with patch("app.services.stock_paper_ledger.session_bounds", return_value=(now.replace(hour=0), now.replace(hour=23))), \
+             patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}), \
+             patch("app.services.stock_paper_ledger._validate_reference_price"):
+            order = reserve_stock_paper_order(db, symbol="SPY", side="sell", quantity=Decimal("1"),
+                reference_price=Decimal("100"), idempotency_key="exit-reject-1", source="manual_close")
+            first = dispatch_reserved_order(db, order.id, gateway)
+            second = dispatch_reserved_order(db, order.id, gateway)
+        return first, second, gateway
+
+    def test_definite_broker_reject_is_rejected_without_halting(self):
+        # 2026-11-04 16:37: Alpaca answered HTTP 422 and the bot halted for 16 minutes.
+        with Session(self.engine) as db:
+            failure = StockPaperUnavailable("Alpaca paper request failed with HTTP 422: potential wash trade",
+                                            status_code=422)
+            first, second, gateway = self._dispatch_with(db, failure)
+            self.assertEqual(first.status, "rejected")
+            self.assertFalse(first.uncertain_submission)
+            self.assertEqual(first.reserved_cash, Decimal("0"))
+            self.assertEqual(gateway.calls, 1)  # never retried
+            self.assertNotEqual(stock_paper_status(db)["status"], "halted")
+
+    def test_server_errors_stay_uncertain_and_halt(self):
+        with Session(self.engine) as db:
+            first, _second, _gateway = self._dispatch_with(
+                db, StockPaperUnavailable("Alpaca paper request failed with HTTP 503", status_code=503))
+            self.assertEqual(first.status, "unknown")
+            self.assertTrue(first.uncertain_submission)
+            self.assertEqual(stock_paper_status(db)["status"], "halted")
+
+    def test_broker_error_code_is_kept_for_diagnosis(self):
+        import httpx
+        from app.services.stock_paper_ledger import AlpacaPaperClient
+
+        def handler(request):
+            return httpx.Response(422, json={"code": 40310000, "message": "potential wash trade detected"})
+
+        real_client = httpx.Client
+        with patch.object(AlpacaPaperClient, "_headers", return_value={}), \
+             patch("app.services.stock_paper_ledger.httpx.Client",
+                   side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs)):
+            with self.assertRaises(StockPaperUnavailable) as raised:
+                AlpacaPaperClient()._request("POST", "/v2/orders", payload={})
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertIn("broker code 40310000", str(raised.exception))
+        self.assertNotIn("wash trade detected", str(raised.exception))  # bodies stay redacted
+
     def _stuck_uncertain_entry(self, db, minutes_ago, *, lookup=None):
         from app.models.stock_paper import StockPaperAccount, StockPaperOrder
         from app.services.stock_paper_ledger import _halt

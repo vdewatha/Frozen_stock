@@ -96,6 +96,18 @@ class StockPaperUnavailable(StockPaperError):
         self.status_code = status_code
 
 
+# A 4xx answer to the order POST itself means the broker did not accept the
+# order (e.g. 422 wash-trade or invalid bracket). Timeouts, 429 and 5xx stay
+# uncertain: the order may have been accepted.
+DEFINITE_REJECT_STATUSES = frozenset({400, 401, 403, 404, 422})
+
+
+class _BrokerRejected(Exception):
+    def __init__(self, cause: StockPaperUnavailable):
+        super().__init__(str(cause))
+        self.cause = cause
+
+
 class AlpacaPaperGateway(Protocol):
     def account(self) -> dict: ...
     def positions(self) -> list[dict]: ...
@@ -123,8 +135,16 @@ class AlpacaPaperClient:
             with httpx.Client(base_url=self.base_url, timeout=20.0, headers=self._headers()) as client:
                 response = client.request(method, path, params=params, json=payload)
             if response.status_code >= 400:
+                # Broker bodies stay redacted; Alpaca's numeric error code
+                # (e.g. 40310000 for a wash trade) is enough to diagnose.
+                try:
+                    body = response.json()
+                    code = body.get("code") if isinstance(body, dict) else None
+                except ValueError:
+                    code = None
                 raise StockPaperUnavailable(
-                    f"Alpaca paper request failed with HTTP {response.status_code}",
+                    f"Alpaca paper request failed with HTTP {response.status_code}"
+                    + (f" (broker code {code})" if isinstance(code, int) and not isinstance(code, bool) else ""),
                     status_code=response.status_code,
                 )
             if method == "DELETE" and response.status_code == 204:
@@ -3175,7 +3195,12 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     order.status, order.submission_attempted_at = "submitting", datetime.now(UTC)
     db.commit()
     try:
-        raw = (gateway or active_paper_gateway()).submit_order(payload)
+        try:
+            raw = (gateway or active_paper_gateway()).submit_order(payload)
+        except StockPaperUnavailable as exc:
+            if exc.status_code in DEFINITE_REJECT_STATUSES:
+                raise _BrokerRejected(exc) from exc
+            raise
         broker_id = str(raw.get("id") or "").strip()
         if not broker_id:
             raise StockPaperUnavailable("Broker accepted an order without an identifier")
@@ -3195,8 +3220,18 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
                                                                 "exit_leg_broker_order_ids": [leg.broker_order_id for leg in legs]}
                                                                if order.order_class != "simple" else {})})
         db.commit()
-    except Exception:
+    except _BrokerRejected as rejected:
         db.rollback()
+        order, account = db.get(StockPaperOrder, order_id), db.get(StockPaperAccount, account_id)
+        order.status, order.reserved_cash, order.uncertain_submission = "rejected", Decimal("0"), False
+        logger.info("stock paper order %s rejected by broker: %s", order.client_order_id, rejected.cause)
+        _event(db, account, "order_submission", "rejected", "Broker rejected the order; nothing was accepted",
+               {"client_order_id": order.client_order_id, "http_status": rejected.cause.status_code,
+                "broker_message": str(rejected.cause)[:300]})
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("stock paper order %s submission outcome uncertain: %s", order_id, exc.__class__.__name__)
         order, account = db.get(StockPaperOrder, order_id), db.get(StockPaperAccount, account_id)
         order.status, order.uncertain_submission = "unknown", True
         _halt(account, "Order submission outcome is uncertain; read-only broker lookup/reconciliation required")
