@@ -198,6 +198,10 @@ class Settings(BaseSettings):
     # capped at 1.0 (never larger than the unscaled size) and floored at
     # ``floor``. When volatility cannot be computed the floor is used (fail
     # closed). A target of 0 disables scaling.
+    # A risk-sized BUY of at least this many shares (but under one) buys one
+    # whole share, since broker-side brackets need whole shares. At most twice
+    # the sized notional. 0 keeps skipping sub-share sizes.
+    paper_min_share_round_up: float = Field(default=0.5, ge=0, le=1)
     paper_vol_target_annual: float = Field(default=0.15, ge=0, le=2)
     paper_vol_lookback_days: int = Field(default=20, ge=5, le=252)
     paper_vol_scale_floor: float = Field(default=0.25, gt=0, le=1)

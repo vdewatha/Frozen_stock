@@ -767,6 +767,13 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
                         # Alpaca only accepts bracket/OTO orders for whole
                         # shares; round down rather than enter without exits.
                         whole = quantity.quantize(WHOLE_SHARE, rounding=ROUND_DOWN)
+                        round_up = Decimal(str(settings.paper_min_share_round_up))
+                        if whole <= 0 and round_up > 0 and quantity >= round_up:
+                            # QQQ, COST and LLY sized to 0.5-0.99 shares were
+                            # skipped every cycle; one share is the smallest
+                            # bracketable position and stays under 2x the budget.
+                            whole = WHOLE_SHARE
+                            result["rounded_up_from"] = str(quantity)
                         if whole <= 0:
                             result.update({
                                 "status": "skipped",

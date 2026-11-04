@@ -156,3 +156,49 @@ def test_an_unfilled_entry_still_blocks_the_re_arm(db):
     result = _real_gates(db)
     assert result["status"] == "blocked"
     assert "In-flight orders" in result["reason"]
+
+
+def _open_critical(db):
+    db.expire_all()
+    return db.query(Notification).filter(Notification.status != "resolved", Notification.severity == "critical",
+                                         Notification.category != "deployment_monitor").all()
+
+
+def test_cleared_pause_alerts_are_closed_so_entries_can_resume(db):
+    # Every BUY is refused by launch admission while a critical alert is open.
+    _pause(db, actor="stock_watchdog")
+    db.add(Notification(category="stock_monitoring", severity="critical", status="open", source="stock_monitoring",
+                        title="Stock paper trading paused", message="monitoring breach", payload={}))
+    db.add(Notification(category="broker", severity="critical", status="open", source="broker_safety",
+                        title="Unrelated broker incident", message="needs a person", payload={}))
+    db.commit()
+    reconcile_stock_paper_account(db, FakeAlpaca())
+    assert len(_open_critical(db)) == 3
+    assert _real_gates(db)["status"] == "resumed"
+    result = _real_gates(db)
+    assert result["status"] == "not_paused" and len(result["closed_notification_ids"]) == 2
+    [left] = _open_critical(db)
+    assert left.category == "broker"  # unrelated incidents still wait for a person
+    from app.models import AuditLog
+    assert db.query(AuditLog).filter_by(action="close_cleared_pause_notices").count() == 1
+    assert "closed_notification_ids" not in _real_gates(db)  # idempotent
+
+
+def test_pause_alerts_stay_open_while_the_pause_is_in_force(db):
+    _pause(db, actor="stock_watchdog")
+    state = db.query(StockPaperRecoveryState).one()
+    state.cooldown_until = NOW + timedelta(minutes=5)
+    db.commit()
+    assert _real_gates(db)["status"] == "cooldown"
+    assert len(_open_critical(db)) == 1
+
+
+def test_a_pause_after_the_last_resume_keeps_its_alert(db):
+    _pause(db, actor="stock_watchdog")
+    reconcile_stock_paper_account(db, FakeAlpaca())
+    assert _real_gates(db)["status"] == "resumed"
+    _pause(db, actor="stock_monitor", minutes_ago=0)
+    state = db.query(StockPaperRecoveryState).one()
+    state.status = "resumable"  # e.g. a status flip without a clearing event
+    db.commit()
+    assert auto.close_cleared_pause_notices(db, state, NOW) == []

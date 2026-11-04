@@ -430,6 +430,26 @@ def test_entry_below_one_share_is_skipped_with_reason():
     assert "whole share" in row["reason"]
 
 
+def test_entry_of_at_least_half_a_share_buys_one_whole_share():
+    db = _ModelDb([_MACD], {})
+    result, calls = _cycle(db, "BUY", price="1400")  # $1000 / 1400 = 0.714 shares, like LLY or COST
+    kwargs = calls.reserve.call_args.kwargs
+    assert kwargs["quantity"] == Decimal("1")
+    assert kwargs["exit_plan"]["order_class"] == "bracket"
+    assert result["results"][0]["rounded_up_from"] == "0.714285"
+
+
+def test_round_up_can_be_disabled():
+    from unittest.mock import patch
+    from app.core.config import settings
+
+    db = _ModelDb([_MACD], {})
+    with patch.object(settings, "paper_min_share_round_up", 0):
+        result, calls = _cycle(db, "BUY", price="1400")
+    calls.reserve.assert_not_called()
+    assert "whole share" in result["results"][0]["reason"]
+
+
 def test_disabling_both_exit_legs_keeps_fractional_simple_entry():
     db = _ModelDb([_MACD], {})
     _result, calls = _cycle(db, "BUY", price="2500",
