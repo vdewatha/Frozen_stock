@@ -469,6 +469,21 @@ def _record_buy_outcomes(db: Session, results: list[dict], now: datetime) -> Non
 
 
 def run_stock_paper_signal_cycle(db: Session) -> dict:
+    """Run one cycle, reusing launch-admission gates across its orders."""
+    from app.services.stock_paper_ledger import LAUNCH_GATES_CACHE, LAUNCH_GATES_CACHE_ENABLED
+
+    info = getattr(db, "info", None)
+    if not isinstance(info, dict):  # test doubles without a session info dict
+        return _run_signal_cycle(db)
+    info[LAUNCH_GATES_CACHE_ENABLED] = True
+    try:
+        return _run_signal_cycle(db)
+    finally:
+        info.pop(LAUNCH_GATES_CACHE_ENABLED, None)
+        info.pop(LAUNCH_GATES_CACHE, None)
+
+
+def _run_signal_cycle(db: Session) -> dict:
     """Run one bounded multi-symbol/multi-strategy paper execution cycle.
 
     A cycle outside market hours is a safe no-op.  During market hours every

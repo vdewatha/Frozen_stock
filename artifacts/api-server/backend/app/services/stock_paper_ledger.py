@@ -96,6 +96,11 @@ class StockPaperUnavailable(StockPaperError):
         self.status_code = status_code
 
 
+# Session-scoped reuse of launch-admission gates within one signal cycle.
+LAUNCH_GATES_CACHE_ENABLED = "launch_gates_cache_enabled"
+LAUNCH_GATES_CACHE = "launch_gates_cache"
+LAUNCH_GATES_REUSE = timedelta(seconds=30)
+
 # A 4xx answer to the order POST itself means the broker did not accept the
 # order (e.g. 422 wash-trade or invalid bracket). Timeouts, 429 and 5xx stay
 # uncertain: the order may have been accepted.
@@ -2827,7 +2832,19 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             evaluate_launch_admission_prerequisites,
         )
 
-        launch_gates = evaluate_launch_admission_prerequisites(db, now=now)
+        # A signal cycle reserves dozens of orders; evaluating every gate for
+        # each took ~3 s per order and stretched one-minute cycles past three
+        # minutes. Inside a cycle (``LAUNCH_GATES_CACHE_ENABLED``) one result
+        # is reused briefly; pauses and the kill switch are re-read below.
+        info = getattr(db, "info", None)
+        caching = isinstance(info, dict) and info.get(LAUNCH_GATES_CACHE_ENABLED) is True
+        cached = info.get(LAUNCH_GATES_CACHE) if caching else None
+        if cached is not None and timedelta(0) <= now - cached[0] <= LAUNCH_GATES_REUSE:
+            launch_gates = cached[1]
+        else:
+            launch_gates = evaluate_launch_admission_prerequisites(db, now=now)
+            if caching:
+                info[LAUNCH_GATES_CACHE] = (now, launch_gates)
         if not all(item.get("status") == "pass" for item in launch_gates.values()):
             _status, reason = classify_launch_prerequisites(launch_gates)
             raise StockPaperError(

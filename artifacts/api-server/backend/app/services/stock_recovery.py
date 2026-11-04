@@ -777,6 +777,9 @@ def cancel_open_stock_orders(
     return {"status": "revalidation_required" if not failures else "failed", "cancelled_order_ids": cancelled, "failures": failures, "flattened_order_ids": flattened_ids}
 
 
+RESTART_RECONCILE_REUSE = timedelta(seconds=45)
+
+
 def reconcile_inflight_stock_orders_on_restart(db: Session) -> dict:
     """Reconcile every durable in-flight order before any resume decision."""
     account = active_paper_account(db)
@@ -786,7 +789,14 @@ def reconcile_inflight_stock_orders_on_restart(db: Session) -> dict:
         StockPaperOrder.account_id == account.id,
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
     ).all()
-    result = reconcile_stock_paper_account(db)
+    # The broker reconciliation job already runs every minute. Running a
+    # second full reconciliation here each minute doubled broker calls and
+    # account-row locking and deadlocked with it; reuse a fresh, clean one.
+    fresh = (
+        account.status == "reconciled" and not account.reconciliation_required and account.last_reconciled_at
+        and datetime.now(UTC) - _utc(account.last_reconciled_at) <= RESTART_RECONCILE_REUSE
+    )
+    result = {"status": "reconciled", "reused_recent_reconciliation": True} if fresh else reconcile_stock_paper_account(db)
     db.expire_all()
     state = _state(db)
     _event(

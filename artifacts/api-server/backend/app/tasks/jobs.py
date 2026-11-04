@@ -210,6 +210,40 @@ def _acquire_job_lock(job_name: str):
             _close_job_lock_client(client, job_name)
 
 
+# Idempotent reconciliation/recovery jobs that Postgres may pick as a
+# deadlock victim (seen 2026-11-04 between the broker and forward-trial
+# reconciliations). A victim's transaction is rolled back whole, so the
+# work is retried instead of failing and pausing paper trading.
+DEADLOCK_RETRY_JOBS = frozenset({
+    "stock_paper_broker_reconciliation_job",
+    "stock_forward_trial_reconcile_job",
+    "paper_auto_revalidation_job",
+    "explained_halt_auto_resume_job",
+})
+DEADLOCK_RETRIES = 2
+
+
+def _is_deadlock(exc: BaseException) -> bool:
+    orig = getattr(exc, "orig", None)
+    return isinstance(exc, DBAPIError) and (
+        getattr(orig, "sqlstate", None) == "40P01" or type(orig).__name__ == "DeadlockDetected"
+    )
+
+
+def _work_with_deadlock_retry(job_name: str, work: Callable, db) -> dict:
+    attempt = 0
+    while True:
+        try:
+            return work(db)
+        except DBAPIError as exc:
+            if job_name not in DEADLOCK_RETRY_JOBS or not _is_deadlock(exc) or attempt >= DEADLOCK_RETRIES:
+                raise
+            attempt += 1
+            db.rollback()
+            logger.warning("Scheduled job deadlock victim; retrying: job=%s attempt=%s", job_name, attempt)
+            time.sleep(0.25 * attempt)
+
+
 def _run_job(job_name: str, work: Callable) -> dict:
     db = SessionLocal()
     lock_key = int.from_bytes(sha256(f"job:{job_name}".encode()).digest()[:8], "big") % 2_147_483_647
@@ -238,7 +272,7 @@ def _run_job(job_name: str, work: Callable) -> dict:
             lock_acquisition_confirmed = True
             if not lock_acquired:
                 return {"status": "skipped", "job": job_name, "reason": "duplicate worker lease is active"}
-        result = work(db)
+        result = _work_with_deadlock_retry(job_name, work, db)
         # A retry that completes successfully is evidence that the prior
         # incident is no longer active. Keep unrelated operator alerts open.
         if isinstance(result, dict) and result.get("status") in {
