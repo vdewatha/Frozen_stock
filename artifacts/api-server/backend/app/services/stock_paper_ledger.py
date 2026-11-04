@@ -2729,8 +2729,16 @@ def _build_stock_paper_signal(strategy: Strategy, symbol: str, generated: Any, s
         })
 
 
+def _signal_generated_event(db: Session, signal: StrategySignal) -> dict:
+    """Column values of the ledger event recorded for a generated signal."""
+    info = getattr(db, "info", None)
+    actor = str(info.get("stock_paper_actor", "system")) if isinstance(info, dict) else "system"
+    return {"account_id": None, "event_type": "signal", "status": "generated", "reason": None, "actor": actor,
+            "payload": {"signal_id": signal.id, "symbol": signal.symbol, "strategy_id": signal.strategy_id}}
+
+
 def _record_signal_generated(db: Session, signal: StrategySignal) -> None:
-    _event(db, None, "signal", "generated", None, {"signal_id": signal.id, "symbol": signal.symbol, "strategy_id": signal.strategy_id})
+    db.add(StockPaperLedgerEvent(**_signal_generated_event(db, signal)))
 
 
 def _stock_paper_signal_result(signal: StrategySignal, strategy_slug: str, observation: dict,

@@ -130,6 +130,58 @@ def _prefetch_inputs(db: Session, symbols: list[str]) -> dict[str, Any]:
         return dict(zip(symbols, pool.map(load_isolated, symbols)))
 
 
+_SIGNAL_COLUMNS = ("strategy_id", "symbol", "signal_time", "action", "probability_up", "probability_down",
+                   "confidence", "reason", "features")
+
+
+def _insert_signals(db: Session, rows: list) -> None:
+    """Insert signal rows and their ledger events in batched statements.
+
+    The ORM unit of work issued one INSERT per signal and one per event
+    (~600 round trips, ~30 s a cycle in production). Core executemany with
+    ``RETURNING`` batches them. Returned rows are checked against the inputs
+    and carry the database-rounded numerics the outcomes report; on any
+    mismatch the batch is rolled back and the per-row ORM path is used.
+    """
+    from sqlalchemy import insert
+
+    from app.models import StrategySignal
+    from app.models.stock_paper import StockPaperLedgerEvent
+
+    returned = (StrategySignal.id, StrategySignal.symbol, StrategySignal.strategy_id,
+                StrategySignal.confidence, StrategySignal.probability_up, StrategySignal.probability_down)
+    # Ordered RETURNING batches on PostgreSQL (sentinel) but degrades to
+    # row-at-a-time on SQLite, where plain RETURNING is already one statement.
+    ordered = db.get_bind().dialect.name == "postgresql"
+    statement = insert(StrategySignal).returning(*returned, sort_by_parameter_order=ordered)
+    values = [{column: getattr(row, column) for column in _SIGNAL_COLUMNS} for row in rows]
+    with db.begin_nested():
+        result = db.execute(statement, values).all()
+        if len(result) != len(rows) or any(
+            (item.symbol, item.strategy_id) != (row.symbol, row.strategy_id) for item, row in zip(result, rows)
+        ):
+            raise _BatchMismatch()
+        for row, item in zip(rows, result):
+            row.id, row.confidence = item.id, item.confidence
+            row.probability_up, row.probability_down = item.probability_up, item.probability_down
+        db.execute(insert(StockPaperLedgerEvent), [ledger._signal_generated_event(db, row) for row in rows])
+
+
+class _BatchMismatch(Exception):
+    """Returned signal rows did not line up with the inputs."""
+
+
+def _persist_signals(db: Session, rows: list) -> None:
+    try:
+        _insert_signals(db, rows)
+    except _BatchMismatch:
+        logger.warning("batched signal insert did not line up; using the per-row path")
+        db.add_all(rows)
+        db.flush()
+        for signal in rows:
+            ledger._record_signal_generated(db, signal)
+
+
 def _is_research_only(strategy: Any) -> bool:
     # Test doubles and older rows may omit the status field; the existing
     # cycle contract treated those rows as active.
@@ -291,10 +343,7 @@ def generate_cycle_signals(
             for symbol, _strategy_type, research_only, row, generated, source, observation in pending
         ]
         try:
-            db.add_all(rows)
-            db.flush()
-            for signal in rows:
-                ledger._record_signal_generated(db, signal)
+            _persist_signals(db, rows)
             db.commit()
             stats["commits"] += 1
         except Exception as exc:

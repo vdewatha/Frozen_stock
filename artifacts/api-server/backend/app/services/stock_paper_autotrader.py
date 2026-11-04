@@ -401,6 +401,66 @@ def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
     }
 
 
+class _EntryLimits:
+    """Open-position, exploration-lot and exploration-confidence limits for one cycle.
+
+    Mirrors the refusals in ``reserve_stock_paper_order`` /
+    ``_validate_exploration_buy`` with the same messages, so a BUY that would
+    certainly be refused skips the reservation. ``None`` from ``check`` only
+    means "not refused here"; the reservation still decides.
+    """
+
+    def __init__(self, held: set[str], max_open: int, exploration_lots: int | None,
+                 max_lots: int, min_confidence: float | None):
+        self.held, self.max_open = held, max_open
+        self.exploration_lots, self.max_lots = exploration_lots, max_lots
+        self.min_confidence = min_confidence
+
+    def check(self, symbol: str, signal: dict, *, exploring: bool) -> str | None:
+        if symbol not in self.held and len(self.held) >= self.max_open:
+            return "Order exceeds the configured open-position risk limit"
+        if exploring:
+            try:
+                confidence = float(signal.get("confidence"))
+            except (TypeError, ValueError):
+                confidence = None
+            if self.min_confidence is not None and confidence is not None and (
+                not math.isfinite(confidence) or confidence < self.min_confidence
+            ):
+                return "Exploration signal confidence is below the minimum threshold"
+            if self.exploration_lots is not None and self.exploration_lots >= self.max_lots:
+                return "Exploration lot limit reached"
+        return None
+
+    def record_buy(self, symbol: str, *, exploring: bool) -> None:
+        self.held.add(symbol)
+        if exploring and self.exploration_lots is not None:
+            self.exploration_lots += 1
+
+
+def _entry_limit_state(db: Session, account, rules: dict) -> _EntryLimits:
+    from app.services.stock_paper_ledger import _open_exploration_lots
+
+    try:
+        held = {row.symbol for row in db.query(StockPaperPosition).filter(
+            StockPaperPosition.account_id == account.id, StockPaperPosition.quantity > 0).all()}
+        lots = _open_exploration_lots(db, account) if settings.paper_exploration_enabled else None
+    except Exception as exc:  # fall back to the reservation's own checks
+        db.rollback()
+        logger.info("entry limit pre-check unavailable: %s", exc.__class__.__name__)
+        return _EntryLimits(set(), 10**9, None, 10**9, None)
+    try:
+        min_confidence = float(rules["min_confidence"]) if "min_confidence" in rules else None
+    except (TypeError, ValueError):
+        min_confidence = None
+    try:
+        # Only an explicit limit is pre-checked; otherwise the reservation decides.
+        max_open = int(rules["max_open_positions"]) if "max_open_positions" in rules else 10**9
+    except (TypeError, ValueError):
+        max_open = 10**9
+    return _EntryLimits(held, max_open, lots, int(settings.paper_exploration_max_positions), min_confidence)
+
+
 def _max_positions_per_sector(rules: dict) -> int:
     value = rules.get("max_positions_per_sector", settings.paper_max_positions_per_sector)
     try:
@@ -584,6 +644,11 @@ def _run_signal_cycle(db: Session) -> dict:
     # Entry-only circuit breakers (stop-loss guard, exit cooldown, low-profit
     # lock, session drawdown, time of day); never consulted for sells.
     protections = load_entry_protections(db, account, now=now, rules=rules, type_by_id=type_by_id)
+    # Cycle-level entry limits. Each refused BUY used to go through a full
+    # reservation (~10 queries under the account lock) only to hit one of
+    # these; they are decided here from one lookup and the reservation still
+    # re-checks every order that passes.
+    entry_limits = _entry_limit_state(db, account, rules)
     base["entry_protections"] = protections.summary()
     results: list[dict] = []
     for symbol in symbols:
@@ -744,6 +809,11 @@ def _run_signal_cycle(db: Session) -> dict:
                         })
                         results.append(result)
                         continue
+                    limit_block = entry_limits.check(symbol, signal, exploring=result.get("mode") == "explore")
+                    if limit_block is not None:
+                        result.update({"status": "blocked", "reason": limit_block})
+                        results.append(result)
+                        continue
                     if any(_is_exit_leg(row) for row in pending):
                         # Another lot's resting exit legs are opposite-side
                         # orders; Alpaca may reject a new entry as a potential
@@ -901,6 +971,7 @@ def _run_signal_cycle(db: Session) -> dict:
                     exiting = True
                 if side == "buy" and order_status != "cancelled":
                     sector_groups.setdefault(sector_group(symbol), set()).add(symbol)
+                    entry_limits.record_buy(symbol, exploring=result.get("mode") == "explore")
             except StockPaperError as exc:
                 result.update({"status": "blocked", "reason": str(exc)})
             except Exception as exc:  # one symbol/strategy must not stop the fan-out
