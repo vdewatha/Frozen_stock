@@ -36,8 +36,10 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 import pandas as pd
-from sqlalchemy.orm import Session
+from concurrent.futures import ThreadPoolExecutor
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.config import settings
 from app.services import stock_paper_ledger as ledger
 from app.services.strategy_execution_policy import daily_bar_execution, gate_daily_bar_entry, symbol_scope_for
 
@@ -95,6 +97,37 @@ def _generate(strategy_type: str, parameters: dict | None, symbol: str, prices: 
             while len(_cache) > _CACHE_MAX_ENTRIES:
                 _cache.popitem(last=False)
     return generated
+
+
+def _prefetch_inputs(db: Session, symbols: list[str]) -> dict[str, Any]:
+    """Each symbol's ``_load_signal_inputs`` result, or the exception it raised.
+
+    The loads are read-only and latency-bound (about seven queries per
+    symbol). In production each query is a network round trip, so 45
+    sequential loads took ~70 s of every cycle. With
+    ``paper_signal_load_workers`` > 1 and a file/server database they run on
+    separate sessions in a small thread pool; results are identical.
+    """
+    def load(session: Session, symbol: str) -> Any:
+        try:
+            return ledger._load_signal_inputs(session, symbol)
+        except Exception as exc:  # recorded per symbol by the caller
+            session.rollback()
+            return exc
+
+    workers = int(getattr(settings, "paper_signal_load_workers", 1) or 1)
+    bind = db.get_bind() if hasattr(db, "get_bind") else None
+    in_memory = bind is None or (bind.dialect.name == "sqlite" and bind.url.database in (None, "", ":memory:"))
+    if workers <= 1 or len(symbols) <= 1 or in_memory:
+        return {symbol: load(db, symbol) for symbol in symbols}
+    factory = sessionmaker(bind=bind, autoflush=False)
+
+    def load_isolated(symbol: str) -> Any:
+        with factory() as session:
+            return load(session, symbol)
+
+    with ThreadPoolExecutor(max_workers=min(workers, len(symbols)), thread_name_prefix="signal-load") as pool:
+        return dict(zip(symbols, pool.map(load_isolated, symbols)))
 
 
 def _is_research_only(strategy: Any) -> bool:
@@ -193,9 +226,14 @@ def generate_cycle_signals(
 
     # 2. One data load per symbol, every strategy computed on that frame.
     pending: list[tuple[str, str, bool, Any, Any, str, dict]] = []
+    inputs = _prefetch_inputs(db, symbols)
+    loaded_at = time.perf_counter()
     for symbol in symbols:
         try:
-            prices, source, observation = ledger._load_signal_inputs(db, symbol)
+            loaded = inputs[symbol]
+            if isinstance(loaded, BaseException):
+                raise loaded
+            prices, source, observation = loaded
             stats["daily_loads"] += 1
             stats["intraday_loads"] += 1
         except Exception as exc:
@@ -273,15 +311,16 @@ def generate_cycle_signals(
     finished = time.perf_counter()
     stats["timing_ms"] = {
         "resolve_strategies": round((resolved_at - started) * 1000, 1),
+        "load": round((loaded_at - resolved_at) * 1000, 1),
         "load_and_compute": round((computed_at - resolved_at) * 1000, 1),
         "persist": round((finished - computed_at) * 1000, 1),
         "total": round((finished - started) * 1000, 1),
     }
     logger.info(
         "stock paper signal batch: symbols=%s strategies=%s daily_loads=%s intraday_loads=%s "
-        "computes=%s cache_hits=%s persisted=%s total_ms=%s",
+        "computes=%s cache_hits=%s persisted=%s load_ms=%s persist_ms=%s total_ms=%s",
         stats["symbols"], stats["strategies"], stats["daily_loads"], stats["intraday_loads"],
         stats["strategy_computes"], stats["strategy_cache_hits"], stats["signals_persisted"],
-        stats["timing_ms"]["total"],
+        stats["timing_ms"]["load"], stats["timing_ms"]["persist"], stats["timing_ms"]["total"],
     )
     return outcomes, stats

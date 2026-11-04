@@ -72,7 +72,7 @@ PAPER_LEARNING_CONCURRENCY = "1"
 # a stale symbol blocks only itself unless >20% of symbols or SPY/QQQ are stale.
 PAPER_EXECUTION_SYMBOLS = "[\"SPY\", \"QQQ\", \"IWM\", \"DIA\", \"XLK\", \"XLF\", \"XLE\", \"XLV\", \"XLY\", \"XLP\", \"XLI\", \"XLU\", \"XLB\", \"XLRE\", \"XLC\", \"SMH\", \"AAPL\", \"MSFT\", \"NVDA\", \"AMZN\", \"GOOGL\", \"META\", \"TSLA\", \"AVGO\", \"JPM\", \"V\", \"MA\", \"UNH\", \"XOM\", \"LLY\", \"COST\", \"HD\", \"PG\", \"JNJ\", \"ABBV\", \"MRK\", \"PEP\", \"KO\", \"BAC\", \"WMT\", \"NFLX\", \"AMD\", \"CRM\", \"ORCL\", \"ADBE\"]"
 # Updated for each deployable release so hosted readiness can be verified.
-PAPER_BUILD_ID = "paper-watchdog-clock-20261104-v1"
+PAPER_BUILD_ID = "paper-parallel-loads-20261104-v1"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 # Feature refreshes retrain every symbol (~98 minutes here); queued from IEX
@@ -102,6 +102,9 @@ PAPER_EXPLORATION_ENABLED = "true"
 # Broker-side bracket exits need whole shares; 1% of equity (~$1,000) keeps
 # most of the universe tradable for exploration.
 PAPER_EXPLORATION_RISK_FRACTION = "0.01"
+# 12 open exploration lots became the main limit on trades (2026-11-04);
+# 20 keeps each lot at 1% of equity (about 20% exposure at most) for faster learning.
+PAPER_EXPLORATION_MAX_POSITIONS = "20"
 ACTIVE_PAPER_BROKER = "alpaca_paper"
 ALPACA_PAPER_ZERO_COMMISSION_CONTRACT = "true"
 ALPACA_ACTIVITY_SSE_ENABLED = "true"
