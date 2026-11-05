@@ -726,6 +726,14 @@ def _run_signal_cycle(db: Session) -> dict:
                     result["meta_label"] = signal["meta_label"]
                 if observed_price is None:
                     observed_price = Decimal(signal["reference_price"])
+                policy = policy_by_type.get(strategy.strategy_type)
+                if signal["signal_action"] == "SELL" and policy is not None and not policy.sell_signal_exit:
+                    # Its backtest never exited on a SELL; the stop, target and
+                    # time stop are the tested exits.
+                    result.update({"status": "observed",
+                                   "reason": "tested exit plan has no SELL-signal exit (stop, target, time stop only)"})
+                    results.append(result)
+                    continue
                 exploring = (
                     research_only
                     and settings.paper_exploration_enabled
@@ -899,12 +907,21 @@ def _run_signal_cycle(db: Session) -> dict:
                         # shares; round down rather than enter without exits.
                         whole = quantity.quantize(WHOLE_SHARE, rounding=ROUND_DOWN)
                         round_up = Decimal(str(settings.paper_min_share_round_up))
+                        one_share_cap = max(Decimal("0"), account.equity) * Decimal(
+                            str(settings.paper_min_one_share_equity_fraction))
                         if whole <= 0 and round_up > 0 and quantity >= round_up:
                             # QQQ, COST and LLY sized to 0.5-0.99 shares were
                             # skipped every cycle; one share is the smallest
                             # bracketable position and stays under 2x the budget.
                             whole = WHOLE_SHARE
                             result["rounded_up_from"] = str(quantity)
+                        elif whole <= 0 and one_share_cap > 0 and reference_price <= one_share_cap:
+                            # Exploration probes are 0.25% of equity: below one
+                            # share of SPY, META or MSFT.  One share capped at a
+                            # small fraction of equity lets them gather evidence.
+                            whole = WHOLE_SHARE
+                            result["rounded_up_from"] = str(quantity)
+                            result["one_share_floor"] = str(one_share_cap)
                         if whole <= 0:
                             result.update({
                                 "status": "skipped",

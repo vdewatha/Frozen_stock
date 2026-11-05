@@ -60,8 +60,10 @@ def test_reversion_strategies_declare_policy_and_index_scope():
         assert strategy.exit_policy() == ExitPolicy(stop_loss_pct=0.10, take_profit_pct=0.0,
                                                     max_holding_sessions=10, indicator_exit=True)
         assert strategy.symbol_scope() == {"SPY", "QQQ", "IWM", "DIA"}
+    # The older strategies trade the exits they were backtested with.
     for slug in ("moving_average_crossover", "macd_momentum", "model_predictive_long"):
-        assert get_strategy(slug).exit_policy() is None
+        assert get_strategy(slug).exit_policy() == ExitPolicy(stop_loss_pct=0.03, take_profit_pct=0.06,
+                                                              max_holding_sessions=20, sell_signal_exit=False)
         assert get_strategy(slug).symbol_scope() is None
 
 
@@ -85,7 +87,9 @@ def test_policy_exit_plan_is_stop_only_oto_and_defaults_keep_bracket():
     assert oto == {"order_class": "oto", "stop_price": Decimal("90.00"), "take_profit_price": None}
     wide = _exit_plan(rules, Decimal("100"), exit_policy_for(_rsi2(take_profit_pct=0.2)))
     assert wide == {"order_class": "bracket", "stop_price": Decimal("90.00"), "take_profit_price": Decimal("120.00")}
-    default = _exit_plan(rules, Decimal("100"), exit_policy_for(_MA))
+    tested = _exit_plan(rules, Decimal("100"), exit_policy_for(_MA))
+    assert tested == {"order_class": "bracket", "stop_price": Decimal("97.00"), "take_profit_price": Decimal("106.00")}
+    default = _exit_plan(rules, Decimal("100"), exit_policy_for(SimpleNamespace(strategy_type="legacy_bracket")))
     assert default == {"order_class": "bracket", "stop_price": Decimal("97.00"), "take_profit_price": Decimal("103.00")}
     # A strategy policy keeps its catastrophe stop even when the rule disables legs.
     assert _exit_plan({"position_stop_loss_pct": 0, "position_take_profit_pct": 0}, Decimal("100"),
@@ -446,12 +450,23 @@ def test_policy_exit_still_runs_for_a_paused_strategy():
 
 
 def test_strategies_without_policy_keep_existing_behaviour():
+    legacy = SimpleNamespace(id=1, strategy_type="legacy_bracket", current_status="paper_trading_candidate",
+                             is_active=True, parameters={})
+    db = _ModelDb([legacy], {"StockPaperPosition": [_position()]})
+    _result, calls, _ = _cycle(db, _signal("HOLD"), holdings={"legacy_bracket": Decimal("2")},
+                               lots={"opened_at": {"legacy_bracket": datetime(2026, 1, 2, tzinfo=UTC)},
+                                     "buyers": {"legacy_bracket"}},
+                               frame=_rising_frame(), now=NOW)
+    calls.reserve.assert_not_called()  # no time stop or indicator exit for an undeclared policy
+
+
+def test_backtested_time_stop_closes_an_old_lot():
     db = _ModelDb([_MA], {"StockPaperPosition": [_position()]})
     _result, calls, _ = _cycle(db, _signal("HOLD"), holdings={"moving_average_crossover": Decimal("2")},
                                lots={"opened_at": {"moving_average_crossover": datetime(2026, 1, 2, tzinfo=UTC)},
                                      "buyers": {"moving_average_crossover"}},
                                frame=_rising_frame(), now=NOW)
-    calls.reserve.assert_not_called()  # no time stop or indicator exit for an undeclared policy
+    assert calls.reserve.call_args.kwargs["side"] == "sell"  # held far past its 20-session time stop
 
 
 # ------------------------------------------------------------ pure helpers

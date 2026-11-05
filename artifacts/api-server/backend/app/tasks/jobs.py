@@ -1633,6 +1633,23 @@ def loss_feedback_job() -> dict:
 
 
 @celery_app.task
+def trade_attribution_job() -> dict:
+    """Intraday: attribute and diagnose trades as they close (idempotent).
+
+    The nightly loss feedback run used to be the only pass, so one skipped
+    run left a day of closed trades unexplained.
+    """
+    def work(db):
+        from app.services.trade_attribution import run_trade_attribution
+
+        result = run_trade_attribution(db, lookback_days=10)
+        db.commit()
+        return {"job": "trade_attribution_job", **result}
+
+    return _run_job("trade_attribution_job", work)
+
+
+@celery_app.task
 def meta_label_retrain_job() -> dict:
     """Retrain the meta-label BUY filter off hours when due (paper only)."""
     from app.services.intraday_data import session_bounds

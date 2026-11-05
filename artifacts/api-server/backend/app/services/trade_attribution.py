@@ -20,6 +20,11 @@ Safety contract:
   treated as zero.
 * Rows are immutable.  A trade whose evidence changes (costs become known,
   a late fill) is recorded as a new revision of the same ``source_key``.
+
+Round trips also carry a ``diagnosis`` (``loss_diagnosis``): the cause of the
+result measured against SPY and the sector ETF over the same hold, earnings
+inside the hold, crowding, clustered stops and whether the exits were the
+backtested ones.
 """
 from __future__ import annotations
 
@@ -308,11 +313,58 @@ def attribute_trials(db: Session, *, since: Optional[datetime] = None) -> list[S
 
 # ----------------------------------------------------------------- autotrader round trips
 
+def _sector_symbol(symbol: str) -> Optional[str]:
+    from app.services.trading_universe import sector_group
+
+    group = sector_group(symbol)
+    return None if group in {"index", symbol} else group
+
+
+def _earnings_lookup():
+    from app.core.config import settings
+    from app.services.earnings_history import runtime_surprises
+
+    return runtime_surprises if settings.loss_diagnosis_earnings_lookup else None
+
+
+def _diagnosis_context(lots: list, trades: dict, *, now: datetime) -> tuple[dict, dict]:
+    """Per entry order id: other lots overlapping on its symbol; per ET date: stop exits."""
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    spans = defaultdict(list)
+    for lot in lots:
+        if lot.entered_at is None:
+            continue
+        end = max(item["filled_at"] for item in lot.exits) if lot.closed and lot.exits else now
+        spans[lot.symbol].append((lot.entry_order.id, _utc(lot.entered_at), _utc(end)))
+    overlaps = {}
+    for members in spans.values():
+        for order_id, start, end in members:
+            overlaps[order_id] = sum(1 for other, s, e in members if other != order_id and s < end and start < e)
+    stops = Counter()
+    for trade in trades.values():
+        if trade["exit_reason"] in _STOP_EXIT_REASONS:
+            stops[_utc(datetime.fromisoformat(trade["exited_at"])).astimezone(et).date()] += 1
+    return overlaps, stops
+
+
+_STOP_EXIT_REASONS = {"stop_loss_leg", "protective_stop"}
+
+
 def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
-                          since: Optional[datetime] = None) -> list[StockTradeAttribution]:
+                          since: Optional[datetime] = None, now: Optional[datetime] = None,
+                          earnings_lookup=...) -> list[StockTradeAttribution]:
     """Attribute closed scheduled / exploration round trips (idempotent)."""
+    from zoneinfo import ZoneInfo
+
     from app.services import paper_trade_scorecard as scorecard
+    from app.services import loss_diagnosis
+    from app.services.strategy_execution_policy import exit_policy_for
     from app.services.trade_mistakes import classify_round_trip
+
+    now = now or datetime.now(UTC)
+    lookup = _earnings_lookup() if earnings_lookup is ... else earnings_lookup
 
     account = scorecard._account(db, account_id)
     if account is None:
@@ -326,6 +378,14 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
     signal_ids = {lot.entry_order.signal_id for lot in lots if lot.entry_order.signal_id}
     signals = {row.id: row for row in db.query(StrategySignal).filter(StrategySignal.id.in_(signal_ids)).all()} \
         if signal_ids else {}
+    trades = {}
+    for lot in lots:
+        signal = signals.get(lot.entry_order.signal_id)
+        trades[lot.entry_order.id] = scorecard._trade_row(lot, strategies, curve,
+                                                          _f(signal.probability_up) if signal else None)
+    overlaps, stops_by_day = _diagnosis_context(rebuilt["lots"], trades, now=now)
+    prices = loss_diagnosis.PriceLookup(db)
+    et = ZoneInfo("America/New_York")
     cache: dict = {}
     created = []
     for lot in lots:
@@ -334,7 +394,7 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
             continue
         signal = signals.get(lot.entry_order.signal_id)
         probability = _f(signal.probability_up) if signal else None
-        trade = scorecard._trade_row(lot, strategies, curve, probability)
+        trade = trades[lot.entry_order.id]
         strategy = strategies.get(lot.strategy_id)
         strategy_type = (strategy.strategy_type if strategy else None) or "unattributed"
         parameters = (strategy.parameters or {}) if strategy else {}
@@ -356,6 +416,23 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
         classification = classify_round_trip(db, trade) if trade["net_pnl"] <= 0 else {"primary_mistake": None, "mistakes": []}
         costs_known = bool(trade["costs_known"])
         cost = float(lot.cost)
+        gross_return = trade["gross_pnl"] / cost if cost > 0 else 0.0
+        effective = trade["net_return"] if costs_known else gross_return
+        news_used, news_sentiment = loss_diagnosis.news_from_features(features)
+        sector = _sector_symbol(lot.symbol)
+        diagnosis = loss_diagnosis.diagnose(
+            gross_return=gross_return, is_loss=effective <= 0,
+            benchmark_return=prices.window_return("SPY", opened_at, closed_at),
+            sector_symbol=sector, sector_return=prices.window_return(sector, opened_at, closed_at) if sector else None,
+            earnings_in_hold=loss_diagnosis.earnings_between(lot.symbol, opened_at, closed_at, lookup),
+            news_used=news_used, news_sentiment=news_sentiment,
+            concurrent_same_symbol=overlaps.get(lot.entry_order.id, 0),
+            same_session_stops=stops_by_day[closed_at.astimezone(et).date()]
+            if trade["exit_reason"] in _STOP_EXIT_REASONS else 0,
+            exit_tested=loss_diagnosis.exit_tested(
+                exit_policy_for(strategy) if strategy else None, entry_price=decision_price or trade["entry_price"],
+                stop_price=_f(lot.entry_order.stop_price), take_profit_price=_f(lot.entry_order.take_profit_price)),
+        )
         record = _record(
             strategy_id=lot.strategy_id, strategy_type=strategy_type, trial_id=None,
             symbol=lot.symbol, opened_at=opened_at.isoformat(), closed_at=closed_at.isoformat(),
@@ -376,9 +453,10 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
             meta_label=({"decision": meta.get("decision"), "probability": meta.get("probability"),
                          "mode": meta.get("mode"), "status": meta.get("status")} if meta else None),
             mistakes={"primary": classification.get("primary_mistake"), "all": classification.get("mistakes") or []},
+            diagnosis=diagnosis,
             lineage={"entry_order_id": lot.entry_order.id, "exit_order_ids": exit_ids,
                      "signal_id": lot.entry_order.signal_id, "order_source": lot.source},
-            gross_return=trade["gross_pnl"] / cost if cost > 0 else 0.0,
+            gross_return=gross_return,
             net_return=trade["net_return"] if costs_known else None,
             net_pnl=trade["net_pnl"] if costs_known else None, costs_known=costs_known,
         )
@@ -393,8 +471,28 @@ def run_trade_attribution(db: Session, *, now: Optional[datetime] = None, lookba
     now = now or datetime.now(UTC)
     since = now - timedelta(days=lookback_days)
     trial_rows = attribute_trials(db, since=since)
-    trip_rows = attribute_round_trips(db, since=since)
-    return {"trial_lots_recorded": len(trial_rows), "round_trips_recorded": len(trip_rows)}
+    trip_rows = attribute_round_trips(db, since=since, now=now)
+    return {"trial_lots_recorded": len(trial_rows), "round_trips_recorded": len(trip_rows),
+            "coverage": attribution_coverage(db, since=since)}
+
+
+def attribution_coverage(db: Session, *, account_id: Optional[int] = None,
+                         since: Optional[datetime] = None) -> dict:
+    """Closed scheduled / exploration round trips vs the ones attributed (a learning-health check)."""
+    from app.services import paper_trade_scorecard as scorecard
+
+    account = scorecard._account(db, account_id)
+    if account is None:
+        return {"closed_round_trips": 0, "attributed": 0, "missing_entry_order_ids": []}
+    closed = [lot for lot in scorecard.reconstruct_round_trips(db, account.id)["lots"]
+              if lot.closed and lot.entry_order.id and lot.entry_order.id > 0
+              and lot.source in {"scheduled", "exploration"}
+              and (since is None or max(item["filled_at"] for item in lot.exits) >= since)]
+    keys = set(db.scalars(select(StockTradeAttribution.source_key).where(
+        StockTradeAttribution.source_key.like("round_trip:%"))).all())
+    missing = sorted(lot.entry_order.id for lot in closed if f"round_trip:{lot.entry_order.id}" not in keys)
+    return {"closed_round_trips": len(closed), "attributed": len(closed) - len(missing),
+            "missing_entry_order_ids": missing[:50]}
 
 
 # ----------------------------------------------------------------- projections
@@ -456,12 +554,15 @@ def attribution_row_out(row: StockTradeAttribution) -> dict:
         "signal_quality": detail.get("signal_quality"), "slippage": detail.get("slippage"),
         "holding": detail.get("holding"), "regime": detail.get("regime"), "exit": detail.get("exit"),
         "meta_label": detail.get("meta_label"), "mistakes": detail.get("mistakes"),
+        "diagnosis": detail.get("diagnosis"),
         "attribution_sha256": row.attribution_sha256,
     }
 
 
 def attribution_summary(rows: list[StockTradeAttribution]) -> dict:
     """Compact, deterministic loss breakdown used in reports and the API."""
+    from app.services.loss_diagnosis import cause_breakdown, repeating_failures
+
     losses = [row for row in rows if row.is_loss]
 
     def regime_key(row):
@@ -492,6 +593,8 @@ def attribution_summary(rows: list[StockTradeAttribution]) -> dict:
             ((row.detail or {}).get("mistakes") or {}).get("primary") for row in losses
             if ((row.detail or {}).get("mistakes") or {}).get("primary")
         )),
+        "diagnosis": cause_breakdown(rows),
+        "repeating_failures": repeating_failures(rows),
         "attribution_ids": sorted(row.id for row in rows)[-200:],
     }
 

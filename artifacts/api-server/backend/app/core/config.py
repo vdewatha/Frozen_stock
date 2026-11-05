@@ -205,6 +205,14 @@ class Settings(BaseSettings):
     # whole share, since broker-side brackets need whole shares. At most twice
     # the sized notional. 0 keeps skipping sub-share sizes.
     paper_min_share_round_up: float = Field(default=0.5, ge=0, le=1)
+    # A sub-share size still buys one whole share when that share costs at
+    # most this fraction of equity. Exploration probes (0.25% of equity) were
+    # below one share of every symbol over ~$250 and never traded, so those
+    # strategies produced no learning data. 0 disables the floor.
+    # Loss diagnosis checks whether an earnings report landed inside each
+    # closed stock trade's hold (yfinance, cached; tests turn it off).
+    loss_diagnosis_earnings_lookup: bool = True
+    paper_min_one_share_equity_fraction: float = Field(default=0.015, ge=0, le=0.05)
     paper_vol_target_annual: float = Field(default=0.15, ge=0, le=2)
     paper_vol_lookback_days: int = Field(default=20, ge=5, le=252)
     paper_vol_scale_floor: float = Field(default=0.25, gt=0, le=1)

@@ -25,3 +25,26 @@ def _no_network_earnings_calendar(monkeypatch):
     Tests that exercise the blackout set the window and inject a fetch.
     """
     monkeypatch.setattr(settings, "paper_earnings_blackout_sessions", 0)
+    monkeypatch.setattr(settings, "loss_diagnosis_earnings_lookup", False)
+
+
+@pytest.fixture()
+def legacy_technical_exits(monkeypatch):
+    """Give the technical strategies the pre-2026-11-05 "no declared exit plan" behaviour.
+
+    They now trade their backtested exits (no SELL-signal exits).  Tests of
+    the generic SELL path were written against them as strategies with no
+    exit plan; this keeps those tests about the SELL path.
+    """
+    from app.services import stock_paper_autotrader
+    from app.services.strategies import technical
+
+    original = stock_paper_autotrader.exit_policy_for
+    slugs = {cls.slug for cls in vars(technical).values()
+             if isinstance(cls, type) and getattr(cls, "default_exit_policy", None)
+             is technical.BACKTESTED_BRACKET_EXIT_POLICY}
+
+    def exit_policy_for(row):
+        return None if getattr(row, "strategy_type", None) in slugs else original(row)
+
+    monkeypatch.setattr(stock_paper_autotrader, "exit_policy_for", exit_policy_for)
