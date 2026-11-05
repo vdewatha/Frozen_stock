@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import RiskRule, Strategy
+from app.models import RiskRule, Strategy, StrategySignal
 from app.models.stock_paper import StockPaperFill, StockPaperOrder, StockPaperPosition
 from app.services.stock_paper_ledger import (
     NONTERMINAL_ORDER_STATUSES,
@@ -505,6 +505,61 @@ def _max_positions_per_sector(rules: dict) -> int:
         return int(settings.paper_max_positions_per_sector)
 
 
+def _news_universe(db: Session, now: datetime, core: set[str]) -> tuple[dict[str, dict], set[str]]:
+    """News-discovered symbols admitted for entries, and ones kept for exits only."""
+    if not settings.news_discovery_enabled:
+        return {}, set()
+    from app.services.news_discovery import news_universe
+
+    try:
+        admitted, exits_only = news_universe(db, now)
+    except Exception as exc:  # discovery state must never stop the cycle
+        db.rollback()
+        logger.info("news discovery state unavailable: %s", exc.__class__.__name__)
+        return {}, set()
+    return ({symbol: row for symbol, row in admitted.items() if symbol not in core},
+            exits_only - core - set(admitted))
+
+
+def _news_context(news: dict) -> dict:
+    headlines = news.get("headlines") or []
+    return {
+        "source": "alpaca_news",
+        "discovered": True,
+        "sentiment_score": news.get("avg_sentiment"),
+        "articles": news.get("articles"),
+        "admitted_at": news.get("admitted_at"),
+        "top_headline": headlines[0].get("headline") if headlines else None,
+    }
+
+
+def _tag_signal_news(db: Session, signal_id, news: dict) -> None:
+    """Record the news that admitted the symbol on the entry's signal row.
+
+    Loss diagnosis reads ``features.news_context``: a loss on a stock bought
+    on positive news that fell on its own is ``news_wrong``.
+    """
+    try:
+        row = db.get(StrategySignal, signal_id)
+        if row is not None:
+            row.features = {**(row.features or {}), "news_context": _news_context(news)}
+            db.flush()
+    except Exception as exc:  # evidence only; never block the entry
+        logger.info("news context not recorded on signal %s: %s", signal_id, exc.__class__.__name__)
+
+
+def _other_holders(symbol: str, strategy_type: str, holdings: dict, pending: list, type_by_id: dict,
+                   cycle_buyers: dict[str, set[str]], held_symbols: set[str]) -> list[str]:
+    """Other strategies holding, buying or (this cycle) bought ``symbol``."""
+    holders = {kind for kind, quantity in holdings.items() if kind != strategy_type and quantity > 0}
+    holders |= {type_by_id.get(row.strategy_id) or "an unattributed order" for row in pending
+                if row.side == "buy" and not _is_exit_leg(row)} - {strategy_type}
+    holders |= cycle_buyers.get(symbol, set()) - {strategy_type}
+    if not holders and symbol in held_symbols:
+        holders.add("an unattributed position")
+    return sorted(str(holder) for holder in holders)
+
+
 def _sector_exposure(db: Session, account_id: int) -> dict[str, set[str]]:
     """Symbols held or being bought, grouped by sector ETF group."""
     held = db.query(StockPaperPosition).filter(
@@ -624,6 +679,13 @@ def _run_signal_cycle(db: Session) -> dict:
         reject_alert = None
     if reject_alert:
         base["order_reject_alert"] = reject_alert
+    # News-discovered symbols: admitted ones are traded learning-sized; an
+    # expired one stays in the cycle while held so its exits still run.
+    news_admitted, news_exits_only = _news_universe(db, now, set(symbols))
+    if news_admitted or news_exits_only:
+        symbols = [*symbols, *sorted(set(news_admitted) | news_exits_only)]
+        base["symbols"] = list(symbols)
+        base["news_discovered"] = {"admitted": sorted(news_admitted), "exits_only": sorted(news_exits_only)}
 
     all_strategies = (
         db.query(Strategy)
@@ -697,6 +759,7 @@ def _run_signal_cycle(db: Session) -> dict:
     order_ms = {"reserve": 0.0, "dispatch": 0.0}
     base["entry_protections"] = protections.summary()
     results: list[dict] = []
+    cycle_buyers: dict[str, set[str]] = {}
     for symbol in symbols:
         # Phase 1: observe every strategy for this symbol before acting, so
         # opposing signals from different strategies are resolved
@@ -837,6 +900,22 @@ def _run_signal_cycle(db: Session) -> dict:
                         result.update({"status": "skipped", "reason": "strategy already holds or is buying this symbol; no pyramiding on a persistent signal"})
                         results.append(result)
                         continue
+                    if symbol in news_exits_only:
+                        result.update({"status": "skipped",
+                                       "reason": "news admission expired; the symbol stays in the cycle for exits only"})
+                        results.append(result)
+                        continue
+                    holders = _other_holders(symbol, strategy.strategy_type, holdings, pending, type_by_id,
+                                             cycle_buyers, entry_limits.held) \
+                        if settings.paper_one_position_per_symbol else []
+                    if holders:
+                        # Two strategies in one name doubled every loss on it
+                        # (GOOGL x3, META, AMD and AAPL x2 in the first 20 trades).
+                        result.update({"status": "skipped",
+                                       "reason": f"one position per symbol: {', '.join(holders)} already holds "
+                                                 f"or is buying {symbol}"})
+                        results.append(result)
+                        continue
                     protection_block = protections.check(symbol, strategy.strategy_type)
                     if protection_block is not None:
                         result.update(protection_block)
@@ -890,11 +969,16 @@ def _run_signal_cycle(db: Session) -> dict:
                         result["volatility_scale"] = vol_scale
                         size_scale = Decimal(str(vol_scale["scale"]))
                     exploring = result.get("mode") == "explore"
+                    news = news_admitted.get(symbol)
+                    if news is not None:
+                        # Admitted on news, not on the strategy's track record:
+                        # learning-sized whatever the strategy's status.
+                        result["news_discovery"] = _news_context(news)
                     allocation_weight = feedback["weights"].get(strategy.strategy_type, Decimal("1"))
-                    if not exploring:
+                    if not exploring and news is None:
                         result["allocation_weight"] = str(allocation_weight)
                     quantity = _quantity_for_buy(account, reference_price, rules,
-                                                 exploration=exploring,
+                                                 exploration=exploring or news is not None,
                                                  size_scale=size_scale,
                                                  allocation_weight=allocation_weight)
                     if quantity <= 0:
@@ -978,6 +1062,8 @@ def _run_signal_cycle(db: Session) -> dict:
                     )
 
                 exploring = result.get("mode") == "explore"
+                if side == "buy" and symbol in news_admitted:
+                    _tag_signal_news(db, signal["signal_id"], news_admitted[symbol])
                 extra = {}
                 if side == "buy" and exit_plan is not None:
                     extra["exit_plan"] = exit_plan
@@ -1046,6 +1132,7 @@ def _run_signal_cycle(db: Session) -> dict:
                 if side == "buy" and order_status != "cancelled":
                     sector_groups.setdefault(sector_group(symbol), set()).add(symbol)
                     entry_limits.record_buy(symbol, exploring=result.get("mode") == "explore")
+                    cycle_buyers.setdefault(symbol, set()).add(strategy.strategy_type)
             except StockPaperError as exc:
                 result.update({"status": "blocked", "reason": str(exc)})
             except Exception as exc:  # one symbol/strategy must not stop the fan-out

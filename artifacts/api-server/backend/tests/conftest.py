@@ -26,6 +26,8 @@ def _no_network_earnings_calendar(monkeypatch):
     """
     monkeypatch.setattr(settings, "paper_earnings_blackout_sessions", 0)
     monkeypatch.setattr(settings, "loss_diagnosis_earnings_lookup", False)
+    # News discovery reads Alpaca news and the database; its tests enable it.
+    monkeypatch.setattr(settings, "news_discovery_enabled", False)
 
 
 @pytest.fixture()

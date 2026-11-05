@@ -121,6 +121,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
     "app.tasks.jobs.trade_attribution_job": {"queue": "learning"},
+    "app.tasks.jobs.news_discovery_job": {"queue": "learning"},
     "app.tasks.jobs.meta_label_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
@@ -262,6 +263,14 @@ celery_app.conf.beat_schedule = {
     "trade-attribution": {
         "task": "app.tasks.jobs.trade_attribution_job",
         "schedule": crontab(minute="5,35", hour="9-16", day_of_week="mon-fri"),
+        "options": {"expires": 25 * 60},
+    },
+    # Stocks in the news outside the fixed universe: screened, admitted for a
+    # few days, traded learning-sized. From 8:10 so the pre-open news lands
+    # before the first cycle and the intraday feed starts on the new names.
+    "news-discovery": {
+        "task": "app.tasks.jobs.news_discovery_job",
+        "schedule": crontab(minute="10,40", hour="8-15", day_of_week="mon-fri"),
         "options": {"expires": 25 * 60},
     },
     # The meta-label filter retrains itself when due (missing, a week old, or
