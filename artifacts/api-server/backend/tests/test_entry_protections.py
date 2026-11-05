@@ -38,6 +38,9 @@ from app.services.intraday_data import session_bounds
 from app.services.stock_paper_autotrader import run_stock_paper_signal_cycle
 from tests.test_stock_paper_autotrader import _ModelDb, signal_source
 
+# These tests exercise the generic SELL-signal path (see conftest).
+pytestmark = pytest.mark.usefixtures("legacy_technical_exits")
+
 UTC = timezone.utc
 ET = ZoneInfo("America/New_York")
 NOW = datetime(2026, 10, 28, 16, 0, tzinfo=UTC)  # Wed 12:00 ET, mid-session

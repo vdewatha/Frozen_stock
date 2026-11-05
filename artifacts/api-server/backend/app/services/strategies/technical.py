@@ -7,6 +7,7 @@ import pandas as pd
 from app.services.probabilistic_model import predict_probabilities
 from app.services.strategies.base import (
     BaseStrategy,
+    ExitPolicy,
     StrategySignalResult,
     clamp,
     has_valid_history,
@@ -14,10 +15,20 @@ from app.services.strategies.base import (
     rsi as compute_rsi,
 )
 
+# The exits every strategy in this module was scored with
+# (reports/strategy-scorecard-20261028.md): the backtester's default 3% stop,
+# 6% target and 20-session time stop, and no exit on a SELL signal.  Paper
+# used a 3% / 3% bracket and SELL exits instead, which needs a win rate
+# above 50% to break even where the tested plan needs about 38%, so paper
+# results could not confirm or refute the backtest.
+BACKTESTED_BRACKET_EXIT_POLICY = ExitPolicy(stop_loss_pct=0.03, take_profit_pct=0.06, max_holding_sessions=20,
+                                            sell_signal_exit=False)
+
 
 class MovingAverageCrossoverStrategy(BaseStrategy):
     name = "Moving Average Crossover"
     slug = "moving_average_crossover"
+    default_exit_policy = BACKTESTED_BRACKET_EXIT_POLICY
 
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         short_window = int(self.parameters.get("short_window", 20))
@@ -53,6 +64,7 @@ class MovingAverageCrossoverStrategy(BaseStrategy):
 class RSIMeanReversionStrategy(BaseStrategy):
     name = "RSI Mean Reversion"
     slug = "rsi_mean_reversion"
+    default_exit_policy = BACKTESTED_BRACKET_EXIT_POLICY
 
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         buy_threshold = float(self.parameters.get("buy_threshold", 30))
@@ -83,6 +95,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
 class MACDMomentumStrategy(BaseStrategy):
     name = "MACD Momentum"
     slug = "macd_momentum"
+    default_exit_policy = BACKTESTED_BRACKET_EXIT_POLICY
 
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         fast_span = int(self.parameters.get("fast_span", 12))
@@ -124,6 +137,7 @@ class MACDMomentumStrategy(BaseStrategy):
 class EnsembleStrategy(BaseStrategy):
     name = "Ensemble Strategy"
     slug = "ensemble"
+    default_exit_policy = BACKTESTED_BRACKET_EXIT_POLICY
 
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         members = [
@@ -150,6 +164,7 @@ class EnsembleStrategy(BaseStrategy):
 class ModelPredictiveLongStrategy(BaseStrategy):
     name = "Model Predictive Long"
     slug = "model_predictive_long"
+    default_exit_policy = BACKTESTED_BRACKET_EXIT_POLICY
 
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         min_probability = float(self.parameters.get("min_probability_up", 0.56))
@@ -213,6 +228,7 @@ class ModelPredictiveLongStrategy(BaseStrategy):
 class BollingerMeanReversionStrategy(BaseStrategy):
     name = "Bollinger Mean Reversion"
     slug = "bollinger_mean_reversion"
+    default_exit_policy = BACKTESTED_BRACKET_EXIT_POLICY
 
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         window = int(self.parameters.get("window", 20))
@@ -262,6 +278,7 @@ class BollingerMeanReversionStrategy(BaseStrategy):
 class ChannelBreakoutStrategy(BaseStrategy):
     name = "Channel Breakout"
     slug = "channel_breakout"
+    default_exit_policy = BACKTESTED_BRACKET_EXIT_POLICY
 
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         lookback = int(self.parameters.get("lookback", 55))
@@ -306,6 +323,7 @@ class ChannelBreakoutStrategy(BaseStrategy):
 class TrendPullbackStrategy(BaseStrategy):
     name = "Trend Pullback"
     slug = "trend_pullback"
+    default_exit_policy = BACKTESTED_BRACKET_EXIT_POLICY
 
     def generate_signal(self, symbol: str, data: pd.DataFrame) -> StrategySignalResult:
         fast = int(self.parameters.get("fast_ema", 20))

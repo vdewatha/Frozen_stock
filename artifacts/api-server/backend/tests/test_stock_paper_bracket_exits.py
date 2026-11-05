@@ -374,6 +374,8 @@ class BracketLedgerTests(unittest.TestCase):
 # --- autotrader cooperation (mocked db, no broker) -------------------------
 
 _MACD = SimpleNamespace(id=3, strategy_type="macd_momentum")
+# A strategy type with no declared exit policy: risk-rule legs and SELL exits.
+_LEGACY = SimpleNamespace(id=3, strategy_type="legacy_bracket")
 
 
 def _cycle(db, action, *, holdings=None, pending=(), coverage=Decimal("0"), exit_orders=(), cancel=None,
@@ -410,7 +412,7 @@ def _leg_row(role="stop_loss"):
 
 
 def test_entry_is_whole_share_bracket_from_risk_rules():
-    db = _ModelDb([_MACD], {})
+    db = _ModelDb([_LEGACY], {})
     result, calls = _cycle(db, "BUY", rules={"max_risk_per_trade": "0.01", "position_take_profit_pct": "0.05"},
                            price="333")
     kwargs = calls.reserve.call_args.kwargs
@@ -422,7 +424,7 @@ def test_entry_is_whole_share_bracket_from_risk_rules():
 
 
 def test_entry_below_one_share_is_skipped_with_reason():
-    db = _ModelDb([_MACD], {})
+    db = _ModelDb([_LEGACY], {})
     result, calls = _cycle(db, "BUY", price="2500")  # 1% of 100k = $1000 < one share
     calls.reserve.assert_not_called()
     row = result["results"][0]
@@ -431,7 +433,7 @@ def test_entry_below_one_share_is_skipped_with_reason():
 
 
 def test_entry_of_at_least_half_a_share_buys_one_whole_share():
-    db = _ModelDb([_MACD], {})
+    db = _ModelDb([_LEGACY], {})
     result, calls = _cycle(db, "BUY", price="1400")  # $1000 / 1400 = 0.714 shares, like LLY or COST
     kwargs = calls.reserve.call_args.kwargs
     assert kwargs["quantity"] == Decimal("1")
@@ -443,15 +445,16 @@ def test_round_up_can_be_disabled():
     from unittest.mock import patch
     from app.core.config import settings
 
-    db = _ModelDb([_MACD], {})
-    with patch.object(settings, "paper_min_share_round_up", 0):
+    db = _ModelDb([_LEGACY], {})
+    with patch.object(settings, "paper_min_share_round_up", 0), \
+            patch.object(settings, "paper_min_one_share_equity_fraction", 0):
         result, calls = _cycle(db, "BUY", price="1400")
     calls.reserve.assert_not_called()
     assert "whole share" in result["results"][0]["reason"]
 
 
 def test_disabling_both_exit_legs_keeps_fractional_simple_entry():
-    db = _ModelDb([_MACD], {})
+    db = _ModelDb([_LEGACY], {})
     _result, calls = _cycle(db, "BUY", price="2500",
                             rules={"position_stop_loss_pct": 0, "position_take_profit_pct": 0})
     kwargs = calls.reserve.call_args.kwargs
@@ -460,7 +463,7 @@ def test_disabling_both_exit_legs_keeps_fractional_simple_entry():
 
 
 def test_new_entry_waits_while_exit_legs_are_live_for_the_symbol():
-    db = _ModelDb([_MACD], {})
+    db = _ModelDb([_LEGACY], {})
     result, calls = _cycle(db, "BUY", pending=[_leg_row()])
     calls.reserve.assert_not_called()
     assert "exit legs are live" in result["results"][0]["reason"]
@@ -468,7 +471,7 @@ def test_new_entry_waits_while_exit_legs_are_live_for_the_symbol():
 
 def test_protective_stop_defers_to_a_live_broker_stop_leg():
     position = SimpleNamespace(quantity=Decimal("5"), average_entry_price=Decimal("110"))
-    db = _ModelDb([_MACD], {"StockPaperPosition": [position]})
+    db = _ModelDb([_LEGACY], {"StockPaperPosition": [position]})
     result, calls = _cycle(db, "HOLD", pending=[_leg_row()], coverage=Decimal("5"))
     calls.reserve.assert_not_called()
     stop = next(row for row in result["results"] if row["strategy"] == "protective_stop")
@@ -478,16 +481,16 @@ def test_protective_stop_defers_to_a_live_broker_stop_leg():
 
 def test_protective_stop_sells_only_the_uncovered_remainder():
     position = SimpleNamespace(quantity=Decimal("5.5"), average_entry_price=Decimal("110"))
-    db = _ModelDb([_MACD], {"StockPaperPosition": [position]})
+    db = _ModelDb([_LEGACY], {"StockPaperPosition": [position]})
     _result, calls = _cycle(db, "HOLD", pending=[_leg_row()], coverage=Decimal("5"))
     assert calls.reserve.call_args.kwargs["quantity"] == Decimal("0.5")
 
 
 def test_sell_signal_cancels_legs_before_dispatching_app_exit():
     position = SimpleNamespace(quantity=Decimal("5"), average_entry_price=Decimal("100"))
-    db = _ModelDb([_MACD], {"StockPaperPosition": [position]})
+    db = _ModelDb([_LEGACY], {"StockPaperPosition": [position]})
     legs = [_leg_row("take_profit"), _leg_row("stop_loss")]
-    result, calls = _cycle(db, "SELL", holdings={"macd_momentum": Decimal("5")}, pending=legs, exit_orders=legs,
+    result, calls = _cycle(db, "SELL", holdings={"legacy_bracket": Decimal("5")}, pending=legs, exit_orders=legs,
                            cancel={"cancelled_order_ids": [11], "clear": True, "leg_filled": False})
     assert calls.reserve.call_args.kwargs["replacing_exit_order_ids"] == {11}
     calls.cancel.assert_called_once()
@@ -497,9 +500,9 @@ def test_sell_signal_cancels_legs_before_dispatching_app_exit():
 
 def test_sell_signal_defers_when_leg_cancel_is_not_confirmed():
     position = SimpleNamespace(quantity=Decimal("5"), average_entry_price=Decimal("100"))
-    db = _ModelDb([_MACD], {"StockPaperPosition": [position]})
+    db = _ModelDb([_LEGACY], {"StockPaperPosition": [position]})
     legs = [_leg_row()]
-    result, calls = _cycle(db, "SELL", holdings={"macd_momentum": Decimal("5")}, pending=legs, exit_orders=legs,
+    result, calls = _cycle(db, "SELL", holdings={"legacy_bracket": Decimal("5")}, pending=legs, exit_orders=legs,
                            cancel={"cancelled_order_ids": [11], "clear": False, "leg_filled": False})
     calls.dispatch.assert_not_called()
     assert result["results"][0]["status"] == "deferred"
@@ -507,9 +510,9 @@ def test_sell_signal_defers_when_leg_cancel_is_not_confirmed():
 
 def test_sell_signal_releases_reservation_when_a_leg_already_filled():
     position = SimpleNamespace(quantity=Decimal("5"), average_entry_price=Decimal("100"))
-    db = _ModelDb([_MACD], {"StockPaperPosition": [position]})
+    db = _ModelDb([_LEGACY], {"StockPaperPosition": [position]})
     legs = [_leg_row()]
-    result, calls = _cycle(db, "SELL", holdings={"macd_momentum": Decimal("5")}, pending=legs, exit_orders=legs,
+    result, calls = _cycle(db, "SELL", holdings={"legacy_bracket": Decimal("5")}, pending=legs, exit_orders=legs,
                            cancel={"cancelled_order_ids": [], "clear": False, "leg_filled": True})
     calls.dispatch.assert_not_called()
     calls.release.assert_called_once()
@@ -517,9 +520,36 @@ def test_sell_signal_releases_reservation_when_a_leg_already_filled():
 
 
 def test_cycle_timing_splits_reservation_and_dispatch_time():
-    db = _ModelDb([_MACD], {})
+    db = _ModelDb([_LEGACY], {})
     result, _calls = _cycle(db, "BUY", rules={"max_risk_per_trade": "0.01"}, price="333")
     timing = result["timing"]
     assert result["results"][0]["status"] == "submitted"
     assert timing["reserve_ms"] >= 0 and timing["dispatch_ms"] >= 0
     assert timing["reserve_ms"] + timing["dispatch_ms"] <= timing["orders_ms"]
+
+
+def test_backtested_exit_plan_ignores_sell_signals():
+    position = SimpleNamespace(quantity=Decimal("5"), average_entry_price=Decimal("100"))
+    db = _ModelDb([_MACD], {"StockPaperPosition": [position]})
+    result, calls = _cycle(db, "SELL", holdings={"macd_momentum": Decimal("5")})
+    calls.reserve.assert_not_called()
+    row = result["results"][0]
+    assert row["status"] == "observed" and "no SELL-signal exit" in row["reason"]
+
+
+def test_backtested_exit_plan_sends_its_own_bracket():
+    db = _ModelDb([_MACD], {})
+    _result, calls = _cycle(db, "BUY", rules={"position_take_profit_pct": "0.05"}, price="100")
+    plan = calls.reserve.call_args.kwargs["exit_plan"]
+    assert (plan["stop_price"], plan["take_profit_price"]) == (Decimal("97.00"), Decimal("106.00"))
+
+
+def test_sub_share_size_buys_one_share_under_the_equity_cap():
+    from unittest.mock import patch
+    from app.core.config import settings
+
+    db = _ModelDb([_LEGACY], {})
+    with patch.object(settings, "paper_min_share_round_up", 0):
+        result, calls = _cycle(db, "BUY", price="1200")  # $1000 budget, one share $1200 <= 1.5% of $100k
+    assert calls.reserve.call_args.kwargs["quantity"] == Decimal("1")
+    assert result["results"][0]["one_share_floor"] == "1500.000"

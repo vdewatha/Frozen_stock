@@ -19,12 +19,16 @@ class ExitPolicy:
     completed regular sessions since the entry session (the backtester's
     ``max_holding_days``), and ``indicator_exit`` makes the paper cycle consult
     :meth:`BaseStrategy.exit_signal` on completed daily bars.
+    ``sell_signal_exit=False`` stops a strategy SELL from closing the
+    position, for strategies whose backtests never exited on one (the
+    backtester exits only on the stop, target, time stop and ``exit_signal``).
     """
 
     stop_loss_pct: Optional[float] = None
     take_profit_pct: Optional[float] = None
     max_holding_sessions: Optional[int] = None
     indicator_exit: bool = False
+    sell_signal_exit: bool = True
 
 
 @dataclass
@@ -88,6 +92,7 @@ class BaseStrategy(ABC):
             take_profit_pct=take if take is not None else policy.take_profit_pct,
             max_holding_sessions=int(hold) if hold is not None else policy.max_holding_sessions,
             indicator_exit=policy.indicator_exit,
+            sell_signal_exit=policy.sell_signal_exit,
         )
 
     def symbol_scope(self) -> Optional[frozenset[str]]:

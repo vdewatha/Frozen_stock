@@ -5,6 +5,7 @@ owner lookup, exit-leg inheritance in reconciliation, scorecard round trips,
 and the exploration lot count freeing up only after a lot is fully sold.
 Every test uses fake Alpaca gateways; nothing reaches a broker.
 """
+import pytest
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -45,6 +46,9 @@ from tests.test_stock_paper_bracket_exits import (
     _parent,
 )
 from tests.test_stock_paper_ledger import FakeAlpaca
+
+# These tests exercise the generic SELL-signal path (see conftest).
+pytestmark = pytest.mark.usefixtures("legacy_technical_exits")
 
 PRICE = Decimal("100")
 

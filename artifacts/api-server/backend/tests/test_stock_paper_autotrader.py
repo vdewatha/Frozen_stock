@@ -1,3 +1,4 @@
+import pytest
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -7,6 +8,9 @@ from unittest.mock import MagicMock, patch
 from app.core.config import settings
 from app.services.stock_paper_autotrader import run_stock_paper_signal_cycle
 from app.services.stock_paper_ledger import StockPaperError
+
+# These tests exercise the generic SELL-signal path (see conftest).
+pytestmark = pytest.mark.usefixtures("legacy_technical_exits")
 
 
 @contextmanager

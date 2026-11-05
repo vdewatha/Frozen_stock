@@ -251,7 +251,7 @@ class ExitRearmTests(unittest.TestCase):
         tuned = Strategy(name="y", strategy_type="rsi2_pullback", parameters={"stop_loss_pct": 0.05})
         self.assertEqual(exit_percentages(rules, tuned), (Decimal("0.05"), Decimal("0")))
         # ... and strategies without a declared policy keep the risk rules.
-        plain = Strategy(name="z", strategy_type="macd_momentum", parameters={})
+        plain = Strategy(name="z", strategy_type="legacy_bracket", parameters={})
         self.assertEqual(exit_percentages(rules, plain), (Decimal("0.05"), Decimal("0.08")))
         with Session(self.engine) as db:
             self.legacy(db)
@@ -356,7 +356,7 @@ class ExitRearmTests(unittest.TestCase):
     # -------------------------------------- strategy lots and reconciliation
     def seed_strategy(self, db):
         initialize_stock_paper_account(db, FakeAlpaca(account=_account_row()))
-        strategy = Strategy(name="Explorer", strategy_type="macd_momentum", parameters={},
+        strategy = Strategy(name="Explorer", strategy_type="legacy_bracket", parameters={},
                             is_active=True, current_status="paper_trading_candidate")
         db.add(strategy)
         db.flush()
@@ -447,9 +447,9 @@ class ExitRearmTests(unittest.TestCase):
             ))
             fill = db.query(StockPaperFill).filter_by(broker_activity_id="fill-oco-stop").one()
             self.assertEqual(db.get(StockPaperOrder, fill.order_id).strategy_id, strategy.id)
-            holdings, attributed = _strategy_holdings(db, parent.account_id, "SPY", {strategy.id: "macd_momentum"})
+            holdings, attributed = _strategy_holdings(db, parent.account_id, "SPY", {strategy.id: "legacy_bracket"})
             self.assertTrue(attributed)
-            self.assertEqual(holdings, {"macd_momentum": Decimal("0")})
+            self.assertEqual(holdings, {"legacy_bracket": Decimal("0")})
 
     def test_fresh_app_sell_reservation_defers_while_trading_is_enabled(self):
         with Session(self.engine) as db:

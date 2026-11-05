@@ -120,6 +120,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.explained_halt_auto_resume_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
+    "app.tasks.jobs.trade_attribution_job": {"queue": "learning"},
     "app.tasks.jobs.meta_label_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
@@ -255,6 +256,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.loss_feedback_job",
         "schedule": crontab(minute=45, hour=16, day_of_week="mon-fri"),
         "options": {"expires": 2 * 60 * 60},
+    },
+    # Attribute and diagnose closed trades during the session too, so a
+    # skipped nightly run does not leave a day of losses unexplained.
+    "trade-attribution": {
+        "task": "app.tasks.jobs.trade_attribution_job",
+        "schedule": crontab(minute="5,35", hour="9-16", day_of_week="mon-fri"),
+        "options": {"expires": 25 * 60},
     },
     # The meta-label filter retrains itself when due (missing, a week old, or
     # enough new closed paper trades); the job itself skips the session.
