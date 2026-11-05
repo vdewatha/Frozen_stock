@@ -1650,6 +1650,17 @@ def trade_attribution_job() -> dict:
 
 
 @celery_app.task
+def news_discovery_job() -> dict:
+    """Admit stocks in the news outside the fixed universe for learning trades."""
+    def work(db):
+        from app.services.news_discovery import run_news_discovery
+
+        return {"job": "news_discovery_job", **run_news_discovery(db)}
+
+    return _run_job("news_discovery_job", work)
+
+
+@celery_app.task
 def meta_label_retrain_job() -> dict:
     """Retrain the meta-label BUY filter off hours when due (paper only)."""
     from app.services.intraday_data import session_bounds

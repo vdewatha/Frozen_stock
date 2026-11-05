@@ -210,7 +210,10 @@ YESTERDAY = date(2026, 10, 27)
 
 # ------------------------------------------------------------- entries/scope
 
-def test_rsi2_entry_uses_oto_catastrophe_stop_and_scope_limits_symbols():
+def test_rsi2_entry_uses_oto_catastrophe_stop_and_scope_limits_symbols(monkeypatch):
+    # Both strategies buy SPY in one cycle; this test is about RSI(2)'s legs,
+    # so the one-position-per-symbol rule (tested on its own) is off.
+    monkeypatch.setattr(settings, "paper_one_position_per_symbol", False)
     db = _ModelDb([_MA, _rsi2()], {})
     result, calls, signals = _cycle(db, _signal("BUY", "50"), symbols=("AAPL", "SPY"), frame=_calm_frame())
     # The signal double answers every pair (real batch scoping is tested

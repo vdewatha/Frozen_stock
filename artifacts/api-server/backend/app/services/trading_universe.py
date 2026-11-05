@@ -5,7 +5,8 @@ symbols the scheduled paper loop may trade.  This module derives everything
 else from it:
 
 * the intraday-ingestion universe (execution symbols plus the frozen research
-  core used by forward trials, scalp research and the live pilot),
+  core used by forward trials, scalp research and the live pilot, plus the
+  news-discovered symbols from ``news_discovery``),
 * a static sector-group map for the per-sector open-position cap, and
 * the rule that decides whether stale market data is a *per-symbol* problem
   (only that symbol is blocked) or a *broad outage* (everything is blocked).
@@ -76,9 +77,16 @@ def execution_symbols() -> list[str]:
     return _normalize(settings.paper_execution_symbols)
 
 
+def discovered_symbols() -> frozenset[str]:
+    """News-discovered symbols admitted (or still held) for paper learning trades."""
+    from app.services.news_discovery import discovered_symbols as _discovered
+
+    return _discovered()
+
+
 def intraday_symbols() -> frozenset[str]:
     """Symbols the intraday feed may ingest and evaluate."""
-    return RESEARCH_CORE_SYMBOLS | frozenset(execution_symbols())
+    return RESEARCH_CORE_SYMBOLS | frozenset(execution_symbols()) | discovered_symbols()
 
 
 def sector_group(symbol: str) -> str:

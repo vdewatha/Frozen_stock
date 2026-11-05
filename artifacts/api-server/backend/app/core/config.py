@@ -209,10 +209,25 @@ class Settings(BaseSettings):
     # most this fraction of equity. Exploration probes (0.25% of equity) were
     # below one share of every symbol over ~$250 and never traded, so those
     # strategies produced no learning data. 0 disables the floor.
+    paper_min_one_share_equity_fraction: float = Field(default=0.015, ge=0, le=0.05)
     # Loss diagnosis checks whether an earnings report landed inside each
     # closed stock trade's hold (yfinance, cached; tests turn it off).
     loss_diagnosis_earnings_lookup: bool = True
-    paper_min_one_share_equity_fraction: float = Field(default=0.015, ge=0, le=0.05)
+    # One open (or pending) position per symbol across strategies: several
+    # strategies holding the same name turned one bad move into 2-3 losses.
+    paper_one_position_per_symbol: bool = True
+    # News symbol discovery (news_discovery.py): Alpaca news admits up to
+    # ``news_discovery_max_symbols`` listed stocks outside the execution
+    # universe for ``news_discovery_admit_days``. The strategies still decide
+    # entries; every entry on a discovered symbol is learning-sized.
+    news_discovery_enabled: bool = True
+    news_discovery_max_symbols: int = Field(default=8, ge=0, le=15)
+    news_discovery_lookback_hours: int = Field(default=24, ge=1, le=96)
+    news_discovery_min_articles: int = Field(default=2, ge=1, le=20)
+    news_discovery_min_sentiment: float = Field(default=0.25, ge=0, le=1)
+    news_discovery_admit_days: int = Field(default=3, ge=1, le=10)
+    news_discovery_min_price: float = Field(default=5.0, ge=1)
+    news_discovery_min_dollar_volume: float = Field(default=20_000_000, ge=0)
     paper_vol_target_annual: float = Field(default=0.15, ge=0, le=2)
     paper_vol_lookback_days: int = Field(default=20, ge=5, le=252)
     paper_vol_scale_floor: float = Field(default=0.25, gt=0, le=1)
