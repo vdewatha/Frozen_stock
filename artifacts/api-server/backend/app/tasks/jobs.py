@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from hashlib import sha256
 from decimal import Decimal
 import logging
+import os
 import time
 from typing import Callable
 from uuid import uuid4
@@ -157,6 +158,33 @@ def _close_job_lock_client(client, job_name: str) -> None:
         )
 
 
+# Deletes the lease only if it still holds the value that was read.
+_DELETE_IF_UNCHANGED = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0"
+
+
+def _release_previous_boot_lease(client, key: str, boot_id: str, job_name: str) -> bool:
+    """Drop a lease taken before this boot (``PAPER_BOOT_ID``); True if dropped.
+
+    A deploy kills workers mid-run and their leases outlived them for the full
+    TTL: on 2026-11-05 the one-minute restart reconciler skipped itself for
+    15 minutes after a publish, the account snapshot aged past the five-minute
+    reservation limit and every new order was blocked. Only a new gateway
+    process gets a new boot id, so a lease from another boot has no live
+    owner here. On PostgreSQL the advisory lock in ``_run_job`` still guards
+    against an overlapping old instance.
+    """
+    holder = client.get(key)
+    if holder is None:
+        return False
+    text_value = holder.decode() if isinstance(holder, bytes) else str(holder)
+    if text_value.startswith(f"{boot_id}:"):
+        return False  # held by a live worker of this boot
+    released = bool(client.eval(_DELETE_IF_UNCHANGED, 1, key, holder))
+    if released:
+        logger.warning("Released scheduled job lease left by a previous boot: job=%s", job_name)
+    return released
+
+
 def _acquire_job_lock(job_name: str):
     """Acquire a Redis lease for jobs whose cadence must not overlap.
 
@@ -192,13 +220,17 @@ def _acquire_job_lock(job_name: str):
             if job_name == "iex_research_collection_job"
             else REDIS_JOB_LOCK_TTL_SECONDS
         )
-        lock = client.lock(
-            f"trading:scheduled-job:{job_name}",
-            timeout=lock_ttl,
-            blocking=False,
-        )
-        if not lock.acquire(blocking=False):
-            return None
+        key = f"trading:scheduled-job:{job_name}"
+        lock = client.lock(key, timeout=lock_ttl, blocking=False)
+        boot_id = (os.environ.get("PAPER_BOOT_ID") or "").strip()
+        # The token names the boot that took the lease, so the next boot can
+        # tell a lease left by a process the deploy killed mid-run.
+        options = {"token": f"{boot_id}:{uuid4().hex}"} if boot_id else {}
+        if not lock.acquire(blocking=False, **options):
+            if not boot_id or not _release_previous_boot_lease(client, key, boot_id, job_name):
+                return None
+            if not lock.acquire(blocking=False, **options):
+                return None
         acquired = True
         return lock
     except redis.RedisError as exc:
