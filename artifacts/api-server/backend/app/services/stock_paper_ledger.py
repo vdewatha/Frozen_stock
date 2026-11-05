@@ -1143,6 +1143,59 @@ def cancel_stale_exit_entries(db: Session, account: StockPaperAccount, now: date
     return cancelled + cancel_aged_open_entries(db, account, now, gateway)
 
 
+def cancel_aged_open_exits(db: Session, account: StockPaperAccount, now: datetime,
+                           gateway: AlpacaPaperGateway | None = None,
+                           max_open_minutes: int | None = None) -> list[int]:
+    """Cancel same-session app-side SELL exits still unfilled after N minutes.
+
+    Signal, policy and protective-stop exits are limit orders at the cycle's
+    price; once the price trades below the limit they rest unfilled until the
+    close, never reduce the position, and as in-flight orders block every
+    resume path (2026-11-05: one AAPL sell held a paused bot for hours). The
+    next cycle re-issues the exit at the current price under a numbered
+    idempotency key. Broker exit legs, partially filled sells and manual or
+    recovery orders are never touched; a refused cancel is left for
+    reconciliation. ``settings.paper_stale_exit_cancel_minutes`` = 0 disables.
+    """
+    minutes = settings.paper_stale_exit_cancel_minutes if max_open_minutes is None else max_open_minutes
+    if not minutes:
+        return []
+    bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
+    if bounds is None:
+        return []
+    cutoff = now - timedelta(minutes=minutes)
+    rows = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id,
+        StockPaperOrder.side == "sell",
+        StockPaperOrder.status.in_(UNFILLED_ENTRY_STATUSES),
+        StockPaperOrder.leg_role.is_(None),
+        StockPaperOrder.parent_order_id.is_(None),
+    ).all()
+    aged = [
+        row for row in rows
+        if row.broker_order_id and row.source in AUTONOMOUS_ORDER_SOURCES
+        and row.submitted_at is not None and bounds[0] <= _utc(row.submitted_at) <= cutoff
+    ]
+    if not aged:
+        return []
+    gateway = gateway or active_paper_gateway()
+    cancelled = []
+    for row in aged:
+        try:
+            gateway.cancel_order(row.broker_order_id)
+        except Exception as exc:  # leave it for reconciliation; never block the cycle
+            logger.warning("stale exit cancel failed for order %s: %s", row.id, exc)
+            continue
+        row.status = "pending_cancel"
+        cancelled.append(row.id)
+    if cancelled:
+        _event(db, account, "stale_open_exit_cancel", "requested",
+               f"Unfilled exit sell still open after {minutes} minutes was cancelled for re-issue",
+               {"order_ids": cancelled})
+        db.commit()
+    return cancelled
+
+
 # Entry orders with no fill yet; partially filled entries are left alone (the
 # filled shares need their legs / the protective stop, not a cancel race).
 UNFILLED_ENTRY_STATUSES = frozenset({"new", "accepted", "pending_new"})

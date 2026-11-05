@@ -108,6 +108,20 @@ def protective_stop_idempotency_key(session_key: str, symbol: str) -> str:
     return f"scheduled-paper:{session_key}:{symbol}:protective_stop:sell"
 
 
+# A stale exit sell is cancelled and re-issued under a numbered key (Alpaca
+# never accepts a client order id twice); bounded so a falling price cannot
+# be chased all session and so attribution can enumerate every variant.
+SELL_RETRY_LIMIT = 8
+
+
+def sell_retry_key(base: str, attempt: int) -> str:
+    return base if attempt <= 0 else f"{base}:retry{attempt}"
+
+
+def sell_key_variants(base: str) -> list[str]:
+    return [sell_retry_key(base, attempt) for attempt in range(SELL_RETRY_LIMIT + 1)]
+
+
 def _client_order_id(idempotency_key: str) -> str:
     # Mirrors reserve_stock_paper_order's client_order_id derivation.
     return "sp-" + hashlib.sha256(idempotency_key.encode()).hexdigest()[:45]
@@ -128,8 +142,9 @@ def _is_protective_stop(client_order_id: str | None, symbol: str, *times: dateti
             continue
         local_day = moment.astimezone(ET).date()
         for day in (local_day, local_day - timedelta(days=1)):
-            if _client_order_id(protective_stop_idempotency_key(day.isoformat(), symbol)) == client_order_id:
-                return True
+            for key in sell_key_variants(protective_stop_idempotency_key(day.isoformat(), symbol)):
+                if _client_order_id(key) == client_order_id:
+                    return True
     return False
 
 

@@ -249,6 +249,10 @@ class Settings(BaseSettings):
     # Autonomous BUY entries with no fill this long after submission (same
     # session) are cancelled; 0 disables.  Sells/exit legs are never touched.
     paper_stale_entry_cancel_minutes: int = Field(default=30, ge=0, le=390)
+    # App-side exit sells (signal, policy and protective-stop SELLs are limit
+    # orders at the cycle's price) still unfilled this long are cancelled and
+    # re-issued by the next cycle at the current price; 0 disables.
+    paper_stale_exit_cancel_minutes: int = Field(default=10, ge=0, le=390)
     # Broker-rejected stock paper orders in 24h that raise one warning
     # notification (never critical, so it cannot gate exits); 0 disables.
     paper_order_reject_alert_count: int = Field(default=3, ge=0, le=1000)

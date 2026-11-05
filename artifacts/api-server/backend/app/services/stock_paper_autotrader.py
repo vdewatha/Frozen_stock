@@ -30,6 +30,7 @@ from app.services.stock_paper_ledger import (
     broker_stop_coverage,
     build_exit_plan,
     cancel_broker_exit_orders,
+    cancel_aged_open_exits,
     cancel_stale_exit_entries,
     dispatch_reserved_order,
     live_exit_orders,
@@ -37,7 +38,12 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
 )
 from app.services.earnings_calendar import earnings_blackout, earnings_known
-from app.services.entry_protections import load_entry_protections, protective_stop_idempotency_key
+from app.services.entry_protections import (
+    SELL_RETRY_LIMIT,
+    load_entry_protections,
+    protective_stop_idempotency_key,
+    sell_retry_key,
+)
 from app.services.intraday_data import session_bounds
 from app.services.meta_label_shadow import resolve_runtime as resolve_meta_label_runtime
 from app.services.stock_paper_signal_batch import generate_cycle_signals
@@ -344,6 +350,35 @@ def _policy_exits(db: Session, account, symbol: str, now: datetime, policy_rows:
     return exits
 
 
+CANCELLED_ORDER_STATUSES = frozenset({"cancelled", "canceled", "expired"})
+
+
+def _sell_key(db: Session, account_id: int, symbol: str, base: str, now: datetime) -> str:
+    """The idempotency key for this session's next app-side exit sell.
+
+    ``cancel_aged_open_exits`` cancels an exit that rested unfilled; the next
+    one needs a fresh client order id, numbered by how many autonomous exit
+    sells for the symbol were cancelled this session. While one is pending the
+    count, and so the key, is unchanged (and the pending-sell guards skip).
+    """
+    day_start = datetime.combine(now.astimezone(ET).date(), datetime.min.time(), tzinfo=ET).astimezone(UTC)
+    attempt = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account_id,
+        StockPaperOrder.symbol == symbol,
+        StockPaperOrder.side == "sell",
+        StockPaperOrder.leg_role.is_(None),
+        StockPaperOrder.source.in_({SCHEDULED_SOURCE, EXPLORATION_SOURCE}),
+        StockPaperOrder.status.in_(CANCELLED_ORDER_STATUSES),
+        StockPaperOrder.created_at >= day_start,
+    ).count()
+    if attempt > SELL_RETRY_LIMIT:
+        raise StockPaperError(
+            f"exit sell for {symbol} was re-issued {SELL_RETRY_LIMIT} times this session without filling; "
+            "the broker-side exit re-arm keeps protecting it"
+        )
+    return sell_retry_key(base, attempt)
+
+
 def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
                      rules: dict, session_key: str, type_by_id: dict | None = None) -> dict | None:
     """Exit a long whose loss from average entry breaches the stop budget.
@@ -384,7 +419,8 @@ def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
         owner_id = _sell_owner_id(db, account.id, symbol, type_by_id, quantity) if type_by_id else None
         order = reserve_stock_paper_order(
             db, symbol=symbol, side="sell", quantity=quantity, reference_price=price,
-            idempotency_key=protective_stop_idempotency_key(session_key, symbol),
+            idempotency_key=_sell_key(db, account.id, symbol, protective_stop_idempotency_key(session_key, symbol),
+                                      datetime.now(UTC)),
             source=SCHEDULED_SOURCE, strategy_id=owner_id,
         )
         submitted = dispatch_reserved_order(db, order.id)
@@ -573,6 +609,13 @@ def _run_signal_cycle(db: Session) -> dict:
         stale_entries = {"status": "blocked", "reason": str(exc)}
     if stale_entries:
         base["stale_entry_cancellations"] = stale_entries
+    try:
+        stale_exits = cancel_aged_open_exits(db, account, now)
+    except StockPaperError as exc:
+        db.rollback()
+        stale_exits = {"status": "blocked", "reason": str(exc)}
+    if stale_exits:
+        base["stale_exit_cancellations"] = stale_exits
     try:
         reject_alert = alert_repeated_order_rejects(db, account, now)
     except Exception as exc:  # alerting must never stop the cycle
@@ -929,6 +972,12 @@ def _run_signal_cycle(db: Session) -> dict:
                     # feed, reconciliation) passes before any exit leg is
                     # touched; dispatch still refuses while a leg is live.
                     extra["replacing_exit_order_ids"] = {row.id for row in exit_orders}
+                idempotency_key = (
+                    f"{'explore' if exploring else 'scheduled'}-paper:{session_key}:{symbol}:"
+                    f"{strategy.strategy_type}:{side}"
+                )
+                if side == "sell":
+                    idempotency_key = _sell_key(db, account.id, symbol, idempotency_key, now)
                 reserve_started = time.perf_counter()
                 try:
                     order = reserve_stock_paper_order(
@@ -937,10 +986,7 @@ def _run_signal_cycle(db: Session) -> dict:
                         side=side,
                         quantity=quantity,
                         reference_price=reference_price,
-                        idempotency_key=(
-                            f"{'explore' if exploring else 'scheduled'}-paper:{session_key}:{symbol}:"
-                            f"{strategy.strategy_type}:{side}"
-                        ),
+                        idempotency_key=idempotency_key,
                         source=EXPLORATION_SOURCE if exploring else SCHEDULED_SOURCE,
                         signal_id=signal["signal_id"],
                         **extra,

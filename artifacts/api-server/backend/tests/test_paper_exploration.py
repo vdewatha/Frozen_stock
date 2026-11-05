@@ -237,6 +237,9 @@ class _Query:
     def one_or_none(self):
         return self.rows[0] if self.rows else None
 
+    def count(self):
+        return len(self.rows)
+
 
 class _Db:
     def __init__(self, strategies):

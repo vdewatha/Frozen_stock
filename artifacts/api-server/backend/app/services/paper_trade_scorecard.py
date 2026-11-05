@@ -45,7 +45,7 @@ from app.models.stock_paper import (
     StockPaperPosition,
 )
 from app.services.trade_mistakes import aggregate_mistakes, classify_round_trip
-from app.services.entry_protections import protective_stop_idempotency_key
+from app.services.entry_protections import protective_stop_idempotency_key, sell_key_variants
 
 SCORECARD_VERSION = "paper-trade-scorecard-v1"
 SNAPSHOT_EVENT_TYPE = "paper_scorecard_snapshot"
@@ -145,7 +145,8 @@ class _ExitAttribution:
 
     The autotrader reserves sells with idempotency keys
     ``{scheduled|explore}-paper:{ET date}:{symbol}:{strategy_type}:sell`` and
-    ``scheduled-paper:{ET date}:{symbol}:protective_stop:sell``. Newer sells
+    ``scheduled-paper:{ET date}:{symbol}:protective_stop:sell``, plus a
+    ``:retry{n}`` suffix when a stale exit was re-issued. Newer sells
     store the strategy of the lot they close (preferred when present); older
     ones did not, so the key is recomputed to recover it.
     """
@@ -164,12 +165,13 @@ class _ExitAttribution:
         if label not in BOT_SOURCES:
             return "other", None
         for day in _session_dates(order):
-            if order.client_order_id == _client_order_id(protective_stop_idempotency_key(day, order.symbol)):
+            if any(order.client_order_id == _client_order_id(key)
+                   for key in sell_key_variants(protective_stop_idempotency_key(day, order.symbol))):
                 return "protective_stop", None
             for strategy_type in self.strategy_types:
                 for prefix in ("scheduled", "explore"):
-                    key = f"{prefix}-paper:{day}:{order.symbol}:{strategy_type}:sell"
-                    if order.client_order_id == _client_order_id(key):
+                    base = f"{prefix}-paper:{day}:{order.symbol}:{strategy_type}:sell"
+                    if any(order.client_order_id == _client_order_id(key) for key in sell_key_variants(base)):
                         return "sell_signal", strategy_type
         return "other", None
 
