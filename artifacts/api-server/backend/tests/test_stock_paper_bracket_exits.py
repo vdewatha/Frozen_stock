@@ -514,3 +514,12 @@ def test_sell_signal_releases_reservation_when_a_leg_already_filled():
     calls.dispatch.assert_not_called()
     calls.release.assert_called_once()
     assert result["results"][0]["status"] == "skipped"
+
+
+def test_cycle_timing_splits_reservation_and_dispatch_time():
+    db = _ModelDb([_MACD], {})
+    result, _calls = _cycle(db, "BUY", rules={"max_risk_per_trade": "0.01"}, price="333")
+    timing = result["timing"]
+    assert result["results"][0]["status"] == "submitted"
+    assert timing["reserve_ms"] >= 0 and timing["dispatch_ms"] >= 0
+    assert timing["reserve_ms"] + timing["dispatch_ms"] <= timing["orders_ms"]

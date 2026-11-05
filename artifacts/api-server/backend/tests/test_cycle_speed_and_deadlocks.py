@@ -132,3 +132,32 @@ def test_deadlock_retries_are_bounded_and_limited_to_idempotent_jobs():
 
     with pytest.raises(OperationalError):
         jobs._work_with_deadlock_retry("stock_paper_broker_reconciliation_job", other, MagicMock())
+
+
+def test_restart_reconciler_reuses_one_that_outlasted_the_old_45_second_window():
+    """A full reconciliation takes 40-85 s; the next tick must not start another."""
+    from app.services import stock_recovery
+
+    account = SimpleNamespace(id=1, status="reconciled", reconciliation_required=False,
+                              last_reconciled_at=datetime.now(timezone.utc) - timedelta(seconds=95))
+    state = SimpleNamespace(status="resumable", updated_by=None)
+    db = MagicMock()
+    db.query.return_value.filter.return_value.all.return_value = []
+    with patch.object(stock_recovery, "active_paper_account", return_value=account), \
+         patch.object(stock_recovery, "reconcile_stock_paper_account") as reconcile, \
+         patch.object(stock_recovery, "_state", return_value=state), \
+         patch.object(stock_recovery, "_event"):
+        stock_recovery.reconcile_inflight_stock_orders_on_restart(db)
+        reconcile.assert_not_called()
+        account.status = "halted"  # a halted account is always reconciled again
+        reconcile.return_value = {"status": "reconciled"}
+        stock_recovery.reconcile_inflight_stock_orders_on_restart(db)
+        reconcile.assert_called_once()
+
+
+def test_reuse_window_keeps_the_snapshot_inside_the_reservation_age_limit():
+    from app.services import stock_recovery
+
+    # One-minute job tick plus the slowest observed reconciliation (~86 s).
+    worst_age = stock_recovery.RESTART_RECONCILE_REUSE + timedelta(seconds=60 + 90)
+    assert worst_age < ledger.MAX_BROKER_SNAPSHOT_AGE

@@ -649,6 +649,9 @@ def _run_signal_cycle(db: Session) -> dict:
     # these; they are decided here from one lookup and the reservation still
     # re-checks every order that passes.
     entry_limits = _entry_limit_state(db, account, rules)
+    # Time spent reserving (account row lock, gates, risk checks) and
+    # dispatching (broker POST), so a slow orders phase shows its cause.
+    order_ms = {"reserve": 0.0, "dispatch": 0.0}
     base["entry_protections"] = protections.summary()
     results: list[dict] = []
     for symbol in symbols:
@@ -926,20 +929,24 @@ def _run_signal_cycle(db: Session) -> dict:
                     # feed, reconciliation) passes before any exit leg is
                     # touched; dispatch still refuses while a leg is live.
                     extra["replacing_exit_order_ids"] = {row.id for row in exit_orders}
-                order = reserve_stock_paper_order(
-                    db,
-                    symbol=symbol,
-                    side=side,
-                    quantity=quantity,
-                    reference_price=reference_price,
-                    idempotency_key=(
-                        f"{'explore' if exploring else 'scheduled'}-paper:{session_key}:{symbol}:"
-                        f"{strategy.strategy_type}:{side}"
-                    ),
-                    source=EXPLORATION_SOURCE if exploring else SCHEDULED_SOURCE,
-                    signal_id=signal["signal_id"],
-                    **extra,
-                )
+                reserve_started = time.perf_counter()
+                try:
+                    order = reserve_stock_paper_order(
+                        db,
+                        symbol=symbol,
+                        side=side,
+                        quantity=quantity,
+                        reference_price=reference_price,
+                        idempotency_key=(
+                            f"{'explore' if exploring else 'scheduled'}-paper:{session_key}:{symbol}:"
+                            f"{strategy.strategy_type}:{side}"
+                        ),
+                        source=EXPLORATION_SOURCE if exploring else SCHEDULED_SOURCE,
+                        signal_id=signal["signal_id"],
+                        **extra,
+                    )
+                finally:
+                    order_ms["reserve"] += (time.perf_counter() - reserve_started) * 1000
                 if side == "sell" and exit_orders:
                     cancel = cancel_broker_exit_orders(db, exit_orders)
                     result["cancelled_exit_order_ids"] = cancel["cancelled_order_ids"]
@@ -958,7 +965,11 @@ def _run_signal_cycle(db: Session) -> dict:
                         exiting = True
                         results.append(result)
                         continue
-                submitted = dispatch_reserved_order(db, order.id)
+                dispatch_started = time.perf_counter()
+                try:
+                    submitted = dispatch_reserved_order(db, order.id)
+                finally:
+                    order_ms["dispatch"] += (time.perf_counter() - dispatch_started) * 1000
                 order_status = str(submitted.status)
                 result.update({
                     "status": "submitted" if order_status not in {"unknown", "cancelled"} else "blocked",
@@ -991,11 +1002,14 @@ def _run_signal_cycle(db: Session) -> dict:
         "signals_ms": round((signals_done - cycle_started) * 1000, 1),
         "orders_ms": round((finished - signals_done) * 1000, 1),
         "total_ms": round((finished - cycle_started) * 1000, 1),
+        "reserve_ms": round(order_ms["reserve"], 1),
+        "dispatch_ms": round(order_ms["dispatch"], 1),
     }
     logger.info(
-        "stock paper cycle: symbols=%s strategies=%s signals_ms=%s orders_ms=%s total_ms=%s submitted=%s blocked=%s",
+        "stock paper cycle: symbols=%s strategies=%s signals_ms=%s orders_ms=%s total_ms=%s "
+        "reserve_ms=%s dispatch_ms=%s submitted=%s blocked=%s",
         len(symbols), len(strategies), timing["signals_ms"], timing["orders_ms"], timing["total_ms"],
-        submitted, blocked,
+        timing["reserve_ms"], timing["dispatch_ms"], submitted, blocked,
     )
     return base | {
         "status": "complete" if blocked == 0 else "partially_complete",

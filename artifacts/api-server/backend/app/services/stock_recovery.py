@@ -777,7 +777,7 @@ def cancel_open_stock_orders(
     return {"status": "revalidation_required" if not failures else "failed", "cancelled_order_ids": cancelled, "failures": failures, "flattened_order_ids": flattened_ids}
 
 
-RESTART_RECONCILE_REUSE = timedelta(seconds=45)
+RESTART_RECONCILE_REUSE = timedelta(seconds=120)
 
 
 def reconcile_inflight_stock_orders_on_restart(db: Session) -> dict:
@@ -789,9 +789,13 @@ def reconcile_inflight_stock_orders_on_restart(db: Session) -> dict:
         StockPaperOrder.account_id == account.id,
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
     ).all()
-    # The broker reconciliation job already runs every minute. Running a
-    # second full reconciliation here each minute doubled broker calls and
-    # account-row locking and deadlocked with it; reuse a fresh, clean one.
+    # The broker reconciliation job already reconciles every five minutes.
+    # A full reconciliation takes 40-85 s in production and holds the account
+    # row lock throughout, so a 45 s reuse window (measured from the snapshot
+    # time) never matched and this job reconciled back to back: every order
+    # reservation queued behind it (~30 s per order on 2026-11-05). Reuse a
+    # clean one for two minutes; with this job's one-minute tick the snapshot
+    # stays well inside the five-minute reservation age limit.
     fresh = (
         account.status == "reconciled" and not account.reconciliation_required and account.last_reconciled_at
         and datetime.now(UTC) - _utc(account.last_reconciled_at) <= RESTART_RECONCILE_REUSE
