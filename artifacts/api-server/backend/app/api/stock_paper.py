@@ -146,6 +146,14 @@ def weekly_report(db: Session = Depends(get_db)) -> dict:
     return {"latest": latest_weekly_report(db), "preview": build_weekly_report(db)}
 
 
+@router.get("/learning-scoreboard")
+def learning_scoreboard(db: Session = Depends(get_db)) -> dict:
+    """Is the bot learning from its paper trades, and is it improving? (read-only)"""
+    from app.services.learning_scoreboard import build_learning_scoreboard
+
+    return build_learning_scoreboard(db)
+
+
 @router.get("/venue-qualification")
 def venue_qualification_status(db: Session = Depends(get_db)) -> dict:
     return paper_venue_qualification_status(db, active_paper_broker_name())
