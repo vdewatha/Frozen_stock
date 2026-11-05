@@ -30,7 +30,13 @@ from app.models import (
     StockStrategyReadmission,
     Strategy,
 )
-from app.models.stock_paper import StockPaperAccount, StockPaperOrder, StockPaperPosition, StockPaperStrategyEvidence
+from app.models.stock_paper import (
+    StockPaperAccount,
+    StockPaperLedgerEvent,
+    StockPaperOrder,
+    StockPaperPosition,
+    StockPaperStrategyEvidence,
+)
 from app.services import alert_delivery, paper_mandate, strategy_readmission
 from app.services.stock_forward_trial import POLICY
 from app.services.stock_learning_cycle import paper_run_approval_projection
@@ -598,3 +604,61 @@ def test_operator_start_path_honours_mandate_withdrawal(withdraw):
             row = start_trial(db, trial.id, actor="operator")
     assert row.status == "blocked"
     assert withdraw[:6] in (row.blocked_reason or "").lower()
+
+
+def _order(acc, now, *, client, status="reserved", minutes_ago=20, **extra):
+    return StockPaperOrder(account_id=acc.id, client_order_id=client, symbol="SPY", side="buy", order_type="limit",
+                           quantity=Decimal("1"), status=status, source="test", raw_payload={},
+                           created_at=now - timedelta(minutes=minutes_ago), **extra)
+
+
+def test_orphaned_reservation_is_released_and_auto_resume_proceeds():
+    """A reservation whose dispatch was refused never reached the broker; it must not block resume forever."""
+    db = _db()
+    now = datetime(2026, 10, 30, 15, 0, tzinfo=UTC)
+    account = _account(db, now, halt_reason="pause")
+    _paused(db, now, actor="stock_watchdog", payload={"heartbeat_reasons": ["broker reconciliation heartbeat is stale"]})
+    orphan = _order(account, now, client="orphan", reserved_cash=Decimal("500"))
+    db.add(orphan)
+    db.commit()
+    result = _resume(db, now)
+    assert result["status"] == "resumed", result
+    released = db.get(StockPaperOrder, orphan.id)
+    assert released.status == "cancelled" and released.reserved_cash == 0
+    event = db.scalar(select(StockPaperLedgerEvent).where(StockPaperLedgerEvent.event_type == "order_reservation",
+                                                          StockPaperLedgerEvent.status == "released"))
+    assert event.payload["order_id"] == orphan.id
+
+
+@pytest.mark.parametrize("extra", [
+    {"minutes_ago": 2},                                    # may still be dispatching
+    {"submission_attempted_at": datetime(2026, 10, 30, 14, 40, tzinfo=UTC)},  # POST attempted: outcome unknown
+    {"broker_order_id": "alpaca-1", "status": "accepted"},  # live at the broker
+])
+def test_reservations_that_may_be_at_the_broker_still_block_and_are_named(extra):
+    db = _db()
+    now = datetime(2026, 10, 30, 15, 0, tzinfo=UTC)
+    account = _account(db, now, halt_reason="pause")
+    _paused(db, now, actor="stock_monitor", payload={"monitor_breach_keys": ["health.broker"]})
+    order = _order(account, now, client="keep", **extra)
+    db.add(order)
+    db.commit()
+    result = _resume(db, now)
+    assert result["status"] == "waiting"
+    assert f"#{order.id} buy SPY {order.status}" in result["reason"]
+    assert db.get(StockPaperOrder, order.id).status == order.status
+    _resume(db, now)  # the named reason is stable: one event, not one per run
+    assert db.query(StockPaperRecoveryEvent).filter_by(action="automatic_resume").count() == 1
+
+
+def test_resting_broker_exit_legs_never_block_resume():
+    db = _db()
+    now = datetime(2026, 10, 30, 15, 0, tzinfo=UTC)
+    account = _account(db, now, halt_reason="pause")
+    _paused(db, now, actor="stock_monitor", payload={"monitor_breach_keys": ["health.broker"]})
+    db.add(StockPaperOrder(
+        account_id=account.id, client_order_id="leg", symbol="SPY", side="sell", order_type="stop",
+        quantity=Decimal("1"), status="held", source="test", raw_payload={}, leg_role="stop_loss",
+        broker_order_id="leg-1"))
+    db.commit()
+    assert _resume(db, now)["status"] == "resumed"

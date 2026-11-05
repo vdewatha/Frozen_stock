@@ -480,6 +480,53 @@ def _record_auto_resume_outcome(
             )
 
 
+# A reservation is committed before its broker POST; if a dispatch gate then
+# refuses (stale snapshot, pause, session end) it stays "reserved" with no
+# broker order. Paused cycles never dispatch it, so it blocked every resume
+# path indefinitely. Older than this it is released; it never reached Alpaca.
+ORPHAN_RESERVATION_AGE = timedelta(minutes=5)
+
+
+def in_flight_orders(db: Session, account: StockPaperAccount, now: datetime) -> list[StockPaperOrder]:
+    """Entries and app-side sells still in flight, after releasing orphaned reservations.
+
+    Resting broker exits (bracket/OCO legs, re-armed stops) protect open
+    positions by design and are not in flight.
+    """
+    rows = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id,
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+        StockPaperOrder.leg_role.is_(None),
+    ).order_by(StockPaperOrder.id).all()
+    orphan_ids = [
+        row.id for row in rows
+        if row.status == "reserved" and row.submission_attempted_at is None and not row.broker_order_id
+        and row.created_at is not None and now - _utc(row.created_at) >= ORPHAN_RESERVATION_AGE
+    ]
+    released: set[int] = set()
+    if orphan_ids:
+        # Lock them, skipping any a dispatch holds right now (it may be about
+        # to POST); a released row makes a later dispatch return without one.
+        for order in db.query(StockPaperOrder).filter(StockPaperOrder.id.in_(orphan_ids)).with_for_update(
+            skip_locked=True
+        ).all():
+            if order.status != "reserved" or order.submission_attempted_at is not None or order.broker_order_id:
+                continue
+            order.status = "cancelled"
+            order.reserved_cash = Decimal("0")
+            released.add(order.id)
+            ledger_event(db, account, "order_reservation", "released",
+                         "Orphaned reservation never reached the broker; released before resume",
+                         {"client_order_id": order.client_order_id, "order_id": order.id})
+    return [row for row in rows if row.id not in released]
+
+
+def describe_orders(rows: list[StockPaperOrder], limit: int = 5) -> str:
+    """Stable summary (no ages) so repeated waits record one event, not one per run."""
+    text = ", ".join(f"#{row.id} {row.side} {row.symbol} {row.status}" for row in rows[:limit])
+    return text + (f" and {len(rows) - limit} more" if len(rows) > limit else "")
+
+
 def attempt_explained_halt_auto_resume(db: Session, *, now: datetime | None = None) -> dict:
     """Resume an explained technical halt once every human-resume gate passes.
 
@@ -526,15 +573,9 @@ def attempt_explained_halt_auto_resume(db: Session, *, now: datetime | None = No
         (not account.accounting_verified or not account.costs_known) and not research_policy_ready
     ):
         return wait("Complete broker accounting, including known costs, is required")
-    in_flight = db.query(StockPaperOrder).filter(
-        StockPaperOrder.account_id == account.id,
-        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
-        # Resting broker exits (bracket/OCO legs, re-armed stops) protect open
-        # positions by design; only entries and app-side sells are in flight.
-        StockPaperOrder.leg_role.is_(None),
-    ).count()
+    in_flight = in_flight_orders(db, account, now)
     if in_flight:
-        return wait("In-flight orders must be terminal before automatic resume")
+        return wait("In-flight orders must be terminal before automatic resume: " + describe_orders(in_flight))
     okay, monitoring_reason = _fresh_monitoring_is_clear(db, now)
     if not okay:
         return wait(monitoring_reason)
@@ -988,14 +1029,9 @@ def resume_stock_paper_after_revalidation(
                 raise StockPaperError("Accounting review evidence is stale; review the latest broker reconciliation")
             if account.unexplained_residual:
                 raise StockPaperError("The unexplained accounting residual remains unresolved")
-    if db.query(StockPaperOrder).filter(
-        StockPaperOrder.account_id == account.id,
-        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
-        # Resting broker exits (bracket/OCO legs, re-armed stops) protect open
-        # positions by design; only entries and app-side sells are in flight.
-        StockPaperOrder.leg_role.is_(None),
-    ).count():
-        raise StockPaperError("In-flight orders must be terminal before recovery can resume")
+    in_flight = in_flight_orders(db, account, now)
+    if in_flight:
+        raise StockPaperError("In-flight orders must be terminal before recovery can resume: " + describe_orders(in_flight))
     okay, monitoring_reason = _fresh_monitoring_is_clear(db, now)
     if not okay:
         _record_monitoring_preflight_rejection(db, actor=actor, reason=monitoring_reason, now=now)
@@ -1219,14 +1255,9 @@ def attempt_automatic_stock_recovery(
     now = _now()
     if state.cooldown_until and _utc(state.cooldown_until) > now:
         return {"status": "waiting", "reason": f"Recovery cooldown remains active until {_utc(state.cooldown_until).isoformat()}"}
-    if db.query(StockPaperOrder).filter(
-        StockPaperOrder.account_id == account.id,
-        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
-        # Resting broker exits (bracket/OCO legs, re-armed stops) protect open
-        # positions by design; only entries and app-side sells are in flight.
-        StockPaperOrder.leg_role.is_(None),
-    ).count():
-        reason = "In-flight orders must be terminal before recovery can resume"
+    in_flight = in_flight_orders(db, account, now)
+    if in_flight:
+        reason = "In-flight orders must be terminal before recovery can resume: " + describe_orders(in_flight)
         _halt(account, reason, reconciliation_required=False)
         _automatic_recovery_notification(db, reason=reason, payload={"evidence": evidence})
         _event(db, action="automatic_resume", status="blocked", actor=AUTOMATIC_RECOVERY_ACTOR, reason=reason, payload={"evidence": evidence})
