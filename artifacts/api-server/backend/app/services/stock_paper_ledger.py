@@ -1395,10 +1395,11 @@ def _exit_leg_parents(db: Session, account: StockPaperAccount, rows: list[dict],
             if isinstance(leg, dict) and leg.get("id"):
                 parent_by_leg[str(leg["id"])] = str(raw.get("id") or "")
     result: dict[str, StockPaperOrder] = {}
+    parents = _rows_by(db, StockPaperOrder.broker_order_id, parent_by_leg.values())
     for leg_id, parent_broker_id in parent_by_leg.items():
         if not parent_broker_id:
             continue
-        parent = db.query(StockPaperOrder).filter(StockPaperOrder.broker_order_id == parent_broker_id).one_or_none()
+        parent = parents.get(parent_broker_id)
         if parent is None and parent_broker_id in client_by_broker:
             # An uncertain submission learns its broker id in this same batch.
             parent = db.query(StockPaperOrder).filter(
@@ -1414,9 +1415,32 @@ def _exit_leg_parents(db: Session, account: StockPaperAccount, rows: list[dict],
     return result
 
 
+# Reconciliation imports the complete broker history every run; one lookup
+# per order and per activity made it ~5 queries per traded order (~800 for
+# 150 orders, 40-230 s at production's ~200 ms per query, all under the
+# account row lock that every order reservation waits for). Rows are fetched
+# in bulk instead; the per-row checks below are unchanged.
+_BULK_LOOKUP_CHUNK = 500
+
+
+def _rows_by(db: Session, column, values) -> dict:
+    """Map ``column`` value -> row for every row whose value is in ``values``."""
+    keys = sorted({value for value in values if value})
+    found: dict = {}
+    entity = column.class_
+    for start in range(0, len(keys), _BULK_LOOKUP_CHUNK):
+        for row in db.query(entity).filter(column.in_(keys[start:start + _BULK_LOOKUP_CHUNK])).all():
+            found[getattr(row, column.key)] = row
+    return found
+
+
 def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict],
                    leg_hints: dict[str, str] | None = None) -> None:
     leg_parents = _exit_leg_parents(db, account, rows, leg_hints)
+    by_broker_id = _rows_by(db, StockPaperOrder.broker_order_id, (str(raw.get("id") or "").strip() for raw in rows))
+    by_client_id = _rows_by(db, StockPaperOrder.client_order_id, (
+        str(raw.get("client_order_id") or f"broker-{str(raw.get('id') or '').strip()}")[:64] for raw in rows
+    ))
     for raw in rows:
         broker_order_id = str(raw.get("id") or "").strip()
         if not broker_order_id:
@@ -1432,9 +1456,9 @@ def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict],
             raise StockPaperError("Broker order has incomplete immutable fields")
         limit_price = _decimal(raw["limit_price"], "limit price") if raw.get("limit_price") is not None else None
         imported_client_id = str(raw.get("client_order_id") or f"broker-{broker_order_id}")[:64]
-        order = db.query(StockPaperOrder).filter(StockPaperOrder.broker_order_id == broker_order_id).one_or_none()
+        order = by_broker_id.get(broker_order_id)
         if order is None:
-            order = db.query(StockPaperOrder).filter(StockPaperOrder.client_order_id == imported_client_id).one_or_none()
+            order = by_client_id.get(imported_client_id)
         if order is not None and order.account_id != account.id:
             raise StockPaperError("Broker order belongs to another ledger account")
         parent = leg_parents.get(broker_order_id)
@@ -1469,6 +1493,7 @@ def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict],
             if raw.get("stop_price") is not None:
                 order.stop_price = _decimal(raw["stop_price"], "stop price")
             order.raw_payload = raw
+            by_broker_id[broker_order_id] = order
             continue
         if order is None:
             order = StockPaperOrder(account_id=account.id, client_order_id=imported_client_id, broker_order_id=broker_order_id,
@@ -1487,17 +1512,23 @@ def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict],
             order.uncertain_submission = False
             order.raw_payload = raw
         order.raw_payload = raw
+        by_broker_id[broker_order_id] = order
+        by_client_id.setdefault(order.client_order_id, order)
     # SessionLocal disables autoflush; fills must see orders imported in this batch.
     db.flush()
 
 
 def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], observed: datetime) -> set[str]:
     enriched_activity_ids: set[str] = set()
+    activity_ids = [str(raw.get("id") or "").strip() for raw in rows]
+    activities = _rows_by(db, StockPaperBrokerActivity.broker_activity_id, activity_ids)
+    existing_fills = _rows_by(db, StockPaperFill.broker_activity_id, activity_ids)
+    fill_orders = _rows_by(db, StockPaperOrder.broker_order_id, (str(raw.get("order_id") or "").strip() for raw in rows))
     for raw in rows:
         activity_id = str(raw.get("id") or "").strip()
         if not activity_id:
             raise StockPaperError("Broker activity is missing an identifier")
-        activity = db.query(StockPaperBrokerActivity).filter_by(broker_activity_id=activity_id).one_or_none()
+        activity = activities.get(activity_id)
         normalized = None
         if account.activity_contract == alpaca_activity_v2.VERSION:
             try:
@@ -1510,6 +1541,7 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
             activity = StockPaperBrokerActivity(account_id=account.id, broker_activity_id=activity_id,
                 activity_type=str(raw.get("activity_type") or "FILL"), occurred_at=_activity_timestamp(raw, observed), raw_payload=raw)
             db.add(activity)
+            activities[activity_id] = activity
         else:
             activity_type = str(raw.get("activity_type") or "FILL")
             previous_payload = dict(activity.raw_payload or {})
@@ -1549,7 +1581,7 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
         if str(raw.get("activity_type") or "FILL").upper() != "FILL":
             continue
         order_id = str(raw.get("order_id") or "").strip() or None
-        order = db.query(StockPaperOrder).filter_by(broker_order_id=order_id).one_or_none() if order_id else None
+        order = fill_orders.get(order_id) if order_id else None
         side = str(raw.get("side") or "").lower()
         if side not in {"buy", "sell"}:
             raise StockPaperError("Broker fill has unsupported side")
@@ -1558,7 +1590,7 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
                 raise StockPaperError("Broker fill references another ledger account's order")
             if (order.symbol, order.side) != (str(raw.get("symbol") or "").strip().upper(), side):
                 raise StockPaperError("Broker fill does not match its order symbol or side")
-        existing_fill = db.query(StockPaperFill).filter_by(broker_activity_id=activity_id).one_or_none()
+        existing_fill = existing_fills.get(activity_id)
         if existing_fill:
             if existing_fill.account_id != account.id:
                 raise StockPaperError("Broker fill belongs to another ledger account")
@@ -1617,10 +1649,12 @@ def _upsert_fills(db: Session, account: StockPaperAccount, rows: list[dict], obs
                         "broker_activity_id": activity_id, "broker_order_id": order_id})
             continue
         fee = _decimal(raw["commission"], "commission") if raw.get("commission") is not None else None
-        db.add(StockPaperFill(account_id=account.id, order_id=order.id if order else None, broker_activity_id=activity_id,
+        fill = StockPaperFill(account_id=account.id, order_id=order.id if order else None, broker_activity_id=activity_id,
             broker_order_id=order_id, symbol=str(raw.get("symbol") or "").upper(), side=side,
             quantity=_decimal(raw.get("qty"), "fill quantity"), price=_decimal(raw.get("price"), "fill price"),
-            fee=fee, cost_known=fee is not None, filled_at=_activity_timestamp(raw, fallback=observed), raw_payload=raw))
+            fee=fee, cost_known=fee is not None, filled_at=_activity_timestamp(raw, fallback=observed), raw_payload=raw)
+        db.add(fill)
+        existing_fills[activity_id] = fill
     return enriched_activity_ids
 
 
