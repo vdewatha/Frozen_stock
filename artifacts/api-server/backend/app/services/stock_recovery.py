@@ -922,7 +922,10 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
     non_clear = [check for check in snapshot.checks if check.get("status") in {"warning", "unknown", "breach"}]
     blocking = [check for check in non_clear if not nonblocking(check)]
     if blocking:
-        return False, f"Monitoring status is {snapshot.status}, not clear"
+        # Name the checks: on 2026-11-06 an unnamed breach held a paused bot
+        # all session while the operator could not see which check refused.
+        named = ", ".join(sorted(f"{check.get('key')}={check.get('status')}" for check in blocking))
+        return False, f"Monitoring status is {snapshot.status}, not clear: {named}"
     if snapshot.status not in {"clear", "warning", "breach"}:
         return False, f"Monitoring status is {snapshot.status}, not clear"
     return True, "Monitoring evidence is fresh and clear"
