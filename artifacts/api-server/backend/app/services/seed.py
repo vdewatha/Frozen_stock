@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Callable
+
 from sqlalchemy.orm import Session
 
 from app.models import Asset, AuditLog, RiskRule, Strategy
@@ -322,45 +324,80 @@ REGIME_GATE_REPORT = "reports/regime-gate-20261106.md"
 REGIME_GATED_STRATEGIES = {"rsi_mean_reversion": "range", "bollinger_mean_reversion": "range"}
 
 
-def enable_regime_gates(db: Session) -> list[str]:
-    """One-time ``regime_gate`` for the strategies the backtest supports.
+def _enable_gate_once(db: Session, gates: dict[str, dict], *, key: str, action: str,
+                      message: Callable[[dict], str], source: str) -> list[str]:
+    """Merge ``gates[strategy_type]`` into each matching row's parameters, once.
 
-    Acts only on a row with no ``regime_gate`` key and no previous update
-    event, so an operator who sets or removes it later is never overridden.
+    Acts only on a row with no ``key`` parameter and no previous ``action``
+    event, so an operator who sets or removes the gate later is never
+    overridden.
     """
     from app.services.audit import write_audit_log
 
     changed: list[str] = []
-    rows = db.query(Strategy).filter(Strategy.strategy_type.in_(REGIME_GATED_STRATEGIES)).order_by(Strategy.id).all()
+    rows = db.query(Strategy).filter(Strategy.strategy_type.in_(gates)).order_by(Strategy.id).all()
     for row in rows:
         params = dict(row.parameters or {})
-        if "regime_gate" in params:
+        if key in params:
             continue
         already = db.query(AuditLog.id).filter(
             AuditLog.event_type == "strategy_governance",
-            AuditLog.action == REGIME_GATE_ACTION,
+            AuditLog.action == action,
             AuditLog.entity_type == "strategy",
             AuditLog.entity_id == row.id,
         ).first()
         if already:
             continue
-        gate = REGIME_GATED_STRATEGIES[row.strategy_type]
-        row.parameters = params | {"regime_gate": gate}
+        gate = gates[row.strategy_type]
+        row.parameters = params | gate
         write_audit_log(
             db,
             event_type="strategy_governance",
             entity_type="strategy",
             entity_id=row.id,
-            action=REGIME_GATE_ACTION,
+            action=action,
             status="complete",
-            message=(f"{REGIME_GATE_REPORT}: BUY only when ADX(14) < 20 (sideways market); the gate kept or raised "
-                     "expectancy and cut portfolio drawdown in the backtest. Sells and exits are unchanged."),
-            payload={"regime_gate": gate, "source": REGIME_GATE_REPORT, "paper_only": True},
+            message=message(gate),
+            payload={**gate, "source": source, "paper_only": True},
         )
         changed.append(row.strategy_type)
     if changed:
         db.flush()
     return changed
+
+
+def enable_regime_gates(db: Session) -> list[str]:
+    """One-time ``regime_gate`` for the strategies the ADX backtest supports."""
+    return _enable_gate_once(
+        db, {slug: {"regime_gate": gate} for slug, gate in REGIME_GATED_STRATEGIES.items()},
+        key="regime_gate", action=REGIME_GATE_ACTION, source=REGIME_GATE_REPORT,
+        message=lambda gate: (f"{REGIME_GATE_REPORT}: BUY only when ADX(14) < 20 (sideways market); the gate kept or "
+                              "raised expectancy and cut portfolio drawdown in the backtest. Sells and exits are unchanged."),
+    )
+
+
+VIX_GATE_ACTION = "vix_gate_update"
+VIX_GATE_REPORT = "reports/vix-gate-20261106.md"
+# Checked on each strategy's live configuration (paper scope plus the SPY-trend
+# gate) in the 2026-11-06 backtest: VIX < 20 on top of Channel Breakout's
+# SPY-20 gate raised net expectancy and total profit in all three windows
+# without raising portfolio drawdown.  IBS with VIX >= 20 raised both too but
+# worsened drawdown since 2015; RSI(2) with VIX >= 20 earned more per trade but
+# less in total; RSI(14) and Bollinger failed.  Those stay ungated.
+VIX_GATED_STRATEGIES = {
+    "channel_breakout": {"vix_gate": "below", "vix_level": 20},
+}
+
+
+def enable_vix_gates(db: Session) -> list[str]:
+    """One-time ``vix_gate`` for the strategies the VIX backtest supports."""
+    def message(gate: dict) -> str:
+        when = "at or above" if gate["vix_gate"] == "above" else "below"
+        return (f"{VIX_GATE_REPORT}: BUY only when the VIX close is {when} {gate['vix_level']:g}; the gate kept or "
+                "raised expectancy without raising portfolio drawdown in the backtest. Sells and exits are unchanged.")
+
+    return _enable_gate_once(db, VIX_GATED_STRATEGIES, key="vix_gate", action=VIX_GATE_ACTION,
+                             source=VIX_GATE_REPORT, message=message)
 
 
 OPEN_POSITION_LIMIT_ACTION = "open_position_limit_update"
@@ -465,6 +502,7 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "widened_rsi2_scope": widen_rsi2_scope(db),
         "regime_gates_enabled": enable_regime_gates(db),
         "market_gates_enabled": enable_market_gates(db),
+        "vix_gates_enabled": enable_vix_gates(db),
     }
 
 
