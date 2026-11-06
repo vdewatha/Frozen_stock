@@ -314,6 +314,55 @@ def widen_rsi2_scope(db: Session) -> bool:
     return changed
 
 
+REGIME_GATE_ACTION = "regime_gate_update"
+REGIME_GATE_REPORT = "reports/regime-gate-20261106.md"
+# The ADX ``range`` gate kept or raised expectancy and cut drawdown for these
+# two in the 2026-11-06 backtest; it lowered expectancy for RSI(2), IBS and
+# Channel Breakout, which stay ungated.
+REGIME_GATED_STRATEGIES = {"rsi_mean_reversion": "range", "bollinger_mean_reversion": "range"}
+
+
+def enable_regime_gates(db: Session) -> list[str]:
+    """One-time ``regime_gate`` for the strategies the backtest supports.
+
+    Acts only on a row with no ``regime_gate`` key and no previous update
+    event, so an operator who sets or removes it later is never overridden.
+    """
+    from app.services.audit import write_audit_log
+
+    changed: list[str] = []
+    rows = db.query(Strategy).filter(Strategy.strategy_type.in_(REGIME_GATED_STRATEGIES)).order_by(Strategy.id).all()
+    for row in rows:
+        params = dict(row.parameters or {})
+        if "regime_gate" in params:
+            continue
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance",
+            AuditLog.action == REGIME_GATE_ACTION,
+            AuditLog.entity_type == "strategy",
+            AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        gate = REGIME_GATED_STRATEGIES[row.strategy_type]
+        row.parameters = params | {"regime_gate": gate}
+        write_audit_log(
+            db,
+            event_type="strategy_governance",
+            entity_type="strategy",
+            entity_id=row.id,
+            action=REGIME_GATE_ACTION,
+            status="complete",
+            message=(f"{REGIME_GATE_REPORT}: BUY only when ADX(14) < 20 (sideways market); the gate kept or raised "
+                     "expectancy and cut portfolio drawdown in the backtest. Sells and exits are unchanged."),
+            payload={"regime_gate": gate, "source": REGIME_GATE_REPORT, "paper_only": True},
+        )
+        changed.append(row.strategy_type)
+    if changed:
+        db.flush()
+    return changed
+
+
 OPEN_POSITION_LIMIT_ACTION = "open_position_limit_update"
 PREVIOUS_MAX_OPEN_POSITIONS = 10
 
@@ -363,6 +412,7 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "dropped_ibs_trend_filter": drop_ibs_trend_filter(db),
         "retired_scorecard_losers": retire_scorecard_losers(db),
         "widened_rsi2_scope": widen_rsi2_scope(db),
+        "regime_gates_enabled": enable_regime_gates(db),
     }
 
 

@@ -535,7 +535,7 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     db.commit()
     assert outcome == {"created": ["rsi2_pullback", "ibs_mean_reversion"], "demoted_moving_average_crossover": True,
                        "dropped_ibs_trend_filter": False, "retired_scorecard_losers": ["moving_average_crossover"],
-                       "widened_rsi2_scope": True}
+                       "widened_rsi2_scope": True, "regime_gates_enabled": []}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
@@ -553,7 +553,7 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     db.commit()
     assert ensure_strategy_lineup(db) == {"created": [], "demoted_moving_average_crossover": False,
                                           "dropped_ibs_trend_filter": False, "retired_scorecard_losers": [],
-                                          "widened_rsi2_scope": False}
+                                          "widened_rsi2_scope": False, "regime_gates_enabled": []}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"
@@ -671,3 +671,27 @@ def test_open_position_limit_is_raised_once_from_the_old_default(db):
     assert raise_open_position_limit(db) is False
     assert old.value["max_open_positions"] == 10
     assert db.query(AuditLog).filter_by(action=OPEN_POSITION_LIMIT_ACTION).count() == 1
+
+
+def test_lineup_gates_rsi_and_bollinger_reversion_once_and_respects_operators(db):
+    from app.services.seed import REGIME_GATE_ACTION, ensure_strategy_lineup
+    from app.services.strategies.regime import RegimeGatedStrategy
+    from app.services.strategies.registry import get_strategy
+
+    for slug in ("rsi_mean_reversion", "bollinger_mean_reversion", "rsi2_pullback"):
+        db.add(Strategy(name=slug, strategy_type=slug, parameters={"k": 1}, is_active=True,
+                        current_status="research"))
+    db.commit()
+    assert ensure_strategy_lineup(db)["regime_gates_enabled"] == ["rsi_mean_reversion", "bollinger_mean_reversion"]
+    db.commit()
+    rows = {row.strategy_type: row for row in db.query(Strategy).all()}
+    assert rows["rsi_mean_reversion"].parameters == {"k": 1, "regime_gate": "range"}
+    assert "regime_gate" not in rows["rsi2_pullback"].parameters
+    assert isinstance(get_strategy("rsi_mean_reversion", rows["rsi_mean_reversion"].parameters), RegimeGatedStrategy)
+    assert db.query(AuditLog).filter_by(action=REGIME_GATE_ACTION).count() == 2
+
+    # An operator who removes the gate later is not overridden.
+    rows["bollinger_mean_reversion"].parameters = {"k": 1}
+    db.commit()
+    assert ensure_strategy_lineup(db)["regime_gates_enabled"] == []
+    assert "regime_gate" not in db.get(Strategy, rows["bollinger_mean_reversion"].id).parameters
