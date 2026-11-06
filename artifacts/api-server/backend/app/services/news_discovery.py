@@ -114,7 +114,11 @@ def _article_symbols(article: dict) -> list[str]:
 # good news on a bearish rating. A note's tone is its rating action alone.
 _ANALYST_ACTION = re.compile(r"\b(Upgrades|Downgrades|Maintains|Reiterates|Initiates|Resumes|Assumes)\b")
 _BULLISH_RATING = re.compile(r"\b(Strong Buy|Buy|Outperform|Overweight|Positive|Accumulate)\b", re.IGNORECASE)
-_ROUTINE = re.compile(r"\bPrice Target\b|\bInsider\b", re.IGNORECASE)
+# Housekeeping with no view on the business: board pay approvals, dividend
+# declarations, call transcripts, conference slots ("eGain Approves ...
+# Compensation" scored +1 on "approval").
+_ROUTINE = re.compile(r"\bPrice Target\b|\bInsider\b|\bCompensation\b|\bDeclares\b.*\bDividend\b|"
+                      r"\bTranscript\b|\bto (Present|Participate)\b|\bConference\b", re.IGNORECASE)
 _BEARISH_RATING = re.compile(r"\b(Sell|Underperform|Underweight|Reduce|Negative)\b", re.IGNORECASE)
 
 
@@ -188,10 +192,12 @@ def store_articles(db: Session, articles: Iterable[dict]) -> int:
 
 
 def rank_candidates(articles: Iterable[dict], *, exclude: Iterable[str] = (),
-                    min_articles: int | None = None, min_sentiment: float | None = None) -> list[dict]:
+                    min_articles: int | None = None, min_sentiment: float | None = None,
+                    min_directional: int | None = None) -> list[dict]:
     """Companies outside ``exclude`` with enough positive, focused stories."""
     min_articles = settings.news_discovery_min_articles if min_articles is None else min_articles
     min_sentiment = settings.news_discovery_min_sentiment if min_sentiment is None else min_sentiment
+    min_directional = settings.news_discovery_min_directional if min_directional is None else min_directional
     excluded = {str(value).upper() for value in exclude}
     seen: set = set()
     by_symbol: dict[str, list[tuple[float, dict]]] = defaultdict(list)
@@ -215,7 +221,7 @@ def rank_candidates(articles: Iterable[dict], *, exclude: Iterable[str] = (),
         # dilute an upgrade or a raised guide to nothing.
         directional = [score for score in scores if score != 0]
         average = sum(directional) / len(directional) if directional else 0.0
-        if len(items) < min_articles or average < min_sentiment:
+        if len(items) < min_articles or len(directional) < min_directional or average < min_sentiment:
             continue
         newest = sorted(items, key=lambda item: str(item[1].get("created_at") or ""), reverse=True)
         ranked.append({

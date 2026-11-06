@@ -162,9 +162,9 @@ def test_technical_strategies_trade_their_backtested_exits():
     assert custom.take_profit_pct == 0.08 and custom.sell_signal_exit is False
 
 
-def test_intraday_attribution_job_is_scheduled_on_the_learning_queue():
+def test_intraday_attribution_job_is_scheduled_on_the_fast_learning_queue():
     from app.tasks.celery_app import celery_app
 
     entry = celery_app.conf.beat_schedule["trade-attribution"]
     assert entry["task"] == "app.tasks.jobs.trade_attribution_job"
-    assert celery_app.conf.task_routes["app.tasks.jobs.trade_attribution_job"] == {"queue": "learning"}
+    assert celery_app.conf.task_routes["app.tasks.jobs.trade_attribution_job"] == {"queue": "learning_fast"}

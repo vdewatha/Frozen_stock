@@ -599,6 +599,11 @@ def daily_market_regime_detection() -> dict:
     return _run_job("daily_market_regime_detection", work)
 
 
+# The nightly fallback sweep stops starting new symbols this long before the
+# next regular session opens.
+NIGHTLY_SWEEP_OPEN_MARGIN = timedelta(minutes=60)
+
+
 @celery_app.task
 def nightly_backtest_job() -> dict:
     def work(db):
@@ -619,19 +624,31 @@ def nightly_backtest_job() -> dict:
                 "experiments": loss_driven["runs"],
             }
         # No attributed losses yet: keep the original research-only sweep.
+        from app.services.intraday_data import next_regular_session_open
+        from app.services.trading_universe import execution_symbols
+
         strategy = db.query(Strategy).filter(Strategy.strategy_type == "moving_average_crossover").one_or_none()
-        assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
         if not strategy:
             return {"status": "skipped", "job": "nightly_backtest_job", "reason": "No moving average strategy configured."}
-        results = [
-            run_strategy_experiments(db, symbol=asset.symbol, strategy_slug=strategy.strategy_type, max_candidates=3, apply_promotions=False)
-            for asset in assets
-        ]
+        # Only the configured universe, and never into the next session. Over
+        # every active asset (news-discovered and old watchlist names too) at
+        # ~2 minutes each it ran from 19:00 until mid-morning and held a
+        # compact worker thread, so the 30-minute learning jobs expired.
+        symbols = execution_symbols()
+        deadline = next_regular_session_open(datetime.now(timezone.utc)) - NIGHTLY_SWEEP_OPEN_MARGIN
+        results, stopped_at = [], None
+        for symbol in symbols:
+            if datetime.now(timezone.utc) >= deadline:
+                stopped_at = symbol
+                break
+            results.append(run_strategy_experiments(db, symbol=symbol, strategy_slug=strategy.strategy_type,
+                                                    max_candidates=3, apply_promotions=False))
         return {
             "status": "complete",
             "job": "nightly_backtest_job",
             "mode": "fixed_fallback",
             "experiments": [{"symbol": result["symbol"], "created": len(result["experiments"])} for result in results],
+            "stopped_before_open_at": stopped_at,
         }
 
     return _run_job("nightly_backtest_job", work)

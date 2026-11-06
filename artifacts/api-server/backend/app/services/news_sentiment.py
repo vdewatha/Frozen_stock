@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
+import re
 from typing import Optional
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -14,64 +15,25 @@ from sqlalchemy.orm import Session
 from app.models import NewsArticle
 from app.services.audit import write_audit_log
 
-POSITIVE_TERMS = {
-    "beat",
-    "beats",
-    "growth",
-    "upgrade",
-    "upgrades",
-    "resilient",
-    "strong",
-    "optimism",
-    "expands",
-    "record",
-    "surge",
-    "rally",
-    "soars",
-    "jumps",
-    "surges",
-    "rallies",
-    "climbs",
-    "gains",
-    "tops",
-    "raises",
-    "upgraded",
-    "outperform",
-    "buyback",
-    "approval",
-    "approved",
-    "wins",
-    "profit",
-}
-NEGATIVE_TERMS = {
-    "miss",
-    "misses",
-    "downgrade",
-    "downgrades",
-    "risk",
-    "risks",
-    "weak",
-    "pressure",
-    "slump",
-    "cuts",
-    "lawsuit",
-    "warning",
-    "plunges",
-    "falls",
-    "tumbles",
-    "sinks",
-    "drops",
-    "slides",
-    "downgraded",
-    "lowers",
-    "probe",
-    "recall",
-    "layoffs",
-    "bankruptcy",
-    "loss",
-    "delays",
-    "underperform",
-}
+# Word forms, not just base words: "shares fell", "cut price targets" and
+# "guided below forecasts" scored as good news when only "falls" and "cuts"
+# were listed (MCHP, 2026-11-06). Every match counts, so a beat with a weak
+# guide and a falling stock nets negative.
+POSITIVE_PATTERN = re.compile(
+    r"\b(beats?|beating|tops|topped|surg(e|es|ed|ing)|soar(s|ed|ing)?|jump(s|ed|ing)?|"
+    r"rall(y|ies|ied|ying)|climb(s|ed|ing)?|gains?|gained|rais(e|es|ed|ing)|upgrad(e|es|ed|ing)|"
+    r"record|strong(er|est)?|outperform(s|ed|ing)?|buybacks?|approvals?|approved|wins?|won|"
+    r"exceed(s|ed|ing)?|boost(s|ed|ing)?|above|upbeat|optimism|resilient|expands?|expanded|growth|profits?)\b",
+    re.IGNORECASE,
+)
+NEGATIVE_PATTERN = re.compile(
+    r"\b(miss(es|ed|ing)?|fell|falls?|falling|drop(s|ped|ping)?|slid(e|es|ing)?|sank|sinks?|sinking|"
+    r"plung(e|es|ed|ing)|tumbl(e|es|ed|ing)|slump(s|ed|ing)?|downgrad(e|es|ed|ing)|cuts?|cutting|"
+    r"slash(es|ed|ing)?|lower(s|ed|ing)?|weak(er|ness)?|warn(s|ed|ing|ings)?|below|prob(e|es|ed)|"
+    r"recalls?|recalled|layoffs?|bankrupt(cy)?|loss(es)?|delay(s|ed)?|underperform(s|ed|ing)?|"
+    r"lawsuits?|pressure|declin(e|es|ed|ing)|risks?|disappoint(s|ed|ing)?)\b",
+    re.IGNORECASE,
+)
 
 
 SYNTHETIC_NEWS_SOURCES = {"mock_news"}
@@ -82,9 +44,8 @@ def _decimal(value: float) -> Decimal:
 
 
 def score_headline_sentiment(text: str) -> float:
-    words = {word.strip(".,:;!?()[]{}").lower() for word in text.split()}
-    positive = len(words & POSITIVE_TERMS)
-    negative = len(words & NEGATIVE_TERMS)
+    positive = len(POSITIVE_PATTERN.findall(text or ""))
+    negative = len(NEGATIVE_PATTERN.findall(text or ""))
     if positive == negative:
         return 0.0
     return max(-1.0, min(1.0, (positive - negative) / max(positive + negative, 1)))
