@@ -19,6 +19,12 @@ DEFAULT_PAPER_EXECUTION_SYMBOLS: tuple[str, ...] = (
     "WMT", "NFLX", "AMD", "CRM", "ORCL", "ADBE",
 )
 MAX_PAPER_EXECUTION_SYMBOLS = 60
+# Hedge instruments the paper cycle may trade on top of the execution
+# universe: SH (inverse S&P 500) only when reports/hedge-20261106.md adopted a
+# hedge size (``strategies.market_hedge.ADOPTED_HEDGE_FRACTION``).  Research
+# scripts replay ``DEFAULT_PAPER_EXECUTION_SYMBOLS`` and never see them.
+DEFAULT_PAPER_HEDGE_SYMBOLS: tuple[str, ...] = ()
+MAX_PAPER_HEDGE_SYMBOLS = 5
 
 
 class Settings(BaseSettings):
@@ -164,6 +170,10 @@ class Settings(BaseSettings):
     # The default is a liquid ~45-name list (index/sector ETFs + megacaps);
     # PAPER_EXECUTION_SYMBOLS in .replit carries the same list.
     paper_execution_symbols: list[str] = list(DEFAULT_PAPER_EXECUTION_SYMBOLS)
+    # Hedge instruments (``trading_universe.hedge_symbols``); see
+    # DEFAULT_PAPER_HEDGE_SYMBOLS.  An operator admitting the market hedge
+    # later sets PAPER_HEDGE_SYMBOLS=SH.
+    paper_hedge_symbols: list[str] = list(DEFAULT_PAPER_HEDGE_SYMBOLS)
     # Stale market data blocks only the affected symbol unless more than this
     # fraction of the execution universe (or SPY/QQQ) is stale: a broad outage
     # still blocks everything.
@@ -454,6 +464,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"Paper execution universe requires 1 to {MAX_PAPER_EXECUTION_SYMBOLS} valid stock symbols"
             )
+        return symbols
+
+    @field_validator("paper_hedge_symbols")
+    @classmethod
+    def validate_paper_hedge_symbols(cls, values: list[str]) -> list[str]:
+        symbols = sorted({value.strip().upper() for value in values if str(value).strip()})
+        if len(symbols) > MAX_PAPER_HEDGE_SYMBOLS or any(
+            not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,15}", symbol) for symbol in symbols
+        ):
+            raise ValueError(f"Paper hedge universe allows at most {MAX_PAPER_HEDGE_SYMBOLS} valid stock symbols")
         return symbols
 
     @field_validator("database_url", mode="before")

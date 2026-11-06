@@ -28,10 +28,13 @@ INDEX_SENTINEL_SYMBOLS = frozenset({"SPY", "QQQ"})
 DEFAULT_PAPER_EXECUTION_SYMBOLS = _DEFAULT_SYMBOLS
 
 # Sector group = the SPDR sector ETF a name belongs to.  Broad index ETFs form
-# their own "index" group.  Unknown symbols fall back to their own group, so an
-# unmapped name is never silently pooled with unrelated exposure.
+# their own "index" group; the inverse index ETF the market hedge buys is its
+# own "inverse" group, so a hedge never competes with (or counts as) index
+# longs under the per-sector cap.  Unknown symbols fall back to their own
+# group, so an unmapped name is never silently pooled with unrelated exposure.
 SECTOR_GROUPS: dict[str, str] = {
     "SPY": "index", "QQQ": "index", "IWM": "index", "DIA": "index",
+    "SH": "inverse",
     # Technology (XLK) incl. semiconductors
     "XLK": "XLK", "SMH": "XLK", "AAPL": "XLK", "MSFT": "XLK", "NVDA": "XLK", "AVGO": "XLK",
     "AMD": "XLK", "CRM": "XLK", "ORCL": "XLK", "ADBE": "XLK",
@@ -54,12 +57,12 @@ SECTOR_NAMES: dict[str, str] = {
     "index": "Broad Market", "XLK": "Technology", "XLC": "Communication Services",
     "XLY": "Consumer Discretionary", "XLP": "Consumer Staples", "XLF": "Financials",
     "XLV": "Health Care", "XLE": "Energy", "XLI": "Industrials", "XLU": "Utilities",
-    "XLB": "Materials", "XLRE": "Real Estate",
+    "XLB": "Materials", "XLRE": "Real Estate", "inverse": "Inverse Index",
 }
 
 ETF_SYMBOLS = frozenset({
     "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLU",
-    "XLB", "XLRE", "XLC", "SMH",
+    "XLB", "XLRE", "XLC", "SMH", "SH",
 })
 
 
@@ -72,9 +75,19 @@ def _normalize(values: Iterable[str]) -> list[str]:
     return seen
 
 
+def hedge_symbols() -> list[str]:
+    """Hedge instruments admitted to the paper cycle (``settings.paper_hedge_symbols``).
+
+    Empty unless the hedge backtest adopted a size (or an operator admits the
+    hedge later); only the ``market_hedge`` strategy may buy them, every other
+    strategy is fenced off (``strategies/market_hedge.py``).
+    """
+    return _normalize(settings.paper_hedge_symbols)
+
+
 def execution_symbols() -> list[str]:
-    """Configured paper execution universe, normalized and de-duplicated."""
-    return _normalize(settings.paper_execution_symbols)
+    """Configured paper execution universe plus admitted hedge instruments, normalized and de-duplicated."""
+    return _normalize([*settings.paper_execution_symbols, *settings.paper_hedge_symbols])
 
 
 def discovered_symbols() -> frozenset[str]:
