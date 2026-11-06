@@ -2,7 +2,7 @@
 
 **Question:** how much does replaying today's 45-symbol list flatter the live strategies, and should the experiment engine and strategy discovery replay the S&P 500 as it stood on each date instead?
 
-**Decision (pre-registered in `scripts/run_survivorship_check.py`):** `replay_point_in_time_universe = True`. Coverage since 2010 80.9% (passes the 70% bar); worst-case engine run 2.1 min (inside the 30-minute budget). Paper only.
+**Decision (pre-registered in `scripts/run_survivorship_check.py`):** `replay_point_in_time_universe = True`. Coverage since 2010 80.9% (passes the 70% bar); worst-case engine run 2.0 min (inside the 30-minute budget). Paper only.
 
 ## 1. Source and cached data
 
@@ -226,7 +226,7 @@ Two readings. First, the flattery is in *which* names are on today's list, not i
 
 ## 5. Budget
 
-Load 9.5s, signals 8.0s, point-in-time replay 5.4s per strategy and setup; the whole check took 87.5s. Worst-case engine run (4 experiments x 5 setups): 2.1 min of the 30-minute learning-queue limit. The first run with the setting on also downloads every past member's history once (about 20 minutes single-threaded, then monthly); later runs refresh only bars older than a week and fetch at most 60 new earnings histories per run.
+Load 10.9s, signals 8.0s, point-in-time replay 4.93s per strategy and setup; the whole check took 82.2s. Worst-case engine run (4 experiments x 5 setups): 2.0 min of the 30-minute learning-queue limit. The first run with the setting on also downloads every past member's history once (about 20 minutes single-threaded, then monthly); later runs refresh only bars older than a week and fetch at most 60 new earnings histories per run.
 
 ## 6. Caveats
 

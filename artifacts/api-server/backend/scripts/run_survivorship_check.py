@@ -31,7 +31,9 @@ universe is the more honest replay whether the gap is large or small.
 What is compared
 ----------------
 * Two arms per strategy and window (all, 2015+, 2020+), same gates, same
-  exits, same cost model (``gate_replay.simulate``):
+  exits, the published cost model on both sides (``gate_replay.simulate``
+  with ``calibration=None``: the script has no paper ledger to read a fitted
+  multiplier from, and the bias is the same under either model):
   (a) **today**: today's 45 symbols, no membership mask;
   (b) **point in time**: today's list plus every past S&P 500 member with
   history, a single stock enterable only while it was a member, ETFs always.
@@ -180,9 +182,10 @@ def run(args) -> dict:
     for strategy in gate_replay.STRATEGIES:
         setup = live_setup(strategy, earnings_cached)
         t0 = time.time()
-        today = gate_replay.simulate(strategy, today_frames, spy, setup, replays, vix=vix)
+        today = gate_replay.simulate(strategy, today_frames, spy, setup, replays, vix=vix, calibration=None)
         t1 = time.time()
-        point = gate_replay.simulate(strategy, frames, spy, setup, replays, vix=vix, universe=membership.mask)
+        point = gate_replay.simulate(strategy, frames, spy, setup, replays, vix=vix, universe=membership.mask,
+                                     calibration=None)
         t2 = time.time()
         today_rows, pit_rows = window_rows(today, today_frames), window_rows(point, frames)
         timings[strategy] = {"today_seconds": round(t1 - t0, 2), "point_in_time_seconds": round(t2 - t1, 2)}
