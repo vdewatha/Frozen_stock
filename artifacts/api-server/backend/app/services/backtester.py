@@ -35,6 +35,10 @@ class BacktestConfig:
     volatility_cost_fraction: float = 0.05
     impact_coefficient: float = 1.0
     max_participation: float = 0.01
+    # Realised-cost calibration: scales the modelled per-side cost (both
+    # models) by a factor fitted to the bot's own paper fills
+    # (``paper_cost_calibration``).  1.0 = the published model.
+    cost_multiplier: float = 1.0
     bootstrap_samples: int = 1000
     bootstrap_seed: int = 7
     # Per-strategy drawdown lock (same rule as the paper entry protection in
@@ -131,11 +135,18 @@ def _liquidity(history: pd.DataFrame, config: BacktestConfig) -> tuple[float, Op
     return sigma_bps, adv
 
 
-def execution_cost_bps(history: pd.DataFrame, quantity: float, config: BacktestConfig) -> dict:
-    """Adverse price move per side, in bps, estimated from prior bars only."""
+def execution_cost_bps(history: pd.DataFrame, quantity: float, config: BacktestConfig,
+                       multiplier: Optional[float] = None) -> dict:
+    """Adverse price move per side, in bps, estimated from prior bars only.
+
+    ``multiplier`` overrides ``config.cost_multiplier`` (a realised-cost
+    calibration factor); the default of 1.0 is the published model.
+    """
+    factor = float(config.cost_multiplier if multiplier is None else multiplier)
     base = float(config.slippage_bps)
     if config.cost_model == "flat":
-        return {"total_bps": base, "base_bps": base, "volatility_bps": 0.0, "impact_bps": 0.0, "participation": None}
+        return {"total_bps": base * factor, "base_bps": base, "volatility_bps": 0.0, "impact_bps": 0.0,
+                "participation": None, "multiplier": factor}
     if config.cost_model != "volatility_scaled":
         raise ValueError(f"Unknown cost model: {config.cost_model}")
     sigma_bps, adv = _liquidity(history, config)
@@ -143,9 +154,9 @@ def execution_cost_bps(history: pd.DataFrame, quantity: float, config: BacktestC
     participation = quantity / adv if adv and quantity > 0 else None
     impact_bps = config.impact_coefficient * sigma_bps * math.sqrt(participation) if participation else 0.0
     # Keep execution proceeds positive even for pathological inputs.
-    total = min(base + volatility_bps + impact_bps, 5_000.0)
+    total = min((base + volatility_bps + impact_bps) * factor, 5_000.0)
     return {"total_bps": total, "base_bps": base, "volatility_bps": volatility_bps,
-            "impact_bps": impact_bps, "participation": participation}
+            "impact_bps": impact_bps, "participation": participation, "multiplier": factor}
 
 
 def _curve_metrics(values: list[float]) -> dict:
@@ -436,6 +447,7 @@ def run_backtest(
             "fees_bps": config.fees_bps,
             "base_slippage_bps": config.slippage_bps,
             "volatility_cost_fraction": config.volatility_cost_fraction if config.cost_model != "flat" else 0.0,
+            "cost_multiplier": config.cost_multiplier,
             "impact_coefficient": config.impact_coefficient if config.cost_model != "flat" else 0.0,
             "max_participation": config.max_participation if config.cost_model != "flat" else None,
             "participation_capped_entries": participation_capped_entries,
