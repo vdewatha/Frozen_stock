@@ -59,3 +59,17 @@ def legacy_technical_exits(monkeypatch):
         return None if getattr(row, "strategy_type", None) in slugs else original(row)
 
     monkeypatch.setattr(stock_paper_autotrader, "exit_policy_for", exit_policy_for)
+
+
+@pytest.fixture(autouse=True)
+def _no_vix_download():
+    """Seeded lineups carry a ``vix_gate``; never reach yfinance from a test.
+
+    An empty pinned history makes the gate fail open (BUYs pass, flagged
+    ``vix_unavailable``), so tests that are not about the gate are unchanged.
+    """
+    from app.services.strategies.vix_gate import set_vix_history
+
+    set_vix_history({})
+    yield
+    set_vix_history(None)
