@@ -62,6 +62,10 @@ Protections (each disabled by a value of 0):
    strategies that trade that model (``MODEL_DEPENDENT_STRATEGIES``) take no
    new entries.  Model breaches pause only these strategies, not the whole
    stock path, and the lock lifts when the check clears.
+8. **Market gate** — a strategy row with ``market_gate_sma = N`` takes no new
+   entries while SPY's last completed close is at or below its N-day average
+   (``market_gate.py``); SPY history that cannot be loaded fails closed for
+   those strategies only.
 
 Configuration: each key is read from the active ``RiskRule.value`` first and
 falls back to ``settings.paper_<key>``.  Unparseable or negative risk-rule
@@ -531,6 +535,18 @@ class EntryProtections:
     allocated_notional: Decimal | None = None
     load_error: str | None = None
     model_breaches: list[str] = field(default_factory=list)
+    # strategy_type -> SMA window, and window -> market_gate.market_state(...)
+    market_gates: dict = field(default_factory=dict)
+    market_states: dict = field(default_factory=dict)
+
+    def market_gate_block(self, strategy: str | None) -> dict | None:
+        window = self.market_gates.get(strategy, 0) if strategy else 0
+        if not window:
+            return None
+        state = self.market_states.get(window) or {"allowed": False, "reason": "market state unavailable"}
+        if state["allowed"]:
+            return None
+        return _block("market_gate", f"{state['reason']}; {strategy} takes no new longs while the market falls")
 
     def check(self, symbol: str, strategy: str | None) -> dict | None:
         """Block dict for a new BUY entry, or None to let existing gates decide."""
@@ -538,6 +554,7 @@ class EntryProtections:
             return _block("unavailable", f"protection state could not be loaded ({self.load_error}); entry withheld")
         for outcome in (
             model_monitoring_block(self.model_breaches, strategy),
+            self.market_gate_block(strategy),
             time_of_day_block(self.now, self.bounds, self.config),
             drawdown_block(self.drawdown, self.config, self.bounds[1] if self.bounds else None),
             stoploss_guard_block(self.events, strategy, self.now, self.config),
@@ -559,6 +576,9 @@ class EntryProtections:
         if cycle_wide:
             out["cycle_block"] = cycle_wide["reason"]
         out["strategy_locks"] = self.strategy_locks()
+        if self.market_states:
+            out["market_gate"] = {"gates": dict(sorted(self.market_gates.items())),
+                                  "states": {str(k): v for k, v in sorted(self.market_states.items())}}
         if self.model_breaches:
             out["model_monitoring_lock"] = {"breaches": sorted(self.model_breaches),
                                             "strategies": sorted(MODEL_DEPENDENT_STRATEGIES)}
@@ -574,7 +594,9 @@ class EntryProtections:
 
 
 def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
-                           type_by_id: dict, bounds_for: Callable = session_bounds) -> EntryProtections:
+                           type_by_id: dict, bounds_for: Callable = session_bounds,
+                           market_gates: dict | None = None,
+                           market_frame: Callable | None = None) -> EntryProtections:
     """Load fills/orders/equity once per cycle and build the evaluator.
 
     Any load failure fails closed for entries only (``check`` withholds every
@@ -588,6 +610,22 @@ def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
     protections = EntryProtections(now=now, config=config)
     try:
         protections.bounds = bounds_for(now.astimezone(ET).date())
+        protections.market_gates = {k: int(v) for k, v in (market_gates or {}).items() if v}
+        if protections.market_gates:
+            from app.services.market_gate import MARKET_SYMBOL, market_state
+
+            try:
+                if market_frame is None:
+                    from app.services.trusted_data import trusted_history
+
+                    spy = trusted_history(db, MARKET_SYMBOL, require_active=False)[0]
+                else:
+                    spy = market_frame()
+            except Exception as exc:  # gated strategies fail closed; others unaffected
+                logger.warning("market gate: %s history unavailable: %s", MARKET_SYMBOL, exc)
+                spy = None
+            protections.market_states = {window: market_state(spy, window)
+                                         for window in sorted(set(protections.market_gates.values()))}
         protections.model_breaches = [
             row.breach_key for row in db.query(StockMonitoringBreach).filter(
                 StockMonitoringBreach.breach_key.like("model.%"),
