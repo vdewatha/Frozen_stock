@@ -303,8 +303,13 @@ def _health(db: Session, *, now: datetime, rows: list, runs: list[AuditLog], equ
 
     # 6. One position per symbol.
     session_entries: dict[str, set] = defaultdict(set)
+    from app.services.stock_paper_ledger import NONTERMINAL_ORDER_STATUSES
+
     for row in entries:
-        if row.status not in {"cancelled", "rejected", "expired"}:
+        # Only buys that filled or are still working hold the symbol.  The
+        # broker spells it "canceled": an unfilled, canceled ABBV buy on
+        # 2026-11-06 made this check report a second buyer that never held it.
+        if row.status in {"filled", "partially_filled"} or row.status in NONTERMINAL_ORDER_STATUSES:
             session_entries[row.symbol].add(row.strategy_id)
     stacked = sorted(symbol for symbol, owners in session_entries.items() if len(owners) > 1)
     outcomes = _buy_outcomes(db, opened)
