@@ -90,3 +90,18 @@ latest actions, and the weekly report's `changes` section narrates them with
 the governance, experiment-engine and gate-cost rows. It never touches
 orders, exits, the kill switch, risk settings or the resume logic. Switch
 with `self_healing_enabled`. See `reports/self-healing-20261106.md`.
+
+## Point-in-time replay universe
+
+The experiment engine and strategy discovery replay daily history over the
+S&P 500 as it stood on each date, not over today's survivor list: every past
+member whose history yfinance still serves is loaded, and a single stock can
+only be entered while it was a member (index and sector ETFs always).
+Membership comes from the MIT-licensed `fja05680/sp500` start/end file,
+cached monthly with its coverage under `history_dir()/universe/`
+(`app/services/point_in_time_universe.py` documents the files). The first
+run with the setting on downloads every past member's bars once (about 20
+minutes), later runs refresh bars older than a week. Switch with
+`replay_point_in_time_universe`; `scripts/run_survivorship_check.py` measures
+the bias and holds the rule that decided the default. See
+`reports/survivorship-20261106.md`.
