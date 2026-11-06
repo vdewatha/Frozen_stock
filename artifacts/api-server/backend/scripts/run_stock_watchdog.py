@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import time
 
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, limit_lock_waits, release_previous_boot_transactions
 from app.services.stock_recovery import run_stock_watchdog
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s stock-watchdog %(message)s")
@@ -29,8 +29,22 @@ def run_once() -> dict:
         db.close()
 
 
+LOCK_WAIT_SECONDS = 20
+
+
+def release_stale_sessions() -> None:
+    """End a replaced deploy's idle transactions before taking the recovery lock."""
+    try:
+        release_previous_boot_transactions()
+    except Exception:
+        logging.exception("previous-deploy session cleanup failed; continuing")
+
+
 def main() -> None:
+    # A blocked lock wait retries next cycle instead of hiding the watchdog.
+    limit_lock_waits(LOCK_WAIT_SECONDS)
     while True:
+        release_stale_sessions()
         run_once()
         time.sleep(30)
 
