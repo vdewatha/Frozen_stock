@@ -250,6 +250,21 @@ class Settings(BaseSettings):
     # included), so a lot is not held through the gap. Funds are unaffected
     # and an unavailable calendar does not block. 0 disables.
     paper_earnings_blackout_sessions: int = Field(default=10, ge=0, le=60)
+    # Real economic data (app/services/economic_data.py). Without a key the
+    # placeholder rows stay, labelled mock_macro, and nothing trades on them.
+    fred_api_key: SecretStr = SecretStr("")
+    # Scheduled market-wide announcements (app/services/market_events.py):
+    # FOMC decisions, CPI and the jobs report. Overnight-holding strategies
+    # skip new BUYs the session before each one and the FOMC day until
+    # 14:30 ET; intraday strategies skip only the FOMC morning.
+    market_event_blackout_enabled: bool = True
+    market_events_fomc_url: str = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    # Market-wide gauges (app/services/market_gauges.py): the VIX and the share
+    # of S&P 500 members above their 200-day average. Always recorded on each
+    # entry for loss diagnosis; sizing on them is opt-in until backtested.
+    paper_market_gauge_sizing_enabled: bool = False
+    market_gauge_high_vix: float = Field(default=30.0, gt=0)
+    market_gauge_weak_breadth_pct: float = Field(default=40.0, ge=0, le=100)
     # Entry protections (app/services/entry_protections.py): entry-only
     # circuit breakers for scheduled and exploration paper BUYs.  They never
     # block sells/exits.  A risk-rule key with the same name minus the
@@ -292,6 +307,15 @@ class Settings(BaseSettings):
     # (``paper_entry_open_buffer_minutes``) still applies on top of this.
     paper_daily_bar_entry_window_start_minutes: int = Field(default=5, ge=0, le=390)
     paper_daily_bar_entry_window_end_minutes: int = Field(default=45, ge=0, le=390)
+    # Stock monitor pause tuning.  Broker/reconciliation health breaches while
+    # the market is closed (outside [open - N minutes, close]) are recorded but
+    # do not pause the stock path; a breach still present N minutes before the
+    # open pauses as before.  In the first M minutes after the open the
+    # current-session minute bars are still arriving, so a broad freshness
+    # gap is a warning (each order still checks its own symbol's feed).
+    paper_monitor_offhours_deferral_enabled: bool = True
+    paper_monitor_offhours_resume_minutes_before_open: int = Field(default=30, ge=0, le=240)
+    paper_monitor_open_feed_grace_minutes: int = Field(default=10, ge=0, le=60)
     # Unattended paper operation.  Explained technical halts auto-resume only
     # after cooldown plus fresh clean evidence; 0 disables the auto-resume.
     paper_auto_resume_enabled: bool = True
@@ -316,9 +340,12 @@ class Settings(BaseSettings):
     meta_label_enforce_min_lift: float = Field(default=0.05, ge=0, le=1)
     meta_label_demote_min_samples: int = Field(default=20, ge=5, le=10000)
     meta_label_demote_precision: float = Field(default=0.5, ge=0, le=1)
-    # Meta-label threshold: maximise validation expectancy subject to this
-    # win-rate floor (an 80% floor was never reachable out of sample).
-    meta_label_min_win_rate: float = Field(default=0.60, ge=0, le=1)
+    # Meta-label threshold. The owner's goal is profit after costs (2026-11-06),
+    # not a win rate: the cutoff maximises validation total net return
+    # (expectancy x trades), so it keeps every trade that adds money. The
+    # win-rate floor stays available but is off by default.
+    meta_label_min_win_rate: float = Field(default=0.0, ge=0, le=1)
+    meta_label_objective: str = Field(default="total", pattern="^(expectancy|total)$")
     # Self-retraining off hours on replayed history plus closed paper round
     # trips; each realised paper outcome weighs this many replayed events.
     meta_label_retrain_enabled: bool = True

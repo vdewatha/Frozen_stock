@@ -14,7 +14,7 @@ export type LearningScoreboard = {
     overall: Totals;
     weeks: (Totals & { week: string })[];
     strategies: (Totals & { strategy_type: string; recent: Totals; earlier: Totals; evidence: string })[];
-    goal: { target_win_rate: number; min_trades_for_evidence: number };
+    goal: { target: string; label: string; min_trades_for_evidence: number };
   };
   causes: { diagnosed: number; by_cause: Record<string, number>; by_family: Record<string, number>; contributing: Record<string, number> };
   repeating_failures: { strategy_type: string; cause: string; count: number; share_of_losses: number; symbols: string[]; lesson?: string | null; proposal?: string | null }[];
@@ -66,7 +66,7 @@ export function LearningScoreboardView({ board }: { board: LearningScoreboard })
     </section>
 
     <section>
-      <div className="section-heading"><h2>Are we improving?</h2><span className="section-meta">Closed paper trades · goal win {formatPct(progress.goal.target_win_rate)} while making money</span></div>
+      <div className="section-heading"><h2>Are we improving?</h2><span className="section-meta">Closed paper trades · goal: {progress.goal.label}</span></div>
       <dl className="short-monitor-metrics">
         <div><dt>All closed trades</dt><dd>{progress.overall.trades}<small>win {formatPct(progress.overall.win_rate)}</small></dd></div>
         <div><dt>Average per trade</dt><dd>{perTrade(progress.overall.avg_return)}<small>net return (expectancy)</small></dd></div>

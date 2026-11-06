@@ -163,23 +163,22 @@ def trade_statistics(returns: Iterable[float], *, clusters: Optional[Sequence] =
 
 
 def goal_assessment(stats: dict, *, min_trades: int) -> dict:
-    """The owner's gate: >= 80% net win rate AND positive expectancy whose
+    """The owner's gate: profit after costs. Positive expectancy whose
     bootstrap CI lower bound is > 0, on enough trades. ``robust`` additionally
-    needs the win-rate CI lower bound >= 80% and profit factor >= 1.3."""
+    needs profit factor >= 1.3. Win rate is reported (``win_rate_ge_80``) but
+    is not part of the gate since 2026-11-06."""
     n = stats.get("trades") or 0
     win_rate = stats.get("win_rate")
     expectancy = stats.get("expectancy_bps")
     ci = stats.get("expectancy_ci_bps")
-    win_ci = stats.get("win_rate_ci")
     checks = {
         "enough_trades": n >= min_trades,
         "win_rate_ge_80": win_rate is not None and win_rate >= GOAL_WIN_RATE,
         "positive_expectancy": expectancy is not None and expectancy > 0,
         "expectancy_ci_low_gt_0": ci is not None and ci[0] > 0,
     }
-    meets = all(checks.values())
-    robust = meets and win_ci is not None and win_ci[0] >= GOAL_WIN_RATE and (
-        stats.get("profit_factor") is None or stats["profit_factor"] >= GOAL_PROFIT_FACTOR)
+    meets = checks["enough_trades"] and checks["positive_expectancy"] and checks["expectancy_ci_low_gt_0"]
+    robust = meets and stats.get("profit_factor") is not None and stats["profit_factor"] >= GOAL_PROFIT_FACTOR
     return {"meets_goal": meets, "robust": bool(robust), "checks": checks, "min_trades": min_trades}
 
 
@@ -500,13 +499,13 @@ def _deflate(rows: list[dict], *, trials: int) -> None:
 
 
 def rank_key(row: dict) -> tuple:
-    """Goal first, then the expectancy CI lower bound, then win rate."""
+    """Goal first, then the expectancy CI lower bound, then profit factor."""
     ci = row.get("expectancy_ci_bps")
     return (
         bool(row.get("meets_goal")),
         bool(row.get("robust")),
         ci[0] if ci else -1e9,
-        row.get("win_rate") or 0.0,
+        row.get("profit_factor") or 0.0,
     )
 
 

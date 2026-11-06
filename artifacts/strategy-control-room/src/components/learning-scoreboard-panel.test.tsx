@@ -17,7 +17,7 @@ const board: LearningScoreboard = {
     overall: some,
     weeks: [{ week: "2026-W44", ...some }, { week: "2026-W45", ...none }],
     strategies: [{ strategy_type: "macd_momentum", ...some, recent: some, earlier: none, evidence: "10 more trades before judging" }],
-    goal: { target_win_rate: 0.8, min_trades_for_evidence: 30 },
+    goal: { target: "profit_after_costs", label: "Profit after costs; win rate is context", min_trades_for_evidence: 30 },
   },
   causes: { diagnosed: 20, by_cause: { signal_wrong: 7, missed_market_move: 3, edge: 7 }, by_family: {}, contributing: { clustered_stops: 11 } },
   repeating_failures: [{ strategy_type: "all", cause: "missed_market_move", count: 3, share_of_losses: 0.4, symbols: ["AAPL", "META"], proposal: "Test a market gate" }],

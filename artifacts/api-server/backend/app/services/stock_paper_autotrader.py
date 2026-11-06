@@ -38,6 +38,8 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
 )
 from app.services.earnings_calendar import earnings_blackout, earnings_known
+from app.services.market_events import cached_events, event_blackout
+from app.services.market_gauges import entry_context, gauge_size_scale, latest_gauges
 from app.services.entry_protections import (
     SELL_RETRY_LIMIT,
     load_entry_protections,
@@ -54,6 +56,7 @@ from app.services.strategy_execution_policy import (
     exit_policy_for,
     symbol_scope_for,
 )
+from app.services.market_gate import gate_window
 from app.services.trusted_data import trusted_history
 from app.services.trading_universe import execution_symbols, sector_group
 
@@ -533,6 +536,33 @@ def _news_context(news: dict) -> dict:
     }
 
 
+def _market_backdrop(db: Session, now: datetime) -> tuple[list[dict] | None, dict]:
+    """Scheduled announcements and market gauges; unavailable is never a block."""
+    events, gauges = None, {}
+    try:
+        events = cached_events(db)
+    except Exception as exc:
+        db.rollback()
+        logger.info("market event calendar unavailable: %s", exc.__class__.__name__)
+    try:
+        gauges = latest_gauges(db, now)
+    except Exception as exc:
+        db.rollback()
+        logger.info("market gauges unavailable: %s", exc.__class__.__name__)
+    return events, gauges
+
+
+def _tag_signal(db: Session, signal_id, key: str, value: dict) -> None:
+    """Evidence for loss diagnosis on the entry's signal row; never blocks the entry."""
+    try:
+        row = db.get(StrategySignal, signal_id)
+        if row is not None:
+            row.features = {**(row.features or {}), key: value}
+            db.flush()
+    except Exception as exc:
+        logger.info("%s not recorded on signal %s: %s", key, signal_id, exc.__class__.__name__)
+
+
 def _tag_signal_news(db: Session, signal_id, news: dict) -> None:
     """Record the news that admitted the symbol on the entry's signal row.
 
@@ -686,6 +716,10 @@ def _run_signal_cycle(db: Session) -> dict:
         symbols = [*symbols, *sorted(set(news_admitted) | news_exits_only)]
         base["symbols"] = list(symbols)
         base["news_discovered"] = {"admitted": sorted(news_admitted), "exits_only": sorted(news_exits_only)}
+    market_events, gauges = _market_backdrop(db, now)
+    market_context = entry_context(gauges, market_events, now)
+    base["market_context"] = market_context
+    gauge_scale = gauge_size_scale(gauges) if settings.paper_market_gauge_sizing_enabled else None
 
     all_strategies = (
         db.query(Strategy)
@@ -748,7 +782,10 @@ def _run_signal_cycle(db: Session) -> dict:
     sector_groups = _sector_exposure(db, account.id) if sector_cap else {}
     # Entry-only circuit breakers (stop-loss guard, exit cooldown, low-profit
     # lock, session drawdown, time of day); never consulted for sells.
-    protections = load_entry_protections(db, account, now=now, rules=rules, type_by_id=type_by_id)
+    protections = load_entry_protections(
+        db, account, now=now, rules=rules, type_by_id=type_by_id,
+        market_gates={row.strategy_type: gate_window(getattr(row, "parameters", None)) for row in strategies},
+    )
     # Cycle-level entry limits. Each refused BUY used to go through a full
     # reservation (~10 queries under the account lock) only to hit one of
     # these; they are decided here from one lookup and the reservation still
@@ -928,6 +965,15 @@ def _run_signal_cycle(db: Session) -> dict:
                         continue
                     if not earnings_known(symbol):
                         result["earnings_unknown"] = True
+                    # Every lot in this cycle may be held overnight (no
+                    # end-of-day flatten), so the session-before rule applies.
+                    event_block = event_blackout(market_events, now, holds_overnight=True)
+                    if event_block is not None:
+                        result.update(event_block)
+                        results.append(result)
+                        continue
+                    if market_events is None:
+                        result["event_calendar_unknown"] = True
                     group = sector_group(symbol)
                     group_symbols = sector_groups.get(group, set())
                     if sector_cap and symbol not in group_symbols and len(group_symbols) >= sector_cap:
@@ -968,6 +1014,10 @@ def _run_signal_cycle(db: Session) -> dict:
                         vol_scale = _volatility_scale_for(db, symbol)
                         result["volatility_scale"] = vol_scale
                         size_scale = Decimal(str(vol_scale["scale"]))
+                    if gauge_scale is not None and gauge_scale["reasons"]:
+                        result["market_gauge_scale"] = {"scale": str(gauge_scale["scale"]),
+                                                        "reasons": gauge_scale["reasons"]}
+                        size_scale *= gauge_scale["scale"]
                     exploring = result.get("mode") == "explore"
                     news = news_admitted.get(symbol)
                     if news is not None:
@@ -1064,6 +1114,8 @@ def _run_signal_cycle(db: Session) -> dict:
                 exploring = result.get("mode") == "explore"
                 if side == "buy" and symbol in news_admitted:
                     _tag_signal_news(db, signal["signal_id"], news_admitted[symbol])
+                if side == "buy":
+                    _tag_signal(db, signal["signal_id"], "market_context", market_context)
                 extra = {}
                 if side == "buy" and exit_plan is not None:
                     extra["exit_plan"] = exit_plan

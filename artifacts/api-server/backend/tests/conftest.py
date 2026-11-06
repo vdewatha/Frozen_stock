@@ -16,6 +16,10 @@ def _wall_clock_independent_entry_window(monkeypatch):
     """
     monkeypatch.setattr(settings, "paper_entry_open_buffer_minutes", 0)
     monkeypatch.setattr(settings, "paper_entry_close_buffer_minutes", 0)
+    # Monitor pause tuning also reads the real clock; tests that exercise it
+    # enable it explicitly with an injected clock.
+    monkeypatch.setattr(settings, "paper_monitor_offhours_deferral_enabled", False)
+    monkeypatch.setattr(settings, "paper_monitor_open_feed_grace_minutes", 0)
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +32,11 @@ def _no_network_earnings_calendar(monkeypatch):
     monkeypatch.setattr(settings, "loss_diagnosis_earnings_lookup", False)
     # News discovery reads Alpaca news and the database; its tests enable it.
     monkeypatch.setattr(settings, "news_discovery_enabled", False)
+    # The announcement blackout would make cycle tests depend on today's date
+    # (a run the session before an FOMC meeting); its tests enable it.
+    monkeypatch.setattr(settings, "market_event_blackout_enabled", False)
+    from app.services import market_events
+    market_events.clear_cache()
 
 
 @pytest.fixture()

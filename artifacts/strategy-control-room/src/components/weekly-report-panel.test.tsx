@@ -7,7 +7,7 @@ const report: WeeklyReport = {
   week: "2026-W45", generated_at: "2026-11-07T14:07:00Z",
   this_week: { trades: 4, win_rate: 0.75, total_pnl: 12, avg_pnl: 3 },
   all_time: { trades: 36, win_rate: 0.6, total_pnl: 97.4, avg_pnl: 2.7, paper_bps: 8 },
-  goal: { target_win_rate: 0.8, min_trades_for_evidence: 30 },
+  goal: { target: "profit_after_costs", label: "Profit after costs; win rate is context", min_trades_for_evidence: 30 },
   strategies: [{ strategy_id: 9, strategy_name: "RSI(2) Pullback", status: "paper_trading_candidate", week_trades: 4, week_pnl: 12,
     trades: 34, win_rate: 0.62, total_pnl: 105.4, paper_bps: 9, backtest_bps: 15, backtest_source: "reports/rsi2-scope-20261102.md",
     verdict: "on track with its backtest" }],

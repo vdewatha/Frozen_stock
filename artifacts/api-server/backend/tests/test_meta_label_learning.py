@@ -72,9 +72,11 @@ def test_reversion_events_use_the_paper_exit_policy():
     assert (events["weight"] == events["uniqueness"]).all() and set(events["source"]) == {"replay"}
 
 
-def test_default_threshold_maximises_expectancy_at_a_reachable_floor():
-    assert Settings().meta_label_min_win_rate == 0.60
-    assert meta_label.ThresholdPolicy().min_win_rate == meta_label.DEFAULT_MIN_WIN_RATE == 0.60
+def test_default_threshold_keeps_every_trade_that_adds_profit():
+    # Owner goal since 2026-11-06: profit after costs. No win-rate floor; the
+    # cutoff maximises total net return on the validation fold.
+    assert Settings().meta_label_min_win_rate == 0.0 and Settings().meta_label_objective == "total"
+    assert meta_label.ThresholdPolicy().min_win_rate == meta_label.DEFAULT_MIN_WIN_RATE == 0.0
     rng = np.random.default_rng(3)
     probability = rng.uniform(size=4000)
     # Higher probability -> more wins, but nothing approaches 80%.
@@ -83,7 +85,12 @@ def test_default_threshold_maximises_expectancy_at_a_reachable_floor():
     old = meta_label.select_threshold(probability, net, meta_label.ThresholdPolicy(min_win_rate=0.80))
     new = meta_label.select_threshold(probability, net)
     assert old["threshold"] is None
-    assert new["threshold"] is not None and new["validation_win_rate"] >= 0.60 and new["validation_expectancy"] > 0
+    assert new["threshold"] is not None and new["validation_expectancy"] > 0
+    total = meta_label.select_threshold(probability, net, meta_label.ThresholdPolicy(objective="total"))
+    # Maximising the total keeps more trades than maximising the average.
+    assert total["validation_trades"] > new["validation_trades"]
+    assert total["validation_trades"] * total["validation_expectancy"] >= \
+        new["validation_trades"] * new["validation_expectancy"]
 
 
 def _outcome(symbol, strategy, opened, closed, net, **extra):
@@ -153,7 +160,7 @@ def test_retrain_promotes_a_candidate_and_is_not_due_again_until_new_trades_clos
         assert result["paper"]["paper_outcomes"] == 1
         manifest = json.loads((tmp_path / "meta.joblib.json").read_text())
         assert manifest["trained_at"] == now.isoformat()
-        assert manifest["policy"]["min_win_rate"] == 0.60
+        assert manifest["policy"]["min_win_rate"] == 0.0 and manifest["policy"]["objective"] == "total"
         assert set(manifest["strategy_barriers"]) == {"rsi2_pullback", "ibs_mean_reversion"}
         bundle = meta_label.load_model(tmp_path / "meta.joblib")
         assert bundle["sha256"] == result["sha256"]

@@ -54,6 +54,10 @@ from app.services.trusted_data import TRUSTED_SOURCES, UntrustedMarketData, trus
 UTC = timezone.utc
 NY = ZoneInfo("America/New_York")
 MONITOR_KEY = "stock_continuous_monitor"
+# Broker/reconciliation health that may lag while the market is closed (the
+# 02:45 ET model retrain starves the reconciliation worker on the 2 vCPU host)
+# without any order being at risk.
+OFFHOURS_DEFERRABLE_KEYS = frozenset({"health.broker", "health.reconciliation"})
 PERSISTENCE_WINDOW = timedelta(minutes=20)
 MIN_PREDICTIONS = 10
 
@@ -212,7 +216,30 @@ def _performance_drift(db: Session) -> dict:
     )
 
 
-def _freshness_and_provenance(db: Session) -> dict:
+def _session_bounds(now: datetime):
+    from app.services.exchange_sessions import session_bounds
+
+    return session_bounds(now.astimezone(NY).date())
+
+
+def _in_open_feed_grace(now: datetime) -> bool:
+    """First ``paper_monitor_open_feed_grace_minutes`` of the regular session."""
+    minutes = int(settings.paper_monitor_open_feed_grace_minutes)
+    bounds = _session_bounds(now)
+    return bool(minutes and bounds and bounds[0] <= now < bounds[0] + timedelta(minutes=minutes))
+
+
+def _market_closed_for_monitoring(now: datetime) -> bool:
+    """True outside ``[open - paper_monitor_offhours_resume_minutes_before_open, close)``."""
+    bounds = _session_bounds(now)
+    if bounds is None:
+        return True
+    lead = timedelta(minutes=int(settings.paper_monitor_offhours_resume_minutes_before_open))
+    return not (bounds[0] - lead <= now < bounds[1])
+
+
+def _freshness_and_provenance(db: Session, now: datetime | None = None) -> dict:
+    now = now or _now()
     assets = db.query(Asset).filter(Asset.is_active.is_(True), Asset.asset_type == "stock").order_by(Asset.symbol).all()
     if not assets:
         return _check("data.freshness_provenance", "data", "data_freshness_and_provenance", "unknown", "No active stock universe is configured.", action_scope="safety")
@@ -262,6 +289,13 @@ def _freshness_and_provenance(db: Session) -> dict:
         else "warning" if failures or historical_warnings
         else "clear"
     )
+    # Right after the open the current session's minute bars are still
+    # arriving, so most symbols look stale for a minute or two.  That paused
+    # the bot at 09:31 ET on 2026-11-03/04/05.  Stale symbols stay blocked by
+    # their own feed gate in reserve_stock_paper_order either way.
+    open_grace = status == "breach" and _in_open_feed_grace(now)
+    if open_grace:
+        status = "warning"
     return _check(
         "data.freshness_provenance", "data", "data_freshness_and_provenance", status,
          "Fresh trusted execution-feed data is unavailable for a broad share of the execution universe."
@@ -282,6 +316,7 @@ def _freshness_and_provenance(db: Session) -> dict:
             "execution_symbols": sorted(execution_symbols),
             "research_only_symbols": research_only_symbols,
             "research_only_excluded_from_execution_gate": True,
+            "open_feed_grace": open_grace,
         },
         action_scope="safety",
     )
@@ -565,7 +600,7 @@ def _restart_warmup_action(db: Session, checks: list[dict], persistent_safety: l
 
 def run_stock_monitoring(db: Session, *, source: str = "stock_monitoring_job") -> dict:
     now = _now()
-    checks = _distribution_drift(db) + [_performance_drift(db), _freshness_and_provenance(db), _execution_divergence(db, now)]
+    checks = _distribution_drift(db) + [_performance_drift(db), _freshness_and_provenance(db, now), _execution_divergence(db, now)]
     checks += _stock_risk_metrics(db, now)
     checks += _broker_reconciliation_health(db, now) + _worker_scheduler_health(db)
     floor = _persistence_floor(db)
@@ -577,6 +612,15 @@ def run_stock_monitoring(db: Session, *, source: str = "stock_monitoring_job") -
     if warmup:
         persistent_safety = [key for key in persistent_safety if key not in warmup["deferred"]]
         actions.append(warmup)
+    if settings.paper_monitor_offhours_deferral_enabled and _market_closed_for_monitoring(now):
+        # Persistence keeps counting, so a breach still present shortly before
+        # the open pauses then; overnight lag alone no longer flips the kill
+        # switch at ~03:00 ET every night (2026-11-03..06).
+        offhours = [key for key in persistent_safety if key in OFFHOURS_DEFERRABLE_KEYS]
+        if offhours:
+            persistent_safety = [key for key in persistent_safety if key not in offhours]
+            actions.append({"action": "offhours_deferral", "deferred": offhours,
+                            "resume_minutes_before_open": int(settings.paper_monitor_offhours_resume_minutes_before_open)})
     if persistent_safety:
         actions.append(_pause_stock_path(db, persistent_safety, now))
     if persistent_model:

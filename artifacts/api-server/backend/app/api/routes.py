@@ -104,7 +104,7 @@ from app.services.deployment_monitor import deployment_monitor_snapshot, run_dep
 from app.services.operational_hardening import operational_hardening_snapshot, run_operational_hardening
 from app.services.stock_monitoring import latest_stock_monitoring, run_stock_monitoring
 from app.services.stock_learning_cycle import sync_cycle_observability
-from app.services.economic_data import import_fallback_economic_indicators, list_economic_indicators, summarize_macro_context
+from app.services.economic_data import import_economic_indicators, list_economic_indicators, summarize_macro_context
 from app.services.experiments import list_strategy_experiments, run_strategy_experiments
 from app.services.governance import evaluate_strategy_governance, latest_strategy_governance_scorecard
 from app.services.learning import propose_parameter_experiments
@@ -653,7 +653,7 @@ def model_performance(symbol: Optional[str] = None, limit: int = 50, db: Session
 
 @router.post("/economic/import", response_model=EconomicImportResponse)
 def import_economic_data(db: Session = Depends(get_db)) -> dict:
-    return import_fallback_economic_indicators(db)
+    return import_economic_indicators(db)
 
 
 @router.get("/economic/indicators", response_model=list[EconomicIndicatorRead])
