@@ -66,6 +66,11 @@ Protections (each disabled by a value of 0):
    entries while SPY's last completed close is at or below its N-day average
    (``market_gate.py``); SPY history that cannot be loaded fails closed for
    those strategies only.
+9. **Stop-out cooldown** — after a stop-out on a symbol (any strategy), no
+   strategy re-enters it until the ``stop_cooldown_sessions``-th NYSE session
+   after the stop's session.  In reports/slot-allocation-20261106.md 55% of
+   the book's trades were re-entries within 10 sessions of a stop on the same
+   symbol and averaged -46.5 bps, against +34.5 bps for the rest.
 
 Configuration: each key is read from the active ``RiskRule.value`` first and
 falls back to ``settings.paper_<key>``.  Unparseable or negative risk-rule
@@ -108,6 +113,7 @@ INT_KEYS = (
     "entry_close_buffer_minutes",
     "strategy_drawdown_trades",
     "strategy_drawdown_lock_sessions",
+    "stop_cooldown_sessions",
 )
 DECIMAL_KEYS = ("session_drawdown_lock_pct", "strategy_drawdown_lock_pct", "strategy_allocation_fraction")
 
@@ -177,6 +183,7 @@ class ProtectionConfig:
     strategy_drawdown_lock_sessions: int = 3
     strategy_drawdown_lock_pct: Decimal = Decimal("0.05")
     strategy_allocation_fraction: Decimal = Decimal("0.10")
+    stop_cooldown_sessions: int = 10
 
     def as_dict(self) -> dict:
         return {key: (str(value) if isinstance(value, Decimal) else value) for key, value in self.__dict__.items()}
@@ -430,6 +437,26 @@ def cooldown_block(events: Iterable[ExitEvent], symbol: str, now: datetime,
     return None
 
 
+def stop_cooldown_block(events: Iterable[ExitEvent], symbol: str, now: datetime, config: ProtectionConfig,
+                       is_session: Callable = is_nyse_session) -> dict | None:
+    """No re-entry on ``symbol`` until the N-th session after its latest stop-out session."""
+    if not config.stop_cooldown_sessions:
+        return None
+    now = _utc(now)
+    symbol = symbol.upper()
+    stops = [_utc(row.at) for row in events if row.symbol == symbol and row.stop_out and _utc(row.at) <= now]
+    if not stops:
+        return None
+    latest = max(stops)
+    until = strategy_lock_end(latest, config.stop_cooldown_sessions - 1, is_session)
+    if now < until:
+        return _block("stop_cooldown", (
+            f"{symbol} was stopped out on {latest.astimezone(ET):%Y-%m-%d}; no re-entry for "
+            f"{config.stop_cooldown_sessions} sessions"
+        ), until)
+    return None
+
+
 def low_profit_block(trades: Iterable[ClosedTrade], symbol: str, strategy: str | None, now: datetime,
                      config: ProtectionConfig) -> dict | None:
     if not config.low_profit_trades or not config.low_profit_lock_minutes or not strategy:
@@ -559,6 +586,7 @@ class EntryProtections:
             drawdown_block(self.drawdown, self.config, self.bounds[1] if self.bounds else None),
             stoploss_guard_block(self.events, strategy, self.now, self.config),
             cooldown_block(self.events, symbol, self.now, self.config),
+            stop_cooldown_block(self.events, symbol, self.now, self.config),
             low_profit_block(self.trades, symbol, strategy, self.now, self.config),
             strategy_drawdown_block(self.trades, strategy, self.now, self.config, self.allocated_notional),
         ):

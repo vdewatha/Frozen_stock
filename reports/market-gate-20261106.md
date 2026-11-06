@@ -39,6 +39,12 @@ statistically significant on its own.
 
 ## The bigger finding: the capped book picks the wrong trades
 
+> **Correction (2026-11-06, `slot-allocation-20261106.md`):** this simulation filled same-day slots in a fixed
+> strategy order that put MA Crossover, RSI(14) and MACD first. The live cycle fills them in symbol-list order.
+> Under the live order, the gap is smaller: accepted −9.9 vs turned away +3.4 bps over all history. The cause is
+> re-entry right after a stop-out (55% of the book's trades, averaging −46.5 bps), not slot order. The gate
+> decisions above don't depend on this section.
+
 Replaying the whole book under today's live caps:
 * one position per symbol;
 * ≤ 5 per strategy;
