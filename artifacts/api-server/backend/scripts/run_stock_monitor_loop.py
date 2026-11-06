@@ -10,7 +10,7 @@ import logging
 import os
 import time
 
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, limit_lock_waits, release_previous_boot_transactions
 from app.services.stock_monitoring import run_stock_monitoring
 from app.services.stock_learning_cycle import sync_cycle_observability
 
@@ -40,9 +40,23 @@ def run_once() -> dict:
         db.close()
 
 
+LOCK_WAIT_SECONDS = 20
+
+
+def release_stale_sessions() -> None:
+    """End a replaced deploy's idle transactions before evaluating."""
+    try:
+        release_previous_boot_transactions()
+    except Exception:
+        logger.exception("previous-deploy session cleanup failed; continuing")
+
+
 def main() -> None:
     interval = max(30, int(os.environ.get("PAPER_MONITOR_INTERVAL_SECONDS", "60")))
+    # A blocked lock wait retries next cycle instead of stopping the heartbeat.
+    limit_lock_waits(LOCK_WAIT_SECONDS)
     while True:
+        release_stale_sessions()
         try:
             result = run_once()
             logger.info("status=%s snapshot_id=%s", result.get("status"), result.get("snapshot_id"))

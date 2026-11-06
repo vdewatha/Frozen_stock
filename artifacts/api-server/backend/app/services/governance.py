@@ -13,7 +13,11 @@ from app.services.notifications import create_notification
 
 MIN_PAPER_TRADES_FOR_ACTIVE = 20
 MIN_PAPER_TRADES_FOR_RETIRE = 10
-MIN_WIN_RATE = 0.45
+# The goal is profit after costs (owner, 2026-11-06). A strategy that wins
+# 35% of trades but makes 3x on winners is good, so win rate never pauses or
+# promotes on its own: profit factor and drawdown do. Low win rate only counts
+# toward retirement together with a losing profit factor and low confidence.
+MIN_WIN_RATE = 0.45  # reported only
 MIN_PROFIT_FACTOR = 1.10
 MAX_MEMORY_DRAWDOWN = -0.10
 RETIRE_DRAWDOWN = -0.20
@@ -27,13 +31,11 @@ def governance_thresholds() -> dict:
     return {
         "promotion": {
             "min_sample_size": MIN_PAPER_TRADES_FOR_ACTIVE,
-            "min_win_rate": 0.50,
             "min_profit_factor": MIN_PROFIT_FACTOR,
             "min_confidence_score": MIN_CONFIDENCE_SCORE,
         },
         "pause": {
             "min_sample_size": 5,
-            "min_win_rate": MIN_WIN_RATE,
             "min_profit_factor": MIN_PROFIT_FACTOR,
             "max_drawdown": MAX_MEMORY_DRAWDOWN,
         },
@@ -136,12 +138,10 @@ def _governance_checks(snapshot: dict) -> dict:
     pause = [
         _check("Drawdown pause breach", avg_drawdown <= MAX_MEMORY_DRAWDOWN, avg_drawdown, MAX_MEMORY_DRAWDOWN, "<="),
         _check("Enough pause evidence", samples >= 5, samples, 5, ">="),
-        _check("Pause weak win rate", win_rate < MIN_WIN_RATE, win_rate, MIN_WIN_RATE, "<"),
         _check("Pause weak profit factor", profit_factor < MIN_PROFIT_FACTOR, profit_factor, MIN_PROFIT_FACTOR, "<"),
     ]
     promotion = [
         _check("Enough promotion evidence", samples >= MIN_PAPER_TRADES_FOR_ACTIVE, samples, MIN_PAPER_TRADES_FOR_ACTIVE, ">="),
-        _check("Promotion win rate", win_rate >= 0.50, win_rate, 0.50, ">="),
         _check("Promotion profit factor", profit_factor >= MIN_PROFIT_FACTOR, profit_factor, MIN_PROFIT_FACTOR, ">="),
         _check("Promotion confidence", confidence >= MIN_CONFIDENCE_SCORE, confidence, MIN_CONFIDENCE_SCORE, ">="),
     ]
@@ -172,17 +172,12 @@ def evaluate_single_strategy(db: Session, strategy: Strategy) -> dict:
             decision = "pause"
             reason = "Paper-trading drawdown exceeded strategy limit."
             new_status = "paused"
-        elif snapshot["sample_size"] >= 5 and snapshot["win_rate"] < MIN_WIN_RATE:
-            decision = "pause"
-            reason = "Paper win rate is below minimum threshold."
-            new_status = "paused"
         elif snapshot["sample_size"] >= 5 and snapshot["profit_factor"] < MIN_PROFIT_FACTOR:
             decision = "pause"
             reason = "Paper profit factor is below minimum threshold."
             new_status = "paused"
         elif (
             snapshot["sample_size"] >= MIN_PAPER_TRADES_FOR_ACTIVE
-            and snapshot["win_rate"] >= 0.50
             and snapshot["profit_factor"] >= MIN_PROFIT_FACTOR
             and snapshot["confidence_score"] >= MIN_CONFIDENCE_SCORE
         ):
