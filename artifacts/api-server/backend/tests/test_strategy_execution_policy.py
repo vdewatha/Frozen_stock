@@ -537,7 +537,7 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                        "dropped_ibs_trend_filter": False, "retired_scorecard_losers": ["moving_average_crossover"],
                        "widened_rsi2_scope": True, "regime_gates_enabled": [],
                        "market_gates_enabled": ["rsi2_pullback"],
-                       "vix_gates_enabled": [], "paused_paper_losers": []}
+                       "vix_gates_enabled": [], "paused_paper_losers": [], "sizing_modes_applied": []}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
@@ -557,7 +557,7 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                                           "dropped_ibs_trend_filter": False, "retired_scorecard_losers": [],
                                           "widened_rsi2_scope": False, "regime_gates_enabled": [],
                                           "market_gates_enabled": [],
-                                          "vix_gates_enabled": [], "paused_paper_losers": []}
+                                          "vix_gates_enabled": [], "paused_paper_losers": [], "sizing_modes_applied": []}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"

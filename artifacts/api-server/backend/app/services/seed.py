@@ -460,6 +460,29 @@ OPEN_POSITION_LIMIT_ACTION = "open_position_limit_update"
 PREVIOUS_MAX_OPEN_POSITIONS = 10
 
 
+SIZING_MODE_ACTION = "sizing_mode_update"
+SIZING_MODE_REPORT = "reports/position-sizing-20261106.md"
+# The 2026-11-06 sizing backtest adopted no mode: every mode is capped at the
+# fixed-fraction notional, so it can only shrink entries, and the cases where
+# it bound (the 10% stop strategies at 0.25% risk, quarter Kelly where the
+# payoff ratio is low) lowered book profit in at least one window.  An
+# adopted mode is written here as ``{slug: {"sizing_mode": ..., "risk_per_trade": ...}}``.
+SIZED_STRATEGIES: dict[str, dict] = {}
+
+
+def apply_sizing_modes(db: Session) -> list[str]:
+    """One-time ``sizing_mode`` / ``risk_per_trade`` for the strategies the sizing backtest adopted."""
+    def message(mode: dict) -> str:
+        risk = mode.get("risk_per_trade")
+        budget = f" with {float(risk):.2%} of equity at risk per trade" if risk is not None else ""
+        return (f"{SIZING_MODE_REPORT}: size scheduled BUYs by {mode['sizing_mode']}{budget}; the mode kept or raised "
+                "book profit without a worse drawdown in every backtest window. Capped at the fixed fraction; "
+                "exits and gates are unchanged.")
+
+    return _enable_gate_once(db, SIZED_STRATEGIES, key="sizing_mode", action=SIZING_MODE_ACTION,
+                             source=SIZING_MODE_REPORT, message=message)
+
+
 def raise_open_position_limit(db: Session) -> bool:
     """One-time raise of ``max_open_positions`` from the old default to the new one.
 
@@ -560,6 +583,7 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "market_gates_enabled": enable_market_gates(db),
         "vix_gates_enabled": enable_vix_gates(db),
         "paused_paper_losers": pause_paper_evidence_losers(db),
+        "sizing_modes_applied": apply_sizing_modes(db),
     }
 
 

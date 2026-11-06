@@ -48,6 +48,7 @@ from app.services.entry_protections import (
 )
 from app.services.intraday_data import session_bounds
 from app.services.meta_label_shadow import resolve_runtime as resolve_meta_label_runtime
+from app.services.position_sizing import sizing_parameters
 from app.services.stock_paper_signal_batch import generate_cycle_signals
 from app.services.strategy_execution_policy import (
     evaluate_policy_exit,
@@ -119,6 +120,54 @@ def _quantity_for_buy(account, reference_price: Decimal, rules: dict, *, explora
     scale = min(max(Decimal(str(size_scale)), Decimal("0")), Decimal("1"))
     notional = max(Decimal("0"), account.equity) * risk_fraction * scale
     return (notional / reference_price).quantize(QUANTITY_INCREMENT, rounding=ROUND_DOWN)
+
+
+def _sized_quantity(db: Session, account, reference_price: Decimal, rules: dict, *, strategy_type: str,
+                    sizing: dict, policy, signal: dict, feedback: dict, payoff_by_type: dict,
+                    size_scale: Decimal, allocation_weight: Decimal) -> tuple[Decimal, dict]:
+    """Quantity under the strategy's ``sizing_mode`` (``position_sizing``), and the record for its signal.
+
+    The fixed fraction (``_quantity_for_buy``) is always the cap: a mode can
+    only shrink the entry, so every later check (whole-share rounding, the
+    one-share floor, the ledger's exposure gate) applies unchanged.  Kelly
+    needs the strategy in meta-label enforce mode (``feedback["enforced_types"]``),
+    the signal's calibrated probability and the strategy's closed paper
+    trades (looked up once per cycle per strategy); anything missing falls
+    back inside ``position_sizing``.
+    """
+    from app.services import position_sizing
+
+    fixed = _quantity_for_buy(account, reference_price, rules, size_scale=size_scale,
+                              allocation_weight=allocation_weight)
+    mode = sizing["sizing_mode"]
+    cap = fixed * reference_price
+    if mode == position_sizing.FIXED_FRACTION:
+        sized = {"mode": mode, "requested_mode": mode, "status": "sized", "notional": cap,
+                 "fixed_fraction_notional": cap, "size_scale": str(size_scale),
+                 "allocation_weight": str(allocation_weight)}
+        return fixed, position_sizing.sizing_features(sized, quantity=fixed, reference_price=reference_price)
+    stop_distance, _take = exit_leg_percentages(
+        policy, rules.get("position_stop_loss_pct", DEFAULT_POSITION_STOP_LOSS_PCT), Decimal("0"))
+    probability = (signal.get("meta_label") or {}).get("probability") if isinstance(signal.get("meta_label"), dict) \
+        else None
+    enforced = strategy_type in feedback.get("enforced_types", set())
+    payoff = None
+    if mode == position_sizing.FRACTIONAL_KELLY and enforced:
+        if strategy_type not in payoff_by_type:
+            try:
+                payoff_by_type[strategy_type] = position_sizing.strategy_payoff(db, strategy_type)
+            except Exception as exc:  # evidence only; the mode falls back
+                logger.info("payoff ratio unavailable for %s: %s", strategy_type, exc.__class__.__name__)
+                payoff_by_type[strategy_type] = {"trades": 0, "payoff_ratio": None, "status": "unavailable"}
+        payoff = payoff_by_type[strategy_type]
+    sized = position_sizing.size_notional(
+        mode=mode, equity=account.equity, risk_fraction=Decimal("1"), size_scale=Decimal("1"),
+        stop_distance=stop_distance, risk_per_trade=sizing["risk_per_trade"], probability=probability,
+        payoff=payoff, enforced=enforced, cap_notional=cap)
+    sized["size_scale"] = str(size_scale)
+    sized["allocation_weight"] = str(allocation_weight)
+    quantity = (sized["notional"] / reference_price).quantize(QUANTITY_INCREMENT, rounding=ROUND_DOWN)
+    return quantity, position_sizing.sizing_features(sized, quantity=quantity, reference_price=reference_price)
 
 
 def _loss_feedback_context(db: Session, strategies: list, now: datetime) -> dict:
@@ -866,6 +915,10 @@ def _run_signal_cycle(db: Session) -> dict:
     # policy keep the risk-rule legs, SELL-signal exits and the full universe.
     scope_by_type = {row.strategy_type: symbol_scope_for(row) for row in strategies}
     policy_by_type = {row.strategy_type: exit_policy_for(row) for row in strategies}
+    # Per-strategy sizing mode (``position_sizing``); the payoff ratio Kelly
+    # needs is looked up at most once per strategy per cycle.
+    sizing_by_type = {row.strategy_type: sizing_parameters(getattr(row, "parameters", None)) for row in strategies}
+    payoff_by_type: dict[str, dict] = {}
     daily_bar_types = {row.strategy_type for row in strategies if daily_bar_execution(row)}
     cycle_rows = {row.strategy_type: row for row in strategies}
     policy_rows: list = []
@@ -1142,10 +1195,18 @@ def _run_signal_cycle(db: Session) -> dict:
                     allocation_weight = feedback["weights"].get(strategy.strategy_type, Decimal("1"))
                     if not exploring and news is None:
                         result["allocation_weight"] = str(allocation_weight)
-                    quantity = _quantity_for_buy(account, reference_price, rules,
-                                                 exploration=exploring or news is not None,
-                                                 size_scale=size_scale,
-                                                 allocation_weight=allocation_weight)
+                    if exploring or news is not None:
+                        # Learning-sized probes keep the exploration fraction;
+                        # sizing modes apply to scheduled entries only.
+                        quantity = _quantity_for_buy(account, reference_price, rules, exploration=True,
+                                                     size_scale=size_scale, allocation_weight=allocation_weight)
+                    else:
+                        quantity, result["sizing"] = _sized_quantity(
+                            db, account, reference_price, rules, strategy_type=strategy.strategy_type,
+                            sizing=sizing_by_type.get(strategy.strategy_type) or sizing_parameters(None),
+                            policy=policy_by_type.get(strategy.strategy_type), signal=signal, feedback=feedback,
+                            payoff_by_type=payoff_by_type, size_scale=size_scale,
+                            allocation_weight=allocation_weight)
                     if quantity <= 0:
                         result.update({"status": "blocked", "reason": "risk-sized quantity rounded to zero"})
                         results.append(result)
@@ -1235,6 +1296,8 @@ def _run_signal_cycle(db: Session) -> dict:
                     _tag_signal(db, signal["signal_id"], "allocation",
                                 feedback["allocation_features"].get(strategy.strategy_type)
                                 or {"multiplier": str(allocation_weight), "status": "unweighted"})
+                if side == "buy" and "sizing" in result:
+                    _tag_signal(db, signal["signal_id"], "sizing", result["sizing"])
                 extra = {}
                 if side == "buy" and exit_plan is not None:
                     extra["exit_plan"] = exit_plan
