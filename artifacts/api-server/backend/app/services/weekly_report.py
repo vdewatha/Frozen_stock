@@ -116,6 +116,17 @@ def _short_pilot_summary(db: Session) -> Optional[dict]:
             "filled_orders": len(filled), "costs_verified": False}
 
 
+def _cost_calibration_section(db: Session) -> Optional[dict]:
+    """Realised vs modelled execution cost and the multiplier in force (``paper_cost_calibration``)."""
+    try:
+        from app.services.paper_cost_calibration import weekly_report_section
+
+        return weekly_report_section(db)
+    except Exception:  # the calibration is optional; the report must not fail
+        db.rollback()
+        return None
+
+
 def build_weekly_report(db: Session, *, now: Optional[datetime] = None) -> dict:
     now = (now or datetime.now(UTC)).astimezone(UTC)
     week = build_scorecard(db, days=7, now=now, classify=False)
@@ -161,6 +172,7 @@ def build_weekly_report(db: Session, *, now: Optional[datetime] = None) -> dict:
         "strategies": strategies,
         "blocked_buys": blocked_buy_reasons(db, now - timedelta(days=7), now),
         "short_pilot": _short_pilot_summary(db),
+        "cost_calibration": _cost_calibration_section(db),
         "open_unrealized_pnl": (all_time.get("open_mark_to_market") or {}).get("unrealized_pnl"),
         "paper_only": True,
         "mutates_strategy_state": False,

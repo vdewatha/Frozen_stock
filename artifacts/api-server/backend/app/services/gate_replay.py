@@ -15,7 +15,11 @@ Each strategy is replayed as it trades on paper:
   strategies, 10% stop / 10 sessions / indicator exit for RSI(2) and IBS;
 * fills follow ``triple_barrier.label_events``: decision on the close,
   next-open entry, volatility-scaled costs both sides, stop first, gaps at the
-  open; one position per symbol per strategy.
+  open; one position per symbol per strategy.  When a paper cost calibration
+  has been recorded (``paper_cost_calibration``), the modelled cost of each
+  side is scaled by the multiplier fitted to the bot's own fills for that
+  symbol's class; ``simulate(..., calibration=None)`` replays with the
+  published model.
 
 A *setup* is the gate configuration the strategy trades with:
 
@@ -44,7 +48,7 @@ from app.services.seed import RSI2_WIDENED_SCOPE
 from app.services.strategies.regime import DEFAULT_RANGE_ADX, wilder_adx
 from app.services.strategy_discovery import _executable, _marked_returns
 from app.services.strategy_scorecard import trade_statistics
-from app.services.triple_barrier import BarrierConfig, label_events
+from app.services.triple_barrier import BarrierConfig, CostMultipliers, label_events
 
 INDEX = ("SPY", "QQQ", "IWM", "DIA")
 BRACKET = BarrierConfig(take_profit_pct=0.06, stop_loss_pct=0.03, max_holding_days=20)
@@ -56,6 +60,33 @@ STRATEGIES = (*TECHNICAL, *REVERSION)
 WINDOWS = {"all": None, "2015+": "2015-01-01", "2020+": "2020-01-01"}
 MIN_CONFIDENCE = 0.55
 SETUP_KEYS = ("market_gate_sma", "vix_gate", "vix_level", "earnings_blackout_sessions")
+LATEST_CALIBRATION = object()  # ``simulate`` default: read the latest recorded cost calibration
+CALIBRATION_CACHE_SECONDS = 300.0
+_calibration_cache: dict = {"at": None, "value": None}
+
+
+def cost_calibration(db=None, *, max_age_seconds: float = CALIBRATION_CACHE_SECONDS):
+    """The latest ``paper_cost_calibration`` in force, or ``None`` (replay with the published model).
+
+    Without a session the lookup opens its own and the answer is cached for
+    ``max_age_seconds`` so one engine run reads the ledger once.
+    """
+    from time import monotonic
+
+    from app.services.paper_cost_calibration import latest_calibration
+
+    if db is None and _calibration_cache["at"] is not None \
+            and monotonic() - _calibration_cache["at"] < max_age_seconds:
+        return _calibration_cache["value"]
+    calibration = latest_calibration(db)
+    value = None if calibration is None or calibration.is_identity else calibration
+    if db is None:
+        _calibration_cache.update(at=monotonic(), value=value)
+    return value
+
+
+def reset_calibration_cache() -> None:
+    _calibration_cache.update(at=None, value=None)
 
 
 def replayable(strategy: str) -> bool:
@@ -146,8 +177,15 @@ def setup_from_parameters(parameters: Optional[Mapping]) -> dict:
 
 def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd.DataFrame],
              setup: Optional[Mapping] = None, replays: Optional[Mapping[str, dict]] = None, *,
-             vix: Optional[pd.DataFrame] = None, window: Optional[int] = None) -> pd.DataFrame:
-    """Every executable trade of ``strategy`` under ``setup`` (``window`` is the legacy market-gate-only form)."""
+             vix: Optional[pd.DataFrame] = None, window: Optional[int] = None,
+             calibration=LATEST_CALIBRATION) -> pd.DataFrame:
+    """Every executable trade of ``strategy`` under ``setup`` (``window`` is the legacy market-gate-only form).
+
+    ``calibration`` is a ``paper_cost_calibration.CostCalibration`` (or
+    ``None`` for the published cost model); by default the latest recorded one.
+    """
+    if calibration is LATEST_CALIBRATION:
+        calibration = cost_calibration()
     setup = dict(setup or {})
     if window is not None:
         setup["market_gate_sma"] = window
@@ -164,7 +202,9 @@ def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd
         positions = np.flatnonzero(buy)
         if not len(positions):
             continue
-        labels = label_events(frame, positions, barrier, exit_signals=primary.replay_exit_signals(frame, strategy))
+        costs: Optional[CostMultipliers] = calibration.for_symbol(symbol) if calibration is not None else None
+        labels = label_events(frame, positions, barrier, exit_signals=primary.replay_exit_signals(frame, strategy),
+                              calibration=costs)
         if labels.empty:
             continue
         out.append(_executable(labels).assign(symbol=symbol, strategy=strategy))

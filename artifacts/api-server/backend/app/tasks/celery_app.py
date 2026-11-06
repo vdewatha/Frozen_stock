@@ -134,6 +134,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.experiment_engine_job": {"queue": "learning"},
     "app.tasks.jobs.experiment_verdict_job": {"queue": "learning"},
     "app.tasks.jobs.gate_cost_job": {"queue": "learning"},
+    "app.tasks.jobs.paper_cost_calibration_job": {"queue": "learning"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
@@ -331,6 +332,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.gate_cost_job",
         "schedule": crontab(minute=20, hour=17, day_of_week="mon-fri"),
         "options": {"expires": 6 * 60 * 60},
+    },
+    # Saturday, before the weekly report and the Sunday experiment run: fit the
+    # replay cost model to the week's paper fills so experiments and gate-cost
+    # replays price execution at what the bot actually pays.
+    "paper-cost-calibration": {
+        "task": "app.tasks.jobs.paper_cost_calibration_job",
+        "schedule": crontab(minute=30, hour=13, day_of_week="sat"),
+        "options": {"expires": 12 * 60 * 60},
     },
     # Weekly paper performance report, Saturday morning after the week closes.
     "weekly-performance-report": {
