@@ -307,6 +307,15 @@ class Settings(BaseSettings):
     # (``paper_entry_open_buffer_minutes``) still applies on top of this.
     paper_daily_bar_entry_window_start_minutes: int = Field(default=5, ge=0, le=390)
     paper_daily_bar_entry_window_end_minutes: int = Field(default=45, ge=0, le=390)
+    # Stock monitor pause tuning.  Broker/reconciliation health breaches while
+    # the market is closed (outside [open - N minutes, close]) are recorded but
+    # do not pause the stock path; a breach still present N minutes before the
+    # open pauses as before.  In the first M minutes after the open the
+    # current-session minute bars are still arriving, so a broad freshness
+    # gap is a warning (each order still checks its own symbol's feed).
+    paper_monitor_offhours_deferral_enabled: bool = True
+    paper_monitor_offhours_resume_minutes_before_open: int = Field(default=30, ge=0, le=240)
+    paper_monitor_open_feed_grace_minutes: int = Field(default=10, ge=0, le=60)
     # Unattended paper operation.  Explained technical halts auto-resume only
     # after cooldown plus fresh clean evidence; 0 disables the auto-resume.
     paper_auto_resume_enabled: bool = True

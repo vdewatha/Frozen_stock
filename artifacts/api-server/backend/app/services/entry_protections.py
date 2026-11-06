@@ -57,6 +57,11 @@ Protections (each disabled by a value of 0):
    even without new trades and re-arms only when a new close keeps the
    window in drawdown.  The backtester applies the same rule when
    ``BacktestConfig.strategy_drawdown_lock_pct`` > 0 (off by default).
+7. **Model monitoring lock** — while a ``model.*`` monitoring check (drift,
+   calibration or realized hit rate of the probabilistic model) is breaching,
+   strategies that trade that model (``MODEL_DEPENDENT_STRATEGIES``) take no
+   new entries.  Model breaches pause only these strategies, not the whole
+   stock path, and the lock lifts when the check clears.
 
 Configuration: each key is read from the active ``RiskRule.value`` first and
 falls back to ``settings.paper_<key>``.  Unparseable or negative risk-rule
@@ -501,6 +506,20 @@ def strategy_drawdown_block(trades: Iterable[ClosedTrade], strategy: str | None,
 # per-cycle evaluator
 
 
+# Strategies whose signals come from ``probabilistic_model.predict_probabilities``,
+# the model that the ``model.*`` monitoring checks evaluate.
+MODEL_DEPENDENT_STRATEGIES = frozenset({"model_predictive_long"})
+
+
+def model_monitoring_block(breaches: Iterable[str], strategy: str | None) -> dict | None:
+    breaches = sorted(breaches)
+    if not breaches or strategy not in MODEL_DEPENDENT_STRATEGIES:
+        return None
+    return _block("model_monitoring", (
+        f"model monitoring breach ({', '.join(breaches)}); {strategy} entries paused until the check clears"
+    ))
+
+
 @dataclass
 class EntryProtections:
     now: datetime
@@ -511,12 +530,14 @@ class EntryProtections:
     drawdown: Decimal | None = None
     allocated_notional: Decimal | None = None
     load_error: str | None = None
+    model_breaches: list[str] = field(default_factory=list)
 
     def check(self, symbol: str, strategy: str | None) -> dict | None:
         """Block dict for a new BUY entry, or None to let existing gates decide."""
         if self.load_error:
             return _block("unavailable", f"protection state could not be loaded ({self.load_error}); entry withheld")
         for outcome in (
+            model_monitoring_block(self.model_breaches, strategy),
             time_of_day_block(self.now, self.bounds, self.config),
             drawdown_block(self.drawdown, self.config, self.bounds[1] if self.bounds else None),
             stoploss_guard_block(self.events, strategy, self.now, self.config),
@@ -538,6 +559,9 @@ class EntryProtections:
         if cycle_wide:
             out["cycle_block"] = cycle_wide["reason"]
         out["strategy_locks"] = self.strategy_locks()
+        if self.model_breaches:
+            out["model_monitoring_lock"] = {"breaches": sorted(self.model_breaches),
+                                            "strategies": sorted(MODEL_DEPENDENT_STRATEGIES)}
         return out
 
     def strategy_locks(self) -> list[dict]:
@@ -556,6 +580,7 @@ def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
     Any load failure fails closed for entries only (``check`` withholds every
     BUY); the caller's sell/exit path is unaffected.
     """
+    from app.models import StockMonitoringBreach
     from app.models.stock_paper import StockPaperEquitySnapshot, StockPaperFill, StockPaperOrder
 
     now = _utc(now)
@@ -563,6 +588,12 @@ def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
     protections = EntryProtections(now=now, config=config)
     try:
         protections.bounds = bounds_for(now.astimezone(ET).date())
+        protections.model_breaches = [
+            row.breach_key for row in db.query(StockMonitoringBreach).filter(
+                StockMonitoringBreach.breach_key.like("model.%"),
+                StockMonitoringBreach.status.in_(("observed", "persistent")),
+            ).all()
+        ]
         since = now - timedelta(days=HISTORY_DAYS)
         fills = [
             row for row in db.query(StockPaperFill).filter(

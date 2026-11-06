@@ -904,13 +904,14 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
         details = check.get("details") or {}
         if transitional_account_checks and key in {"health.broker", "health.reconciliation"}:
             return True
-        if check.get("action_scope") == "model":
-            # Model drift/performance never pauses the stock path: a persistent
-            # model breach demotes the active model instead. Blocking resume on
-            # it held a paused bot all session on 2026-11-06 (a safety pause at
-            # 08:00 that had cleared, then model.realized_performance=breach),
-            # including the operator's own resume, for strategies that do not
-            # use the model at all.
+        if check.get("action_scope") == "model" or str(key).startswith("model."):
+            # Model drift, calibration and realized hit rate concern only the
+            # probabilistic model and never pause the stock path.  A breach
+            # demotes the active model and withholds entries for the strategies
+            # that trade it (entry_protections.MODEL_DEPENDENT_STRATEGIES); it
+            # must not hold every other strategy's resume.  On 2026-11-06 a
+            # realized hit-rate breach (30% vs 52%) kept the whole bot paused
+            # all session, operator resume included.
             return True
         if key == "data.freshness_provenance" and status == "warning":
             # A warning means a partial feed gap: each order re-checks its own
@@ -919,8 +920,6 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
             # IEX symbols (ABBV, COST, DIA) nearly always lag, so treating the
             # warning as blocking refused every in-session resume.
             return True
-        if key == "model.realized_performance" and status == "unknown":
-            return int(details.get("recent_count", 0)) < 10 or int(details.get("baseline_count", 0)) < 10
         if key == "execution.fill_divergence" and status == "unknown":
             return "no broker fills" in str(check.get("message", "")).lower()
         if key == "risk.concentration" and status == "unknown":
