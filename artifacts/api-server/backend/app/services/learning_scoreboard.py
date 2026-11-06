@@ -48,6 +48,9 @@ CHANGES = (
     {"key": "news_symbols", "effective": "2026-11-06", "title": "Symbols from the news; one position per symbol",
      "watch": "Up to 8 news-found stocks admitted each day and traded learning-sized. crowded_symbol disappears "
               "from loss flags."},
+    {"key": "market_context", "effective": "2026-11-09", "title": "Real economic data; announcement blackout; VIX and breadth",
+     "watch": "No BUYs the session before a Fed decision, CPI or jobs report. Losses get macro_event_in_hold, "
+              "high_vix_entry and weak_breadth_entry flags; a repeat proposes a gate to backtest."},
 )
 
 
@@ -314,7 +317,72 @@ def _health(db: Session, *, now: datetime, rows: list, runs: list[AuditLog], equ
                              f"No symbol bought by two strategies this session; the rule skipped {blocked} buy "
                              "signals that would have stacked." if entries or blocked else
                              "No entries this session yet."))
+    checks += _market_data_checks(db, now=now, outcomes=outcomes)
     return {"session": session_out, "checks": checks}
+
+
+def _sentence(text: str) -> str:
+    return text[:1].upper() + text[1:] + "."
+
+
+def _market_data_checks(db: Session, *, now: datetime, outcomes: list[dict]) -> list[dict]:
+    """7-9. The economic data is real; the announcement calendar and the gauges are current."""
+    from app.services.economic_data import MOCK_SOURCE, fred_configured, latest_indicator_map
+    from app.services.market_events import EVENT_NAMES, is_blackout_reason, latest_calendar, next_events
+    from app.services.market_gauges import BREADTH, VIX, latest_gauges
+
+    checks = []
+    latest = latest_indicator_map(db, auto_seed=False)
+    rates = latest.get("treasury_10y")
+    if rates is None or rates.source == MOCK_SOURCE:
+        detail = ("FRED_API_KEY is set; waiting for the 07:00 ET import." if fred_configured()
+                  else "Placeholder numbers. Add a free FRED_API_KEY in Replit Secrets and publish.")
+        checks.append(_check("real_macro", "Economic data is real", "warning", detail))
+    else:
+        age = (now.astimezone(ET).date() - rates.observation_date).days
+        checks.append(_check(
+            "real_macro", "Economic data is real", "ok" if age <= 7 else "warning",
+            f"FRED: 10-year Treasury {float(rates.value):.2f}% on {rates.observation_date.isoformat()}"
+            + ("" if age <= 7 else f", {age} days old; check the 07:00 ET import.")))
+
+    calendar = latest_calendar(db)
+    skipped = sum(is_blackout_reason(item.get("reason")) for item in outcomes)
+    if not calendar:
+        checks.append(_check("event_calendar", "Announcement dates are loaded", "waiting",
+                             "The calendar refreshes at 06:45 ET; until then only the built-in Fed dates apply."))
+    else:
+        observed = datetime.fromisoformat(calendar["observed_at"])
+        upcoming = next_events(calendar.get("events"), now, limit=1)
+        fomc_ahead = next_events([e for e in calendar.get("events") or [] if e["kind"] == "fomc"], now, limit=1)
+        problems = []
+        if now - observed > timedelta(hours=36):
+            problems.append(f"last refreshed {observed.astimezone(ET):%b %d %H:%M} ET")
+        if calendar.get("missing"):
+            problems.append("no dates for " + ", ".join(EVENT_NAMES.get(k, k) for k in calendar["missing"])
+                            + (" (needs FRED_API_KEY)" if not fred_configured() else ""))
+        if not fomc_ahead or datetime.fromisoformat(fomc_ahead[0]["date"]).date() - now.date() > timedelta(days=75):
+            problems.append("no Fed meeting known in the next 75 days")
+        nxt = (f"Next: {EVENT_NAMES.get(upcoming[0]['kind'], upcoming[0]['kind'])} on {upcoming[0]['date']}."
+               if upcoming else "No upcoming event known.")
+        checks.append(_check("event_calendar", "Announcement dates are loaded", "warning" if problems else "ok",
+                             f"{nxt} Skipped {skipped} BUYs before an announcement this session."
+                             + (" " + _sentence("; ".join(problems)) if problems else ""),
+                             skipped=skipped))
+
+    gauges = latest_gauges(db, now)
+    parts = []
+    if VIX in gauges:
+        parts.append(f"VIX {gauges[VIX]['value']:.1f} ({gauges[VIX]['as_of']})")
+    if BREADTH in gauges:
+        parts.append(f"{gauges[BREADTH]['value']:.0f}% of S&P 500 above 200-day ({gauges[BREADTH]['as_of']})")
+    stale = [name for name in (VIX, BREADTH) if not (gauges.get(name) or {}).get("fresh")]
+    if not gauges:
+        checks.append(_check("market_gauges", "VIX and breadth are current", "waiting",
+                             "First reading at 09:50 ET on the next session."))
+    else:
+        checks.append(_check("market_gauges", "VIX and breadth are current", "warning" if stale else "ok",
+                             "; ".join(parts) + "." + (f" Stale or missing: {', '.join(stale)}." if stale else "")))
+    return checks
 
 
 def _news_vs_core(rows: list, ever: set[str]) -> dict:

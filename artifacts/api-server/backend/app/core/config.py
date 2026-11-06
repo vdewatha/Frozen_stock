@@ -250,6 +250,21 @@ class Settings(BaseSettings):
     # included), so a lot is not held through the gap. Funds are unaffected
     # and an unavailable calendar does not block. 0 disables.
     paper_earnings_blackout_sessions: int = Field(default=10, ge=0, le=60)
+    # Real economic data (app/services/economic_data.py). Without a key the
+    # placeholder rows stay, labelled mock_macro, and nothing trades on them.
+    fred_api_key: SecretStr = SecretStr("")
+    # Scheduled market-wide announcements (app/services/market_events.py):
+    # FOMC decisions, CPI and the jobs report. Overnight-holding strategies
+    # skip new BUYs the session before each one and the FOMC day until
+    # 14:30 ET; intraday strategies skip only the FOMC morning.
+    market_event_blackout_enabled: bool = True
+    market_events_fomc_url: str = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    # Market-wide gauges (app/services/market_gauges.py): the VIX and the share
+    # of S&P 500 members above their 200-day average. Always recorded on each
+    # entry for loss diagnosis; sizing on them is opt-in until backtested.
+    paper_market_gauge_sizing_enabled: bool = False
+    market_gauge_high_vix: float = Field(default=30.0, gt=0)
+    market_gauge_weak_breadth_pct: float = Field(default=40.0, ge=0, le=100)
     # Entry protections (app/services/entry_protections.py): entry-only
     # circuit breakers for scheduled and exploration paper BUYs.  They never
     # block sells/exits.  A risk-rule key with the same name minus the

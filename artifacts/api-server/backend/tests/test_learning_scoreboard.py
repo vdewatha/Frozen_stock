@@ -16,6 +16,7 @@ from tests.test_paper_trade_scorecard import Ledger, at
 
 UTC = timezone.utc
 NOW = at(19)  # Thursday 2026-10-29, 15:00 New York: session in progress
+MARKET_DATA_CHECKS = ("real_macro", "event_calendar", "market_gauges")
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +56,8 @@ def _bar(db, symbol, when):
 def test_an_empty_account_waits_instead_of_failing(db):  # noqa: F811
     result = board.build_learning_scoreboard(db, now=NOW)
     statuses = {key: item["status"] for key, item in _checks(result).items()}
+    # Placeholder economic data is a real gap (no FRED key), not a wait.
+    assert statuses.pop("real_macro") == "warning"
     assert set(statuses.values()) == {"waiting"}
     assert result["health"]["session"]["date"] == "2026-10-29" and result["health"]["session"]["in_progress"]
     assert result["progress"]["overall"]["trades"] == 0 and len(result["progress"]["weeks"]) == board.WEEKS
@@ -74,6 +77,8 @@ def test_a_working_session_passes_every_check(db):  # noqa: F811
     db.flush()
     result = board.build_learning_scoreboard(db, now=NOW)
     checks = _checks(result)
+    for key in MARKET_DATA_CHECKS:
+        checks.pop(key)
     assert {key: item["status"] for key, item in checks.items()} == {
         "explained": "ok", "diagnosed": "ok", "news_ran": "ok", "news_fed": "ok", "news_sized": "ok",
         "tested_exits": "ok", "one_per_symbol": "ok"}
@@ -133,9 +138,46 @@ def test_changes_split_results_before_and_after(db):  # noqa: F811
     account, *_ = _book(db)
     trade_attribution.attribute_round_trips(db, account_id=account.id, earnings_lookup=None)
     changes = board.build_learning_scoreboard(db, now=NOW)["changes"]
-    assert [change["key"] for change in changes] == ["loss_learning", "news_symbols"]
+    assert [change["key"] for change in changes] == ["loss_learning", "news_symbols", "market_context"]
     assert changes[0]["before"]["trades"] == 1 and changes[0]["after"]["trades"] == 0
 
 
 def test_viewers_can_read_the_scoreboard():
     assert required_role("GET", "/stock-paper/learning-scoreboard") == "viewer"
+
+
+def test_market_data_checks_report_real_data_calendar_and_gauges(db, monkeypatch):  # noqa: F811
+    from pydantic import SecretStr
+
+    from app.core.config import settings
+    from app.models import EconomicIndicator
+    from app.services import market_events
+
+    monkeypatch.setattr(settings, "fred_api_key", SecretStr("test-key"))
+    day = NOW.date()
+    for name, value, source in (("treasury_10y", 4.1, "fred"), ("vix", 18.2, "yfinance"),
+                                ("breadth_above_200d", 61.0, "yfinance")):
+        db.add(EconomicIndicator(indicator_name=name, observation_date=day, value=Decimal(str(value)), source=source))
+    db.flush()
+    market_events.refresh_market_events(
+        db, now=NOW, fomc=lambda: [datetime(2026, 12, 9).date()],
+        fred=lambda path, params: {"release_dates": [{"date": "2026-11-13" if params["release_id"] == 10
+                                                      else "2026-11-06"}]})
+    write_audit_log(db, event_type="stock_paper", action=board.BUY_OUTCOMES, status="complete", message="t",
+                    payload={"outcomes": [{"symbol": "AAPL", "strategy": "rsi2", "status": "skipped",
+                                           "reason": "jobs report on 2026-11-06 at 08:30 ET; an overnight "
+                                                     "position would be held through it"}]})
+    checks = _checks(board.build_learning_scoreboard(db, now=NOW))
+    assert checks["real_macro"]["status"] == "ok" and "4.10%" in checks["real_macro"]["detail"]
+    assert checks["event_calendar"]["status"] == "ok", checks["event_calendar"]["detail"]
+    assert "Next: jobs report on 2026-11-06" in checks["event_calendar"]["detail"]
+    assert "Skipped 1 BUYs" in checks["event_calendar"]["detail"]
+    assert checks["market_gauges"]["status"] == "ok" and "VIX 18.2" in checks["market_gauges"]["detail"]
+
+
+def test_a_partial_calendar_says_what_is_missing(db):  # noqa: F811
+    from app.services import market_events
+
+    market_events.refresh_market_events(db, now=NOW, fomc=lambda: [datetime(2026, 12, 9).date()])
+    check = _checks(board.build_learning_scoreboard(db, now=NOW))["event_calendar"]
+    assert check["status"] == "warning" and "needs FRED_API_KEY" in check["detail"]

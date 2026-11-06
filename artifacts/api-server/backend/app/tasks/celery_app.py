@@ -88,7 +88,11 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.expire_stale_scalp_research_runs_job": {"queue": SCALP_RESEARCH_QUEUE},
     "app.tasks.jobs.daily_market_data_import": {"queue": "market_data"},
     "app.tasks.jobs.intraday_market_data_import": {"queue": INTRADAY_MARKET_DATA_QUEUE},
-    "app.tasks.jobs.daily_economic_data_import": {"queue": "market_data"},
+    # Short HTTP jobs: on the fast lane so a long sweep on paper-core cannot
+    # hold them past the open (PR #7).
+    "app.tasks.jobs.daily_economic_data_import": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.market_events_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.market_gauges_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.daily_news_import": {"queue": "market_data"},
     "app.tasks.jobs.daily_feature_generation": {"queue": "market_data"},
     "app.tasks.jobs.model_realization_scoring_job": {"queue": "learning"},
@@ -161,6 +165,18 @@ celery_app.conf.beat_schedule = {
         "options": {"expires": 55},
     },
     "daily-economic-data-import": {"task": "app.tasks.jobs.daily_economic_data_import", "schedule": crontab(minute=0, hour=7)},
+    # Fed, CPI and jobs-report dates for the announcement blackout.
+    "market-events": {
+        "task": "app.tasks.jobs.market_events_job",
+        "schedule": crontab(minute=45, hour=6),
+        "options": {"expires": 6 * 60 * 60},
+    },
+    # VIX and S&P 500 breadth: after the first 20 minutes and after the close.
+    "market-gauges": {
+        "task": "app.tasks.jobs.market_gauges_job",
+        "schedule": crontab(minute=50, hour="9,16", day_of_week="mon-fri"),
+        "options": {"expires": 2 * 60 * 60},
+    },
     "daily-news-import": {"task": "app.tasks.jobs.daily_news_import", "schedule": crontab(minute=30, hour=7)},
     # Re-run the trusted prediction pipeline outside market hours only. A run
     # retrains every active symbol and took ~98 minutes on the 2 vCPU VM; the

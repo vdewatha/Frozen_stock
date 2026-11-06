@@ -18,7 +18,7 @@ from sqlalchemy.types import JSON
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.services.economic_data import import_fallback_economic_indicators
+from app.services.economic_data import import_economic_indicators
 from app.services.decision_journal import refresh_decision_journal_outcomes, update_strategy_memory_from_journal
 from app.services.deployment_monitor import run_deployment_monitor
 from app.services.experiments import run_strategy_experiments
@@ -584,7 +584,7 @@ def model_realization_scoring_job() -> dict:
 @celery_app.task
 def daily_economic_data_import() -> dict:
     def work(db):
-        result = import_fallback_economic_indicators(db)
+        result = import_economic_indicators(db)
         return {"status": "complete", "job": "daily_economic_data_import", **result}
 
     return _run_job("daily_economic_data_import", work)
@@ -1675,6 +1675,30 @@ def news_discovery_job() -> dict:
         return {"job": "news_discovery_job", **run_news_discovery(db)}
 
     return _run_job("news_discovery_job", work)
+
+
+@celery_app.task
+def market_events_job() -> dict:
+    """Refresh the Fed, CPI and jobs-report calendar for the BUY blackout."""
+    def work(db):
+        from app.services.market_events import refresh_market_events
+
+        result = refresh_market_events(db)
+        return {"job": "market_events_job", "status": result["status"], "events": len(result["events"]),
+                "missing": result["missing"], "errors": result["errors"]}
+
+    return _run_job("market_events_job", work)
+
+
+@celery_app.task
+def market_gauges_job() -> dict:
+    """Store the VIX and the share of S&P 500 members above their 200-day average."""
+    def work(db):
+        from app.services.market_gauges import refresh_market_gauges
+
+        return {"job": "market_gauges_job", **refresh_market_gauges(db)}
+
+    return _run_job("market_gauges_job", work)
 
 
 @celery_app.task

@@ -19,7 +19,11 @@ Every closed trade gets one primary cause in one of four families:
 cannot be told apart.  Contributing flags are recorded next to the cause:
 ``crowded_symbol`` (another lot held the same symbol), ``clustered_stops``
 (several stops filled the same session), ``exit_untested`` (the exits were
-not the ones the strategy was backtested with) and ``market_down``.
+not the ones the strategy was backtested with), ``market_down``,
+``macro_event_in_hold`` (a Fed decision, CPI or jobs report was released
+during the hold), ``high_vix_entry`` (VIX at or above 25 at entry) and
+``weak_breadth_entry`` (under 40% of S&P 500 members above their 200-day
+average at entry).
 
 Wins are labelled too: ``market_tailwind`` when the market rose more than the
 stock (the gain was drift, not edge), else ``edge``.
@@ -70,7 +74,15 @@ CONTRIBUTING_PROPOSALS = {
     "crowded_symbol": "Several lots held one symbol: test one position per symbol across strategies.",
     "clustered_stops": "Stops fired together: positions were one bet. Test a cap on correlated entries per day.",
     "exit_untested": "The exits were not the backtested ones, so the result does not test the strategy.",
+    "macro_event_in_hold": "A Fed, CPI or jobs release landed inside these holds: test a longer announcement "
+                           "blackout for this strategy.",
+    "high_vix_entry": "These losses were opened with the VIX at 25 or more: backtest half size or no entries "
+                      "above a VIX level.",
+    "weak_breadth_entry": "These losses were opened while most stocks were below their 200-day average: "
+                          "backtest a breadth gate for this strategy.",
 }
+HIGH_VIX_ENTRY = 25.0
+WEAK_BREADTH_ENTRY = 40.0
 
 
 def _ret(value: Optional[float]) -> Optional[float]:
@@ -81,7 +93,9 @@ def diagnose(*, gross_return: float, is_loss: bool, benchmark_return: Optional[f
              sector_symbol: Optional[str] = None, sector_return: Optional[float] = None,
              earnings_in_hold: Optional[bool] = None, news_used: bool = False,
              news_sentiment: Optional[float] = None, concurrent_same_symbol: int = 0,
-             same_session_stops: int = 0, exit_tested: Optional[bool] = None) -> dict:
+             same_session_stops: int = 0, exit_tested: Optional[bool] = None,
+             macro_events_in_hold: Optional[list[str]] = None, entry_vix: Optional[float] = None,
+             entry_breadth: Optional[float] = None) -> dict:
     """One trade's cause and contributing flags.  Pure and deterministic."""
     r = float(gross_return)
     excess_market = r - benchmark_return if benchmark_return is not None else None
@@ -96,6 +110,12 @@ def diagnose(*, gross_return: float, is_loss: bool, benchmark_return: Optional[f
         contributing.append("exit_untested")
     if benchmark_return is not None and benchmark_return <= -MOVE_RETURN:
         contributing.append("market_down")
+    if macro_events_in_hold:
+        contributing.append("macro_event_in_hold")
+    if entry_vix is not None and entry_vix >= HIGH_VIX_ENTRY:
+        contributing.append("high_vix_entry")
+    if entry_breadth is not None and entry_breadth < WEAK_BREADTH_ENTRY:
+        contributing.append("weak_breadth_entry")
 
     if not is_loss:
         cause = "market_tailwind" if (benchmark_return is not None and benchmark_return >= MOVE_RETURN
@@ -122,7 +142,8 @@ def diagnose(*, gross_return: float, is_loss: bool, benchmark_return: Optional[f
         "sector_return": _ret(sector_return) if sector_differs else None, "excess_vs_sector": _ret(excess_sector),
         "earnings_in_hold": earnings_in_hold, "news_used": news_used, "news_sentiment": news_sentiment,
         "concurrent_same_symbol": concurrent_same_symbol, "same_session_stops": same_session_stops,
-        "exit_tested": exit_tested, "hindsight_only": True,
+        "exit_tested": exit_tested, "macro_events_in_hold": macro_events_in_hold,
+        "entry_vix": entry_vix, "entry_breadth": entry_breadth, "hindsight_only": True,
     }
 
 
