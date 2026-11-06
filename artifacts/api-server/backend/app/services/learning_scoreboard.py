@@ -397,14 +397,29 @@ def _news_vs_core(rows: list, ever: set[str]) -> dict:
     return {"news": totals(news), "core": totals(core), "news_wrong": news_wrong}
 
 
-def _changes(rows: list) -> list[dict]:
+def _changes(rows: list, extra: Iterable[dict] = ()) -> list[dict]:
+    """Shipped changes plus the experiment engine's adopted ones, each with results before and after.
+
+    An engine change is judged on its own strategy's trades only.
+    """
     out = []
-    for change in CHANGES:
+    for change in (*CHANGES, *extra):
         start = datetime.fromisoformat(change["effective"]).replace(tzinfo=ET)
-        before = [row for row in rows if _utc(row.opened_at) < start]
-        after = [row for row in rows if _utc(row.opened_at) >= start]
+        scope = [row for row in rows if not change.get("strategy_type") or row.strategy_type == change["strategy_type"]]
+        before = [row for row in scope if _utc(row.opened_at) < start]
+        after = [row for row in scope if _utc(row.opened_at) >= start]
         out.append({**change, "before": totals(before), "after": totals(after)})
     return out
+
+
+def _engine_changes(db: Session) -> list[dict]:
+    from app.services.experiment_engine import scoreboard_changes
+
+    try:
+        return scoreboard_changes(db)
+    except Exception:  # the scoreboard must render without the ledger
+        db.rollback()
+        return []
 
 
 def _equity(db: Session) -> float:
@@ -435,7 +450,7 @@ def build_learning_scoreboard(db: Session, *, now: Optional[datetime] = None) ->
         "repeating_failures": repeating_failures(rows),
         "news": _news_summary(runs),
         "news_vs_core": _news_vs_core(rows, ever),
-        "changes": _changes(rows),
+        "changes": _changes(rows, _engine_changes(db)),
         "paper_only": True,
     }
 

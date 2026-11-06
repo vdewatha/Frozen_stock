@@ -74,6 +74,21 @@ def _session_horizon(today: date, sessions: int) -> date:
     return day
 
 
+def strategy_blackout_sessions(parameters: dict | None) -> int | None:
+    """A strategy row's own ``earnings_blackout_sessions`` (0 = off), or None to use the account-wide setting.
+
+    The experiment engine sets this per strategy when the ``missed_earnings``
+    lesson repeats and the pre-registered backtest supports a change.
+    """
+    value = (parameters or {}).get("earnings_blackout_sessions")
+    if value is None:
+        return None
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def earnings_blackout(symbol: str, now: datetime, sessions: int | None = None, fetch=None) -> dict | None:
     """Skip result for a BUY when earnings fall within ``sessions`` sessions, else ``None``.
 

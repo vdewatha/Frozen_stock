@@ -375,6 +375,17 @@ class Settings(BaseSettings):
     strategy_discovery_max_new: int = Field(default=3, ge=0, le=20)
     strategy_discovery_max_live: int = Field(default=10, ge=0, le=50)
     strategy_discovery_history_start: str = "2000-01-01"
+    # Experiment engine: weekly, the repeating loss lessons choose which gate
+    # experiments to replay; a candidate that passes the pre-registered rule is
+    # adopted on the strategy row (adoption_enabled) and judged on its forward
+    # paper trades (verdict_min/max_trades) with an automatic revert.
+    experiment_engine_enabled: bool = True
+    experiment_engine_adoption_enabled: bool = True
+    experiment_engine_max_experiments: int = Field(default=4, ge=0, le=20)
+    experiment_engine_cooldown_days: int = Field(default=28, ge=1, le=365)
+    experiment_engine_history_start: str = "2000-01-01"
+    experiment_verdict_min_trades: int = Field(default=20, ge=5, le=500)
+    experiment_verdict_max_trades: int = Field(default=60, ge=5, le=1000)
     # Performance-weighted paper risk fractions (bounded, shrink-first).
     paper_allocation_weighting_enabled: bool = True
     paper_allocation_floor: float = Field(default=0.5, gt=0, le=1)

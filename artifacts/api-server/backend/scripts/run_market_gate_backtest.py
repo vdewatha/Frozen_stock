@@ -42,87 +42,23 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import DEFAULT_PAPER_EXECUTION_SYMBOLS  # noqa: E402
+from app.services import gate_replay  # noqa: E402
 from app.services import meta_label_primary as primary  # noqa: E402
-from app.services.market_gate import spy_above_sma  # noqa: E402
-from app.services.meta_label import REVERSION_BARRIER  # noqa: E402
-from app.services.seed import RSI2_WIDENED_SCOPE  # noqa: E402
-from app.services.strategies.regime import DEFAULT_RANGE_ADX, wilder_adx  # noqa: E402
-from app.services.strategy_discovery import _executable, _marked_returns  # noqa: E402
+from app.services.gate_replay import (  # noqa: E402,F401  (re-exported for the slot-allocation script and tests)
+    BRACKET, INDEX, RANGE_GATED, STRATEGIES, TECHNICAL, WINDOWS, entries, scope, spy_gate_on, window_metrics,
+)
+from app.services.strategy_discovery import _marked_returns  # noqa: E402
 from app.services.strategy_scorecard import load_daily_history, normalize_prices, trade_statistics  # noqa: E402
 from app.services.trading_universe import sector_group  # noqa: E402
-from app.services.triple_barrier import BarrierConfig, label_events  # noqa: E402
 
-INDEX = ("SPY", "QQQ", "IWM", "DIA")
-BRACKET = BarrierConfig(take_profit_pct=0.06, stop_loss_pct=0.03, max_holding_days=20)
-TECHNICAL = ("moving_average_crossover", "rsi_mean_reversion", "macd_momentum", "ensemble",
-             "bollinger_mean_reversion", "channel_breakout", "trend_pullback")
-RANGE_GATED = {"rsi_mean_reversion", "bollinger_mean_reversion"}
-STRATEGIES = (*TECHNICAL, "rsi2_pullback", "ibs_mean_reversion")
 GATES = (0, 10, 20, 50)
-WINDOWS = {"all": None, "2015+": "2015-01-01", "2020+": "2020-01-01"}
 CAPS = (20, 12, 8, 5)
 SLOT = 0.05
 
 
-def scope(strategy: str, symbols: list[str]) -> list[str]:
-    if strategy == "rsi2_pullback":
-        return [s for s in symbols if s in RSI2_WIDENED_SCOPE]
-    if strategy == "ibs_mean_reversion":
-        return [s for s in symbols if s in INDEX]
-    return symbols
-
-
-def entries(strategy: str, frame: pd.DataFrame, replay: dict) -> np.ndarray:
-    signal = primary.ibs_mean_reversion(frame, entry_threshold=0.1) if strategy == "ibs_mean_reversion" \
-        else replay[strategy]
-    buy = (signal["action"].to_numpy() == "BUY") & (signal["confidence"].to_numpy() >= 0.55)
-    if strategy in RANGE_GATED:
-        adx = wilder_adx(frame)["adx"].to_numpy()
-        buy &= np.isfinite(adx) & (adx < DEFAULT_RANGE_ADX)
-    return buy
-
-
-def spy_gate_on(frame: pd.DataFrame, spy: pd.DataFrame, window: int) -> np.ndarray:
-    if window <= 0:
-        return np.ones(len(frame), dtype=bool)
-    above = pd.Series(spy_above_sma(spy["close"], window), index=pd.to_datetime(spy["date"]))
-    dates = pd.to_datetime(frame["date"])
-    return above.reindex(dates, method="ffill").fillna(False).to_numpy(bool)
-
-
 def simulate(strategy: str, frames: dict, spy: pd.DataFrame, window: int, replays: dict) -> pd.DataFrame:
-    barrier = REVERSION_BARRIER if strategy in ("rsi2_pullback", "ibs_mean_reversion") else BRACKET
-    out = []
-    for symbol in scope(strategy, list(frames)):
-        frame = frames[symbol]
-        buy = entries(strategy, frame, replays[symbol]) & spy_gate_on(frame, spy, window)
-        positions = np.flatnonzero(buy)
-        if not len(positions):
-            continue
-        labels = label_events(frame, positions, barrier, exit_signals=primary.replay_exit_signals(frame, strategy))
-        if labels.empty:
-            continue
-        labels = _executable(labels).assign(symbol=symbol, strategy=strategy)
-        out.append(labels)
-    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
-
-
-def window_metrics(trades: pd.DataFrame, frames: dict, start) -> dict:
-    sub = trades if start is None else trades.loc[pd.to_datetime(trades["decision_date"]) >= start]
-    months = pd.to_datetime(sub["decision_date"]).dt.to_period("M").astype(str).tolist()
-    stats = trade_statistics(sub["net_return"].to_numpy(), clusters=months)
-    daily = []
-    for symbol, group in sub.groupby("symbol"):
-        frame = frames[symbol]
-        series = pd.Series(_marked_returns(group, frame["close"].to_numpy(float)), index=pd.to_datetime(frame["date"]))
-        daily.append(series if start is None else series.loc[series.index >= start])
-    portfolio = pd.concat(daily, axis=1).mean(axis=1).sort_index() if daily else pd.Series(dtype=float)
-    equity = np.cumprod(1 + portfolio.to_numpy()) if len(portfolio) else np.array([1.0])
-    peak = np.maximum.accumulate(np.concatenate([[1.0], equity]))
-    drawdown = float(np.max(1 - np.concatenate([[1.0], equity]) / peak))
-    return {"trades": stats["trades"], "win_rate": stats["win_rate"], "expectancy_bps": stats["expectancy_bps"],
-            "expectancy_ci_bps": stats.get("expectancy_ci_bps"), "profit_factor": stats["profit_factor"],
-            "portfolio_max_drawdown": round(drawdown, 4)}
+    """Market-gate-only replay; the engine lives in ``app.services.gate_replay``."""
+    return gate_replay.simulate(strategy, frames, spy, {"market_gate_sma": window}, replays)
 
 
 def decide_gate(rows: dict) -> dict:

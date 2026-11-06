@@ -154,6 +154,14 @@ def learning_scoreboard(db: Session = Depends(get_db)) -> dict:
     return build_learning_scoreboard(db)
 
 
+@router.get("/learning-experiments")
+def learning_experiments(db: Session = Depends(get_db)) -> dict:
+    """What the bot tested, what it changed, and whether each change is working (read-only)."""
+    from app.services.experiment_engine import experiment_ledger
+
+    return experiment_ledger(db)
+
+
 @router.get("/venue-qualification")
 def venue_qualification_status(db: Session = Depends(get_db)) -> dict:
     return paper_venue_qualification_status(db, active_paper_broker_name())
