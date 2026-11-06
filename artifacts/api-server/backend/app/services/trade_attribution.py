@@ -359,12 +359,17 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
     from zoneinfo import ZoneInfo
 
     from app.services import paper_trade_scorecard as scorecard
-    from app.services import loss_diagnosis
+    from app.services import loss_diagnosis, market_events
     from app.services.strategy_execution_policy import exit_policy_for
     from app.services.trade_mistakes import classify_round_trip
 
     now = now or datetime.now(UTC)
     lookup = _earnings_lookup() if earnings_lookup is ... else earnings_lookup
+    try:
+        calendar = market_events.cached_events(db)
+    except Exception:  # evidence only; an unreadable calendar is "unknown"
+        db.rollback()
+        calendar = None
 
     account = scorecard._account(db, account_id)
     if account is None:
@@ -419,6 +424,7 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
         gross_return = trade["gross_pnl"] / cost if cost > 0 else 0.0
         effective = trade["net_return"] if costs_known else gross_return
         news_used, news_sentiment = loss_diagnosis.news_from_features(features)
+        market = features.get("market_context") if isinstance(features.get("market_context"), dict) else {}
         sector = _sector_symbol(lot.symbol)
         diagnosis = loss_diagnosis.diagnose(
             gross_return=gross_return, is_loss=effective <= 0,
@@ -432,6 +438,8 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
             exit_tested=loss_diagnosis.exit_tested(
                 exit_policy_for(strategy) if strategy else None, entry_price=decision_price or trade["entry_price"],
                 stop_price=_f(lot.entry_order.stop_price), take_profit_price=_f(lot.entry_order.take_profit_price)),
+            macro_events_in_hold=market_events.events_between(calendar, opened_at, closed_at),
+            entry_vix=_f(market.get("vix")), entry_breadth=_f(market.get("breadth_above_200d")),
         )
         record = _record(
             strategy_id=lot.strategy_id, strategy_type=strategy_type, trial_id=None,

@@ -28,6 +28,11 @@ def _no_network_earnings_calendar(monkeypatch):
     monkeypatch.setattr(settings, "loss_diagnosis_earnings_lookup", False)
     # News discovery reads Alpaca news and the database; its tests enable it.
     monkeypatch.setattr(settings, "news_discovery_enabled", False)
+    # The announcement blackout would make cycle tests depend on today's date
+    # (a run the session before an FOMC meeting); its tests enable it.
+    monkeypatch.setattr(settings, "market_event_blackout_enabled", False)
+    from app.services import market_events
+    market_events.clear_cache()
 
 
 @pytest.fixture()
