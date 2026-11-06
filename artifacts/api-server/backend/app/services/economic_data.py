@@ -47,6 +47,36 @@ def fred_get(path: str, params: dict, *, client: Optional[httpx.Client] = None) 
             client.close()
 
 
+FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+
+def fred_csv_get(path: str, params: dict, *, client: Optional[httpx.Client] = None) -> dict:
+    """The same observations from FRED's public CSV download, which needs no key.
+
+    Without ``FRED_API_KEY`` production stored placeholder macro numbers; the
+    graph CSV serves every series used here. Returns the API's JSON shape.
+    """
+    if path != "series/observations":
+        raise ValueError(f"FRED CSV supports series/observations only, not {path}")
+    owned = client is None
+    client = client or httpx.Client(timeout=20, follow_redirects=True)
+    try:
+        response = client.get(FRED_CSV_URL, params={"id": params["series_id"],
+                                                    "cosd": params.get("observation_start", "")})
+        response.raise_for_status()
+        lines = [line.strip() for line in response.text.splitlines() if line.strip()]
+    finally:
+        if owned:
+            client.close()
+    if not lines or "," not in lines[0]:
+        raise ValueError("FRED CSV response has no header")
+    observations = []
+    for line in lines[1:]:
+        day, _, value = line.partition(",")
+        observations.append({"date": day, "value": value})
+    return {"observations": observations}
+
+
 def _fred_observations(series_id: str, start: date, fetch: Callable) -> list[tuple[date, float]]:
     payload = fetch("series/observations", {"series_id": series_id, "observation_start": start.isoformat()})
     rows = []
@@ -124,10 +154,13 @@ def import_fred_economic_indicators(db: Session, *, today: Optional[date] = None
 
 
 def import_economic_indicators(db: Session) -> dict:
-    """FRED when a key is configured; the labelled placeholder rows otherwise."""
+    """FRED (API with a key, else the public CSV); placeholder rows only if FRED fails."""
     if fred_configured():
         return import_fred_economic_indicators(db)
-    return import_fallback_economic_indicators(db)
+    result = import_fred_economic_indicators(db, fetch=fred_csv_get)
+    if result["status"] == "failed":
+        return import_fallback_economic_indicators(db)
+    return result
 
 
 def _decimal(value: float) -> Decimal:

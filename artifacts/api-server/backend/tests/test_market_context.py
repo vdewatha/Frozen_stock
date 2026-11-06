@@ -88,10 +88,41 @@ def test_one_failing_series_keeps_the_others(db, fred_key):
     assert db.query(EconomicIndicator).filter_by(indicator_name="treasury_10y").count() == 2
 
 
-def test_without_a_key_the_placeholders_stay_labelled(db, monkeypatch):
+def test_without_a_key_the_public_csv_supplies_real_series(db, monkeypatch):
     monkeypatch.setattr(settings, "fred_api_key", SecretStr(""))
+    monkeypatch.setattr(economic_data, "fred_csv_get", _fred(SERIES))
+    result = economic_data.import_economic_indicators(db)
+    assert result["source"] == "fred" and result["status"] == "complete"
+    assert db.query(EconomicIndicator).filter_by(indicator_name="treasury_10y", source="fred").count() == 2
+
+
+def test_without_a_key_and_without_fred_the_placeholders_stay_labelled(db, monkeypatch):
+    monkeypatch.setattr(settings, "fred_api_key", SecretStr(""))
+    monkeypatch.setattr(economic_data, "fred_csv_get", _fred(SERIES, fail=set(SERIES)))
     assert economic_data.import_economic_indicators(db)["source"] == "mock_macro"
     assert economic_data.summarize_macro_context(db)["source"] == "mock_macro"
+
+
+def test_the_public_csv_is_read_into_the_api_shape():
+    class _Response:
+        text = "observation_date,DGS10\n2026-11-04,.\n2026-11-05,4.18\n"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self):
+            self.params = None
+
+        def get(self, url, params):
+            self.url, self.params = url, params
+            return _Response()
+
+    client = _Client()
+    payload = economic_data.fred_csv_get("series/observations",
+                                         {"series_id": "DGS10", "observation_start": "2026-11-01"}, client=client)
+    assert client.url == economic_data.FRED_CSV_URL and client.params == {"id": "DGS10", "cosd": "2026-11-01"}
+    assert payload == {"observations": [{"date": "2026-11-04", "value": "."}, {"date": "2026-11-05", "value": "4.18"}]}
 
 
 def test_with_a_key_nothing_seeds_placeholders(db, fred_key):
