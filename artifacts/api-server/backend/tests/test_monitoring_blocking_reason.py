@@ -39,8 +39,9 @@ def test_the_refusal_names_each_blocking_check_but_not_the_tolerated_ones():
     ], "breach")
     clear, reason = recovery._fresh_monitoring_is_clear(db, NOW)
     assert not clear
-    assert reason == ("Monitoring status is breach, not clear: "
-                      "execution.fill_divergence=warning, model.realized_performance=breach")
+    # Model breaches pause only the model's strategies (see test_kill_switch_triggers),
+    # so they are tolerated here and not named.
+    assert reason == "Monitoring status is breach, not clear: execution.fill_divergence=warning"
 
 
 def test_tolerated_checks_alone_still_pass():

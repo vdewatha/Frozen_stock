@@ -16,6 +16,10 @@ def _wall_clock_independent_entry_window(monkeypatch):
     """
     monkeypatch.setattr(settings, "paper_entry_open_buffer_minutes", 0)
     monkeypatch.setattr(settings, "paper_entry_close_buffer_minutes", 0)
+    # Monitor pause tuning also reads the real clock; tests that exercise it
+    # enable it explicitly with an injected clock.
+    monkeypatch.setattr(settings, "paper_monitor_offhours_deferral_enabled", False)
+    monkeypatch.setattr(settings, "paper_monitor_open_feed_grace_minutes", 0)
 
 
 @pytest.fixture(autouse=True)

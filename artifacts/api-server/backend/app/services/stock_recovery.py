@@ -911,8 +911,14 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
             # IEX symbols (ABBV, COST, DIA) nearly always lag, so treating the
             # warning as blocking refused every in-session resume.
             return True
-        if key == "model.realized_performance" and status == "unknown":
-            return int(details.get("recent_count", 0)) < 10 or int(details.get("baseline_count", 0)) < 10
+        if str(key).startswith("model."):
+            # Model drift, calibration and realized hit rate concern only the
+            # probabilistic model.  A breach demotes the active model and
+            # withholds entries for the strategies that trade it
+            # (entry_protections.MODEL_DEPENDENT_STRATEGIES); it must not hold
+            # every other strategy's resume.  On 2026-11-06 a realized hit-rate
+            # breach (30% vs 52%) kept the whole bot paused all session.
+            return True
         if key == "execution.fill_divergence" and status == "unknown":
             return "no broker fills" in str(check.get("message", "")).lower()
         if key == "risk.concentration" and status == "unknown":
