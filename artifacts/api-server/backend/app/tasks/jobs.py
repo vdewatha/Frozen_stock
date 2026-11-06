@@ -1744,6 +1744,40 @@ def strategy_discovery_job() -> dict:
 
 
 @celery_app.task
+def experiment_engine_job() -> dict:
+    """Weekly: run the pre-registered gate experiments the repeating losses call for (paper only)."""
+    from app.services.intraday_data import session_bounds
+
+    now = datetime.now(timezone.utc)
+    bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
+    if bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]:
+        return {"status": "skipped", "job": "experiment_engine_job",
+                "reason": "the experiment engine is deferred outside the regular session"}
+
+    def work(db):
+        from app.services.experiment_engine import run_experiment_engine
+
+        result = run_experiment_engine(db, now=now)
+        db.commit()
+        return {"job": "experiment_engine_job", **result}
+
+    return _run_job("experiment_engine_job", work)
+
+
+@celery_app.task
+def experiment_verdict_job() -> dict:
+    """Daily: judge each adopted experiment on its forward paper trades; revert what is not helping."""
+    def work(db):
+        from app.services.experiment_engine import review_changes
+
+        result = review_changes(db)
+        db.commit()
+        return {"job": "experiment_verdict_job", **result, "live_authorized": False}
+
+    return _run_job("experiment_verdict_job", work)
+
+
+@celery_app.task
 def weekly_performance_report_job() -> dict:
     """Store the weekend paper performance report (read-only on strategies)."""
     def work(db):
