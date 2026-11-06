@@ -110,7 +110,9 @@ Settings: `experiment_engine_enabled`, `experiment_engine_adoption_enabled`, `ex
    report. **Built:** `app/services/gate_cost.py`, `reports/gate-cost-20261106.md`.
 2. **Exit autopsy.** Compute `post_exit_return` for every closed trade (price path to the planned horizon after
    the exit), which `trade_mistakes.premature_stop` already needs. New templates: stop width and time stop per
-   strategy, replayed through `triple_barrier` with the same rule.
+   strategy, replayed through `triple_barrier` with the same rule. **Built:** `post_exit` / `excursion` on every
+   attribution, the `premature_stop` / `gave_back_gains` / `held_too_long` flags, the `stop_width` and
+   `time_stop` templates, `reports/exit-autopsy-20261106.md`.
 3. **Signal autopsy for `signal_wrong`.** Contrast the entry-time features of a strategy's losses with its
    wins (RSI, distance to the 200-day average, ATR%, gap, VIX, breadth, time of day; all in `strategies/rules.py`)
    with a permutation test. A feature that separates them becomes a scope-narrowing candidate for the engine

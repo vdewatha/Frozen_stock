@@ -25,6 +25,14 @@ during the hold), ``high_vix_entry`` (VIX at or above 25 at entry) and
 ``weak_breadth_entry`` (under 40% of S&P 500 members above their 200-day
 average at entry).
 
+Three flags judge the exit rather than the entry, from the attribution's
+``post_exit`` path (exit price to the planned horizon) and the hold's best
+excursion: ``premature_stop`` (stopped out, then the price got back to the
+entry price before the horizon), ``gave_back_gains`` (the trade closed below
+half of its best open gain, which was at least 1%) and ``held_too_long`` (the
+time stop closed a trade whose best gain had reached the target, or 3% when
+the strategy has no target, and that gain was never taken).
+
 Wins are labelled too: ``market_tailwind`` when the market rose more than the
 stock (the gain was drift, not edge), else ``edge``.
 
@@ -40,7 +48,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
 UTC = timezone.utc
-DIAGNOSIS_VERSION = "loss-diagnosis-v1"
+DIAGNOSIS_VERSION = "loss-diagnosis-v2"
 # A benchmark that moved this much over the hold, with the stock within this
 # much of it, explains the trade.
 MOVE_RETURN = 0.01
@@ -80,9 +88,22 @@ CONTRIBUTING_PROPOSALS = {
                       "above a VIX level.",
     "weak_breadth_entry": "These losses were opened while most stocks were below their 200-day average: "
                           "backtest a breadth gate for this strategy.",
+    "premature_stop": "Stopped out, then the price got back to the entry before the planned horizon: test a "
+                      "wider stop for this strategy.",
+    "gave_back_gains": "These trades gave back more than half of their best open gain: test a shorter time stop "
+                       "or a profit-protection exit.",
+    "held_too_long": "The time stop closed trades whose best gain had passed the target: test a shorter time "
+                     "stop or a target that is taken.",
 }
 HIGH_VIX_ENTRY = 25.0
 WEAK_BREADTH_ENTRY = 40.0
+# Exit flags: the smallest open gain worth protecting, the share of it that
+# counts as given back, and the target assumed for a strategy with none.
+GAVE_BACK_MIN_MFE = 0.01
+GAVE_BACK_SHARE = 0.5
+HELD_TOO_LONG_MFE = 0.03
+STOP_CAUSES = {"catastrophe_stop"}
+TIME_STOP_CAUSES = {"time_stop"}
 
 
 def _ret(value: Optional[float]) -> Optional[float]:
@@ -95,8 +116,16 @@ def diagnose(*, gross_return: float, is_loss: bool, benchmark_return: Optional[f
              news_sentiment: Optional[float] = None, concurrent_same_symbol: int = 0,
              same_session_stops: int = 0, exit_tested: Optional[bool] = None,
              macro_events_in_hold: Optional[list[str]] = None, entry_vix: Optional[float] = None,
-             entry_breadth: Optional[float] = None) -> dict:
-    """One trade's cause and contributing flags.  Pure and deterministic."""
+             entry_breadth: Optional[float] = None, exit_cause: Optional[str] = None,
+             post_exit: Optional[dict] = None, hold_mfe: Optional[float] = None,
+             take_profit_pct: Optional[float] = None) -> dict:
+    """One trade's cause and contributing flags.  Pure and deterministic.
+
+    ``exit_cause`` is the attribution vocabulary (``catastrophe_stop``,
+    ``time_stop``, ...); ``post_exit`` the attribution's exit-to-horizon path
+    (``mfe`` from the exit price); ``hold_mfe`` the hold's best excursion from
+    the entry price; ``take_profit_pct`` the strategy's declared target.
+    """
     r = float(gross_return)
     excess_market = r - benchmark_return if benchmark_return is not None else None
     sector_differs = sector_symbol not in {None, "SPY"} and sector_return is not None
@@ -116,6 +145,8 @@ def diagnose(*, gross_return: float, is_loss: bool, benchmark_return: Optional[f
         contributing.append("high_vix_entry")
     if entry_breadth is not None and entry_breadth < WEAK_BREADTH_ENTRY:
         contributing.append("weak_breadth_entry")
+    contributing.extend(exit_flags(gross_return=r, exit_cause=exit_cause, post_exit=post_exit, hold_mfe=hold_mfe,
+                                   take_profit_pct=take_profit_pct))
 
     if not is_loss:
         cause = "market_tailwind" if (benchmark_return is not None and benchmark_return >= MOVE_RETURN
@@ -143,8 +174,29 @@ def diagnose(*, gross_return: float, is_loss: bool, benchmark_return: Optional[f
         "earnings_in_hold": earnings_in_hold, "news_used": news_used, "news_sentiment": news_sentiment,
         "concurrent_same_symbol": concurrent_same_symbol, "same_session_stops": same_session_stops,
         "exit_tested": exit_tested, "macro_events_in_hold": macro_events_in_hold,
-        "entry_vix": entry_vix, "entry_breadth": entry_breadth, "hindsight_only": True,
+        "entry_vix": entry_vix, "entry_breadth": entry_breadth, "exit_cause": exit_cause,
+        "post_exit_return": _ret((post_exit or {}).get("return")), "post_exit_mfe": _ret((post_exit or {}).get("mfe")),
+        "hold_mfe": _ret(hold_mfe), "take_profit_pct": take_profit_pct, "hindsight_only": True,
     }
+
+
+def exit_flags(*, gross_return: float, exit_cause: Optional[str], post_exit: Optional[dict] = None,
+               hold_mfe: Optional[float] = None, take_profit_pct: Optional[float] = None) -> list[str]:
+    """The exit-judging flags for one trade (see the module docstring).  Pure."""
+    r = float(gross_return)
+    flags = []
+    post_mfe = (post_exit or {}).get("mfe")
+    if exit_cause in STOP_CAUSES and r < 0 and post_mfe is not None and r > -1:
+        # Back to the entry price from the exit price needs 1 / (1 + r) - 1.
+        if float(post_mfe) >= 1 / (1 + r) - 1 - 1e-9:
+            flags.append("premature_stop")
+    if hold_mfe is not None and hold_mfe >= GAVE_BACK_MIN_MFE and r < (1 - GAVE_BACK_SHARE) * hold_mfe:
+        flags.append("gave_back_gains")
+    if exit_cause in TIME_STOP_CAUSES and hold_mfe is not None:
+        target = float(take_profit_pct) if take_profit_pct else HELD_TOO_LONG_MFE
+        if hold_mfe >= target and r < target:
+            flags.append("held_too_long")
+    return flags
 
 
 def news_from_features(features: Optional[dict]) -> tuple[bool, Optional[float]]:

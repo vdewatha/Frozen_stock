@@ -25,12 +25,17 @@ A *setup* is the gate configuration the strategy trades with:
   the decision bar is under the level, ``"above"`` only at or over it;
 * ``earnings_blackout_sessions``: no entry when an earnings report lands
   within the next N sessions (the live ``earnings_calendar`` rule, replayed
-  from the ``earn_surprise`` reaction bars that ``earnings_history`` attaches).
+  from the ``earn_surprise`` reaction bars that ``earnings_history`` attaches);
+* ``stop_loss_pct`` / ``take_profit_pct`` / ``max_holding_sessions``: the exit
+  geometry (``barrier_for``), the same keys a strategy row's parameters use
+  to override its exit policy.  Missing keys keep the fixed barrier above, so
+  a setup built from the live policy replays exactly as before.
 
 Model Predictive Long refits a forest per bar and is not replayable.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Mapping, Optional
 
 import numpy as np
@@ -55,7 +60,9 @@ REVERSION = ("rsi2_pullback", "ibs_mean_reversion")
 STRATEGIES = (*TECHNICAL, *REVERSION)
 WINDOWS = {"all": None, "2015+": "2015-01-01", "2020+": "2020-01-01"}
 MIN_CONFIDENCE = 0.55
-SETUP_KEYS = ("market_gate_sma", "vix_gate", "vix_level", "earnings_blackout_sessions")
+GATE_KEYS = ("market_gate_sma", "vix_gate", "vix_level", "earnings_blackout_sessions")
+EXIT_KEYS = ("stop_loss_pct", "take_profit_pct", "max_holding_sessions")
+SETUP_KEYS = (*GATE_KEYS, *EXIT_KEYS)
 
 
 def replayable(strategy: str) -> bool:
@@ -140,8 +147,34 @@ def setup_from_parameters(parameters: Optional[Mapping]) -> dict:
         level = float(level) if level is not None else None
     except (TypeError, ValueError):
         level = None
+
+    def number(key: str, valid) -> Optional[float]:
+        try:
+            value = float(params[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return value if np.isfinite(value) and valid(value) else None
+
+    hold = number("max_holding_sessions", lambda v: v >= 1 and v == int(v))
     return {"market_gate_sma": integer("market_gate_sma"), "vix_gate": gate if gate in ("below", "above") else None,
-            "vix_level": level, "earnings_blackout_sessions": integer("earnings_blackout_sessions")}
+            "vix_level": level, "earnings_blackout_sessions": integer("earnings_blackout_sessions"),
+            "stop_loss_pct": number("stop_loss_pct", lambda v: 0 < v < 1),
+            "take_profit_pct": number("take_profit_pct", lambda v: v >= 0),
+            "max_holding_sessions": int(hold) if hold is not None else None}
+
+
+def barrier_for(strategy: str, setup: Optional[Mapping] = None) -> BarrierConfig:
+    """The exit geometry a setup replays with: the strategy's fixed barrier, overridden key by key."""
+    base = REVERSION_BARRIER if strategy in REVERSION else BRACKET
+    setup = setup_from_parameters(setup)
+    changes = {}
+    if setup["stop_loss_pct"] is not None:
+        changes["stop_loss_pct"] = float(setup["stop_loss_pct"])
+    if setup["take_profit_pct"] is not None:
+        changes["take_profit_pct"] = float(setup["take_profit_pct"])
+    if setup["max_holding_sessions"] is not None:
+        changes["max_holding_days"] = int(setup["max_holding_sessions"])
+    return replace(base, **changes) if changes else base
 
 
 def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd.DataFrame],
@@ -152,7 +185,7 @@ def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd
     if window is not None:
         setup["market_gate_sma"] = window
     setup = setup_from_parameters(setup)
-    barrier = REVERSION_BARRIER if strategy in REVERSION else BRACKET
+    barrier = barrier_for(strategy, setup)
     out = []
     for symbol in scope(strategy, list(frames)):
         frame = frames[symbol]
