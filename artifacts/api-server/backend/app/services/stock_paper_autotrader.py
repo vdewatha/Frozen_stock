@@ -127,7 +127,7 @@ def _loss_feedback_context(db: Session, strategies: list, now: datetime) -> dict
     Each piece degrades explicitly (recorded in the summary) to the neutral
     behaviour: no overlay, shadow-only meta-label, weight 1.0.
     """
-    out = {"overrides": {}, "enforced_types": set(), "weights": {}, "summary": {}}
+    out = {"overrides": {}, "enforced_types": set(), "weights": {}, "allocation_features": {}, "summary": {}}
     try:
         from app.services.parameter_application import parameter_overrides
 
@@ -145,14 +145,22 @@ def _loss_feedback_context(db: Session, strategies: list, now: datetime) -> dict
     except Exception as exc:
         out["summary"]["meta_label_modes_error"] = f"{exc.__class__.__name__}: {exc}"
     try:
-        from app.services.strategy_allocation import session_weights
+        from app.services.strategy_allocation import allocation_features, clamp, session_weight_rows
 
         active = [row.strategy_type for row in strategies if row.current_status == "paper_trading_active"]
         with db.begin_nested():
-            out["weights"] = session_weights(db, active, session_date=now.astimezone(ET).date(), now=now)
+            rows = session_weight_rows(db, active, session_date=now.astimezone(ET).date(), now=now)
+        out["weights"] = {key: clamp(Decimal(str(row.multiplier))) for key, row in rows.items()}
+        # The weight (and the regime cell behind it) is recorded on each BUY's
+        # signal, so attribution can see how the entry was sized.
+        out["allocation_features"] = {key: allocation_features(row) for key, row in rows.items()}
         out["summary"]["allocation_weights"] = {key: str(value) for key, value in out["weights"].items()}
+        cells = {value["regime_cell"] for value in out["allocation_features"].values() if value.get("regime_cell")}
+        if cells:
+            out["summary"]["allocation_regime_cells"] = sorted(cells)
     except Exception as exc:
         out["weights"] = {}
+        out["allocation_features"] = {}
         out["summary"]["allocation_weights_error"] = f"{exc.__class__.__name__}: {exc}"
     return out
 
@@ -1223,6 +1231,10 @@ def _run_signal_cycle(db: Session) -> dict:
                     _tag_signal_news(db, signal["signal_id"], news_admitted[symbol])
                 if side == "buy":
                     _tag_signal(db, signal["signal_id"], "market_context", market_context)
+                if side == "buy" and "allocation_weight" in result:
+                    _tag_signal(db, signal["signal_id"], "allocation",
+                                feedback["allocation_features"].get(strategy.strategy_type)
+                                or {"multiplier": str(allocation_weight), "status": "unweighted"})
                 extra = {}
                 if side == "buy" and exit_plan is not None:
                     extra["exit_plan"] = exit_plan
