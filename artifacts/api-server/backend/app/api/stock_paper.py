@@ -162,6 +162,14 @@ def learning_experiments(db: Session = Depends(get_db)) -> dict:
     return experiment_ledger(db)
 
 
+@router.get("/gate-costs")
+def gate_costs(db: Session = Depends(get_db)) -> dict:
+    """What each entry gate cost: the trades it stopped, scored under the tested exits (read-only)."""
+    from app.services.gate_cost import gate_costs_view
+
+    return gate_costs_view(db)
+
+
 @router.get("/venue-qualification")
 def venue_qualification_status(db: Session = Depends(get_db)) -> dict:
     return paper_venue_qualification_status(db, active_paper_broker_name())

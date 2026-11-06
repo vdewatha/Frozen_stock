@@ -10,7 +10,9 @@ One read-only snapshot for the Learning > Scoreboard page:
 * ``causes`` / ``repeating_failures``: why trades lost and which lessons
   keep coming back (from ``loss_diagnosis``);
 * ``news_vs_core``: news-found symbols against the fixed universe;
-* ``changes``: what shipped when, with results before and after.
+* ``changes``: what shipped when, with results before and after;
+* ``gate_costs``: what each entry gate cost, from the trades it stopped
+  (``gate_cost.py``).
 
 Nothing here writes; every number comes from attributions, orders, bars
 and the audit log.
@@ -422,6 +424,17 @@ def _engine_changes(db: Session) -> list[dict]:
         return []
 
 
+def _gate_costs(db: Session) -> dict:
+    from app.services.gate_cost import scoreboard_gate_costs
+
+    try:
+        return scoreboard_gate_costs(db)
+    except Exception:  # the scoreboard must render without the gate-cost ledger
+        db.rollback()
+        return {"as_of": None, "status": "unavailable", "detail": "The gate-cost report could not be read.",
+                "gates": [], "by_strategy": [], "costly": []}
+
+
 def _equity(db: Session) -> float:
     from app.services.stock_paper_ledger import active_paper_account
 
@@ -451,6 +464,7 @@ def build_learning_scoreboard(db: Session, *, now: Optional[datetime] = None) ->
         "news": _news_summary(runs),
         "news_vs_core": _news_vs_core(rows, ever),
         "changes": _changes(rows, _engine_changes(db)),
+        "gate_costs": _gate_costs(db),
         "paper_only": True,
     }
 

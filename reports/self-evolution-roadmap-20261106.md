@@ -107,7 +107,7 @@ Settings: `experiment_engine_enabled`, `experiment_engine_adoption_enabled`, `ex
 1. **Gate cost audit.** Every blocked BUY (`buy_signal_outcomes`) is followed up with the return it would have
    had, so a gate that blocks winners gets a measured cost. Gates then earn a verdict on what they stopped, not
    only on what they let through. Builds on `meta_label_shadow` and the blocked-reason counts in the weekly
-   report.
+   report. **Built:** `app/services/gate_cost.py`, `reports/gate-cost-20261106.md`.
 2. **Exit autopsy.** Compute `post_exit_return` for every closed trade (price path to the planned horizon after
    the exit), which `trade_mistakes.premature_stop` already needs. New templates: stop width and time stop per
    strategy, replayed through `triple_barrier` with the same rule.

@@ -386,6 +386,11 @@ class Settings(BaseSettings):
     experiment_engine_history_start: str = "2000-01-01"
     experiment_verdict_min_trades: int = Field(default=20, ge=5, le=500)
     experiment_verdict_max_trades: int = Field(default=60, ge=5, le=1000)
+    # Gate cost: each withheld BUY of the last N sessions is replayed under the
+    # strategy's tested exits; a gate needs min_scored resolved trades before
+    # it is called costly or earning its keep (gate_cost.py).
+    gate_cost_lookback_sessions: int = Field(default=60, ge=1, le=250)
+    gate_cost_min_scored: int = Field(default=30, ge=1, le=500)
     # Performance-weighted paper risk fractions (bounded, shrink-first).
     paper_allocation_weighting_enabled: bool = True
     paper_allocation_floor: float = Field(default=0.5, gt=0, le=1)
