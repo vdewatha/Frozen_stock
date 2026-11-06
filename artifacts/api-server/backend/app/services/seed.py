@@ -404,6 +404,57 @@ def raise_open_position_limit(db: Session) -> bool:
     return changed
 
 
+MARKET_GATE_ACTION = "market_gate_update"
+MARKET_GATE_REPORT = "reports/market-gate-20261106.md"
+# SPY-trend gate N (no new longs while SPY <= its N-day average) for the
+# strategies where it kept or raised expectancy in all three windows without
+# worsening drawdown in the 2026-11-06 backtest.  The others stay ungated.
+MARKET_GATED_STRATEGIES = {"macd_momentum": 50, "channel_breakout": 20, "trend_pullback": 10, "rsi2_pullback": 50}
+
+
+def enable_market_gates(db: Session) -> list[str]:
+    """One-time ``market_gate_sma`` for the strategies the backtest supports.
+
+    Same contract as ``enable_regime_gates``: a row that already has the key,
+    or had it set by an earlier update event, is left to the operator.
+    """
+    from app.services.audit import write_audit_log
+    from app.services.market_gate import MARKET_GATE_KEY
+
+    changed: list[str] = []
+    rows = db.query(Strategy).filter(Strategy.strategy_type.in_(MARKET_GATED_STRATEGIES)).order_by(Strategy.id).all()
+    for row in rows:
+        params = dict(row.parameters or {})
+        if MARKET_GATE_KEY in params:
+            continue
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance",
+            AuditLog.action == MARKET_GATE_ACTION,
+            AuditLog.entity_type == "strategy",
+            AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        window = MARKET_GATED_STRATEGIES[row.strategy_type]
+        row.parameters = params | {MARKET_GATE_KEY: window}
+        write_audit_log(
+            db,
+            event_type="strategy_governance",
+            entity_type="strategy",
+            entity_id=row.id,
+            action=MARKET_GATE_ACTION,
+            status="complete",
+            message=(f"{MARKET_GATE_REPORT}: no new longs while SPY is at or below its {window}-day average; "
+                     "the gate kept or raised expectancy without worsening drawdown in the backtest. "
+                     "Sells and exits are unchanged."),
+            payload={MARKET_GATE_KEY: window, "source": MARKET_GATE_REPORT, "paper_only": True},
+        )
+        changed.append(row.strategy_type)
+    if changed:
+        db.flush()
+    return changed
+
+
 def ensure_strategy_lineup(db: Session) -> dict:
     """Idempotent strategy lineup reconciliation run by every seed pass."""
     return {
@@ -413,6 +464,7 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "retired_scorecard_losers": retire_scorecard_losers(db),
         "widened_rsi2_scope": widen_rsi2_scope(db),
         "regime_gates_enabled": enable_regime_gates(db),
+        "market_gates_enabled": enable_market_gates(db),
     }
 
 

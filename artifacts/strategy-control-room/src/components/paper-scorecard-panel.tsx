@@ -63,9 +63,7 @@ export function PaperScorecardPanel() {
 
   const head = card?.headline;
   const goal = card?.goal;
-  const target = goal?.target_win_rate ?? 0.8;
   const winRate = head?.win_rate ?? null;
-  const progress = winRate === null ? 0 : Math.min(1, winRate / target);
   const bench = card?.benchmark;
   const mtm = card?.open_mark_to_market;
 
@@ -86,9 +84,8 @@ export function PaperScorecardPanel() {
     {card && head && goal ? <>
       <dl className="grid gap-4 border-b border-line p-4 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <dt className="text-xs text-slate-500">Win rate vs {formatPct(target)} goal</dt>
+          <dt className="text-xs text-slate-500">Win rate (context; the goal is profit)</dt>
           <dd className="mt-1 text-2xl font-semibold">{formatPct(winRate)}</dd>
-          <dd className="mt-2 h-2 rounded bg-slate-100" aria-hidden="true"><div className={`h-2 rounded ${winRate !== null && winRate >= target ? "bg-emerald-500" : "bg-amber-500"}`} style={{ width: `${progress * 100}%` }} /></dd>
           {head.bootstrap_ci ? <dd className="mt-1 text-xs text-slate-500">95% CI {formatPct(head.bootstrap_ci.win_rate[0])} to {formatPct(head.bootstrap_ci.win_rate[1])}</dd> : <dd className="mt-1 text-xs text-slate-500">CI after 20 trades</dd>}
         </div>
         <div>
@@ -104,7 +101,7 @@ export function PaperScorecardPanel() {
         <div>
           <dt className="text-xs text-slate-500">Last {goal.window} trades</dt>
           <dd className="mt-1 text-2xl font-semibold">{goal.last_window_wins}/{goal.last_window_trades}</dd>
-          <dd className={`mt-1 text-xs ${goal.met_last_window ? "text-mint" : "text-slate-500"}`}>{goal.met_last_window ? "Goal met: 8 of 10 and profitable" : `Net ${formatUsd(goal.last_window_pnl)}`}</dd>
+          <dd className={`mt-1 text-xs ${goal.met_last_window ? "text-mint" : "text-slate-500"}`}>{goal.met_last_window ? "Goal met: profitable after costs" : `Net ${formatUsd(goal.last_window_pnl)}`}</dd>
         </div>
       </dl>
       <div className="grid gap-4 border-b border-line p-4 text-sm sm:grid-cols-3">

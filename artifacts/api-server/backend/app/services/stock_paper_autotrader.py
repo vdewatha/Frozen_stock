@@ -56,6 +56,7 @@ from app.services.strategy_execution_policy import (
     exit_policy_for,
     symbol_scope_for,
 )
+from app.services.market_gate import gate_window
 from app.services.trusted_data import trusted_history
 from app.services.trading_universe import execution_symbols, sector_group
 
@@ -781,7 +782,10 @@ def _run_signal_cycle(db: Session) -> dict:
     sector_groups = _sector_exposure(db, account.id) if sector_cap else {}
     # Entry-only circuit breakers (stop-loss guard, exit cooldown, low-profit
     # lock, session drawdown, time of day); never consulted for sells.
-    protections = load_entry_protections(db, account, now=now, rules=rules, type_by_id=type_by_id)
+    protections = load_entry_protections(
+        db, account, now=now, rules=rules, type_by_id=type_by_id,
+        market_gates={row.strategy_type: gate_window(getattr(row, "parameters", None)) for row in strategies},
+    )
     # Cycle-level entry limits. Each refused BUY used to go through a full
     # reservation (~10 queries under the account lock) only to hit one of
     # these; they are decided here from one lookup and the reservation still

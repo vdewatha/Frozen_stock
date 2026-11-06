@@ -535,7 +535,8 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     db.commit()
     assert outcome == {"created": ["rsi2_pullback", "ibs_mean_reversion"], "demoted_moving_average_crossover": True,
                        "dropped_ibs_trend_filter": False, "retired_scorecard_losers": ["moving_average_crossover"],
-                       "widened_rsi2_scope": True, "regime_gates_enabled": []}
+                       "widened_rsi2_scope": True, "regime_gates_enabled": [],
+                       "market_gates_enabled": ["rsi2_pullback"]}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
@@ -553,7 +554,8 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     db.commit()
     assert ensure_strategy_lineup(db) == {"created": [], "demoted_moving_average_crossover": False,
                                           "dropped_ibs_trend_filter": False, "retired_scorecard_losers": [],
-                                          "widened_rsi2_scope": False, "regime_gates_enabled": []}
+                                          "widened_rsi2_scope": False, "regime_gates_enabled": [],
+                                          "market_gates_enabled": []}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"
