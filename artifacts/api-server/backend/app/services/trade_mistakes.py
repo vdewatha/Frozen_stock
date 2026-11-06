@@ -230,8 +230,19 @@ def _excursions(db: Session, symbol: str, start: datetime, end: datetime, entry:
     return max(0.0, high / entry - 1), min(0.0, low / entry - 1)
 
 
-def trial_lot_trades(db: Session, trial: StockPaperTrial) -> list[dict]:
-    """Build classifier inputs for every fully closed lot of a trial."""
+def trial_lot_trades(db: Session, trial: StockPaperTrial, *, now: Optional[datetime] = None) -> list[dict]:
+    """Build classifier inputs for every fully closed lot of a trial.
+
+    ``post_exit`` (exit price to the planned horizon, from stored daily bars)
+    and ``excursion`` (the hold's best and worst, from daily bars) come from
+    :mod:`app.services.trade_attribution`; both are ``None`` until the bars
+    exist.  ``post_exit_return`` feeds the ``premature_stop`` check.
+    """
+    from app.services.trade_attribution import (
+        hold_excursion_from_daily_bars, post_exit_from_daily_bars, session_date,
+    )
+
+    now = now or datetime.now(timezone.utc)
     lots = db.scalars(select(StockPaperTrialLot).where(
         StockPaperTrialLot.trial_id == trial.id).order_by(StockPaperTrialLot.id)).all()
     rows: list[dict] = []
@@ -253,6 +264,12 @@ def trial_lot_trades(db: Session, trial: StockPaperTrial) -> list[dict]:
         entered_at = min(_aware(fill.filled_at) for fill in entries)
         exited_at = max(_aware(fill.filled_at) for fill in exits)
         mfe, mae = _excursions(db, lot.symbol, entered_at, exited_at, float(entry_price))
+        entry_session, exit_session = session_date(entered_at), session_date(exited_at)
+        post_exit = post_exit_from_daily_bars(
+            db, lot.symbol, entry_session=entry_session, exit_session=exit_session,
+            max_hold=lot.planned_horizon_sessions, exit_price=float(exit_price), now=now)
+        hold_path = hold_excursion_from_daily_bars(db, lot.symbol, entry_session=entry_session,
+                                                   exit_session=exit_session, entry_price=float(entry_price))
         decision = db.get(StockPaperTrialDecision, lot.entry_decision_id)
         lineage = (decision.lineage if decision else None) or {}
         trade = {
@@ -270,8 +287,11 @@ def trial_lot_trades(db: Session, trial: StockPaperTrial) -> list[dict]:
             "stop_fraction": float(lot.stop_fraction or Decimal("0.02")),
             "planned_horizon_sessions": lot.planned_horizon_sessions,
             "exit_reason": lot.exit_reason,
-            "max_favorable_excursion": mfe,
-            "max_adverse_excursion": mae,
+            "max_favorable_excursion": mfe if mfe is not None else (hold_path["mfe"] if hold_path else None),
+            "max_adverse_excursion": mae if mae is not None else (hold_path["mae"] if hold_path else None),
+            "post_exit": post_exit,
+            "post_exit_return": post_exit["return"] if post_exit else None,
+            "excursion": hold_path,
             "probability": _f(lineage.get("probability")),
             "entry_regime": lineage.get("market_regime"),
             "validated_regimes": lineage.get("validated_regimes"),
@@ -329,13 +349,16 @@ def _post_exit_return(db: Session, symbol: str, exited_at: datetime, exit_price:
     return max(float(bar.close) for bar in bars) / exit_price - 1
 
 
-def classify_round_trip(db: Session, trip: dict) -> dict:
+def classify_round_trip(db: Session, trip: dict, *, post_exit_return: Optional[float] = None) -> dict:
     """Classify one closed scheduled/exploration round trip from the scorecard.
 
     ``trip`` is a closed trade from :mod:`app.services.paper_trade_scorecard`
     (entry/exit prices, quantity, recorded fees, exit reason, planned stop).
     Excursions come from stored 1-minute bars when present; otherwise those
-    checks are skipped rather than guessed.  Read-only, hindsight evaluation.
+    checks are skipped rather than guessed.  ``post_exit_return`` is the
+    attribution's exit-to-horizon return (``trade_attribution.post_exit``);
+    without it a stop exit falls back to the best close within a day of the
+    exit.  Read-only, hindsight evaluation.
     """
     entered_at = _aware(datetime.fromisoformat(trip["entered_at"]))
     exited_at = _aware(datetime.fromisoformat(trip["exited_at"]))
@@ -343,7 +366,9 @@ def classify_round_trip(db: Session, trip: dict) -> dict:
     exit_price = float(trip["exit_price"])
     mfe, mae = _excursions(db, trip["symbol"], entered_at, exited_at, entry_price)
     reason = str(trip.get("exit_reason") or "")
-    post_exit = _post_exit_return(db, trip["symbol"], exited_at, exit_price) if reason in STOP_EXIT_REASONS else None
+    post_exit = post_exit_return
+    if post_exit is None and reason in STOP_EXIT_REASONS:
+        post_exit = _post_exit_return(db, trip["symbol"], exited_at, exit_price)
     trade = {
         "entry_price": entry_price,
         "exit_price": exit_price,

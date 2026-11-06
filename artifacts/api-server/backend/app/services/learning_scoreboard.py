@@ -53,6 +53,10 @@ CHANGES = (
     {"key": "market_context", "effective": "2026-11-09", "title": "Real economic data; announcement blackout; VIX and breadth",
      "watch": "No BUYs the session before a Fed decision, CPI or jobs report. Losses get macro_event_in_hold, "
               "high_vix_entry and weak_breadth_entry flags; a repeat proposes a gate to backtest."},
+    {"key": "exit_autopsy", "effective": "2026-11-09", "title": "Exits judged too: post-exit path, stop and time-stop experiments",
+     "watch": "Every closed trade records what the price did after the exit up to its planned horizon. Losses get "
+              "premature_stop, gave_back_gains and held_too_long flags; a repeat lets the experiment engine test a "
+              "wider stop or a shorter time stop and adopt it through the exit policy."},
 )
 
 
