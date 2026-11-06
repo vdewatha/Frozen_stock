@@ -1806,6 +1806,19 @@ def gate_cost_job() -> dict:
 
 
 @celery_app.task
+def setup_shadow_job() -> dict:
+    """Daily after the close: score every candidate gate value's hypothetical trades from the recorded BUY decisions (paper only)."""
+    def work(db):
+        from app.services.setup_shadow import record_scores
+
+        result = record_scores(db)
+        db.commit()
+        return {"job": "setup_shadow_job", **result, "live_authorized": False}
+
+    return _run_job("setup_shadow_job", work)
+
+
+@celery_app.task
 def weekly_performance_report_job() -> dict:
     """Store the weekend paper performance report (read-only on strategies)."""
     def work(db):

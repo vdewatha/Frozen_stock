@@ -170,6 +170,14 @@ def gate_costs(db: Session = Depends(get_db)) -> dict:
     return gate_costs_view(db)
 
 
+@router.get("/setup-shadow")
+def setup_shadow(db: Session = Depends(get_db)) -> dict:
+    """Every candidate gate value's forward record from the live BUY decisions (read-only)."""
+    from app.services.setup_shadow import setup_shadow_view
+
+    return setup_shadow_view(db)
+
+
 @router.get("/self-healing")
 def self_healing(db: Session = Depends(get_db)) -> dict:
     """What the bot fixes on its own, what it did lately and what it leaves to a person (read-only)."""

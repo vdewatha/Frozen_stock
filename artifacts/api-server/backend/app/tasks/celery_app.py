@@ -134,6 +134,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.experiment_engine_job": {"queue": "learning"},
     "app.tasks.jobs.experiment_verdict_job": {"queue": "learning"},
     "app.tasks.jobs.gate_cost_job": {"queue": "learning"},
+    "app.tasks.jobs.setup_shadow_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.self_healing_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
@@ -331,6 +332,15 @@ celery_app.conf.beat_schedule = {
     "gate-cost": {
         "task": "app.tasks.jobs.gate_cost_job",
         "schedule": crontab(minute=20, hour=17, day_of_week="mon-fri"),
+        "options": {"expires": 6 * 60 * 60},
+    },
+    # Each weekday after the daily bar import (17:15): score the hypothetical
+    # trades every candidate gate value would have taken from the session's
+    # BUY decisions, so each value earns a forward record (setup_shadow.py).
+    # The next day's experiment verdict (17:10) reads these scores.
+    "setup-shadow": {
+        "task": "app.tasks.jobs.setup_shadow_job",
+        "schedule": crontab(minute=25, hour=17, day_of_week="mon-fri"),
         "options": {"expires": 6 * 60 * 60},
     },
     # Weekly paper performance report, Saturday morning after the week closes.

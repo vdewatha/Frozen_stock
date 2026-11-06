@@ -395,6 +395,10 @@ class Settings(BaseSettings):
     # it is called costly or earning its keep (gate_cost.py).
     gate_cost_lookback_sessions: int = Field(default=60, ge=1, le=250)
     gate_cost_min_scored: int = Field(default=30, ge=1, le=500)
+    # Setup shadow: every candidate gate value is decided alongside the live
+    # one on each BUY and scored from the next open; the per-candidate
+    # record covers the last N sessions (setup_shadow.py).
+    setup_shadow_lookback_sessions: int = Field(default=120, ge=1, le=500)
     # Performance-weighted paper risk fractions (bounded, shrink-first).
     paper_allocation_weighting_enabled: bool = True
     paper_allocation_floor: float = Field(default=0.5, gt=0, le=1)

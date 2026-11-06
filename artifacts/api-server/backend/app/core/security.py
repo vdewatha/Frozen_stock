@@ -50,6 +50,7 @@ READ_PATHS = {
     "/stock-paper/learning-scoreboard",
     "/stock-paper/learning-experiments",
     "/stock-paper/gate-costs",
+    "/stock-paper/setup-shadow",
     "/stock-paper/self-healing",
     "/stock-paper/venue-qualification",
     "/live-broker/status",
