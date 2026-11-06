@@ -27,7 +27,7 @@ services:
     <<: *small-runtime
   learning:
     <<: *small-runtime
-    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning", "--concurrency=1"]
+    command: ["python", "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=learning@%h", "--queues=learning,learning_fast", "--concurrency=1"]
   execution:
     <<: *small-runtime
   risk:

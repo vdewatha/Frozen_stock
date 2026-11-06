@@ -16,6 +16,9 @@ INTRADAY_MARKET_DATA_QUEUE = "intraday_market_data"
 RESEARCH_MARKET_DATA_QUEUE = "research_market_data"
 SCALP_RESEARCH_QUEUE = "scalp_research"
 MONITORING_QUEUE = "monitoring"
+# Short (under a minute), frequent learning jobs. On the learning queue they
+# sat behind multi-hour research tasks and expired before they ever ran.
+LEARNING_FAST_QUEUE = "learning_fast"
 # The five-minute broker reconciliation is the watchdog's broker heartbeat. It
 # gets a lane of its own so the minutely signal pass cannot queue it past the
 # watchdog's ten-minute staleness limit (which re-pauses recovery).
@@ -120,8 +123,8 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.explained_halt_auto_resume_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
-    "app.tasks.jobs.trade_attribution_job": {"queue": "learning"},
-    "app.tasks.jobs.news_discovery_job": {"queue": "learning"},
+    "app.tasks.jobs.trade_attribution_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.news_discovery_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.meta_label_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},

@@ -73,6 +73,9 @@ def test_ranking_needs_several_focused_positive_stories_outside_the_universe():
     ("Jefferies Initiates Coverage On Wayfair With Underperform Rating", -0.5),
     ("Deutsche Bank Adjusts Trex Price Target to $70", 0.0),
     ("Duolingo Insider Executes Share Sale", 0.0),
+    ("eGain Approves Fiscal 2026 Variable Cash Compensation for Executives", 0.0),
+    ("Gray Media, Inc. Declares Quarterly Cash Dividend", 0.0),
+    ("eGain Q1 2027 Earnings Call Transcript", 0.0),
     ("Tanger Reports Q3 Results and Raises Full-Year Guidance", None),
 ])
 def test_analyst_notes_are_scored_by_their_rating_action(headline, tone):
@@ -82,10 +85,36 @@ def test_analyst_notes_are_scored_by_their_rating_action(headline, tone):
 def test_routine_notes_count_as_coverage_but_not_tone():
     news = [_article(20, ["TREX"], "Barclays Maintains Underweight on Trex Co, Raises Price Target to $46"),
             _article(21, ["TREX"], "BofA Securities Upgrades Trex to Buy"),
+            _article(24, ["TREX"], "Trex beats estimates and raises guidance"),
             _article(22, ["W"], "Barclays Maintains Equal-Weight on Wayfair, Raises Price Target"),
             _article(23, ["W"], "Wells Fargo Raises Price Target on Wayfair")]
     ranked = nd.rank_candidates(news, exclude=())
-    assert [(row["symbol"], row["articles"], row["avg_sentiment"]) for row in ranked] == [("TREX", 2, 1.0)]
+    assert [(row["symbol"], row["articles"], row["avg_sentiment"]) for row in ranked] == [("TREX", 3, 1.0)]
+
+
+def test_one_directional_story_is_not_enough():
+    # OKLO, 2026-11-06: one "sales beat" next to routine filings.
+    news = [_article(30, ["OKLO"], "Oklo Q3 Cash, Equivalents & Marketable Securities $3.13B"),
+            _article(31, ["OKLO"], "Oklo Q3 GAAP EPS $(0.22) vs $(0.20) YoY; Sales $1.86M Beat $1.02M Estimate")]
+    assert nd.rank_candidates(news, exclude=()) == []
+    assert [row["symbol"] for row in nd.rank_candidates(news, exclude=(), min_directional=1)] == ["OKLO"]
+
+
+@pytest.mark.parametrize("text, sign", [
+    # MCHP, 2026-11-06: admitted at +1.0 because "fell" and "cut" were not listed.
+    ("Microchip Technology Analysts Slash Their Forecasts After Q2 Results. Microchip beat Q2 earnings and sales "
+     "estimates but guided Q3 below forecasts. Shares fell 2.1%; analysts cut price targets.", -1),
+    ("These Analysts Slash Their Forecasts On Cloudflare Following Q3 Results. Cloudflare beat Q3 estimates, raised "
+     "full-year guidance, and shares surged 19.9%; analysts cut price targets despite strong results.", 1),
+    ("Telephone and Data Q3 EPS $0.26 Beats $0.13 Estimate, Sales $306.700M Miss $309.252M Estimate", 0),
+    ("Shares dropped after the company lowered its outlook and disappointed investors", -1),
+    ("Top picks for the week ahead", 0),
+])
+def test_tone_reads_word_forms(text, sign):
+    from app.services.news_sentiment import score_headline_sentiment
+
+    score = score_headline_sentiment(text)
+    assert (score > 0) - (score < 0) == sign
 
 
 def test_articles_are_stored_once_per_named_company(db):  # noqa: F811
@@ -225,11 +254,11 @@ def test_alpaca_news_is_paged(monkeypatch):
     assert seen[0]["sort"] == "desc" and seen[0]["limit"] == "50"
 
 
-def test_news_job_is_scheduled_on_the_learning_queue():
+def test_news_job_is_scheduled_on_the_fast_learning_queue():
     from app.tasks.celery_app import celery_app
 
     assert celery_app.conf.beat_schedule["news-discovery"]["task"] == "app.tasks.jobs.news_discovery_job"
-    assert celery_app.conf.task_routes["app.tasks.jobs.news_discovery_job"] == {"queue": "learning"}
+    assert celery_app.conf.task_routes["app.tasks.jobs.news_discovery_job"] == {"queue": "learning_fast"}
 
 
 # ------------------------------------------------------------ the paper cycle

@@ -302,18 +302,20 @@ function startPaperWorkers(): void {
     supervisePaperWorker([
       "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
       "--loglevel=INFO", "--hostname=paper-core@%h",
-      "--queues=default,market_data,intraday_market_data,research_market_data,scalp_research,learning,paper_trading,risk,monitoring",
+      "--queues=default,market_data,intraday_market_data,research_market_data,scalp_research,learning,learning_fast,paper_trading,risk,monitoring",
       // Only reserve tasks a free thread can start. With the default prefetch,
       // a core busy with long learning or import jobs held minutely intraday
       // imports until their 55-second expiry and they were discarded.
       "--pool=threads", "--concurrency=2", "--prefetch-multiplier=1",
     ], "paper-core");
     // Time-critical lane: long research and learning jobs must never starve
-    // paper signals, risk or monitoring.
+    // paper signals, risk or monitoring. It also serves learning_fast (trade
+    // attribution, news discovery: under a minute, twice an hour); behind a
+    // 14-hour backtest on paper-core they expired and losses went unexplained.
     supervisePaperWorker([
       "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
       "--loglevel=INFO", "--hostname=paper-fast@%h",
-      "--queues=paper_trading,risk,monitoring",
+      "--queues=paper_trading,risk,monitoring,learning_fast",
       "--pool=threads", "--concurrency=2", "--prefetch-multiplier=1",
     ], "paper-fast");
     // The minutely intraday import gets a lane of its own. Sharing paper-fast,
@@ -363,7 +365,7 @@ function startPaperWorkers(): void {
     supervisePaperWorker([
       "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
       "--loglevel=INFO", "--hostname=learning-" + replica + "@%h",
-      "--queues=learning", `--concurrency=${learningConcurrency}`,
+      "--queues=learning,learning_fast", `--concurrency=${learningConcurrency}`,
     ], `learning-${replica}`);
   }
   supervisePaperWorker(["-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "--hostname=execution@%h", "--queues=paper_trading,broker_reconciliation", "--concurrency=1"], "execution");

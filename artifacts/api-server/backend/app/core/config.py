@@ -225,6 +225,9 @@ class Settings(BaseSettings):
     news_discovery_lookback_hours: int = Field(default=24, ge=1, le=96)
     news_discovery_min_articles: int = Field(default=2, ge=1, le=20)
     news_discovery_min_sentiment: float = Field(default=0.25, ge=0, le=1)
+    # Stories with a direction (not routine notes) a symbol needs; one story
+    # admitted OKLO on a sales beat next to a wider loss.
+    news_discovery_min_directional: int = Field(default=2, ge=1, le=10)
     news_discovery_admit_days: int = Field(default=3, ge=1, le=10)
     news_discovery_min_price: float = Field(default=5.0, ge=1)
     news_discovery_min_dollar_volume: float = Field(default=20_000_000, ge=0)
