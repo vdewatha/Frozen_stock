@@ -135,6 +135,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.experiment_verdict_job": {"queue": "learning"},
     "app.tasks.jobs.gate_cost_job": {"queue": "learning"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
+    "app.tasks.jobs.self_healing_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
     "app.tasks.jobs.alert_daily_digest_job": {"queue": "risk"},
@@ -339,6 +340,16 @@ celery_app.conf.beat_schedule = {
         "options": {"expires": 12 * 60 * 60},
     },
     "parameter-application": {"task": "app.tasks.jobs.parameter_application_job", "schedule": 60 * 15},
+    # Self-healing: every 15 minutes from before the open through the evening
+    # learning jobs, on the fast lane so a long learning job cannot hold back
+    # the fixes for the stalls it causes (missing meta-label model, stale
+    # intraday symbols, expired learning leases). Paper only; never touches
+    # orders, exits, the kill switch or the resume logic.
+    "self-healing": {
+        "task": "app.tasks.jobs.self_healing_job",
+        "schedule": crontab(minute="*/15", hour="7-20", day_of_week="mon-fri"),
+        "options": {"expires": 10 * 60},
+    },
     "alert-delivery": {
         "task": "app.tasks.jobs.alert_delivery_job",
         "schedule": 60,
