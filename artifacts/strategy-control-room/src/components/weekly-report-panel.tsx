@@ -10,7 +10,7 @@ export type WeeklyReport = {
   generated_at: string;
   this_week: Totals;
   all_time: Totals;
-  goal: { target_win_rate: number; min_trades_for_evidence: number };
+  goal: { target: string; label: string; min_trades_for_evidence: number };
   strategies: {
     strategy_id: number | null; strategy_name: string; status: string | null;
     week_trades: number; week_pnl: number | null; trades: number; win_rate: number | null;
@@ -43,7 +43,7 @@ export function WeeklyReportView({ report, stored }: { report: WeeklyReport; sto
         <div><dt>Avg per trade</dt><dd>{formatUsd(total.avg_pnl)}<small>{bps(total.paper_bps ?? null)}</small></dd></div>
         <div><dt>Open positions</dt><dd>{formatUsd(report.open_unrealized_pnl)}<small>unrealized, not in totals</small></dd></div>
       </dl>
-      <p className="section-meta">Goal: win {formatPct(goal.target_win_rate)} while making money. Results are judged once a strategy has {goal.min_trades_for_evidence} closed trades.</p>
+      <p className="section-meta">Goal: {goal.label}. Results are judged once a strategy has {goal.min_trades_for_evidence} closed trades.</p>
     </section>
     <section>
       <div className="section-heading"><h2>Strategies against their backtest</h2><span className="section-meta">Net return per trade, paper vs research</span></div>

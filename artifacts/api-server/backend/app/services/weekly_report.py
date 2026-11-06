@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AuditLog, Strategy
 from app.services.audit import write_audit_log
-from app.services.paper_trade_scorecard import MIN_TRADES_FOR_EVIDENCE, build_scorecard
+from app.services.paper_trade_scorecard import GOAL, GOAL_LABEL, MIN_TRADES_FOR_EVIDENCE, build_scorecard
 
 UTC = timezone.utc
 ET = ZoneInfo("America/New_York")
@@ -157,7 +157,7 @@ def build_weekly_report(db: Session, *, now: Optional[datetime] = None) -> dict:
         "all_time": {"trades": headline.get("trades", 0), "win_rate": headline.get("win_rate"),
                      "total_pnl": headline.get("total_pnl", 0.0), "avg_pnl": headline.get("expectancy"),
                      "paper_bps": _bps(headline.get("expectancy_return"))},
-        "goal": {"target_win_rate": 0.8, "min_trades_for_evidence": MIN_TRADES_FOR_EVIDENCE},
+        "goal": {"target": GOAL, "label": GOAL_LABEL, "min_trades_for_evidence": MIN_TRADES_FOR_EVIDENCE},
         "strategies": strategies,
         "blocked_buys": blocked_buy_reasons(db, now - timedelta(days=7), now),
         "short_pilot": _short_pilot_summary(db),

@@ -74,7 +74,7 @@ MARKET_FEATURES = (
     "buy_consensus",
 )
 MAX_FEATURE_LOOKBACK = 252
-DEFAULT_MIN_WIN_RATE = 0.60
+DEFAULT_MIN_WIN_RATE = 0.0  # profit is the goal; a win-rate floor is opt-in
 # RSI(2)/IBS paper exit policy (SHORT_TERM_REVERSION_EXIT_POLICY): 10% stop, no
 # target, 10 sessions, plus the indicator exit from ``replay_exit_signals``.
 REVERSION_BARRIER = BarrierConfig(take_profit_pct=0.0, stop_loss_pct=0.10, max_holding_days=10)

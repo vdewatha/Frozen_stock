@@ -31,7 +31,7 @@ from app.services import trade_attribution
 from app.services.exchange_sessions import session_bounds
 from app.services.stock_paper_autotrader import SCHEDULED_SOURCE
 from app.services.stock_paper_ledger import EXPLORATION_SOURCE
-from app.services.paper_trade_scorecard import GOAL_WIN_RATE, MIN_TRADES_FOR_EVIDENCE
+from app.services.paper_trade_scorecard import GOAL, GOAL_LABEL, MIN_TRADES_FOR_EVIDENCE
 
 UTC = timezone.utc
 ET = ZoneInfo("America/New_York")
@@ -121,7 +121,7 @@ def _progress(rows: list, now: datetime) -> dict:
         })
     strategies.sort(key=lambda item: (-item["trades"], item["strategy_type"]))
     return {"overall": totals(rows), "weeks": weeks, "strategies": strategies,
-            "goal": {"target_win_rate": GOAL_WIN_RATE, "min_trades_for_evidence": MIN_TRADES_FOR_EVIDENCE}}
+            "goal": {"target": GOAL, "label": GOAL_LABEL, "min_trades_for_evidence": MIN_TRADES_FOR_EVIDENCE}}
 
 
 def _news_runs(db: Session, limit: int = 200) -> list[AuditLog]:

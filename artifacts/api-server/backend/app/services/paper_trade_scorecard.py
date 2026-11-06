@@ -54,7 +54,9 @@ ET = ZoneInfo("America/New_York")
 ZERO = Decimal("0")
 QTY_EPSILON = Decimal("0.000000001")
 
-GOAL_WIN_RATE = 0.80
+# The owner's goal (2026-11-06): profit after costs. Win rate is context.
+GOAL = "profit_after_costs"
+GOAL_LABEL = "Profit after costs; win rate is context"
 GOAL_WINDOW = 10
 ROLLING_WINDOWS = (20, 50, 100)
 BOOTSTRAP_MIN_TRADES = 20
@@ -511,23 +513,23 @@ def _rolling(trades: list[dict]) -> dict:
 
 
 def goal_progress(trades: list[dict]) -> dict:
-    """Owner goal: 8 of every 10 trades profitable while making money overall."""
+    """Owner goal: make money after costs. The last 10 trades are a short-run check."""
     ordered = sorted(trades, key=lambda trade: trade["exited_at"])
     last = ordered[-GOAL_WINDOW:]
     wins = sum(1 for trade in last if trade["net_pnl"] > 0)
     total = sum(trade["net_pnl"] for trade in last)
     overall = summarize(ordered)
     return {
-        "target_win_rate": GOAL_WIN_RATE,
+        "target": GOAL,
+        "label": GOAL_LABEL,
         "window": GOAL_WINDOW,
         "last_window_trades": len(last),
         "last_window_wins": wins,
         "last_window_win_rate": _r(wins / len(last)) if last else None,
         "last_window_pnl": _r(total) if last else None,
-        "met_last_window": bool(len(last) >= GOAL_WINDOW and wins >= GOAL_WIN_RATE * GOAL_WINDOW and total > 0),
+        "met_last_window": bool(len(last) >= GOAL_WINDOW and total > 0),
         "overall_win_rate": overall["win_rate"],
         "overall_expectancy": overall["expectancy"],
-        "win_rate_gap": _r(GOAL_WIN_RATE - overall["win_rate"]) if overall["win_rate"] is not None else None,
         "making_money": bool(overall["total_pnl"] and overall["total_pnl"] > 0),
         "rolling": _rolling(ordered),
         "scope": "bot trades (scheduled + exploration), net of recorded fees",
@@ -823,7 +825,7 @@ def render_markdown(scorecard: dict) -> str:
         f"- Win rate: {_pct(head['win_rate'])}"
         + (f" [Wilson 95% {_pct(head['win_rate_wilson_ci'][0])} to {_pct(head['win_rate_wilson_ci'][1])}]"
            if head["win_rate_wilson_ci"] else "")
-        + f" (goal {_pct(goal['target_win_rate'])})",
+        + " (context, not the goal)",
         f"- Total net P&L: {_usd(head['total_pnl'])} (fees {_usd(head['fees'])})",
         f"- Last {goal['window']} trades: {goal['last_window_wins']}/{goal['last_window_trades']} wins, "
         f"P&L {_usd(goal['last_window_pnl'])}; goal met: {'yes' if goal['met_last_window'] else 'no'}",

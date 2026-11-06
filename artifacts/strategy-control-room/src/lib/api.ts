@@ -1795,7 +1795,8 @@ export type PaperScorecard = {
   days: number;
   headline: PaperScorecardStats;
   goal: {
-    target_win_rate: number;
+    target: string;
+    label: string;
     window: number;
     last_window_trades: number;
     last_window_wins: number;
