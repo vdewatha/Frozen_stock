@@ -858,6 +858,7 @@ def ingest_intraday(
     *,
     now: datetime | None = None,
     repair_sessions: int = 1,
+    backfill_time_budget_seconds: float | None = None,
 ) -> dict:
     if not 1 <= repair_sessions <= 10:
         raise ValueError("repair_sessions must be between 1 and 10")
@@ -887,7 +888,10 @@ def ingest_intraday(
             if getattr(exc, "status_code", None) == 429:
                 prefetch_rate_limited = exc
     backfill_budget = settings.intraday_backfill_request_budget
-    backfill_deadline = time.monotonic() + settings.intraday_backfill_time_budget_seconds
+    backfill_deadline = time.monotonic() + (
+        settings.intraday_backfill_time_budget_seconds
+        if backfill_time_budget_seconds is None else backfill_time_budget_seconds
+    )
     # Rotate which symbols are first in line for the shared backfill budget so
     # a long repair queue cannot starve the same tail symbols every minute.
     rotation = (observed_at.minute % len(selected)) if selected else 0
@@ -1340,7 +1344,12 @@ def preflight_intraday(
             ],
         })
 
-    ingestion = ingest_intraday(db, selected, now=observed_at)
+    ingest_started = time.monotonic()
+    ingestion = ingest_intraday(
+        db, selected, now=observed_at,
+        backfill_time_budget_seconds=settings.intraday_backfill_session_time_budget_seconds,
+    )
+    status_started = time.monotonic()
     ingestion_by_symbol = {item["symbol"]: item for item in ingestion["results"]}
     results = []
     for symbol in selected:
@@ -1447,8 +1456,12 @@ def preflight_intraday(
         results.append(result)
 
     failed = [item for item in results if item.get("status") != "ready"]
+    finished = time.monotonic()
     return _record_preflight_audit(db, {
         **base,
+        # Where the minute goes (fetch + repair + upserts vs per-symbol status).
+        "timing_ms": {"ingest": round((status_started - ingest_started) * 1000),
+                      "status": round((finished - status_started) * 1000)},
         "status": "ready" if not failed else "blocked",
         "ready": not failed,
         "failure_class": failed[0].get("failure_class") if failed else None,

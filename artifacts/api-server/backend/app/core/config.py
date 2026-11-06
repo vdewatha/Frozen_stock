@@ -186,6 +186,11 @@ class Settings(BaseSettings):
     # the import reports, so 40 sequential repair requests (~160 s on the VM)
     # made every live minute arrive late; leftover gaps wait for a later cycle.
     intraday_backfill_time_budget_seconds: float = Field(default=25.0, ge=0, le=120)
+    # During the regular session the minutely import must finish inside its
+    # minute: with the 25 s repair budget plus per-symbol reads it took 85-92 s
+    # on 2026-11-06, runs expired and nine symbols went stale. Repairs during
+    # the session get this smaller budget; the post-close job keeps the larger.
+    intraday_backfill_session_time_budget_seconds: float = Field(default=8.0, ge=0, le=120)
     # Paper exploration lets candidate/research strategies place small, tagged
     # paper orders to generate learning data before they earn trial evidence.
     # Exploration fills never count as promotion evidence. Off by default.

@@ -313,6 +313,48 @@ def test_backfill_stops_at_the_time_budget():
         engine.dispose()
 
 
+def test_an_explicit_session_budget_overrides_the_repair_budget():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    observed = datetime(2026, 9, 11, 18, 0, tzinfo=UTC)
+    symbols = ["AAPL", "MSFT", "NVDA", "XLE", "SPY"]
+    calls = []
+
+    def single(symbol, start, end):
+        calls.append(symbol)
+        return [], 0, False
+
+    try:
+        with patch.object(settings, "paper_execution_symbols", symbols), \
+             patch.object(settings, "active_market_data_provider", "tradier"), \
+             patch.object(settings, "intraday_backfill_chunks_per_cycle", 8), \
+             patch.object(settings, "intraday_backfill_request_budget", 40), \
+             patch.object(settings, "intraday_backfill_time_budget_seconds", 120), \
+             patch.object(intraday_data, "_fetch_bars", side_effect=single):
+            result = intraday_data.ingest_intraday(db, symbols, now=observed, backfill_time_budget_seconds=0)
+        assert len(calls) == len(symbols)  # newest windows only; no repair requests
+        assert result["backfill_requests_remaining"] == 40
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_session_preflight_uses_the_smaller_repair_budget_and_reports_timing():
+    observed = datetime(2026, 9, 11, 18, 0, tzinfo=UTC)
+    with patch.object(settings, "active_market_data_provider", "alpaca_iex"), \
+         patch.object(settings, "active_paper_broker", "alpaca_paper"), \
+         patch.object(settings, "allow_live_trading", False), \
+         patch.object(settings, "intraday_backfill_session_time_budget_seconds", 8.0), \
+         patch.object(type(settings), "research_alpaca_credentials", lambda self: ("key", "secret")), \
+         patch.object(intraday_data, "ingest_intraday", return_value={"results": []}) as ingest, \
+         patch.object(intraday_data, "feed_status", side_effect=RuntimeError("no db")), \
+         patch.object(intraday_data, "_record_preflight_audit", side_effect=lambda db, result, **_: result):
+        result = intraday_data.preflight_intraday(None, ["SPY"], now=observed)
+    assert ingest.call_args.kwargs["backfill_time_budget_seconds"] == 8.0
+    assert set(result["timing_ms"]) == {"ingest", "status"}
+
+
 # --- sector / correlation cap ------------------------------------------------
 
 def _cycle(db, symbols, actions):
