@@ -47,3 +47,21 @@ def test_tolerated_checks_alone_still_pass():
     db = _db([{"key": "data.freshness_provenance", "status": "warning"},
               {"key": "health.broker", "status": "breach"}], "breach")
     assert recovery._fresh_monitoring_is_clear(db, NOW) == (True, "Monitoring evidence is fresh and clear")
+
+
+def test_model_scoped_checks_never_block_a_resume():
+    db = _db([
+        {"key": "model.realized_performance", "status": "breach", "action_scope": "model",
+         "details": {"recent_count": 30, "baseline_count": 90}},
+        {"key": "model.input_features", "status": "warning", "action_scope": "model"},
+    ], "breach")
+    assert recovery._fresh_monitoring_is_clear(db, NOW) == (True, "Monitoring evidence is fresh and clear")
+
+
+def test_safety_checks_still_block_next_to_a_model_breach():
+    db = _db([
+        {"key": "model.realized_performance", "status": "breach", "action_scope": "model"},
+        {"key": "risk.daily_loss", "status": "breach", "action_scope": "safety"},
+    ], "breach")
+    assert recovery._fresh_monitoring_is_clear(db, NOW) == (
+        False, "Monitoring status is breach, not clear: risk.daily_loss=breach")

@@ -904,6 +904,14 @@ def _fresh_monitoring_is_clear(db: Session, now: datetime) -> tuple[bool, str]:
         details = check.get("details") or {}
         if transitional_account_checks and key in {"health.broker", "health.reconciliation"}:
             return True
+        if check.get("action_scope") == "model":
+            # Model drift/performance never pauses the stock path: a persistent
+            # model breach demotes the active model instead. Blocking resume on
+            # it held a paused bot all session on 2026-11-06 (a safety pause at
+            # 08:00 that had cleared, then model.realized_performance=breach),
+            # including the operator's own resume, for strategies that do not
+            # use the model at all.
+            return True
         if key == "data.freshness_provenance" and status == "warning":
             # A warning means a partial feed gap: each order re-checks its own
             # symbol's feed and stale symbols stay blocked, while a broad
