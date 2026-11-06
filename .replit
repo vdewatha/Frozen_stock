@@ -72,7 +72,7 @@ PAPER_LEARNING_CONCURRENCY = "1"
 # a stale symbol blocks only itself unless >20% of symbols or SPY/QQQ are stale.
 PAPER_EXECUTION_SYMBOLS = "[\"SPY\", \"QQQ\", \"IWM\", \"DIA\", \"XLK\", \"XLF\", \"XLE\", \"XLV\", \"XLY\", \"XLP\", \"XLI\", \"XLU\", \"XLB\", \"XLRE\", \"XLC\", \"SMH\", \"AAPL\", \"MSFT\", \"NVDA\", \"AMZN\", \"GOOGL\", \"META\", \"TSLA\", \"AVGO\", \"JPM\", \"V\", \"MA\", \"UNH\", \"XOM\", \"LLY\", \"COST\", \"HD\", \"PG\", \"JNJ\", \"ABBV\", \"MRK\", \"PEP\", \"KO\", \"BAC\", \"WMT\", \"NFLX\", \"AMD\", \"CRM\", \"ORCL\", \"ADBE\"]"
 # Updated for each deployable release so hosted readiness can be verified.
-PAPER_BUILD_ID = "paper-kill-switch-triggers-20261106-v1"
+PAPER_BUILD_ID = "paper-market-gate-20261106-v1"
 PAPER_EMBEDDED_REDIS = "true"
 IEX_RESEARCH_ENABLED = "true"
 # Feature refreshes retrain every symbol (~98 minutes here); queued from IEX
