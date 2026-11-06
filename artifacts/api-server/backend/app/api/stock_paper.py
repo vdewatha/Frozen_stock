@@ -178,6 +178,14 @@ def setup_shadow(db: Session = Depends(get_db)) -> dict:
     return setup_shadow_view(db)
 
 
+@router.get("/cost-calibration")
+def cost_calibration(db: Session = Depends(get_db)) -> dict:
+    """Realised paper fill costs against the replay cost model, and the multipliers in force (read-only)."""
+    from app.services.paper_cost_calibration import calibration_view
+
+    return calibration_view(db)
+
+
 @router.get("/self-healing")
 def self_healing(db: Session = Depends(get_db)) -> dict:
     """What the bot fixes on its own, what it did lately and what it leaves to a person (read-only)."""

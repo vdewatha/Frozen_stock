@@ -399,6 +399,11 @@ class Settings(BaseSettings):
     # one on each BUY and scored from the next open; the per-candidate
     # record covers the last N sessions (setup_shadow.py).
     setup_shadow_lookback_sessions: int = Field(default=120, ge=1, le=500)
+    # Paper cost calibration: the replay cost model is fitted to the last N
+    # sessions of paper fills; a (symbol class, time bucket) cell needs
+    # min_fills fills before its multiplier is fitted (paper_cost_calibration.py).
+    paper_cost_calibration_lookback_sessions: int = Field(default=60, ge=1, le=250)
+    paper_cost_calibration_min_fills: int = Field(default=20, ge=1, le=1000)
     # Performance-weighted paper risk fractions (bounded, shrink-first).
     paper_allocation_weighting_enabled: bool = True
     paper_allocation_floor: float = Field(default=0.5, gt=0, le=1)

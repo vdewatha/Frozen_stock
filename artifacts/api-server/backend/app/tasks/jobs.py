@@ -1819,6 +1819,19 @@ def setup_shadow_job() -> dict:
 
 
 @celery_app.task
+def paper_cost_calibration_job() -> dict:
+    """Weekly (Saturday): fit the replay cost model to the last sessions of paper fills (paper only)."""
+    def work(db):
+        from app.services.paper_cost_calibration import record_calibration
+
+        result = record_calibration(db)
+        db.commit()
+        return {"job": "paper_cost_calibration_job", **result, "live_authorized": False}
+
+    return _run_job("paper_cost_calibration_job", work)
+
+
+@celery_app.task
 def weekly_performance_report_job() -> dict:
     """Store the weekend paper performance report (read-only on strategies)."""
     def work(db):
