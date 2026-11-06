@@ -43,6 +43,25 @@ from app.services.backtester import BacktestConfig
 
 
 @dataclass(frozen=True)
+class CostMultipliers:
+    """Realised-cost scaling for one symbol's replay: fitted by
+    ``paper_cost_calibration`` from the bot's own paper fills, applied to the
+    modelled per-side cost (``side_cost_bps``).  ``entry`` scales the next-open
+    entry, ``exit`` every exit.  1.0 on both sides is the published model."""
+    entry: float = 1.0
+    exit: float = 1.0
+
+    def __post_init__(self) -> None:
+        for name in ("entry", "exit"):
+            value = getattr(self, name)
+            if not (isinstance(value, (int, float)) and math.isfinite(value) and value > 0):
+                raise ValueError(f"{name} cost multiplier must be a positive finite number")
+
+
+NO_CALIBRATION = CostMultipliers()
+
+
+@dataclass(frozen=True)
 class BarrierConfig:
     # Fixed geometry defaults match the paper path's broker-side bracket
     # (DEFAULT_POSITION_STOP_LOSS_PCT / DEFAULT_POSITION_TAKE_PROFIT_PCT = 3%).
@@ -111,15 +130,20 @@ def prior_liquidity(prices: pd.DataFrame, lookback: int) -> tuple[np.ndarray, np
     return sigma_bps, adv
 
 
-def side_cost_bps(sigma_bps: float, adv: float, quantity: float, config: BarrierConfig) -> float:
-    """Same arithmetic as ``backtester.execution_cost_bps`` for one side."""
+def side_cost_bps(sigma_bps: float, adv: float, quantity: float, config: BarrierConfig,
+                  multiplier: float = 1.0) -> float:
+    """Same arithmetic as ``backtester.execution_cost_bps`` for one side.
+
+    ``multiplier`` is a fitted calibration factor (``CostMultipliers``); 1.0
+    leaves the published model unchanged.
+    """
     base = float(config.slippage_bps)
     if config.cost_model == "flat":
-        return base
+        return base * float(multiplier)
     volatility_bps = config.volatility_cost_fraction * sigma_bps
     participation = quantity / adv if adv and math.isfinite(adv) and adv > 0 and quantity > 0 else None
     impact = config.impact_coefficient * sigma_bps * math.sqrt(participation) if participation else 0.0
-    return min(base + volatility_bps + impact, 5_000.0)
+    return min((base + volatility_bps + impact) * float(multiplier), 5_000.0)
 
 
 def decision_volatility(prices: pd.DataFrame, lookback: int) -> np.ndarray:
@@ -147,15 +171,20 @@ LABEL_COLUMNS = [
 
 
 def label_events(prices: pd.DataFrame, event_positions: Iterable[int],
-                 config: BarrierConfig | None = None, exit_signals: Sequence[bool] | None = None) -> pd.DataFrame:
+                 config: BarrierConfig | None = None, exit_signals: Sequence[bool] | None = None,
+                 calibration: CostMultipliers | None = None) -> pd.DataFrame:
     """Triple-barrier labels for decisions made on the close of ``event_positions``.
 
     ``prices`` must be one symbol's daily bars in ascending date order with
     ``date, open, high, low, close`` (``volume`` optional).  ``exit_signals``
     (one bool per bar) is a strategy indicator exit decided on that bar's
-    close.  Returns one row per *resolved* event (see ``LABEL_COLUMNS``).
+    close.  ``calibration`` scales the modelled cost of each side by the
+    multipliers fitted to the bot's own paper fills (``paper_cost_calibration``);
+    ``None`` prices costs exactly as the published model.  Returns one row per
+    *resolved* event (see ``LABEL_COLUMNS``).
     """
     config = config or BarrierConfig()
+    calibration = calibration or NO_CALIBRATION
     frame = prices.reset_index(drop=True)
     n = len(frame)
     opens = pd.to_numeric(frame["open"], errors="coerce").to_numpy(float)
@@ -188,7 +217,8 @@ def label_events(prices: pd.DataFrame, event_positions: Iterable[int],
         if not (math.isfinite(take_pct) and math.isfinite(stop_pct) and math.isfinite(open_entry) and open_entry > 0):
             continue
         quantity = config.position_notional / open_entry
-        entry_price = open_entry * (1 + side_cost_bps(sigma_bps[entry], adv[entry], quantity, config) / 10_000)
+        entry_price = open_entry * (1 + side_cost_bps(sigma_bps[entry], adv[entry], quantity, config,
+                                                      calibration.entry) / 10_000)
         stop_level = entry_price * (1 - stop_pct)
         target_level = entry_price * (1 + take_pct) if take_pct > 0 else math.inf
         exit_idx = exit_raw = barrier = None
@@ -213,7 +243,8 @@ def label_events(prices: pd.DataFrame, event_positions: Iterable[int],
                 break
         if exit_idx is None:
             continue  # path unresolved at the end of the data
-        exit_price = exit_raw * (1 - side_cost_bps(sigma_bps[exit_idx], adv[exit_idx], quantity, config) / 10_000)
+        exit_price = exit_raw * (1 - side_cost_bps(sigma_bps[exit_idx], adv[exit_idx], quantity, config,
+                                                   calibration.exit) / 10_000)
         net = (exit_price * (1 - fee)) / (entry_price * (1 + fee)) - 1
         rows.append((t, entry, exit_idx, dates[t], dates[entry], dates[exit_idx], entry_price, exit_price,
                      take_pct, stop_pct, barrier, exit_idx - entry, exit_raw / open_entry - 1, net, int(net > 0)))
@@ -252,7 +283,7 @@ def average_uniqueness(starts: Sequence[int], ends: Sequence[int], groups: Seque
 
 
 def label_open_session(prices: pd.DataFrame, event_positions: Iterable[int], stop_loss_pct: float,
-                       config: BarrierConfig | None = None) -> pd.DataFrame:
+                       config: BarrierConfig | None = None, calibration: CostMultipliers | None = None) -> pd.DataFrame:
     """Same-session labels for buys at the open of ``event_positions`` (an opening-gap fade).
 
     Entry at the open of bar ``t`` plus the cost estimated from bars ``< t``.
@@ -264,6 +295,7 @@ def label_open_session(prices: pd.DataFrame, event_positions: Iterable[int], sto
     == exit_idx`` and ``barrier`` in ``take_profit / stop_loss / close``.
     """
     config = config or BarrierConfig()
+    calibration = calibration or NO_CALIBRATION
     if not 0 < stop_loss_pct < 1:
         raise ValueError("stop_loss_pct must be in (0, 1)")
     frame = prices.reset_index(drop=True)
@@ -283,7 +315,7 @@ def label_open_session(prices: pd.DataFrame, event_positions: Iterable[int], sto
         if not (math.isfinite(open_) and math.isfinite(target) and 0 < open_ < target):
             continue
         quantity = config.position_notional / open_
-        entry_price = open_ * (1 + side_cost_bps(sigma_bps[t], adv[t], quantity, config) / 10_000)
+        entry_price = open_ * (1 + side_cost_bps(sigma_bps[t], adv[t], quantity, config, calibration.entry) / 10_000)
         stop_level = entry_price * (1 - stop_loss_pct)
         low = lows[t] if math.isfinite(lows[t]) else min(open_, closes[t])
         high = highs[t] if math.isfinite(highs[t]) else max(open_, closes[t])
@@ -293,7 +325,7 @@ def label_open_session(prices: pd.DataFrame, event_positions: Iterable[int], sto
             exit_raw, barrier = target, "take_profit"
         else:
             exit_raw, barrier = closes[t], "close"
-        exit_price = exit_raw * (1 - side_cost_bps(sigma_bps[t], adv[t], quantity, config) / 10_000)
+        exit_price = exit_raw * (1 - side_cost_bps(sigma_bps[t], adv[t], quantity, config, calibration.exit) / 10_000)
         net = (exit_price * (1 - fee)) / (entry_price * (1 + fee)) - 1
         rows.append((t, t, t, dates[t], dates[t], dates[t], entry_price, exit_price, target / open_ - 1,
                      stop_loss_pct, barrier, 0, exit_raw / open_ - 1, net, int(net > 0)))
