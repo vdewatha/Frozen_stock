@@ -25,6 +25,18 @@ Round trips also carry a ``diagnosis`` (``loss_diagnosis``): the cause of the
 result measured against SPY and the sector ETF over the same hold, earnings
 inside the hold, crowding, clustered stops and whether the exits were the
 backtested ones.
+
+Every closed trade (trial lots and round trips) also records what the price
+did *after* the exit, up to the planned horizon (``max_holding_sessions``
+from the entry session): ``post_exit`` holds the return from the exit price
+to the horizon close, the best and worst excursion over that span (``mfe`` /
+``mae``), the number of daily bars seen and whether the horizon bar was among
+them.  ``excursion`` holds the best and worst excursion over the hold itself,
+from the entry price.  Both come from stored daily bars.  A trade whose
+horizon has not passed yet records ``None`` and is filled by a later revision
+once the bars exist, so a stop that was followed by a recovery
+(``premature_stop``) or a time stop that closed a trade past its target
+(``held_too_long``) can be diagnosed from evidence, not guessed.
 """
 from __future__ import annotations
 
@@ -35,6 +47,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -45,6 +58,7 @@ from app.models.loss_feedback import StockTradeAttribution
 from app.models.stock_paper import StockPaperOrder, StockPaperTrialLot
 
 UTC = timezone.utc
+ET = ZoneInfo("America/New_York")
 ATTRIBUTION_VERSION = "trade-attribution-v1"
 EXIT_CAUSES = ("indicator", "time_stop", "catastrophe_stop", "protection_lock", "take_profit", "operator", "other")
 SOURCES = ("trial_lot", "scheduled_round_trip", "exploration_round_trip")
@@ -111,6 +125,81 @@ def held_sessions(opened_at: datetime, closed_at: datetime) -> int:
         if is_nyse_session(day):
             count += 1
     return count
+
+
+def session_date(moment: datetime) -> date:
+    """The New York session date a moment falls in."""
+    return _utc(moment).astimezone(ET).date()
+
+
+def sessions_after(day: date, count: int) -> date:
+    """The NYSE session ``count`` sessions after ``day`` (``day`` itself when ``count`` <= 0)."""
+    from app.services.exchange_sessions import is_nyse_session
+
+    current, found, scanned = day, 0, 0
+    while found < count and scanned < 400:
+        current += timedelta(days=1)
+        scanned += 1
+        if is_nyse_session(current):
+            found += 1
+    return current
+
+
+def sessions_between(start: date, end: date) -> int:
+    """NYSE sessions in ``(start, end]``."""
+    from app.services.exchange_sessions import is_nyse_session
+
+    count, day = 0, start
+    while day < end and count < 400:
+        day += timedelta(days=1)
+        if is_nyse_session(day):
+            count += 1
+    return count
+
+
+def excursion(bars: Iterable[dict], reference_price: float) -> Optional[dict]:
+    """Best (``mfe`` >= 0) and worst (``mae`` <= 0) excursion of daily ``bars`` from ``reference_price``.
+
+    Each bar has ``close`` and optional ``high`` / ``low`` (the close stands
+    in for a missing side).  ``None`` without bars or a usable reference.
+    """
+    rows = [bar for bar in bars if _f(bar.get("close"))]
+    if not rows or not reference_price or reference_price <= 0:
+        return None
+    highs = [_f(bar.get("high")) or _f(bar["close"]) for bar in rows]
+    lows = [_f(bar.get("low")) or _f(bar["close"]) for bar in rows]
+    return {"mfe": _round(max(0.0, max(highs) / reference_price - 1)),
+            "mae": _round(min(0.0, min(lows) / reference_price - 1)), "bars": len(rows)}
+
+
+def post_exit_path(bars: Iterable[dict], exit_price: float, *, span_sessions: int,
+                   horizon_date: date) -> Optional[dict]:
+    """What the price did from the exit to the planned horizon.
+
+    ``bars`` are the daily bars strictly after the exit session, up to and
+    including the horizon session, ascending (``price_date``, ``close``,
+    optional ``high`` / ``low``).  ``span_sessions`` is how many sessions
+    that span holds; a trade closed at or beyond its horizon has an empty
+    span and a zero path.  Returns ``None`` when there is nothing to measure
+    yet (no bars), so a later revision can fill it in; ``horizon_reached``
+    is False while the bars stop short of the horizon session.
+    """
+    if not exit_price or exit_price <= 0:
+        return None
+    horizon = horizon_date.isoformat()
+    if span_sessions <= 0:
+        return {"return": 0.0, "mfe": 0.0, "mae": 0.0, "bars": 0, "horizon_reached": True,
+                "sessions": 0, "horizon_date": horizon, "last_bar": None}
+    rows = [bar for bar in bars if _f(bar.get("close")) and bar.get("price_date") is not None
+            and bar["price_date"] <= horizon_date]
+    if not rows:
+        return None
+    rows.sort(key=lambda bar: bar["price_date"])
+    path = excursion(rows, exit_price)
+    last = rows[-1]
+    return {"return": _round(_f(last["close"]) / exit_price - 1), "mfe": path["mfe"], "mae": path["mae"],
+            "bars": len(rows), "horizon_reached": last["price_date"] >= horizon_date,
+            "sessions": span_sessions, "horizon_date": horizon, "last_bar": last["price_date"].isoformat()}
 
 
 def holding_relation(sessions: Optional[int], rule_sessions: Optional[int]) -> str:
@@ -185,6 +274,49 @@ def _closes_before(db: Session, symbol: str, day: date, *, limit: int = 60) -> l
     return [by_day[key] for key in sorted(by_day)][-limit:]
 
 
+def _daily_bars(db: Session, symbol: str, start: date, end: date) -> list[dict]:
+    """One raw daily bar per session in ``[start, end]`` (the lowest id wins a duplicate date)."""
+    if end < start:
+        return []
+    rows = db.execute(
+        select(MarketPrice.price_date, MarketPrice.high, MarketPrice.low, MarketPrice.close)
+        .where(MarketPrice.symbol == symbol, MarketPrice.price_date >= start, MarketPrice.price_date <= end)
+        .order_by(MarketPrice.price_date, MarketPrice.id)
+    ).all()
+    seen: dict[date, dict] = {}
+    for price_date, high, low, close in rows:
+        if price_date not in seen and _f(close):
+            seen[price_date] = {"price_date": price_date, "high": _f(high), "low": _f(low), "close": _f(close)}
+    return [seen[key] for key in sorted(seen)]
+
+
+def post_exit_from_daily_bars(db: Session, symbol: str, *, entry_session: date, exit_session: date,
+                              max_hold: Optional[int], exit_price: float, now: datetime) -> Optional[dict]:
+    """``post_exit`` for a closed trade from stored daily bars; ``None`` until the horizon has passed.
+
+    The horizon is ``max_hold`` sessions after the entry session.  The span
+    runs over the sessions after the exit session up to the horizon; it is
+    measured only once the horizon session is over (its bar is complete).
+    """
+    if not max_hold or max_hold <= 0 or not exit_price or exit_price <= 0:
+        return None
+    horizon = sessions_after(entry_session, int(max_hold))
+    span = sessions_between(exit_session, horizon)
+    if span <= 0:
+        return post_exit_path([], exit_price, span_sessions=0, horizon_date=horizon)
+    if horizon >= session_date(now):
+        return None  # the horizon bar is not complete yet; a later revision fills this in
+    bars = _daily_bars(db, symbol, exit_session + timedelta(days=1), horizon)
+    return post_exit_path(bars, exit_price, span_sessions=span, horizon_date=horizon)
+
+
+def hold_excursion_from_daily_bars(db: Session, symbol: str, *, entry_session: date, exit_session: date,
+                                   entry_price: float) -> Optional[dict]:
+    """Best and worst excursion over the hold from the entry price, from daily bars (entry and exit sessions included)."""
+    path = excursion(_daily_bars(db, symbol, entry_session, exit_session), entry_price)
+    return path | {"source": "daily_bars"} if path else None
+
+
 def _regime(db: Session, symbol: str, opened_at: datetime, cache: dict) -> dict:
     from zoneinfo import ZoneInfo
 
@@ -245,7 +377,8 @@ def _record(**values) -> dict:
 
 # ----------------------------------------------------------------- trial lots
 
-def attribute_trial(db: Session, trial: StockPaperTrial, *, regime_cache: Optional[dict] = None) -> list[StockTradeAttribution]:
+def attribute_trial(db: Session, trial: StockPaperTrial, *, regime_cache: Optional[dict] = None,
+                    now: Optional[datetime] = None) -> list[StockTradeAttribution]:
     """Attribute every fully closed lot of one forward trial (idempotent)."""
     from app.services.trade_mistakes import classify_trade, trial_lot_trades
 
@@ -253,7 +386,7 @@ def attribute_trial(db: Session, trial: StockPaperTrial, *, regime_cache: Option
     strategy = db.get(Strategy, trial.strategy_id) if trial.strategy_id else None
     strategy_type = strategy.strategy_type if strategy else "stock_forward_trial"
     created = []
-    for trade in trial_lot_trades(db, trial):
+    for trade in trial_lot_trades(db, trial, now=now):
         lot = db.get(StockPaperTrialLot, trade["lot_id"])
         entry_order = db.get(StockPaperOrder, lot.entry_order_id) if lot and lot.entry_order_id else None
         decision = db.get(StockPaperTrialDecision, trade["entry_decision_id"])
@@ -287,6 +420,8 @@ def attribute_trial(db: Session, trial: StockPaperTrial, *, regime_cache: Option
                      "relation": holding_relation(sessions, trade.get("planned_horizon_sessions"))},
             regime=_regime(db, trade["symbol"], opened_at, cache),
             exit={"cause": exit_cause(trade.get("exit_reason")), "raw_reason": trade.get("exit_reason")},
+            post_exit=trade.get("post_exit"),
+            excursion=trade.get("excursion"),
             mistakes={"primary": classification.get("primary_mistake"), "all": classification.get("mistakes") or []},
             lineage={"lot_id": trade["lot_id"], "entry_decision_id": trade["entry_decision_id"],
                      "entry_order_id": lot.entry_order_id if lot else None},
@@ -300,14 +435,15 @@ def attribute_trial(db: Session, trial: StockPaperTrial, *, regime_cache: Option
     return created
 
 
-def attribute_trials(db: Session, *, since: Optional[datetime] = None) -> list[StockTradeAttribution]:
+def attribute_trials(db: Session, *, since: Optional[datetime] = None,
+                     now: Optional[datetime] = None) -> list[StockTradeAttribution]:
     statement = select(StockPaperTrial).order_by(StockPaperTrial.created_at)
     if since is not None:
         statement = statement.where(StockPaperTrial.created_at >= since - timedelta(days=60))
     cache: dict = {}
     created = []
     for trial in db.scalars(statement).all():
-        created.extend(attribute_trial(db, trial, regime_cache=cache))
+        created.extend(attribute_trial(db, trial, regime_cache=cache, now=now))
     return created
 
 
@@ -392,6 +528,7 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
     prices = loss_diagnosis.PriceLookup(db)
     et = ZoneInfo("America/New_York")
     cache: dict = {}
+    policies: dict = {}
     created = []
     for lot in lots:
         closed_at = max(item["filled_at"] for item in lot.exits)
@@ -403,9 +540,14 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
         strategy = strategies.get(lot.strategy_id)
         strategy_type = (strategy.strategy_type if strategy else None) or "unattributed"
         parameters = (strategy.parameters or {}) if strategy else {}
-        max_hold = int(parameters["max_holding_sessions"]) if _f(parameters.get("max_holding_sessions")) else None
+        if strategy is not None and lot.strategy_id not in policies:
+            policies[lot.strategy_id] = exit_policy_for(strategy)
+        policy = policies.get(lot.strategy_id)
+        max_hold = int(parameters["max_holding_sessions"]) if _f(parameters.get("max_holding_sessions")) else \
+            (policy.max_holding_sessions if policy is not None else None)
         opened_at = _utc(lot.entered_at)
         sessions = held_sessions(opened_at, closed_at)
+        entry_session, exit_session = session_date(opened_at), session_date(closed_at)
         exit_ids = sorted({item["order_id"] for item in lot.exits if item["order_id"]})
         exit_refs = []
         for order_id in exit_ids:
@@ -418,7 +560,14 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
         decision_price = _f(lot.entry_order.limit_price)
         features = (signal.features or {}) if signal else {}
         meta = features.get("meta_label") if isinstance(features.get("meta_label"), dict) else None
-        classification = classify_round_trip(db, trade) if trade["net_pnl"] <= 0 else {"primary_mistake": None, "mistakes": []}
+        post_exit = post_exit_from_daily_bars(db, lot.symbol, entry_session=entry_session, exit_session=exit_session,
+                                              max_hold=max_hold, exit_price=trade["exit_price"], now=now)
+        hold_path = hold_excursion_from_daily_bars(db, lot.symbol, entry_session=entry_session,
+                                                   exit_session=exit_session, entry_price=trade["entry_price"])
+        cause = exit_cause(trade["exit_reason"], held_sessions=sessions, max_holding_sessions=max_hold)
+        classification = classify_round_trip(
+            db, trade, post_exit_return=post_exit["return"] if post_exit else None,
+        ) if trade["net_pnl"] <= 0 else {"primary_mistake": None, "mistakes": []}
         costs_known = bool(trade["costs_known"])
         cost = float(lot.cost)
         gross_return = trade["gross_pnl"] / cost if cost > 0 else 0.0
@@ -436,10 +585,12 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
             same_session_stops=stops_by_day[closed_at.astimezone(et).date()]
             if trade["exit_reason"] in _STOP_EXIT_REASONS else 0,
             exit_tested=loss_diagnosis.exit_tested(
-                exit_policy_for(strategy) if strategy else None, entry_price=decision_price or trade["entry_price"],
+                policy, entry_price=decision_price or trade["entry_price"],
                 stop_price=_f(lot.entry_order.stop_price), take_profit_price=_f(lot.entry_order.take_profit_price)),
             macro_events_in_hold=market_events.events_between(calendar, opened_at, closed_at),
             entry_vix=_f(market.get("vix")), entry_breadth=_f(market.get("breadth_above_200d")),
+            exit_cause=cause, post_exit=post_exit, hold_mfe=hold_path["mfe"] if hold_path else None,
+            take_profit_pct=_f(policy.take_profit_pct) if policy is not None else None,
         )
         record = _record(
             strategy_id=lot.strategy_id, strategy_type=strategy_type, trial_id=None,
@@ -456,8 +607,9 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
             holding={"sessions": sessions, "minutes": trade["holding_minutes"], "rule_sessions": max_hold,
                      "relation": holding_relation(sessions, max_hold)},
             regime=_regime(db, lot.symbol, opened_at, cache),
-            exit={"cause": exit_cause(trade["exit_reason"], held_sessions=sessions, max_holding_sessions=max_hold),
-                  "raw_reason": trade["exit_reason"], "reasons_by_quantity": trade["exit_reasons"]},
+            exit={"cause": cause, "raw_reason": trade["exit_reason"], "reasons_by_quantity": trade["exit_reasons"]},
+            post_exit=post_exit,
+            excursion=hold_path,
             meta_label=({"decision": meta.get("decision"), "probability": meta.get("probability"),
                          "mode": meta.get("mode"), "status": meta.get("status")} if meta else None),
             mistakes={"primary": classification.get("primary_mistake"), "all": classification.get("mistakes") or []},
@@ -478,7 +630,7 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
 def run_trade_attribution(db: Session, *, now: Optional[datetime] = None, lookback_days: int = 120) -> dict:
     now = now or datetime.now(UTC)
     since = now - timedelta(days=lookback_days)
-    trial_rows = attribute_trials(db, since=since)
+    trial_rows = attribute_trials(db, since=since, now=now)
     trip_rows = attribute_round_trips(db, since=since, now=now)
     return {"trial_lots_recorded": len(trial_rows), "round_trips_recorded": len(trip_rows),
             "coverage": attribution_coverage(db, since=since)}
@@ -562,7 +714,8 @@ def attribution_row_out(row: StockTradeAttribution) -> dict:
         "signal_quality": detail.get("signal_quality"), "slippage": detail.get("slippage"),
         "holding": detail.get("holding"), "regime": detail.get("regime"), "exit": detail.get("exit"),
         "meta_label": detail.get("meta_label"), "mistakes": detail.get("mistakes"),
-        "diagnosis": detail.get("diagnosis"),
+        "diagnosis": detail.get("diagnosis"), "post_exit": detail.get("post_exit"),
+        "excursion": detail.get("excursion"),
         "attribution_sha256": row.attribution_sha256,
     }
 

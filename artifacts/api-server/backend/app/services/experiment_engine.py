@@ -25,6 +25,12 @@ applied the result.  This module lets the bot run that loop itself.
 3. **Governed adoption.**  An adopted candidate is written to the strategy
    row's parameters with the same ``strategy_governance`` audit action the
    one-time seed steps check, so the seed never overrides the bot's decision.
+   Exit templates (``stop_width``, ``time_stop``; triggered by the exit flags
+   ``premature_stop``, ``gave_back_gains`` and ``held_too_long``) write the
+   row's ``stop_loss_pct`` / ``max_holding_sessions``, which the strategy's
+   exit policy reads (``strategy_execution_policy.exit_policy_for``); the
+   broker legs of lots already open are left as they were opened, the new
+   stop applies to entries after the change.
    Every experiment, adoption and verdict is an ``experiment_engine`` audit
    row: the ledger needs no migration and is the only state.
 4. **Forward verdict** (``review_changes``).  After ``min_trades`` closed
@@ -46,6 +52,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Mapping, Optional
 
 import numpy as np
@@ -63,6 +70,7 @@ ACTION_EXPERIMENT = "experiment"
 ACTION_ADOPTED = "change_adopted"
 ACTION_VERDICT = "change_verdict"
 GOVERNANCE_EVENT = "strategy_governance"
+EXIT_POLICY_ACTION = "exit_policy_update"
 ACTIVE_STATUSES = ("paper_trading_active", "paper_trading_candidate")
 SOURCES = ("scheduled_round_trip", "exploration_round_trip")
 WINDOWS = ("all", "2015+", "2020+")
@@ -87,6 +95,18 @@ class Template:
     candidates: tuple
     label: Callable[[dict], str]
     describe: Callable[[dict], str]
+    # ``gate`` templates turn an entry gate; ``exit`` templates change the
+    # exit geometry (stop / time stop) and have their own candidates for the
+    # short-term reversion pair, whose tested exits are wider and shorter.
+    kind: str = "gate"
+    reversion_candidates: Optional[tuple] = None
+
+    def candidates_for(self, strategy_type: str) -> tuple:
+        from app.services.gate_replay import REVERSION
+
+        if self.reversion_candidates is not None and strategy_type in REVERSION:
+            return self.reversion_candidates
+        return self.candidates
 
 
 def _market_label(candidate: dict) -> str:
@@ -118,6 +138,22 @@ def _earnings_describe(candidate: dict) -> str:
     return "no earnings blackout" if not n else f"no entry when an earnings report falls within the next {n} sessions"
 
 
+def _stop_label(candidate: dict) -> str:
+    return f"stop{candidate['stop_loss_pct'] * 100:g}"
+
+
+def _stop_describe(candidate: dict) -> str:
+    return f"{candidate['stop_loss_pct']:.0%} broker-side stop (target and time stop unchanged)"
+
+
+def _hold_label(candidate: dict) -> str:
+    return f"hold{candidate['max_holding_sessions']}"
+
+
+def _hold_describe(candidate: dict) -> str:
+    return f"time stop after {candidate['max_holding_sessions']} sessions (stop and target unchanged)"
+
+
 # A gate the gate-cost audit flags ``costly`` for a strategy (``gate_cost
 # .costly_gate_lessons``) is a lesson too: it plans the same template, whose
 # first candidate is always the gate turned off, under the same rule.
@@ -134,8 +170,23 @@ TEMPLATES = (
              "earnings_blackout_sessions", "earnings_blackout_update",
              ({"earnings_blackout_sessions": 0}, {"earnings_blackout_sessions": 10}, {"earnings_blackout_sessions": 20}),
              _earnings_label, _earnings_describe),
+    # Exit geometry: a stop that keeps getting hit before a recovery, or a
+    # time stop that keeps closing trades past their best gain, is tested as
+    # a stop width / time stop change against the strategy's current exits.
+    Template("stop_width", frozenset({"premature_stop"}), "stop_loss_pct", EXIT_POLICY_ACTION,
+             ({"stop_loss_pct": 0.02}, {"stop_loss_pct": 0.03}, {"stop_loss_pct": 0.05}),
+             _stop_label, _stop_describe, kind="exit",
+             reversion_candidates=({"stop_loss_pct": 0.07}, {"stop_loss_pct": 0.10}, {"stop_loss_pct": 0.15})),
+    Template("time_stop", frozenset({"held_too_long", "gave_back_gains"}), "max_holding_sessions",
+             EXIT_POLICY_ACTION,
+             ({"max_holding_sessions": 10}, {"max_holding_sessions": 20}, {"max_holding_sessions": 30}),
+             _hold_label, _hold_describe, kind="exit",
+             reversion_candidates=({"max_holding_sessions": 5}, {"max_holding_sessions": 10},
+                                   {"max_holding_sessions": 15})),
 )
 TEMPLATE_BY_NAME = {template.name: template for template in TEMPLATES}
+GATE_TEMPLATES = tuple(template for template in TEMPLATES if template.kind == "gate")
+EXIT_TEMPLATES = tuple(template for template in TEMPLATES if template.kind == "exit")
 
 
 def templates_for(triggers: Iterable[str]) -> list[Template]:
@@ -143,13 +194,26 @@ def templates_for(triggers: Iterable[str]) -> list[Template]:
     return [template for template in TEMPLATES if template.triggers & wanted]
 
 
-def current_setup(parameters: Optional[Mapping]) -> dict:
-    """The strategy's live gate setup; the earnings blackout falls back to the account-wide setting."""
+def current_setup(parameters: Optional[Mapping], strategy_type: Optional[str] = None) -> dict:
+    """The strategy's live setup: its gates and, given its type, the exits its policy trades with.
+
+    The earnings blackout falls back to the account-wide setting.  The exit
+    keys come from ``exit_policy_for`` (class default with the row's
+    overrides), so the baseline replays the exits the strategy really uses;
+    without a strategy type they stay ``None`` (the replay's fixed barrier).
+    """
     from app.services.gate_replay import setup_from_parameters
+    from app.services.strategy_execution_policy import exit_policy_for
 
     setup = setup_from_parameters(parameters)
     if (parameters or {}).get("earnings_blackout_sessions") is None:
         setup["earnings_blackout_sessions"] = int(settings.paper_earnings_blackout_sessions or 0)
+    if strategy_type:
+        policy = exit_policy_for(SimpleNamespace(strategy_type=strategy_type, parameters=dict(parameters or {})))
+        if policy is not None:
+            setup["stop_loss_pct"] = float(policy.stop_loss_pct) if policy.stop_loss_pct is not None else None
+            setup["take_profit_pct"] = float(policy.take_profit_pct) if policy.take_profit_pct is not None else None
+            setup["max_holding_sessions"] = int(policy.max_holding_sessions) if policy.max_holding_sessions else None
     return setup
 
 
@@ -298,9 +362,9 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
     """Replay the strategy under its current setup and each candidate; apply the rule."""
     from app.services.gate_replay import window_rows
 
-    baseline = current_setup(getattr(strategy, "parameters", None))
+    baseline = current_setup(getattr(strategy, "parameters", None), strategy.strategy_type)
     setups = {BASELINE: baseline}
-    for candidate in template.candidates:
+    for candidate in template.candidates_for(strategy.strategy_type):
         setup = {**baseline, **candidate}
         if setup == baseline:
             continue
@@ -352,16 +416,18 @@ def _apply_parameters(row: Strategy, changes: Mapping[str, Any]) -> dict:
 
 def adopt_change(db: Session, strategy: Strategy, experiment: dict, *, now: datetime, recent_rows: list) -> dict:
     template = TEMPLATE_BY_NAME[experiment["template"]]
-    candidate = {key: experiment["adopted_setup"][key] for key in template.candidates[0]}
+    candidate = {key: experiment["adopted_setup"][key] for key in template.candidates_for(strategy.strategy_type)[0]}
     before = _apply_parameters(strategy, candidate)
     after = {key: (strategy.parameters or {}).get(key) for key in candidate}
     change_id = hashlib.sha256(f"{strategy.id}:{template.name}:{now.isoformat()}".encode()).hexdigest()[:12]
+    untouched = ("Entry gates are unchanged; lots already open keep the legs they were opened with."
+                 if template.kind == "exit" else "Sells and exits are unchanged.")
     write_audit_log(
         db, event_type=GOVERNANCE_EVENT, entity_type="strategy", entity_id=strategy.id,
         action=template.governance_action, status="complete",
         message=(f"experiment {change_id}: {experiment['adopted_description']}; adopted by the experiment engine "
                  f"after the {experiment['trigger']} lesson repeated and the pre-registered backtest rule passed. "
-                 "Sells and exits are unchanged."),
+                 + untouched),
         payload=_clean({**candidate, "source": "experiment_engine", "change_id": change_id, "paper_only": True}),
     )
     recent = _recent_performance(recent_rows, experiment["trigger"], limit=RECENT_TRADES)
@@ -613,7 +679,10 @@ def scoreboard_changes(db: Session) -> list[dict]:
 
 def experiment_ledger(db: Session, *, limit: int = 30) -> dict:
     runs = _history_rows(db, ACTION_RUN, 1)
-    return {"rule": RULE, "templates": [{"name": t.name, "triggers": sorted(t.triggers), "key": t.key,
-                                         "candidates": [t.label(c) for c in t.candidates]} for t in TEMPLATES],
+    return {"rule": RULE, "templates": [{"name": t.name, "kind": t.kind, "triggers": sorted(t.triggers), "key": t.key,
+                                         "candidates": [t.label(c) for c in t.candidates],
+                                         "reversion_candidates": ([t.label(c) for c in t.reversion_candidates]
+                                                                  if t.reversion_candidates else None)}
+                                        for t in TEMPLATES],
             "changes": adopted_changes(db), "experiments": experiment_history(db, limit=limit),
             "latest_run": (runs[0].payload if runs else None), "paper_only": True}

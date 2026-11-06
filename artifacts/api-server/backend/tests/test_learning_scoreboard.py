@@ -138,7 +138,7 @@ def test_changes_split_results_before_and_after(db):  # noqa: F811
     account, *_ = _book(db)
     trade_attribution.attribute_round_trips(db, account_id=account.id, earnings_lookup=None)
     changes = board.build_learning_scoreboard(db, now=NOW)["changes"]
-    assert [change["key"] for change in changes] == ["loss_learning", "news_symbols", "market_context"]
+    assert [change["key"] for change in changes] == ["loss_learning", "news_symbols", "market_context", "exit_autopsy"]
     assert changes[0]["before"]["trades"] == 1 and changes[0]["after"]["trades"] == 0
 
 
