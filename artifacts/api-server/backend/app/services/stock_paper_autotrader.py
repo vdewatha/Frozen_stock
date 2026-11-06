@@ -8,7 +8,7 @@ submitted to Alpaca paper.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 import logging
 import math
@@ -354,6 +354,55 @@ def _policy_exits(db: Session, account, symbol: str, now: datetime, policy_rows:
 
 
 CANCELLED_ORDER_STATUSES = frozenset({"cancelled", "canceled", "expired"})
+
+
+ENTRY_IN_FLIGHT_STATUSES = NONTERMINAL_ORDER_STATUSES | {"uncertain_submission"}
+
+
+class EntryRetryBlocked(Exception):
+    """A same-day re-entry the session limits do not allow yet."""
+
+
+def _buy_key(db: Session, account_id: int, symbol: str, base: str, strategy_ids: set[int],
+             now: datetime) -> str:
+    """The idempotency key for this strategy's next entry in ``symbol`` today.
+
+    The base key is one per strategy, symbol and session. A second entry the
+    same day (a re-entry after a stop, or a retry after a rejected or
+    cancelled order) reused it with a new price and quantity, so the ledger
+    refused it as "Idempotency key was already used for a different order"
+    on every cycle for the rest of the day (DIA, GOOGL and TSLA ~230 times
+    each on 2026-11-05). Each ended entry now advances the key; one still in
+    flight keeps it, so a crash-and-retry still finds its own reservation.
+    """
+    day_start = datetime.combine(now.astimezone(ET).date(), datetime.min.time(), tzinfo=ET).astimezone(UTC)
+    rows = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account_id,
+        StockPaperOrder.symbol == symbol,
+        StockPaperOrder.side == "buy",
+        StockPaperOrder.leg_role.is_(None),
+        StockPaperOrder.strategy_id.in_(strategy_ids),
+        StockPaperOrder.source.in_({SCHEDULED_SOURCE, EXPLORATION_SOURCE}),
+        StockPaperOrder.created_at >= day_start,
+    ).all()
+    ended = [row for row in rows if row.status not in ENTRY_IN_FLIGHT_STATUSES]
+    if len(rows) > len(ended):
+        return sell_retry_key(base, len(ended))
+    if len(ended) >= settings.paper_max_entries_per_symbol_per_day:
+        raise EntryRetryBlocked(
+            f"{len(ended)} entries in {symbol} already ended this session for this strategy "
+            f"(limit {settings.paper_max_entries_per_symbol_per_day})")
+    wait = timedelta(minutes=settings.paper_entry_reject_retry_minutes)
+    rejected = [_aware(row.updated_at or row.created_at) for row in ended if row.status == "rejected"]
+    if rejected and wait and now - max(rejected) < wait:
+        raise EntryRetryBlocked(
+            f"the broker rejected the last entry in {symbol} at "
+            f"{max(rejected).astimezone(ET):%H:%M} ET; retry after {settings.paper_entry_reject_retry_minutes} minutes")
+    return sell_retry_key(base, len(ended))
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _sell_key(db: Session, account_id: int, symbol: str, base: str, now: datetime) -> str:
@@ -1133,6 +1182,15 @@ def _run_signal_cycle(db: Session) -> dict:
                 )
                 if side == "sell":
                     idempotency_key = _sell_key(db, account.id, symbol, idempotency_key, now)
+                else:
+                    try:
+                        idempotency_key = _buy_key(
+                            db, account.id, symbol, idempotency_key,
+                            {sid for sid, kind in type_by_id.items() if kind == strategy.strategy_type}, now)
+                    except EntryRetryBlocked as blocked:
+                        result.update({"status": "skipped", "reason": str(blocked)})
+                        results.append(result)
+                        continue
                 reserve_started = time.perf_counter()
                 try:
                     order = reserve_stock_paper_order(
