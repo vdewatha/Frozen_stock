@@ -118,16 +118,20 @@ def _earnings_describe(candidate: dict) -> str:
     return "no earnings blackout" if not n else f"no entry when an earnings report falls within the next {n} sessions"
 
 
+# A gate the gate-cost audit flags ``costly`` for a strategy (``gate_cost
+# .costly_gate_lessons``) is a lesson too: it plans the same template, whose
+# first candidate is always the gate turned off, under the same rule.
 TEMPLATES = (
-    Template("market_gate", frozenset({"missed_market_move", "market_down"}), "market_gate_sma", "market_gate_update",
+    Template("market_gate", frozenset({"missed_market_move", "market_down", "costly_market_gate"}),
+             "market_gate_sma", "market_gate_update",
              ({"market_gate_sma": 0}, {"market_gate_sma": 10}, {"market_gate_sma": 20}, {"market_gate_sma": 50}),
              _market_label, _market_describe),
-    Template("vix_gate", frozenset({"high_vix_entry"}), "vix_gate", "vix_gate_update",
+    Template("vix_gate", frozenset({"high_vix_entry", "costly_vix_gate"}), "vix_gate", "vix_gate_update",
              ({"vix_gate": None, "vix_level": None}, {"vix_gate": "below", "vix_level": 20.0},
               {"vix_gate": "below", "vix_level": 25.0}, {"vix_gate": "below", "vix_level": 30.0}),
              _vix_label, _vix_describe),
-    Template("earnings_blackout", frozenset({"missed_earnings"}), "earnings_blackout_sessions",
-             "earnings_blackout_update",
+    Template("earnings_blackout", frozenset({"missed_earnings", "costly_earnings_blackout"}),
+             "earnings_blackout_sessions", "earnings_blackout_update",
              ({"earnings_blackout_sessions": 0}, {"earnings_blackout_sessions": 10}, {"earnings_blackout_sessions": 20}),
              _earnings_label, _earnings_describe),
 )
@@ -386,6 +390,18 @@ def experiment_history(db: Session, *, limit: Optional[int] = None) -> list[dict
     return [row.payload or {} for row in _history_rows(db, ACTION_EXPERIMENT, limit)]
 
 
+def _costly_gate_lessons(db: Session) -> list[dict]:
+    """Gates the gate-cost audit flags costly, as lessons (an unreadable ledger is no lesson)."""
+    from app.services.gate_cost import costly_gate_lessons
+
+    try:
+        return costly_gate_lessons(db)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("experiment engine: gate-cost lessons unavailable: %s", exc)
+        return []
+
+
 def _load_vix(start: str):
     from app.services.strategies.vix_gate import download_vix_history
 
@@ -404,6 +420,8 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
         return base | {"status": "disabled"}
     attributions = current_attributions(db, sources=SOURCES)
     lessons = repeating_failures(attributions)
+    gate_lessons = _costly_gate_lessons(db)
+    lessons = [*lessons, *gate_lessons]
     strategies = {row.strategy_type: row for row in db.query(Strategy).filter(
         Strategy.current_status.in_(ACTIVE_STATUSES)).order_by(Strategy.id).all()}
     plan = plan_experiments(lessons, strategies, now=now, history=experiment_history(db),
@@ -459,6 +477,8 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
             experiments.append(experiment)
             db.commit()
     summary = {"status": "complete", "ran_at": _iso(now), "lessons": len(lessons), "planned": len(plan["planned"]),
+               "gate_cost_lessons": [{k: lesson.get(k) for k in ("strategy_type", "cause", "gate", "count",
+                                                                   "mean_net_bps")} for lesson in gate_lessons],
                "experiments": [{k: e.get(k) for k in ("strategy_type", "template", "trigger", "adopted",
                                                        "adopted_description", "change_id", "applied")}
                                for e in experiments],

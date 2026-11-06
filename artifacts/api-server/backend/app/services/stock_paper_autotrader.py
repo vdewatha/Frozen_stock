@@ -713,6 +713,8 @@ def _record_buy_outcomes(db: Session, results: list[dict], now: datetime) -> Non
     State signals repeat every minute; recording each repeat would flood the
     audit log, so a row is written only when the set of outcomes differs from
     the previous one. This is the evidence for why signals did not trade.
+    A BUY a strategy's own gate turned into a HOLD (``gated_action``) counts
+    as a withheld BUY, so ``gate_cost`` can score what the gate stopped.
     """
     from app.models import AuditLog
     from app.services.audit import write_audit_log
@@ -722,7 +724,8 @@ def _record_buy_outcomes(db: Session, results: list[dict], now: datetime) -> Non
             {"symbol": item.get("symbol"), "strategy": item.get("strategy"),
              "mode": item.get("mode", "governed"), "status": item.get("status"),
              "reason": item.get("reason")}
-            for item in results if item.get("signal_action") == "BUY"
+            for item in results
+            if item.get("signal_action") == "BUY" or item.get("gated_action") == "BUY"
         ),
         key=lambda row: (str(row["symbol"]), str(row["strategy"])),
     )
@@ -946,6 +949,12 @@ def _run_signal_cycle(db: Session) -> dict:
                 elif signal["signal_action"] in {"BUY", "SELL"}:
                     actionable.append((strategy, signal, result))
                     continue
+                elif signal.get("gated_action") == "BUY":
+                    # The strategy's own gate (VIX, regime) withheld a BUY:
+                    # recorded like any other blocked BUY (gate_cost.py scores
+                    # it); no order path.
+                    result.update({"status": "skipped", "gated_action": "BUY",
+                                   "reason": signal.get("gate_reason") or "strategy gate withheld the BUY"})
                 else:
                     result.update({"status": "observed", "reason": "signal is not actionable"})
             except StockPaperError as exc:

@@ -2830,10 +2830,16 @@ def _record_signal_generated(db: Session, signal: StrategySignal) -> None:
 
 def _stock_paper_signal_result(signal: StrategySignal, strategy_slug: str, observation: dict,
                                research_only: bool) -> dict:
-    return {"mode": "paper", "action": "signal_generated", "signal_id": signal.id, "symbol": signal.symbol,
-            "strategy": strategy_slug, "signal_action": signal.action, "confidence": str(signal.confidence),
-            "reference_price": str(observation["close"]), "execution_created": False,
-            "research_only": research_only}
+    result = {"mode": "paper", "action": "signal_generated", "signal_id": signal.id, "symbol": signal.symbol,
+              "strategy": strategy_slug, "signal_action": signal.action, "confidence": str(signal.confidence),
+              "reference_price": str(observation["close"]), "execution_created": False,
+              "research_only": research_only}
+    gated = (signal.features or {}).get("gated_action")
+    if gated and signal.action == "HOLD":
+        # A BUY the strategy's own gate (VIX, regime) turned into a HOLD: the
+        # cycle records it as a withheld BUY so the gate's cost is measurable.
+        result.update({"gated_action": gated, "gate_reason": signal.reason})
+    return result
 
 
 def _create_stock_paper_signal(

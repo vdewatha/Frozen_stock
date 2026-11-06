@@ -133,6 +133,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
     "app.tasks.jobs.experiment_engine_job": {"queue": "learning"},
     "app.tasks.jobs.experiment_verdict_job": {"queue": "learning"},
+    "app.tasks.jobs.gate_cost_job": {"queue": "learning"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
@@ -320,6 +321,15 @@ celery_app.conf.beat_schedule = {
     "experiment-verdict": {
         "task": "app.tasks.jobs.experiment_verdict_job",
         "schedule": crontab(minute=10, hour=17, day_of_week="mon-fri"),
+        "options": {"expires": 6 * 60 * 60},
+    },
+    # Each weekday after the close, once the session's trades are attributed
+    # (trade-attribution's last run is 16:35): score the BUYs every gate
+    # withheld, so a gate is judged on the trades it stopped, not only on the
+    # ones it let through.
+    "gate-cost": {
+        "task": "app.tasks.jobs.gate_cost_job",
+        "schedule": crontab(minute=20, hour=17, day_of_week="mon-fri"),
         "options": {"expires": 6 * 60 * 60},
     },
     # Weekly paper performance report, Saturday morning after the week closes.

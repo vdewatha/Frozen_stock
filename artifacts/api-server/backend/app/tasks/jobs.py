@@ -1778,6 +1778,19 @@ def experiment_verdict_job() -> dict:
 
 
 @celery_app.task
+def gate_cost_job() -> dict:
+    """Daily after the close: score the BUYs each entry gate withheld under the tested exits (paper only)."""
+    def work(db):
+        from app.services.gate_cost import record_gate_costs
+
+        result = record_gate_costs(db)
+        db.commit()
+        return {"job": "gate_cost_job", **result, "live_authorized": False}
+
+    return _run_job("gate_cost_job", work)
+
+
+@celery_app.task
 def weekly_performance_report_job() -> dict:
     """Store the weekend paper performance report (read-only on strategies)."""
     def work(db):
