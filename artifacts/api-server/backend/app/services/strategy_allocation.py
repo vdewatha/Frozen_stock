@@ -11,6 +11,13 @@ multiplier on the risk-rule ``max_risk_per_trade`` used to size its BUYs:
   down to ``paper_allocation_floor`` at ``-return_scale``; positive
   performance grows it only modestly, up to ``paper_allocation_ceiling`` at
   ``+return_scale``.  No strategy is ever zeroed.
+* Regime-aware (opt-in, ``paper_allocation_regime_enabled``): the weight is
+  also multiplied by the strategy's record in the *current* regime cell
+  (``regime_allocation``: SPY trend x VIX band x breadth), through the same
+  shrink-first function, and the product is clamped to the same floor and
+  ceiling.  A cell with too few trades contributes exactly 1.0, so the
+  overall record alone governs.  The cell and the multiplier are stored in
+  the weight's evidence and on each BUY's signal features (``allocation``).
 * Concentration cap: no single strategy may hold more than
   ``paper_allocation_max_share`` of the summed multipliers when at least
   three strategies are weighted; excess growth is trimmed (never below 1.0).
@@ -45,6 +52,7 @@ def bounds() -> dict:
         "return_scale": settings.paper_allocation_return_scale,
         "shrinkage_trades": settings.paper_allocation_shrinkage_trades,
         "max_share": settings.paper_allocation_max_share,
+        "regime_enabled": bool(settings.paper_allocation_regime_enabled),
     }
 
 
@@ -88,6 +96,21 @@ def apply_concentration_cap(weights: dict[str, float], max_share: float) -> dict
     return out
 
 
+def apply_regime(results: dict[str, dict], records: dict[str, dict], cell: dict, policy: dict) -> dict[str, dict]:
+    """Multiply each overall weight by its regime-cell multiplier, inside the floor / ceiling."""
+    from app.services.regime_allocation import combine, regime_multiplier
+
+    out = {}
+    for key, value in results.items():
+        regime = regime_multiplier(records.get(key), cell)
+        combined = combine(value["multiplier"], regime["regime_multiplier"], policy)
+        status = value["status"]
+        if regime["regime_status"] != "fallback_overall" and combined != value["multiplier"]:
+            status = "regime_reduced" if combined < value["multiplier"] else "regime_increased"
+        out[key] = value | regime | {"base_multiplier": value["multiplier"], "multiplier": combined, "status": status}
+    return out
+
+
 def compute_weights(db: Session, strategy_types: Iterable[str], *, now: datetime) -> dict[str, dict]:
     from app.services.trade_attribution import current_attributions
 
@@ -103,6 +126,14 @@ def compute_weights(db: Session, strategy_types: Iterable[str], *, now: datetime
         results[strategy_type] = performance_multiplier(returns, policy) | {
             "attribution_ids": [row.id for row in rows],
         }
+    if policy["regime_enabled"] and results:
+        from app.services.regime_allocation import current_regime, regime_records
+
+        regime = current_regime(db, now=now)
+        records = regime_records(db, results, now=now, policy=policy)
+        results = apply_regime(results, records, regime["cell"], policy)
+        for value in results.values():
+            value["regime_readings"] = regime["readings"]
     capped = apply_concentration_cap({key: value["multiplier"] for key, value in results.items()}, policy["max_share"])
     for key, value in capped.items():
         if value != results[key]["multiplier"]:
@@ -112,13 +143,13 @@ def compute_weights(db: Session, strategy_types: Iterable[str], *, now: datetime
     return results
 
 
-def session_weights(db: Session, strategy_types: Iterable[str], *, session_date: date,
-                    now: Optional[datetime] = None) -> dict[str, Decimal]:
-    """Stored weights for the session, computing any missing strategy once."""
+def session_weight_rows(db: Session, strategy_types: Iterable[str], *, session_date: date,
+                        now: Optional[datetime] = None) -> dict[str, StockAllocationWeight]:
+    """Stored weight rows for the session, computing any missing strategy once."""
     now = now or datetime.now(UTC)
     types = sorted(set(strategy_types))
     if not settings.paper_allocation_weighting_enabled or not types:
-        return {key: Decimal("1") for key in types}
+        return {}
     stored = {row.strategy_type: row for row in db.scalars(select(StockAllocationWeight).where(
         StockAllocationWeight.session_date == session_date,
         StockAllocationWeight.strategy_type.in_(types))).all()}
@@ -141,7 +172,33 @@ def session_weights(db: Session, strategy_types: Iterable[str], *, session_date:
                 stored[key] = db.scalar(select(StockAllocationWeight).where(
                     StockAllocationWeight.session_date == session_date,
                     StockAllocationWeight.strategy_type == key))
-    return {key: clamp(Decimal(str(stored[key].multiplier))) for key in types if stored.get(key) is not None}
+    return {key: row for key, row in stored.items() if row is not None}
+
+
+def session_weights(db: Session, strategy_types: Iterable[str], *, session_date: date,
+                    now: Optional[datetime] = None) -> dict[str, Decimal]:
+    """Stored weights for the session (1 for every strategy while weighting is off)."""
+    types = sorted(set(strategy_types))
+    if not settings.paper_allocation_weighting_enabled or not types:
+        return {key: Decimal("1") for key in types}
+    rows = session_weight_rows(db, types, session_date=session_date, now=now)
+    return {key: clamp(Decimal(str(rows[key].multiplier))) for key in types if key in rows}
+
+
+def allocation_features(row: Optional[StockAllocationWeight]) -> dict:
+    """What a BUY's signal records about the weight that sized it (attribution reads ``features.allocation``)."""
+    if row is None:
+        return {"multiplier": "1", "status": "unweighted", "regime_enabled": bool(settings.paper_allocation_regime_enabled)}
+    evidence = row.evidence or {}
+    return {
+        "multiplier": str(clamp(Decimal(str(row.multiplier)))), "status": row.status,
+        "session_date": row.session_date.isoformat(),
+        "base_multiplier": evidence.get("base_multiplier", float(row.multiplier)),
+        "regime_enabled": bool(settings.paper_allocation_regime_enabled),
+        "regime_cell": evidence.get("regime_cell"),
+        "regime_multiplier": evidence.get("regime_multiplier"),
+        "regime_status": evidence.get("regime_status"),
+    }
 
 
 def clamp(value: Decimal) -> Decimal:
@@ -160,7 +217,9 @@ def allocation_projection(db: Session, *, limit_sessions: int = 10) -> dict:
         history.append({"session_date": day.isoformat(), "weights": [
             {"strategy_type": row.strategy_type, "multiplier": float(row.multiplier), "status": row.status,
              "trades": (row.evidence or {}).get("trades"), "mean_return": (row.evidence or {}).get("mean_return"),
-             "shrunk_return": (row.evidence or {}).get("shrunk_return")}
+             "shrunk_return": (row.evidence or {}).get("shrunk_return"),
+             "regime_cell": (row.evidence or {}).get("regime_cell"),
+             "regime_multiplier": (row.evidence or {}).get("regime_multiplier")}
             for row in rows
         ]})
     return {

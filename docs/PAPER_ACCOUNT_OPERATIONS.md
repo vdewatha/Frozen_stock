@@ -73,3 +73,20 @@ continues collecting real research observations and can be returned to the
 execution universe only after its feed is complete. Missing bars are never
 synthesized, and this setting does not clear
 accounting, risk, or authorization gates.
+
+## Self-healing
+
+`self_healing_job` runs every 15 minutes (07:00-20:45 New York time, weekdays)
+on the `learning_fast` queue and fixes the routine stalls that used to wait
+for a person, each with a cooldown and a daily cap: a missing meta-label model
+(enqueues the retrain off hours), traded symbols with no fresh minute bar
+while SPY is current (re-runs the backfill for those symbols inside the
+existing repair budget) and learning scopes whose worker lease expired
+without a result (requeues them). Past a cap it raises a warning instead of
+acting. A starved fast lane, a heartbeat pause after a publish and
+monitoring pauses are reported only. Every action is a `self_healing` audit
+row; `GET /stock-paper/self-healing` (viewer) shows the cases, budgets and
+latest actions, and the weekly report's `changes` section narrates them with
+the governance, experiment-engine and gate-cost rows. It never touches
+orders, exits, the kill switch, risk settings or the resume logic. Switch
+with `self_healing_enabled`. See `reports/self-healing-20261106.md`.

@@ -1638,6 +1638,21 @@ def operations_health_alert_job() -> dict:
     return _run_job("operations_health_alert_job", work)
 
 
+@celery_app.task(soft_time_limit=120, time_limit=150)
+def self_healing_job() -> dict:
+    """Fix the known routine stalls that have a safe fix; report the rest (paper only).
+
+    On the fast learning lane: the stalls it fixes are mostly caused by long
+    jobs holding the learning queue, so it must not wait behind them.
+    """
+    def work(db):
+        from app.services.self_healing import run_self_healing
+
+        return {"job": "self_healing_job", **run_self_healing(db)}
+
+    return _run_job("self_healing_job", work)
+
+
 @celery_app.task
 def loss_feedback_job() -> dict:
     """Nightly paper loss feedback: attribute closed trades, review meta-label modes."""

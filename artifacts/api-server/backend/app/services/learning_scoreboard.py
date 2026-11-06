@@ -13,6 +13,9 @@ One read-only snapshot for the Learning > Scoreboard page:
 * ``changes``: what shipped when, with results before and after;
 * ``gate_costs``: what each entry gate cost, from the trades it stopped
   (``gate_cost.py``).
+* ``regime``: each strategy's record per regime cell and the regime-aware
+  multiplier the current cell would give (``regime_allocation.py``; off
+  until its backtest says otherwise).
 
 Nothing here writes; every number comes from attributions, orders, bars
 and the audit log.
@@ -439,6 +442,17 @@ def _gate_costs(db: Session) -> dict:
                 "gates": [], "by_strategy": [], "costly": []}
 
 
+def _regime(db: Session, now: datetime) -> dict:
+    """Each strategy's record per regime cell and the regime-aware multiplier (off until its backtest says so)."""
+    from app.services.regime_allocation import regime_allocation_view
+
+    try:
+        return regime_allocation_view(db, now=now)
+    except Exception:  # the scoreboard must render without SPY history or gauges
+        db.rollback()
+        return {"enabled": False, "status": "unavailable", "regime": None, "strategies": [], "paper_only": True}
+
+
 def _equity(db: Session) -> float:
     from app.services.stock_paper_ledger import active_paper_account
 
@@ -469,6 +483,7 @@ def build_learning_scoreboard(db: Session, *, now: Optional[datetime] = None) ->
         "news_vs_core": _news_vs_core(rows, ever),
         "changes": _changes(rows, _engine_changes(db)),
         "gate_costs": _gate_costs(db),
+        "regime": _regime(db, now),
         "paper_only": True,
     }
 

@@ -178,6 +178,14 @@ def cost_calibration(db: Session = Depends(get_db)) -> dict:
     return calibration_view(db)
 
 
+@router.get("/self-healing")
+def self_healing(db: Session = Depends(get_db)) -> dict:
+    """What the bot fixes on its own, what it did lately and what it leaves to a person (read-only)."""
+    from app.services.self_healing import self_healing_summary
+
+    return self_healing_summary(db)
+
+
 @router.get("/venue-qualification")
 def venue_qualification_status(db: Session = Depends(get_db)) -> dict:
     return paper_venue_qualification_status(db, active_paper_broker_name())
