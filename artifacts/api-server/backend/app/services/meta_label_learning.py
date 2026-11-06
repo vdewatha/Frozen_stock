@@ -142,7 +142,8 @@ def retrain_meta_label(db: Session, *, now: Optional[datetime] = None, force: bo
     events, merged = meta_label.merge_paper_outcomes(events, outcomes, prices, prices["SPY"],
                                                      weight=settings.meta_label_paper_outcome_weight)
     data_end = max(str(frame["date"].iloc[-1])[:10] for frame in prices.values())
-    policy = meta_label.ThresholdPolicy(min_win_rate=settings.meta_label_min_win_rate)
+    policy = meta_label.ThresholdPolicy(min_win_rate=settings.meta_label_min_win_rate,
+                                        objective=settings.meta_label_objective)
     candidate = meta_label.fit_final_model(events, meta_label.WalkForwardConfig(policy=policy), data_end=data_end)
     last_closed = max((row["closed_at"] for row in outcomes), default=None)
     candidate["trained_at"] = now.isoformat()
