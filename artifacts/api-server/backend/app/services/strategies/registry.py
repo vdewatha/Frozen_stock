@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from app.services.strategies.base import BaseStrategy
+from app.services.strategies.regime import apply_regime_gate
 from app.services.strategies.rules import RULE_SLUG_PREFIX, RuleStrategy
 from app.services.strategies.short_term_reversion import IBSMeanReversionStrategy, RSI2PullbackStrategy
 from app.services.strategies.technical import (
@@ -45,8 +46,10 @@ def is_known_strategy(slug: str) -> bool:
 
 def get_strategy(slug: str, parameters: Optional[dict] = None) -> BaseStrategy:
     if isinstance(slug, str) and slug.startswith(RULE_SLUG_PREFIX):
-        return RuleStrategy(parameters, slug=slug)
+        return apply_regime_gate(RuleStrategy(parameters, slug=slug), parameters)
     try:
-        return STRATEGY_REGISTRY[slug](parameters)
+        strategy = STRATEGY_REGISTRY[slug](parameters)
     except KeyError as exc:
         raise ValueError(f"Unknown strategy: {slug}") from exc
+    # Opt-in ``regime_gate`` parameter (see strategies/regime.py); a no-op otherwise.
+    return apply_regime_gate(strategy, parameters)
