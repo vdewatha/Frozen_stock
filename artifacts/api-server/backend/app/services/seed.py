@@ -316,6 +316,62 @@ def widen_rsi2_scope(db: Session) -> bool:
     return changed
 
 
+PAPER_EVIDENCE_PAUSE_ACTION = "paper_evidence_pause"
+# Weekly report 2026-W45 (2026-11-06): 11 closed paper trades, 2 wins (18%),
+# -184.3 bps per trade against +26.8 bps in its backtest; 2 or fewer wins in
+# 11 has about a 3% chance at a 50% win rate. Its monitor check
+# (model.realized_performance) was in breach, and retraining it per symbol was
+# the slowest part of the signal cycle.
+PAPER_EVIDENCE_PAUSES = {
+    "model_predictive_long": {"trades": 11, "wins": 2, "paper_bps": -184.3, "backtest_bps": 26.8,
+                              "source": "weekly report 2026-W45"},
+}
+
+
+def pause_paper_evidence_losers(db: Session) -> list[str]:
+    """One-time pause of strategies whose paper results contradict their backtest.
+
+    ``paused`` leaves the signal cycle (no new entries, no signal compute) but
+    keeps open lots' broker exit legs and the protective stop, and the governed
+    re-admission path can bring the strategy back. Acts only on a candidate or
+    research row with no earlier pause event, so an operator's later choice
+    stands.
+    """
+    from app.services.audit import write_audit_log
+
+    paused: list[str] = []
+    rows = db.query(Strategy).filter(Strategy.strategy_type.in_(tuple(PAPER_EVIDENCE_PAUSES))).order_by(Strategy.id).all()
+    for row in rows:
+        if row.current_status not in {"paper_trading_candidate", "research", "paper_trading_active"}:
+            continue
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance",
+            AuditLog.action == PAPER_EVIDENCE_PAUSE_ACTION,
+            AuditLog.entity_type == "strategy",
+            AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        evidence = PAPER_EVIDENCE_PAUSES[row.strategy_type]
+        old_status, row.current_status = row.current_status, "paused"
+        write_audit_log(
+            db,
+            event_type="strategy_governance",
+            entity_type="strategy",
+            entity_id=row.id,
+            action=PAPER_EVIDENCE_PAUSE_ACTION,
+            status="complete",
+            message=(f"{evidence['source']}: {evidence['wins']} wins in {evidence['trades']} closed paper trades, "
+                     f"{evidence['paper_bps']:+.1f} bps per trade against {evidence['backtest_bps']:+.1f} in its "
+                     "backtest; paused from paper trading. Open lots keep their exits."),
+            payload={"old_status": old_status, "new_status": "paused", **evidence, "paper_only": True},
+        )
+        paused.append(row.strategy_type)
+    if paused:
+        db.flush()
+    return paused
+
+
 REGIME_GATE_ACTION = "regime_gate_update"
 REGIME_GATE_REPORT = "reports/regime-gate-20261106.md"
 # The ADX ``range`` gate kept or raised expectancy and cut drawdown for these
@@ -503,6 +559,7 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "regime_gates_enabled": enable_regime_gates(db),
         "market_gates_enabled": enable_market_gates(db),
         "vix_gates_enabled": enable_vix_gates(db),
+        "paused_paper_losers": pause_paper_evidence_losers(db),
     }
 
 

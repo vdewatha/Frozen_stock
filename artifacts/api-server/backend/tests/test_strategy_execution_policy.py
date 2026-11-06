@@ -537,7 +537,7 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                        "dropped_ibs_trend_filter": False, "retired_scorecard_losers": ["moving_average_crossover"],
                        "widened_rsi2_scope": True, "regime_gates_enabled": [],
                        "market_gates_enabled": ["rsi2_pullback"],
-                       "vix_gates_enabled": []}
+                       "vix_gates_enabled": [], "paused_paper_losers": []}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
@@ -557,7 +557,7 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                                           "dropped_ibs_trend_filter": False, "retired_scorecard_losers": [],
                                           "widened_rsi2_scope": False, "regime_gates_enabled": [],
                                           "market_gates_enabled": [],
-                                          "vix_gates_enabled": []}
+                                          "vix_gates_enabled": [], "paused_paper_losers": []}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"
@@ -726,3 +726,23 @@ def test_lineup_vix_gates_channel_breakout_once_and_respects_operators(db):
     db.commit()
     assert ensure_strategy_lineup(db)["vix_gates_enabled"] == []
     assert "vix_gate" not in db.get(Strategy, breakout.id).parameters
+
+
+def test_lineup_pauses_model_predictive_long_once_and_respects_operators(db):
+    from app.services.seed import PAPER_EVIDENCE_PAUSE_ACTION, ensure_strategy_lineup
+
+    db.add(Strategy(name="Model Predictive Long", strategy_type="model_predictive_long", parameters={},
+                    is_active=True, current_status="paper_trading_candidate"))
+    db.commit()
+    assert ensure_strategy_lineup(db)["paused_paper_losers"] == ["model_predictive_long"]
+    db.commit()
+    row = db.query(Strategy).filter_by(strategy_type="model_predictive_long").one()
+    assert row.current_status == "paused"
+    audit = db.query(AuditLog).filter_by(action=PAPER_EVIDENCE_PAUSE_ACTION).one()
+    assert audit.payload["old_status"] == "paper_trading_candidate" and audit.payload["wins"] == 2
+
+    # An operator who re-admits it later is not overridden.
+    row.current_status = "paper_trading_candidate"
+    db.commit()
+    assert ensure_strategy_lineup(db)["paused_paper_losers"] == []
+    assert db.get(Strategy, row.id).current_status == "paper_trading_candidate"

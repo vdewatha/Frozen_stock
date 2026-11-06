@@ -205,6 +205,41 @@ def _volatility_scale_for(db: Session, symbol: str) -> dict:
     return volatility_size_scale(closes)
 
 
+# Per-cycle read cache (enabled by run_stock_paper_signal_cycle). The order
+# phase looked up each symbol's position twice and re-read its whole fill
+# history for every holdings check: ~2-12 queries per symbol, ~30 s of every
+# cycle at production's ~200 ms per query. Positions and fills only change
+# through reconciliation (another session), so one bulk read per cycle is the
+# same evidence. Pending orders change as the cycle trades and stay live.
+CYCLE_READS = "stock_paper_cycle_reads"
+
+
+def _cycle_reads(db: Session, account_id: int) -> dict | None:
+    info = getattr(db, "info", None)
+    reads = info.get(CYCLE_READS) if isinstance(info, dict) else None
+    if not isinstance(reads, dict):
+        return None
+    if reads.get("account_id") != account_id:
+        positions = db.query(StockPaperPosition).filter_by(account_id=account_id).all()
+        fills = db.query(StockPaperFill).filter_by(account_id=account_id).all()
+        order_ids = {row.order_id for row in fills if row.order_id is not None}
+        orders = {row.id: row for row in db.query(StockPaperOrder).filter(StockPaperOrder.id.in_(order_ids)).all()} \
+            if order_ids else {}
+        fills_by_symbol: dict[str, list] = {}
+        for fill in fills:
+            fills_by_symbol.setdefault(fill.symbol, []).append(fill)
+        reads.update(account_id=account_id, positions={row.symbol: row for row in positions},
+                     fills=fills_by_symbol, orders=orders, lots={})
+    return reads
+
+
+def _position(db: Session, account_id: int, symbol: str):
+    reads = _cycle_reads(db, account_id)
+    if reads is not None:
+        return reads["positions"].get(symbol)
+    return db.query(StockPaperPosition).filter_by(account_id=account_id, symbol=symbol).one_or_none()
+
+
 def _pending_orders(db: Session, account_id: int, symbol: str) -> list:
     return db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account_id,
@@ -236,11 +271,19 @@ def _strategy_lots(db: Session, account_id: int, symbol: str, type_by_id: dict) 
     in the current episode) and ``owner_ids`` (the strategy id of each
     type's latest buy in the episode, used to attribute its exits).
     """
-    fills = db.query(StockPaperFill).filter_by(account_id=account_id, symbol=symbol).all()
-    order_ids = {row.order_id for row in fills if row.order_id is not None}
-    orders = {
-        row.id: row for row in db.query(StockPaperOrder).filter(StockPaperOrder.id.in_(order_ids)).all()
-    } if order_ids else {}
+    reads = _cycle_reads(db, account_id)
+    if reads is not None:
+        cached = reads["lots"].get((symbol, id(type_by_id)))
+        if cached is not None:
+            return cached
+        fills = reads["fills"].get(symbol, [])
+        orders = reads["orders"]
+    else:
+        fills = db.query(StockPaperFill).filter_by(account_id=account_id, symbol=symbol).all()
+        order_ids = {row.order_id for row in fills if row.order_id is not None}
+        orders = {
+            row.id: row for row in db.query(StockPaperOrder).filter(StockPaperOrder.id.in_(order_ids)).all()
+        } if order_ids else {}
     holdings: dict[str, Decimal] = {}
     opened_at: dict[str, datetime] = {}
     buyers: set[str] = set()
@@ -265,8 +308,11 @@ def _strategy_lots(db: Session, account_id: int, symbol: str, type_by_id: dict) 
         if total <= 0:
             holdings = {key: Decimal("0") for key in holdings}
             opened_at, buyers, owner_ids, attributed = {}, set(), {}, True
-    return {"holdings": holdings, "attributed": attributed, "opened_at": opened_at, "buyers": buyers,
+    lots = {"holdings": holdings, "attributed": attributed, "opened_at": opened_at, "buyers": buyers,
             "owner_ids": owner_ids}
+    if reads is not None:
+        reads["lots"][(symbol, id(type_by_id))] = lots
+    return lots
 
 
 def _sell_owner_id(db: Session, account_id: int, symbol: str, type_by_id: dict,
@@ -325,7 +371,7 @@ def _policy_exits(db: Session, account, symbol: str, now: datetime, policy_rows:
     """
     if not policy_rows:
         return []
-    position = db.query(StockPaperPosition).filter_by(account_id=account.id, symbol=symbol).one_or_none()
+    position = _position(db, account.id, symbol)
     if not position or not position.quantity or position.quantity <= 0:
         return []
     holdings, attributed = _strategy_holdings(db, account.id, symbol, type_by_id)
@@ -445,7 +491,7 @@ def _protective_stop(db: Session, account, symbol: str, price: Decimal | None,
     stop_pct = Decimal(str(rules.get("position_stop_loss_pct", DEFAULT_POSITION_STOP_LOSS_PCT)))
     if stop_pct <= 0:
         return None
-    position = db.query(StockPaperPosition).filter_by(account_id=account.id, symbol=symbol).one_or_none()
+    position = _position(db, account.id, symbol)
     entry = getattr(position, "average_entry_price", None) if position else None
     if not position or position.quantity <= 0 or not entry or entry <= 0:
         return None
@@ -706,11 +752,13 @@ def run_stock_paper_signal_cycle(db: Session) -> dict:
     if not isinstance(info, dict):  # test doubles without a session info dict
         return _run_signal_cycle(db)
     info[LAUNCH_GATES_CACHE_ENABLED] = True
+    info[CYCLE_READS] = {}
     try:
         return _run_signal_cycle(db)
     finally:
         info.pop(LAUNCH_GATES_CACHE_ENABLED, None)
         info.pop(LAUNCH_GATES_CACHE, None)
+        info.pop(CYCLE_READS, None)
 
 
 def _run_signal_cycle(db: Session) -> dict:
