@@ -216,6 +216,12 @@ class Settings(BaseSettings):
     # One open (or pending) position per symbol across strategies: several
     # strategies holding the same name turned one bad move into 2-3 losses.
     paper_one_position_per_symbol: bool = True
+    # Same-day re-entries (app/services/stock_paper_autotrader.py _buy_key):
+    # each new entry after an ended one gets a fresh order key; these cap how
+    # often one strategy re-enters one symbol per session, and how soon it
+    # retries after the broker rejected an entry.
+    paper_max_entries_per_symbol_per_day: int = Field(default=3, ge=1, le=20)
+    paper_entry_reject_retry_minutes: int = Field(default=30, ge=0, le=390)
     # News symbol discovery (news_discovery.py): Alpaca news admits up to
     # ``news_discovery_max_symbols`` listed stocks outside the execution
     # universe for ``news_discovery_admit_days``. The strategies still decide
