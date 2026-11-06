@@ -131,6 +131,8 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.news_discovery_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.meta_label_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
+    "app.tasks.jobs.experiment_engine_job": {"queue": "learning"},
+    "app.tasks.jobs.experiment_verdict_job": {"queue": "learning"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
@@ -305,6 +307,20 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.strategy_discovery_job",
         "schedule": crontab(minute=0, hour=10, day_of_week="sun"),
         "options": {"expires": 12 * 60 * 60},
+    },
+    # Experiment engine: Sunday after discovery, replay the gate experiments the
+    # repeating loss lessons call for and adopt what passes the fixed rule.
+    "experiment-engine": {
+        "task": "app.tasks.jobs.experiment_engine_job",
+        "schedule": crontab(minute=0, hour=12, day_of_week="sun"),
+        "options": {"expires": 12 * 60 * 60},
+    },
+    # Each weekday after the close: verdicts on adopted experiments from their
+    # forward paper trades (revert what is not helping).
+    "experiment-verdict": {
+        "task": "app.tasks.jobs.experiment_verdict_job",
+        "schedule": crontab(minute=10, hour=17, day_of_week="mon-fri"),
+        "options": {"expires": 6 * 60 * 60},
     },
     # Weekly paper performance report, Saturday morning after the week closes.
     "weekly-performance-report": {

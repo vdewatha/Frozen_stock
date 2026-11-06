@@ -37,7 +37,7 @@ from app.services.stock_paper_ledger import (
     release_unsubmitted_reservation,
     reserve_stock_paper_order,
 )
-from app.services.earnings_calendar import earnings_blackout, earnings_known
+from app.services.earnings_calendar import earnings_blackout, earnings_known, strategy_blackout_sessions
 from app.services.market_events import cached_events, event_blackout
 from app.services.market_gauges import entry_context, gauge_size_scale, latest_gauges
 from app.services.entry_protections import (
@@ -1007,7 +1007,8 @@ def _run_signal_cycle(db: Session) -> dict:
                         result.update(protection_block)
                         results.append(result)
                         continue
-                    earnings_block = earnings_blackout(symbol, now)
+                    earnings_block = earnings_blackout(
+                        symbol, now, sessions=strategy_blackout_sessions(getattr(strategy, "parameters", None)))
                     if earnings_block is not None:
                         result.update(earnings_block)
                         results.append(result)
