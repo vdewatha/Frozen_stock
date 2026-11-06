@@ -401,6 +401,8 @@ class Settings(BaseSettings):
     paper_allocation_return_scale: float = Field(default=0.02, gt=0, le=1)
     paper_allocation_shrinkage_trades: int = Field(default=10, ge=0, le=500)
     paper_allocation_max_share: float = Field(default=0.5, gt=0, le=1)
+    # Regime-aware multiplier on the weight (reports/regime-allocation-20261106.md decides the default).
+    paper_allocation_regime_enabled: bool = False
     # Warn this long before a standing paper mandate expires.
     paper_mandate_expiry_warning_hours: int = Field(default=48, ge=1, le=24 * 30)
     # External alert delivery.  Channels are enabled only when configured.
