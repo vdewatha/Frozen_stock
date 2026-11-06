@@ -535,7 +535,8 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     db.commit()
     assert outcome == {"created": ["rsi2_pullback", "ibs_mean_reversion"], "demoted_moving_average_crossover": True,
                        "dropped_ibs_trend_filter": False, "retired_scorecard_losers": ["moving_average_crossover"],
-                       "widened_rsi2_scope": True, "regime_gates_enabled": []}
+                       "widened_rsi2_scope": True, "regime_gates_enabled": [],
+                       "vix_gates_enabled": ["ibs_mean_reversion"]}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
@@ -553,7 +554,8 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
     db.commit()
     assert ensure_strategy_lineup(db) == {"created": [], "demoted_moving_average_crossover": False,
                                           "dropped_ibs_trend_filter": False, "retired_scorecard_losers": [],
-                                          "widened_rsi2_scope": False, "regime_gates_enabled": []}
+                                          "widened_rsi2_scope": False, "regime_gates_enabled": [],
+                                          "vix_gates_enabled": []}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"
@@ -695,3 +697,29 @@ def test_lineup_gates_rsi_and_bollinger_reversion_once_and_respects_operators(db
     db.commit()
     assert ensure_strategy_lineup(db)["regime_gates_enabled"] == []
     assert "regime_gate" not in db.get(Strategy, rows["bollinger_mean_reversion"].id).parameters
+
+
+def test_lineup_vix_gates_reversion_and_breakout_once_and_respects_operators(db):
+    from app.services.seed import VIX_GATE_ACTION, ensure_strategy_lineup
+    from app.services.strategies.registry import get_strategy
+    from app.services.strategies.vix_gate import VixGatedStrategy
+
+    for slug in ("rsi2_pullback", "ibs_mean_reversion", "channel_breakout", "rsi_mean_reversion"):
+        db.add(Strategy(name=slug, strategy_type=slug, parameters={"k": 1}, is_active=True,
+                        current_status="research"))
+    db.commit()
+    assert sorted(ensure_strategy_lineup(db)["vix_gates_enabled"]) == ["channel_breakout", "ibs_mean_reversion"]
+    db.commit()
+    rows = {row.strategy_type: row for row in db.query(Strategy).all()}
+    assert rows["ibs_mean_reversion"].parameters == {"k": 1, "vix_gate": "above", "vix_level": 20}
+    assert rows["channel_breakout"].parameters["vix_gate"] == "below"
+    assert "vix_gate" not in rows["rsi_mean_reversion"].parameters
+    assert "vix_gate" not in rows["rsi2_pullback"].parameters
+    assert isinstance(get_strategy("ibs_mean_reversion", rows["ibs_mean_reversion"].parameters), VixGatedStrategy)
+    assert db.query(AuditLog).filter_by(action=VIX_GATE_ACTION).count() == 2
+
+    # An operator who removes the gate later is not overridden.
+    rows["ibs_mean_reversion"].parameters = {"k": 1}
+    db.commit()
+    assert ensure_strategy_lineup(db)["vix_gates_enabled"] == []
+    assert "vix_gate" not in db.get(Strategy, rows["ibs_mean_reversion"].id).parameters
