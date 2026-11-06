@@ -181,6 +181,32 @@ def _set_kill_switch(db: Session, enabled: bool) -> None:
         rule.value = (rule.value or {}) | {"kill_switch_enabled": enabled, "paper_only": True}
 
 
+def _chain_pause_context(db: Session, state: StockPaperRecoveryState, context: dict | None) -> dict | None:
+    """A detector pause that lands while recovery is already halted joins that halt.
+
+    Its own ``prior_status`` / ``prior_kill_switch`` would describe the halt it
+    landed in (not tradable), so explained-halt auto-resume could never act on
+    it: on 2026-11-06 watchdog pauses during the 03:00 monitor pause left the
+    bot waiting for an operator although both causes had cleared.  The new
+    pause instead records the chain of earlier pauses and inherits the first
+    one's pre-pause state; ``classify_recovery_halt`` must then explain every
+    pause in the chain, so nothing is resumed on the newest cause alone.
+    """
+    if not context or "prior_status" not in context or state.status not in HALTED_RECOVERY_STATUSES:
+        return context
+    previous = _latest_pause_event(db)
+    if previous is None:
+        return context
+    earlier = previous.payload or {}
+    return context | {
+        "chained_pause_event_ids": [*earlier.get("chained_pause_event_ids", []), previous.id],
+        "prior_status": earlier.get("prior_status"),
+        "prior_kill_switch": earlier.get("prior_kill_switch"),
+        "observed_prior_status": context.get("prior_status"),
+        "observed_prior_kill_switch": context.get("prior_kill_switch"),
+    }
+
+
 def enter_stock_recovery(
     db: Session,
     *,
@@ -196,6 +222,7 @@ def enter_stock_recovery(
         raise StockPaperError("Recovery flatten policy must be none or positions")
     now = _now()
     state = _state(db)
+    context = _chain_pause_context(db, state, context)
     state.status = "cooldown"
     state.flatten_policy = flatten_policy
     state.cooldown_until = now + cooldown
@@ -276,6 +303,9 @@ def restore_after_transient_heartbeat_pause(db: Session, account: StockPaperAcco
     if (
         pause is None
         or pause.actor != "stock_watchdog"
+        # A chained pause joins an earlier halt; the explained-halt path, with
+        # its full preflight, decides whether every cause in the chain cleared.
+        or payload.get("chained_pause_event_ids")
         or payload.get("prior_status") not in TRANSIENT_HEARTBEAT_RESTORABLE_STATUSES
         or payload.get("prior_kill_switch") is not False
         or not reasons
@@ -362,6 +392,23 @@ def _latest_pause_event(db: Session) -> StockPaperRecoveryEvent | None:
     )
 
 
+def _pause_classes(pause: StockPaperRecoveryEvent) -> tuple[set[str] | None, str]:
+    """Explained classes of one automated pause, or ``(None, why)`` when it is not explained."""
+    payload = pause.payload or {}
+    if pause.actor == "stock_watchdog":
+        reasons = payload.get("heartbeat_reasons") or []
+        if not reasons or not all(str(reason).endswith(" is stale") for reason in reasons):
+            return None, "Watchdog pause includes missing or future-dated evidence"
+        return {"stale_heartbeat"}, ""
+    if pause.actor == "stock_monitor":
+        keys = [str(key) for key in payload.get("monitor_breach_keys") or []]
+        unknown = sorted(key for key in keys if key not in MONITOR_KEY_CLASSES)
+        if not keys or unknown:
+            return None, "Monitoring breach is not an explained technical condition: " + (", ".join(unknown) or "unrecorded")
+        return {MONITOR_KEY_CLASSES[key] for key in keys}, ""
+    return None, f"Pause by {pause.actor} requires operator revalidation"
+
+
 def classify_recovery_halt(
     db: Session,
     *,
@@ -403,23 +450,25 @@ def classify_recovery_halt(
         return unexplained("An unexplained accounting residual requires operator review")
     if payload.get("prior_status") not in TRANSIENT_HEARTBEAT_RESTORABLE_STATUSES or payload.get("prior_kill_switch") is not False:
         return unexplained("Recovery was not tradable with the kill switch off before the pause")
+    chained_ids = [int(value) for value in payload.get("chained_pause_event_ids") or []]
+    chain = [pause]
+    if chained_ids:
+        earlier = {row.id: row for row in db.query(StockPaperRecoveryEvent).filter(
+            StockPaperRecoveryEvent.id.in_(chained_ids), StockPaperRecoveryEvent.action == "pause").all()}
+        if len(earlier) != len(set(chained_ids)):
+            return unexplained("An earlier pause in this halt is missing")
+        chain += [earlier[event_id] for event_id in chained_ids]
+        base["chained_pause_event_ids"] = chained_ids
     classes: set[str] = set()
-    if pause.actor == "stock_watchdog":
-        reasons = payload.get("heartbeat_reasons") or []
-        if not reasons or not all(str(reason).endswith(" is stale") for reason in reasons):
-            return unexplained("Watchdog pause includes missing or future-dated evidence")
-        classes.add("stale_heartbeat")
-    elif pause.actor == "stock_monitor":
-        keys = [str(key) for key in payload.get("monitor_breach_keys") or []]
-        unknown = sorted(key for key in keys if key not in MONITOR_KEY_CLASSES)
-        if not keys or unknown:
-            return unexplained(
-                "Monitoring breach is not an explained technical condition: " + (", ".join(unknown) or "unrecorded")
-            )
-        classes.update(MONITOR_KEY_CLASSES[key] for key in keys)
-    else:
-        return unexplained(f"Pause by {pause.actor} requires operator revalidation")
-    if "risk_drawdown_reset" in classes and pause.created_at and _ny_date(now) <= _ny_date(pause.created_at):
+    waiting_drawdown = False
+    for item in chain:
+        item_classes, why = _pause_classes(item)
+        if item_classes is None:
+            return unexplained(why if item is pause else f"Earlier pause {item.id}: {why}")
+        classes |= item_classes
+        if "risk_drawdown_reset" in item_classes and item.created_at and _ny_date(now) <= _ny_date(item.created_at):
+            waiting_drawdown = True
+    if waiting_drawdown:
         return base | {
             "class": "+".join(sorted(classes)),
             "reason": "Daily drawdown window has not reset; waiting for the next New York session",
@@ -429,7 +478,7 @@ def classify_recovery_halt(
     if account is not None and account.status == "halted":
         halt_reason = account.halt_reason or ""
         allowed = {
-            pause.reason or "",
+            *(item.reason or "" for item in chain),
             state.pause_reason or "",
             TRANSIENT_PROVIDER_HALT_REASON,
         }

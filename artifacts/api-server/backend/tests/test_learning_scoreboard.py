@@ -181,3 +181,19 @@ def test_a_partial_calendar_says_what_is_missing(db):  # noqa: F811
     market_events.refresh_market_events(db, now=NOW, fomc=lambda: [datetime(2026, 12, 9).date()])
     check = _checks(board.build_learning_scoreboard(db, now=NOW))["event_calendar"]
     assert check["status"] == "warning" and "needs FRED_API_KEY" in check["detail"]
+
+
+def test_a_canceled_unfilled_buy_is_not_a_second_holder(db):  # noqa: F811
+    # 2026-11-06: one strategy's ABBV buy was canceled unfilled, then Model
+    # Predictive Long bought ABBV; only one strategy ever held it.
+    account, *_ = _book(db)
+    macd, mpl = _strategy(db, "macd_momentum"), _strategy(db, "model_predictive_long")
+    ledger = _ledger(db, account)
+    canceled = ledger.order(symbol="ABBV", side="buy", quantity=3, strategy=macd, order_class="bracket",
+                            stop="97.00", take="106.00", created=at(15))
+    canceled.status = "canceled"
+    ledger.order(symbol="ABBV", side="buy", quantity=3, strategy=mpl, order_class="bracket",
+                 stop="97.00", take="106.00", created=at(16))
+    db.flush()
+    checks = _checks(board.build_learning_scoreboard(db, now=NOW))
+    assert checks["one_per_symbol"]["status"] == "ok", checks["one_per_symbol"]
