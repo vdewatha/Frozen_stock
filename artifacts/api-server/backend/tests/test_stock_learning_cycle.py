@@ -1580,6 +1580,7 @@ def test_schedule_control_is_viewer_read_and_operator_write():
             "set_scheduled_learning_control",
             return_value=object(),
         ),
+        patch.object(learning_cycle_api, "drift_retraining_projection", return_value={"enabled": True}),
         patch.object(learning_cycle_api, "write_audit_log"),
     ):
         with _client() as client:

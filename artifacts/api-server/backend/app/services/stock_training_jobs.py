@@ -364,8 +364,11 @@ def create_stock_training_job(
 ) -> tuple[StockTrainingJob, bool]:
     if type(horizon_bars) is not int or not 1 <= horizon_bars <= 252 or type(seed) is not int:
         raise StockTrainingError("A supported integer horizon and seed are required")
-    if trigger not in {"manual", "scheduled"}:
-        raise StockTrainingError("Only manual or scheduled challenger triggers are allowed")
+    if trigger not in {"manual", "scheduled", "drift"}:
+        raise StockTrainingError("Only manual, scheduled, or drift challenger triggers are allowed")
+    # Scheduled and drift-triggered challengers are automation-owned: capacity
+    # or holdout exhaustion defers them instead of failing the request.
+    automated = trigger in {"scheduled", "drift"}
     _lock_training_admission(db)
     try:
         dataset = create_stock_dataset(
@@ -414,7 +417,7 @@ def create_stock_training_job(
         StockTrainingJob.status.in_(("queued", "running", "cancel_requested"))
     ).with_for_update()).all())
     if active_count >= MAX_ACTIVE_JOBS:
-        if trigger != "scheduled":
+        if not automated:
             raise StockTrainingError("Stock training admission is full; retry after an active job completes")
         reservation = None
         status, deferred_reason = "deferred", "Scheduled challenger deferred: bounded training admission is full"
@@ -426,7 +429,7 @@ def create_stock_training_job(
         try:
             reservation = _reserve_holdout(db, dataset, job_id)
         except HoldoutAlreadyReserved:
-            if trigger != "scheduled":
+            if not automated:
                 raise
             # A rolling challenger never reuses an evaluation holdout. The
             # core trainer requires one final untouched holdout, so defer it

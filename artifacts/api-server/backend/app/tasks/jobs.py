@@ -1515,6 +1515,19 @@ def explained_halt_auto_resume_job() -> dict:
     return _run_job("explained_halt_auto_resume_job", work)
 
 
+@celery_app.task(soft_time_limit=120, time_limit=150)
+def drift_retrain_job() -> dict:
+    """Every 15 minutes: a persistent model.* monitoring breach starts one governed
+    challenger cycle (trigger "drift", every gate intact); the 18:30 calendar
+    retrain stays as the fallback. Paper only; never touches the active binding."""
+    def work(db):
+        from app.services.drift_retraining import run_drift_retraining
+
+        return {"job": "drift_retrain_job", **run_drift_retraining(db)}
+
+    return _run_job("drift_retrain_job", work)
+
+
 @celery_app.task
 def strategy_readmission_job() -> dict:
     """Schedule governed re-admission cycles for edge-decay-suspended strategies."""

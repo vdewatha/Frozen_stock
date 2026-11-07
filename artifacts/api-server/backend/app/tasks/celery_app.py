@@ -126,6 +126,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.paper_auto_revalidation_job": {"queue": "risk"},
     "app.tasks.jobs.explained_halt_auto_resume_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
+    "app.tasks.jobs.drift_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
     "app.tasks.jobs.trade_attribution_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.news_discovery_job": {"queue": LEARNING_FAST_QUEUE},
@@ -275,6 +276,14 @@ celery_app.conf.beat_schedule = {
         "options": {"expires": 4 * 60},
     },
     "strategy-readmission": {"task": "app.tasks.jobs.strategy_readmission_job", "schedule": 60 * 15},
+    # Drift-triggered retraining: a persistent model.* monitoring breach starts
+    # one governed challenger cycle (trigger "drift") instead of waiting for the
+    # 18:30 calendar retrain; one at a time, cooldown, back-off, daily cap.
+    "drift-retrain": {
+        "task": "app.tasks.jobs.drift_retrain_job",
+        "schedule": 60 * 15,
+        "options": {"expires": 10 * 60},
+    },
     # Paper loss feedback loop: attribute closed trades and review per-strategy
     # meta-label modes after the close (before the 19:00 loss-driven
     # experiments); governed parameter sets advance with their cycles.
