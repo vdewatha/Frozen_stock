@@ -6,6 +6,7 @@ from app.services.strategies.base import BaseStrategy
 from app.services.strategies.market_hedge import MarketHedgeStrategy, fenced_class
 from app.services.strategies.regime import apply_regime_gate
 from app.services.strategies.rules import RULE_SLUG_PREFIX, RuleStrategy
+from app.services.strategies.scope import apply_scope
 from app.services.strategies.short_term_reversion import IBSMeanReversionStrategy, RSI2PullbackStrategy
 from app.services.strategies.vix_gate import apply_vix_gate
 from app.services.strategies.technical import (
@@ -60,8 +61,10 @@ def get_strategy(slug: str, parameters: Optional[dict] = None) -> BaseStrategy:
 
 
 def _apply_gates(strategy: BaseStrategy, parameters: Optional[dict]) -> BaseStrategy:
-    # Opt-in ``regime_gate`` (strategies/regime.py) and ``vix_gate``
-    # (strategies/vix_gate.py) parameters; each is a no-op when unset.  The
-    # strategy itself is a ``fenced_class`` (strategies/market_hedge.py), so
-    # no strategy but the hedge can buy a hedge instrument.
-    return apply_vix_gate(apply_regime_gate(strategy, parameters), parameters)
+    # Opt-in ``regime_gate`` (strategies/regime.py), ``vix_gate``
+    # (strategies/vix_gate.py) and ``scope`` (strategies/scope.py, written by
+    # the experiment engine from the signal autopsy) parameters; each is a
+    # no-op when unset.  The strategy itself is a ``fenced_class``
+    # (strategies/market_hedge.py), so no strategy but the hedge can buy a
+    # hedge instrument.
+    return apply_scope(apply_vix_gate(apply_regime_gate(strategy, parameters), parameters), parameters)

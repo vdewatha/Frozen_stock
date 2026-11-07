@@ -126,6 +126,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.paper_auto_revalidation_job": {"queue": "risk"},
     "app.tasks.jobs.explained_halt_auto_resume_job": {"queue": "risk"},
     "app.tasks.jobs.strategy_readmission_job": {"queue": "learning"},
+    "app.tasks.jobs.drift_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
     "app.tasks.jobs.trade_attribution_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.news_discovery_job": {"queue": LEARNING_FAST_QUEUE},
@@ -135,6 +136,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.experiment_verdict_job": {"queue": "learning"},
     "app.tasks.jobs.gate_cost_job": {"queue": "learning"},
     "app.tasks.jobs.setup_shadow_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.signal_autopsy_job": {"queue": "learning"},
     "app.tasks.jobs.paper_cost_calibration_job": {"queue": "learning"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.engine_audit_job": {"queue": "learning"},
@@ -276,6 +278,14 @@ celery_app.conf.beat_schedule = {
         "options": {"expires": 4 * 60},
     },
     "strategy-readmission": {"task": "app.tasks.jobs.strategy_readmission_job", "schedule": 60 * 15},
+    # Drift-triggered retraining: a persistent model.* monitoring breach starts
+    # one governed challenger cycle (trigger "drift") instead of waiting for the
+    # 18:30 calendar retrain; one at a time, cooldown, back-off, daily cap.
+    "drift-retrain": {
+        "task": "app.tasks.jobs.drift_retrain_job",
+        "schedule": 60 * 15,
+        "options": {"expires": 10 * 60},
+    },
     # Paper loss feedback loop: attribute closed trades and review per-strategy
     # meta-label modes after the close (before the 19:00 loss-driven
     # experiments); governed parameter sets advance with their cycles.
@@ -344,6 +354,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.setup_shadow_job",
         "schedule": crontab(minute=25, hour=17, day_of_week="mon-fri"),
         "options": {"expires": 6 * 60 * 60},
+    },
+    # Sunday before the experiment engine (noon): contrast the entry features
+    # of each strategy's losses with its wins and record the scope candidates
+    # the engine's scope template replays (signal_autopsy.py).
+    "signal-autopsy": {
+        "task": "app.tasks.jobs.signal_autopsy_job",
+        "schedule": crontab(minute=30, hour=11, day_of_week="sun"),
+        "options": {"expires": 12 * 60 * 60},
     },
     # Saturday, before the weekly report and the Sunday experiment run: fit the
     # replay cost model to the week's paper fills so experiments and gate-cost

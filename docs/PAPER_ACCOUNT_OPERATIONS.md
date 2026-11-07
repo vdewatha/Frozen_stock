@@ -174,3 +174,24 @@ shows the map, today's budget and what each cycle took and skipped; the
 learning scoreboard's `exploration` section lists trades until the next
 verdict per watched item. Paper only. See
 `reports/exploration-budget-20261106.md`.
+
+## Drift-triggered retraining
+
+A persistent `model.*` monitoring breach (prediction-distribution drift,
+input-feature drift, calibration or realised-performance degradation) starts
+one governed learning cycle with trigger `drift` at once, instead of waiting
+for the 18:30 calendar retrain. The cycle is the normal one (fresh holdout,
+challenger, validation, forward paper trial, promotion gates); the trigger
+only creates it, with the monitoring snapshot id, the breach keys and the
+breach episodes in the cycle's lineage. `drift_retrain_job` (every 15 minutes,
+`learning`) applies the guard rails: one open drift cycle at a time, a
+`drift_retrain_cooldown_hours` (48) cooldown after a cycle ends, exponential
+back-off (`drift_retrain_backoff_factor`) after repeated failures, a breach
+episode a promoted cycle already answered never re-triggers,
+`drift_retrain_max_per_day` (1), and cycle creation only inside a regular
+session (open + 15 min to close − 30 min: the preflight needs the live
+verified feed and the dataset must be captured on its cutoff day). The
+operator pause of scheduled learning pauses it; `drift_retrain_enabled` turns
+it off. `GET /stock/learning-cycles/schedule-control` carries the state under
+`drift_retraining`; the ledger is the `drift_retrain` audit rows. See
+`reports/drift-retraining-20261106.md`.

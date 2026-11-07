@@ -356,6 +356,15 @@ class Settings(BaseSettings):
     strategy_readmission_quarantine_hours: int = Field(default=72, ge=1, le=24 * 90)
     strategy_readmission_backoff_factor: int = Field(default=2, ge=1, le=10)
     strategy_readmission_max_attempts: int = Field(default=3, ge=1, le=20)
+    # Drift-triggered retraining (app/services/drift_retraining.py): a
+    # persistent model.* monitoring breach starts one governed challenger
+    # cycle (trigger "drift"; every gate intact) instead of waiting for the
+    # 18:30 calendar retrain.  One open drift cycle at a time, a cooldown after
+    # a cycle ends, exponential back-off on repeated failures, a daily cap.
+    drift_retrain_enabled: bool = True
+    drift_retrain_cooldown_hours: int = Field(default=48, ge=1, le=24 * 90)
+    drift_retrain_max_per_day: int = Field(default=1, ge=0, le=20)
+    drift_retrain_backoff_factor: int = Field(default=2, ge=1, le=10)
     # Paper-only loss feedback loop (app/services/loss_feedback.py).
     # Attribution window feeding the research agenda and weights.
     loss_feedback_lookback_days: int = Field(default=30, ge=1, le=365)
