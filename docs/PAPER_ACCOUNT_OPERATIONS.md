@@ -151,6 +151,30 @@ minutes), later runs refresh bars older than a week. Switch with
 the bias and holds the rule that decided the default. See
 `reports/survivorship-20261106.md`.
 
+## Exploration budget: learning lots go where evidence is scarcest
+
+Learning-sized trades (0.25% of equity with the one-share floor, from
+candidate and research strategies and from news-found symbols) no longer go
+wherever a signal fires. Each paper cycle builds an evidence map
+(`app/services/exploration_budget.py`): per learning strategy, per regime
+cell, per setup-shadow candidate and per watched experiment change, the
+forward trades so far, the trades still needed to reach that item's evidence
+minimum and the Wilson half-width of its win rate. Every eligible learning
+BUY gets a priority (trades needed, weighted by the candidate's backtest
+expectancy, discounted by that strategy's lots already in flight) and the
+session's budget, `exploration_budget_fraction` of equity (1%), is allotted in
+priority order; the rest are skipped with the reason `exploration_budget` in
+the BUY outcome. An item with fewer than half its minimum trades and a
+positive backtest expectancy may trade up to `exploration_lift_max` (2x) the
+learning size, never above the scheduled size or any ledger cap; the
+multiplier and its reason are recorded in the signal's `features.exploration`
+and the ledger admits a lifted lot only from that record. Scheduled entries,
+exits and caps are untouched. `GET /stock-paper/exploration-budget` (viewer)
+shows the map, today's budget and what each cycle took and skipped; the
+learning scoreboard's `exploration` section lists trades until the next
+verdict per watched item. Paper only. See
+`reports/exploration-budget-20261106.md`.
+
 ## Drift-triggered retraining
 
 A persistent `model.*` monitoring breach (prediction-distribution drift,

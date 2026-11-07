@@ -38,6 +38,12 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
 )
 from app.services.earnings_calendar import earnings_blackout, earnings_known, strategy_blackout_sessions
+from app.services.exploration_budget import (
+    SKIP_REASON as EXPLORATION_BUDGET_REASON,
+    apply_lift,
+    plan_exploration,
+    record_plan,
+)
 from app.services.market_events import cached_events, event_blackout
 from app.services.market_gauges import breadth_gate_min, entry_context, gauge_size_scale, latest_gauges
 from app.services.entry_protections import (
@@ -959,6 +965,12 @@ def _run_signal_cycle(db: Session) -> dict:
     # these; they are decided here from one lookup and the reservation still
     # re-checks every order that passes.
     entry_limits = _entry_limit_state(db, account, rules)
+    # Exploration budget: this session's learning-sized lots go to the
+    # learning BUYs whose evidence is scarcest (exploration_budget.py), in
+    # priority order until the budget is spent.  Scheduled entries, exits
+    # and every cap are untouched; the plan never raises into the cycle.
+    exploration_plan = plan_exploration(db, account, signal_outcomes, strategies, news_admitted, now=now)
+    base["exploration_budget"] = exploration_plan.summary()
     # Time spent reserving (account row lock, gates, risk checks) and
     # dispatching (broker POST), so a slow orders phase shows its cause.
     order_ms = {"reserve": 0.0, "dispatch": 0.0}
@@ -1204,9 +1216,23 @@ def _run_signal_cycle(db: Session) -> dict:
                         result["allocation_weight"] = str(allocation_weight)
                     if exploring or news is not None:
                         # Learning-sized probes keep the exploration fraction;
-                        # sizing modes apply to scheduled entries only.
+                        # sizing modes apply to scheduled entries only.  The
+                        # exploration budget decides whether this lot is
+                        # taken this cycle and whether its evidence is scarce
+                        # enough to lift it (never above the scheduled size).
+                        lot = exploration_plan.decide(symbol, strategy.strategy_type)
+                        result["exploration"] = lot
+                        if lot["status"] == "skipped":
+                            result.update({"status": "skipped", "reason": EXPLORATION_BUDGET_REASON})
+                            results.append(result)
+                            continue
                         quantity = _quantity_for_buy(account, reference_price, rules, exploration=True,
                                                      size_scale=size_scale, allocation_weight=allocation_weight)
+                        if lot.get("multiplier", 1.0) > 1.0:
+                            quantity = apply_lift(
+                                quantity, lot["multiplier"],
+                                _quantity_for_buy(account, reference_price, rules, size_scale=size_scale))
+                            lot["lifted_quantity"] = str(quantity)
                     else:
                         quantity, result["sizing"] = _sized_quantity(
                             db, account, reference_price, rules, strategy_type=strategy.strategy_type,
@@ -1305,6 +1331,10 @@ def _run_signal_cycle(db: Session) -> dict:
                                 or {"multiplier": str(allocation_weight), "status": "unweighted"})
                 if side == "buy" and "sizing" in result:
                     _tag_signal(db, signal["signal_id"], "sizing", result["sizing"])
+                if side == "buy" and "exploration" in result:
+                    # The multiplier and its reason; the ledger admits a
+                    # lifted learning lot only from this record.
+                    _tag_signal(db, signal["signal_id"], "exploration", result["exploration"])
                 extra = {}
                 if side == "buy" and exit_plan is not None:
                     extra["exit_plan"] = exit_plan
@@ -1399,6 +1429,13 @@ def _run_signal_cycle(db: Session) -> dict:
     except Exception as exc:  # evidence only; never fail the cycle
         db.rollback()
         logger.info("buy outcome record unavailable: %s", exc.__class__.__name__)
+    try:
+        # What the exploration budget took and skipped this cycle, with the
+        # evidence map it ranked against (exploration_budget.py); evidence only.
+        record_plan(db, exploration_plan, results, now)
+    except Exception as exc:  # evidence only; never fail the cycle
+        db.rollback()
+        logger.info("exploration budget record unavailable: %s", exc.__class__.__name__)
     try:
         # Every candidate value of every gate template decided for this
         # cycle's BUYs from the states already loaded (setup_shadow.py);

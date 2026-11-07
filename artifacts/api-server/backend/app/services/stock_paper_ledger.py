@@ -2729,6 +2729,18 @@ def _open_exploration_lots(db: Session, account: StockPaperAccount, *, exclude_o
     return len(open_lots)
 
 
+def _exploration_lift(signal: StrategySignal) -> Decimal:
+    """The size multiplier recorded on the signal by the exploration budget, clamped to [1, exploration_lift_max]."""
+    record = (signal.features or {}).get("exploration") if isinstance(signal.features, dict) else None
+    try:
+        multiplier = Decimal(str((record or {}).get("multiplier") or 1))
+    except (InvalidOperation, TypeError, ValueError):
+        multiplier = Decimal("1")
+    if not multiplier.is_finite():
+        multiplier = Decimal("1")
+    return min(max(multiplier, Decimal("1")), Decimal(str(settings.exploration_lift_max)))
+
+
 def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: str, signal_id: int | None,
                               quantity: Decimal, reference_price: Decimal, rules: dict,
                               now: datetime, *, dispatching_order_id: int | None = None) -> StrategySignal:
@@ -2756,6 +2768,10 @@ def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: s
     if not math.isfinite(confidence) or confidence < float(rules["min_confidence"]):
         raise StockPaperError("Exploration signal confidence is below the minimum threshold")
     budget = account.equity * Decimal(str(settings.paper_exploration_risk_fraction))
+    # The exploration budget may lift a learning lot (exploration_budget.py);
+    # the ledger admits the lift only when the signal carries that record,
+    # and never beyond the configured maximum.
+    budget *= _exploration_lift(signal)
     if account.equity <= 0 or quantity * reference_price > budget * Decimal("1.0001"):
         raise StockPaperError("Exploration order exceeds the per-trade exploration budget")
     if _open_exploration_lots(db, account, exclude_order_id=dispatching_order_id) >= settings.paper_exploration_max_positions:

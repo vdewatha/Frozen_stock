@@ -20,6 +20,8 @@ One read-only snapshot for the Learning > Scoreboard page:
 * ``regime``: each strategy's record per regime cell and the regime-aware
   multiplier the current cell would give (``regime_allocation.py``; off
   until its backtest says otherwise).
+* ``exploration``: trades until the next verdict per watched item and the
+  session's learning budget (``exploration_budget.py``).
 
 Nothing here writes; every number comes from attributions, orders, bars
 and the audit log.
@@ -479,6 +481,18 @@ def _regime(db: Session, now: datetime) -> dict:
         return {"enabled": False, "status": "unavailable", "regime": None, "strategies": [], "paper_only": True}
 
 
+def _exploration(db: Session, now: datetime) -> dict:
+    """Trades until the next verdict per watched item, and the session's learning budget (``exploration_budget.py``)."""
+    from app.services.exploration_budget import scoreboard_exploration
+
+    try:
+        return scoreboard_exploration(db, now=now)
+    except Exception:  # the scoreboard must render without the evidence map
+        db.rollback()
+        return {"as_of": None, "status": "unavailable", "detail": "The exploration budget could not be read.",
+                "budget": None, "next_verdicts": [], "today": {"taken": 0, "skipped": 0}}
+
+
 def _equity(db: Session) -> float:
     from app.services.stock_paper_ledger import active_paper_account
 
@@ -512,6 +526,7 @@ def build_learning_scoreboard(db: Session, *, now: Optional[datetime] = None) ->
         "setup_shadow": _setup_shadow(db),
         "engine_audit": _engine_audit(db),
         "regime": _regime(db, now),
+        "exploration": _exploration(db, now),
         "paper_only": True,
     }
 

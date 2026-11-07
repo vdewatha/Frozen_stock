@@ -178,6 +178,14 @@ def setup_shadow(db: Session = Depends(get_db)) -> dict:
     return setup_shadow_view(db)
 
 
+@router.get("/exploration-budget")
+def exploration_budget(db: Session = Depends(get_db)) -> dict:
+    """Where the learning-sized lots go: the evidence map, today's budget, what was taken and skipped (read-only)."""
+    from app.services.exploration_budget import exploration_budget_view
+
+    return exploration_budget_view(db)
+
+
 @router.get("/signal-autopsy")
 def signal_autopsy(db: Session = Depends(get_db)) -> dict:
     """Per strategy, the entry features of its losses against its wins and the scope candidates they yield (read-only)."""
