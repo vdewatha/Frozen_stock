@@ -402,6 +402,10 @@ class Settings(BaseSettings):
     # it is called costly or earning its keep (gate_cost.py).
     gate_cost_lookback_sessions: int = Field(default=60, ge=1, le=250)
     gate_cost_min_scored: int = Field(default=30, ge=1, le=500)
+    # Setup shadow: every candidate gate value is decided alongside the live
+    # one on each BUY and scored from the next open; the per-candidate
+    # record covers the last N sessions (setup_shadow.py).
+    setup_shadow_lookback_sessions: int = Field(default=120, ge=1, le=500)
     # Paper cost calibration: the replay cost model is fitted to the last N
     # sessions of paper fills; a (symbol class, time bucket) cell needs
     # min_fills fills before its multiplier is fitted (paper_cost_calibration.py).

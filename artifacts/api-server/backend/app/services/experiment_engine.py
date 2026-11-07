@@ -40,6 +40,12 @@ applied the result.  This module lets the bot run that loop itself.
    ``REVERT_EXPECTANCY_BPS`` worse and the cause no rarer) reverts it, with an
    audit trail; otherwise it keeps watching until ``max_trades`` and closes as
    ``inconclusive``.
+   Every candidate value also earns a forward record in shadow from the same
+   BUY decisions (``setup_shadow.py``): the verdict carries it, an
+   alternative that beats the adopted value by ``REVERT_EXPECTANCY_BPS`` over
+   ``min_trades`` overlapping decisions reverts the change early, and a
+   candidate that beats the live setup is a ``shadow_evidence`` lesson for
+   the next weekly run, replayed under the same rule.
 
 Paper only.  Nothing here places, sizes or blocks an order directly; it only
 changes the entry-gate parameters the autotrader already honours.
@@ -301,7 +307,10 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
     untemplated, skipped = [], []
     for lesson in lessons:
         triggers = {lesson["cause"], *((lesson.get("contributing") or {}).keys())}
-        matched = templates_for(triggers)
+        # A shadow-evidence lesson names the template whose candidate beat
+        # the live value; it plans exactly that template with its own trigger.
+        named = TEMPLATE_BY_NAME.get(lesson.get("template") or "")
+        matched = [named] if named is not None else templates_for(triggers)
         if not matched:
             untemplated.append({"strategy_type": lesson["strategy_type"], "cause": lesson["cause"],
                                 "count": lesson["count"], "proposal": lesson.get("proposal"),
@@ -309,7 +318,7 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
             continue
         targets = [lesson["strategy_type"]] if lesson["strategy_type"] != "all" else sorted(strategies)
         for template in matched:
-            trigger = lesson["cause"] if lesson["cause"] in template.triggers else next(
+            trigger = lesson["cause"] if (lesson["cause"] in template.triggers or template is named) else next(
                 flag for flag in (lesson.get("contributing") or {}) if flag in template.triggers)
             for target in targets:
                 if target not in strategies:
@@ -323,6 +332,8 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
                 candidate = {"strategy_type": target, "template": template.name, "trigger": trigger,
                              "lesson_count": int(lesson["count"]), "lesson_scope": lesson["strategy_type"],
                              "lesson": lesson.get("lesson")}
+                if named is not None:
+                    candidate["shadow_candidate"] = lesson.get("candidate")
                 if key not in wanted or wanted[key]["lesson_count"] < candidate["lesson_count"]:
                     wanted[key] = candidate
     planned, deferred = [], []
@@ -474,6 +485,18 @@ def _costly_gate_lessons(db: Session) -> list[dict]:
         return []
 
 
+def _shadow_lessons(db: Session) -> list[dict]:
+    """Candidates whose shadow record beats the live setup, as lessons (an unreadable ledger is no lesson)."""
+    from app.services.setup_shadow import shadow_lessons
+
+    try:
+        return shadow_lessons(db, min_trades=settings.experiment_verdict_min_trades)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("experiment engine: setup-shadow lessons unavailable: %s", exc)
+        return []
+
+
 def _load_vix(start: str):
     from app.services.strategies.vix_gate import download_vix_history
 
@@ -493,7 +516,8 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
     attributions = current_attributions(db, sources=SOURCES)
     lessons = repeating_failures(attributions)
     gate_lessons = _costly_gate_lessons(db)
-    lessons = [*lessons, *gate_lessons]
+    shadow = _shadow_lessons(db)
+    lessons = [*lessons, *gate_lessons, *shadow]
     strategies = {row.strategy_type: row for row in db.query(Strategy).filter(
         Strategy.current_status.in_(ACTIVE_STATUSES)).order_by(Strategy.id).all()}
     plan = plan_experiments(lessons, strategies, now=now, history=experiment_history(db),
@@ -564,6 +588,8 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
     summary = {"status": "complete", "ran_at": _iso(now), "lessons": len(lessons), "planned": len(plan["planned"]),
                "gate_cost_lessons": [{k: lesson.get(k) for k in ("strategy_type", "cause", "gate", "count",
                                                                    "mean_net_bps")} for lesson in gate_lessons],
+               "shadow_lessons": [{k: lesson.get(k) for k in ("strategy_type", "template", "candidate", "live", "count",
+                                                                "trades", "delta_expectancy_bps")} for lesson in shadow],
                "experiments": [{k: e.get(k) for k in ("strategy_type", "template", "trigger", "adopted",
                                                        "adopted_description", "change_id", "applied")}
                                for e in experiments],
@@ -628,8 +654,42 @@ def revert_change(db: Session, change: Mapping, *, now: datetime, reason: str) -
     return True
 
 
+def _shadow_record(db: Session, change: Mapping, *, since: datetime, min_trades: int) -> Optional[dict]:
+    """The alternatives' forward record since the change (``setup_shadow``); None when unreadable."""
+    from app.services.setup_shadow import shadow_track_record
+
+    try:
+        return shadow_track_record(db, change["strategy_type"], change["template"], since=since,
+                                   min_trades=min_trades, margin_bps=REVERT_EXPECTANCY_BPS)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("experiment engine: setup-shadow record unavailable for %s: %s", change.get("change_id"), exc)
+        return None
+
+
+def shadow_beats_adopted(shadow: Optional[Mapping]) -> Optional[dict]:
+    """The alternative that beat the adopted value by the revert margin over ``min_trades`` overlapping decisions."""
+    if not shadow:
+        return None
+    better = [c for c in shadow.get("candidates") or [] if c.get("beats_live") and not c.get("is_live")]
+    if not better:
+        return None
+    return max(better, key=lambda c: (c.get("delta_expectancy_bps") or 0.0))
+
+
+def _fmt_bps(value: Any) -> str:
+    return f"{float(value):+.1f}" if isinstance(value, (int, float)) else "n/a"
+
+
 def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
-    """Daily: give each watched change a verdict once enough paper trades closed after it."""
+    """Daily: give each watched change a verdict once enough paper trades closed after it.
+
+    The alternatives' shadow record (``setup_shadow``) rides in every verdict
+    and pending entry, and a change is ``not_helping`` as soon as an
+    alternative beats the adopted value by ``REVERT_EXPECTANCY_BPS`` over at
+    least ``min_trades`` overlapping decisions, before the live trades reach
+    ``min_trades``: the same decisions judge every value at once.
+    """
     from app.services.trade_attribution import current_attributions
 
     now = now or datetime.now(UTC)
@@ -645,34 +705,51 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
         min_trades = int(watch.get("min_trades") or settings.experiment_verdict_min_trades)
         max_trades = int(watch.get("max_trades") or settings.experiment_verdict_max_trades)
         after = _recent_performance(rows, change["trigger"])
-        if after["trades"] < min_trades:
-            pending.append({"change_id": change["change_id"], "strategy_type": change["strategy_type"],
-                            "trades": after["trades"], "needed": min_trades - after["trades"]})
-            continue
-        verdict = judge(change.get("recent_before") or {}, after, max_trades=max_trades)
-        if verdict == "watching":
-            pending.append({"change_id": change["change_id"], "strategy_type": change["strategy_type"],
-                            "trades": after["trades"], "needed": max_trades - after["trades"], "so_far": "mixed"})
-            continue
+        shadow = _shadow_record(db, change, since=adopted_at, min_trades=min_trades)
+        shadow_summary = ({"decisions": shadow.get("decisions"), "beating": shadow.get("beating"),
+                           "candidates": shadow.get("candidates")} if shadow else None)
+        beaten_by = shadow_beats_adopted(shadow)
+        if beaten_by is None:
+            if after["trades"] < min_trades:
+                pending.append({"change_id": change["change_id"], "strategy_type": change["strategy_type"],
+                                "trades": after["trades"], "needed": min_trades - after["trades"],
+                                "shadow": shadow_summary})
+                continue
+            verdict = judge(change.get("recent_before") or {}, after, max_trades=max_trades)
+            if verdict == "watching":
+                pending.append({"change_id": change["change_id"], "strategy_type": change["strategy_type"],
+                                "trades": after["trades"], "needed": max_trades - after["trades"], "so_far": "mixed",
+                                "shadow": shadow_summary})
+                continue
+            reason = (f"after {after['trades']} trades expectancy {_fmt_bps(after['expectancy_bps'])} bps vs "
+                      f"{_fmt_bps((change.get('recent_before') or {}).get('expectancy_bps'))} before, and "
+                      f"{change['trigger']} losses no rarer")
+        else:
+            verdict = "not_helping"
+            reason = (f"in shadow, {change['template']} = {beaten_by['candidate']} beat the adopted "
+                      f"{beaten_by['live']} by {_fmt_bps(beaten_by['delta_expectancy_bps'])} bps per trade over "
+                      f"{beaten_by['overlap']} of the same BUY decisions ({beaten_by['trades']} forward trades)")
         state = {"working": "confirmed", "not_helping": "reverted", "inconclusive": "closed"}[verdict]
         reverted = False
         if verdict == "not_helping":
-            reverted = revert_change(db, change, now=now, reason=(
-                f"after {after['trades']} trades expectancy {after['expectancy_bps']:+.1f} bps vs "
-                f"{(change.get('recent_before') or {}).get('expectancy_bps'):+.1f} before, and {change['trigger']} "
-                f"losses no rarer"))
+            reverted = revert_change(db, change, now=now, reason=reason)
             if not reverted:
                 state = "closed"
         payload = {"change_id": change["change_id"], "strategy_id": change["strategy_id"],
                    "strategy_type": change["strategy_type"], "template": change["template"],
                    "trigger": change["trigger"], "verdict": verdict, "state": state, "reverted": reverted,
-                   "before": change.get("recent_before"), "after": after, "judged_at": _iso(now), "paper_only": True}
+                   "before": change.get("recent_before"), "after": after, "judged_at": _iso(now),
+                   "shadow": shadow_summary, "shadow_verdict": beaten_by is not None,
+                   "beaten_by": ({k: beaten_by.get(k) for k in ("candidate", "live", "overlap", "trades",
+                                                                 "expectancy_bps", "delta_expectancy_bps",
+                                                                 "delta_total_bps")} if beaten_by else None),
+                   "paper_only": True}
+        message = (f"{change['strategy_type']}: {change['description']} -> {verdict} "
+                   + (f"on shadow evidence: {reason}" if beaten_by else
+                      f"after {after['trades']} trades ({_fmt_bps(after['expectancy_bps'])} bps vs "
+                      f"{(change.get('recent_before') or {}).get('expectancy_bps')} before)"))
         write_audit_log(db, event_type=EVENT, entity_type="strategy", entity_id=change["strategy_id"],
-                        action=ACTION_VERDICT, status=state,
-                        message=(f"{change['strategy_type']}: {change['description']} -> {verdict} after "
-                                 f"{after['trades']} trades ({after['expectancy_bps']:+.1f} bps vs "
-                                 f"{(change.get('recent_before') or {}).get('expectancy_bps')} before)"),
-                        payload=_clean(payload))
+                        action=ACTION_VERDICT, status=state, message=message, payload=_clean(payload))
         reviewed.append(payload)
     if reviewed:
         db.commit()

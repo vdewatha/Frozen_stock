@@ -565,6 +565,9 @@ class EntryProtections:
     # strategy_type -> SMA window, and window -> market_gate.market_state(...)
     market_gates: dict = field(default_factory=dict)
     market_states: dict = field(default_factory=dict)
+    # The SPY frame behind ``market_states``; ``setup_shadow`` decides the
+    # candidate windows from it without a second load.
+    market_history: Any = field(default=None, repr=False)
 
     def market_gate_block(self, strategy: str | None) -> dict | None:
         window = self.market_gates.get(strategy, 0) if strategy else 0
@@ -654,6 +657,7 @@ def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
                 spy = None
             protections.market_states = {window: market_state(spy, window)
                                          for window in sorted(set(protections.market_gates.values()))}
+            protections.market_history = spy
         protections.model_breaches = [
             row.breach_key for row in db.query(StockMonitoringBreach).filter(
                 StockMonitoringBreach.breach_key.like("model.%"),

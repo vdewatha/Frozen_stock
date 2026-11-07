@@ -13,6 +13,8 @@ One read-only snapshot for the Learning > Scoreboard page:
 * ``changes``: what shipped when, with results before and after;
 * ``gate_costs``: what each entry gate cost, from the trades it stopped
   (``gate_cost.py``).
+* ``setup_shadow``: every candidate gate value's forward record from the
+  live BUY decisions, against the live value (``setup_shadow.py``).
 * ``regime``: each strategy's record per regime cell and the regime-aware
   multiplier the current cell would give (``regime_allocation.py``; off
   until its backtest says otherwise).
@@ -442,6 +444,17 @@ def _gate_costs(db: Session) -> dict:
                 "gates": [], "by_strategy": [], "costly": []}
 
 
+def _setup_shadow(db: Session) -> dict:
+    from app.services.setup_shadow import scoreboard_setup_shadow
+
+    try:
+        return scoreboard_setup_shadow(db)
+    except Exception:  # the scoreboard must render without the shadow ledger
+        db.rollback()
+        return {"as_of": None, "status": "unavailable", "detail": "The setup-shadow scores could not be read.",
+                "records": [], "beating": []}
+
+
 def _regime(db: Session, now: datetime) -> dict:
     """Each strategy's record per regime cell and the regime-aware multiplier (off until its backtest says so)."""
     from app.services.regime_allocation import regime_allocation_view
@@ -483,6 +496,7 @@ def build_learning_scoreboard(db: Session, *, now: Optional[datetime] = None) ->
         "news_vs_core": _news_vs_core(rows, ever),
         "changes": _changes(rows, _engine_changes(db)),
         "gate_costs": _gate_costs(db),
+        "setup_shadow": _setup_shadow(db),
         "regime": _regime(db, now),
         "paper_only": True,
     }
