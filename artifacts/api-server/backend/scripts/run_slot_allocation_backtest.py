@@ -28,9 +28,11 @@ Policies (each a change to the baseline only in what it names):
 * ``symbol_only``: one position per symbol, no other cap.
 
 Every position gets 1 / total-cap of equity, so each policy can be at most
-100% invested.  Trades come from ``run_market_gate_backtest.simulate`` with
-the gates live since PR #13 (MACD 50, Channel Breakout 20, Trend Pullback 10,
-RSI(2) 50).
+100% invested.  Trades come from ``gate_replay.simulate`` with the gates live
+since PR #13 (MACD 50, Channel Breakout 20, Trend Pullback 10, RSI(2) 50).
+The book simulation itself (``candidates`` / ``allocate`` / ``metrics``) is
+``app.services.book_replay``, which the experiment engine reuses for its
+book-level experiments (``entry_cluster_cap``).
 
 Usage (from artifacts/api-server/backend):
 
@@ -42,10 +44,8 @@ import argparse
 import json
 import sys
 import warnings
-from collections import defaultdict
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -53,14 +53,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import run_market_gate_backtest as gate_bt  # noqa: E402
 from app.core.config import DEFAULT_PAPER_EXECUTION_SYMBOLS  # noqa: E402
+from app.services import book_replay  # noqa: E402
 from app.services import meta_label_primary as primary  # noqa: E402
 from app.services.seed import MARKET_GATED_STRATEGIES  # noqa: E402
-from app.services.strategy_discovery import _marked_returns  # noqa: E402
-from app.services.strategy_scorecard import load_daily_history, normalize_prices, trade_statistics  # noqa: E402
-from app.services.trading_universe import sector_group  # noqa: E402
+from app.services.strategy_scorecard import load_daily_history, normalize_prices  # noqa: E402
 
 WINDOWS = gate_bt.WINDOWS
-BASE_CAPS = {"total": 20, "strategy": 5, "sector": 3}
+BASE_CAPS = book_replay.BASE_CAPS
 POLICIES = {
     "baseline": {},
     "rank_confidence": {"order": "confidence"},
@@ -75,104 +74,22 @@ POLICIES = {
 
 
 def candidates(frames: dict, spy: pd.DataFrame, replays: dict) -> pd.DataFrame:
-    """Every executable trade per strategy (live gates applied) with its decision-day confidence."""
-    out = []
-    for strategy in gate_bt.STRATEGIES:
-        trades = gate_bt.simulate(strategy, frames, spy, MARKET_GATED_STRATEGIES.get(strategy, 0), replays)
-        if trades.empty:
-            continue
-        confidence = []
-        for symbol, index in zip(trades["symbol"], trades["event_idx"]):
-            signal = primary.ibs_mean_reversion(frames[symbol], entry_threshold=0.1) \
-                if strategy == "ibs_mean_reversion" else replays[symbol][strategy]
-            confidence.append(float(signal["confidence"].iloc[int(index)]))
-        out.append(trades.assign(confidence=confidence))
-    rows = pd.concat(out, ignore_index=True)
-    rows["entry_date"] = [frames[s]["date"].iloc[i] for s, i in zip(rows["symbol"], rows["entry_idx"])]
-    rows["exit_date"] = [frames[s]["date"].iloc[i] for s, i in zip(rows["symbol"], rows["exit_idx"])]
-    symbol_rank = {s: i for i, s in enumerate(DEFAULT_PAPER_EXECUTION_SYMBOLS)}
-    strategy_rank = {s: i for i, s in enumerate(gate_bt.STRATEGIES)}
-    rows["live_rank"] = [symbol_rank[s] * 100 + strategy_rank[t] for s, t in zip(rows["symbol"], rows["strategy"])]
-    return rows.sort_values(["entry_date", "live_rank"], kind="stable").reset_index(drop=True)
+    """Every executable trade per strategy (live gates applied) with its decision-day confidence.
 
-
-def _track_records(rows: pd.DataFrame) -> dict:
-    """strategy -> (sorted exit dates, cumulative sums, counts) for a causal mean before any day."""
-    out = {}
-    for strategy, group in rows.groupby("strategy"):
-        group = group.sort_values("exit_date")
-        out[strategy] = (group["exit_date"].to_numpy(), np.cumsum(group["net_return"].to_numpy()))
-    return out
-
-
-def _mean_before(records: dict, strategy: str, day) -> float:
-    dates, sums = records.get(strategy, (np.array([]), np.array([])))
-    n = int(np.searchsorted(dates, day, side="left"))  # trades closed strictly before ``day``
-    return float(sums[n - 1] / n) if n else 0.0
+    The book simulation lives in ``app.services.book_replay``; this keeps the
+    script's setup (the market gates live since PR #13, the published cost
+    model) and signature.
+    """
+    setups = {strategy: {"market_gate_sma": MARKET_GATED_STRATEGIES.get(strategy, 0)} for strategy in gate_bt.STRATEGIES}
+    return book_replay.candidates(frames, spy, replays, setups)
 
 
 def allocate(rows: pd.DataFrame, frames: dict, policy: dict) -> pd.DataFrame:
-    caps = policy.get("caps", BASE_CAPS)
-    order = policy.get("order", "live")
-    cooldown = int(policy.get("stop_cooldown", 0))
-    max_new = int(policy.get("max_new_per_day", 0))
-    records = _track_records(rows) if order == "track_record" else {}
-    session_index = {s: {d: i for i, d in enumerate(f["date"])} for s, f in frames.items()}
-    blocked_until: dict[str, int] = {}
-    open_rows: list[dict] = []
-    keep = np.zeros(len(rows), dtype=bool)
-    for day, group in rows.groupby("entry_date", sort=True):
-        if order == "confidence":
-            group = group.sort_values(["confidence", "live_rank"], ascending=[False, True], kind="stable")
-        elif order == "track_record":
-            score = group["strategy"].map(lambda s: _mean_before(records, s, day))
-            group = group.assign(_score=score).sort_values(["_score", "live_rank"], ascending=[False, True],
-                                                           kind="stable")
-        closing = [o for o in open_rows if o["exit_date"] <= day]
-        for o in closing:
-            if cooldown and o["stopped"]:
-                blocked_until[o["symbol"]] = session_index[o["symbol"]][o["exit_date"]] + cooldown
-        open_rows = [o for o in open_rows if o["exit_date"] > day]
-        taken = 0
-        for index, row in group.iterrows():
-            if max_new and taken >= max_new:
-                break
-            if cooldown and session_index[row.symbol].get(day, -1) < blocked_until.get(row.symbol, -1):
-                continue
-            if any(o["symbol"] == row.symbol for o in open_rows):
-                continue
-            sector = sector_group(row.symbol)
-            if (len(open_rows) >= caps["total"]
-                    or sum(o["strategy"] == row.strategy for o in open_rows) >= caps["strategy"]
-                    or sum(o["sector"] == sector for o in open_rows) >= caps["sector"]):
-                continue
-            keep[index] = True
-            taken += 1
-            open_rows.append({"symbol": row.symbol, "strategy": row.strategy, "sector": sector,
-                              "exit_date": row.exit_date, "stopped": str(row.barrier).startswith("stop_loss")})
-    return rows.loc[keep]
+    return book_replay.allocate(rows, frames, policy)
 
 
 def metrics(accepted: pd.DataFrame, frames: dict, start, weight: float) -> dict:
-    sub = accepted if start is None else accepted.loc[pd.to_datetime(accepted["decision_date"]) >= start]
-    returns: dict = defaultdict(float)
-    for row in sub.itertuples(index=False):
-        close = frames[row.symbol]["close"].to_numpy(float)
-        dates = frames[row.symbol]["date"].to_numpy()
-        marked = _marked_returns(pd.DataFrame([{"entry_idx": row.entry_idx, "exit_idx": row.exit_idx,
-                                                "entry_price": row.entry_price, "exit_price": row.exit_price}]), close)
-        for index in range(int(row.entry_idx), int(row.exit_idx) + 1):
-            returns[dates[index]] += weight * marked[index]
-    series = pd.Series(returns).sort_index()
-    equity = np.concatenate([[1.0], np.cumprod(1 + series.to_numpy())]) if len(series) else np.array([1.0])
-    drawdown = float(np.max(1 - equity / np.maximum.accumulate(equity)))
-    months = pd.to_datetime(sub["decision_date"]).dt.to_period("M").astype(str).tolist()
-    stats = trade_statistics(sub["net_return"].to_numpy(), clusters=months)
-    stops = sub.loc[sub["barrier"].astype(str).str.startswith("stop_loss")]
-    return {"trades": stats["trades"], "win_rate": stats["win_rate"], "expectancy_bps": stats["expectancy_bps"],
-            "expectancy_ci_bps": stats.get("expectancy_ci_bps"), "total_return": round(float(equity[-1] - 1), 4),
-            "max_drawdown": round(drawdown, 4),
-            "days_with_3plus_stops": int((stops.groupby("exit_date").size() >= 3).sum())}
+    return book_replay.metrics(accepted, frames, start, weight)
 
 
 def decide(results: dict) -> dict:

@@ -39,7 +39,7 @@ from app.services.stock_paper_ledger import (
 )
 from app.services.earnings_calendar import earnings_blackout, earnings_known, strategy_blackout_sessions
 from app.services.market_events import cached_events, event_blackout
-from app.services.market_gauges import entry_context, gauge_size_scale, latest_gauges
+from app.services.market_gauges import breadth_gate_min, entry_context, gauge_size_scale, latest_gauges
 from app.services.entry_protections import (
     SELL_RETRY_LIMIT,
     load_entry_protections,
@@ -57,7 +57,7 @@ from app.services.strategy_execution_policy import (
     exit_policy_for,
     symbol_scope_for,
 )
-from app.services.market_gate import gate_window
+from app.services.market_gate import gate_window, sector_gate_window
 from app.services.trusted_data import trusted_history
 from app.services.trading_universe import execution_symbols, sector_group
 
@@ -946,6 +946,13 @@ def _run_signal_cycle(db: Session) -> dict:
     protections = load_entry_protections(
         db, account, now=now, rules=rules, type_by_id=type_by_id,
         market_gates={row.strategy_type: gate_window(getattr(row, "parameters", None)) for row in strategies},
+        # Sector gate (per-symbol sector ETF trend) and breadth gate (latest
+        # gauge, fail open) per strategy row; the session entry cap reads the
+        # risk rule through ``protection_config``.
+        sector_gates={row.strategy_type: sector_gate_window(getattr(row, "parameters", None)) for row in strategies},
+        symbols=symbols,
+        breadth_gates={row.strategy_type: breadth_gate_min(getattr(row, "parameters", None)) for row in strategies},
+        gauges=gauges,
     )
     # Cycle-level entry limits. Each refused BUY used to go through a full
     # reservation (~10 queries under the account lock) only to hit one of
@@ -1376,6 +1383,8 @@ def _run_signal_cycle(db: Session) -> dict:
                     sector_groups.setdefault(sector_group(symbol), set()).add(symbol)
                     entry_limits.record_buy(symbol, exploring=result.get("mode") == "explore")
                     cycle_buyers.setdefault(symbol, set()).add(strategy.strategy_type)
+                    if hasattr(protections, "record_entry"):  # session entry cap counts this cycle's BUYs too
+                        protections.record_entry(symbol)
             except StockPaperError as exc:
                 result.update({"status": "blocked", "reason": str(exc)})
             except Exception as exc:  # one symbol/strategy must not stop the fan-out

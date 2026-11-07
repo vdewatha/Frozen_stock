@@ -71,6 +71,23 @@ Protections (each disabled by a value of 0):
    after the stop's session.  In reports/slot-allocation-20261106.md 55% of
    the book's trades were re-entries within 10 sessions of a stop on the same
    symbol and averaged -46.5 bps, against +34.5 bps for the rest.
+10. **Sector gate** — a strategy row with ``sector_gate_sma = N`` takes no new
+    entry in a symbol while that symbol's sector ETF (``market_gate
+    .sector_symbol``) closed at or below its N-day average.  Each needed
+    ETF's history is loaded once per cycle; an ETF that cannot be loaded
+    fails closed for gated strategies only, like the market gate.  Symbols
+    without a sector ETF (index ETFs, the sector ETFs themselves, unmapped
+    names) are never sector-gated.
+11. **Breadth gate** — a strategy row with ``breadth_gate_min = P`` takes no
+    new entry while the latest breadth gauge (``market_gauges``: share of
+    S&P 500 members above their 200-day average) is below P percent.  A
+    missing or stale gauge fails *open*, as the VIX gate does, and the
+    state says so.
+12. **Session entry cap** — ``max_new_entries_per_session`` (book-level, 0 =
+    off): once that many new entries filled in the regular session (distinct
+    buy orders with a fill since the open, plus the BUYs this cycle already
+    submitted), every further BUY waits for the next session.  The
+    ``clustered_stops`` lesson: positions opened together were one bet.
 
 Configuration: each key is read from the active ``RiskRule.value`` first and
 falls back to ``settings.paper_<key>``.  Unparseable or negative risk-rule
@@ -83,7 +100,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
 import logging
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
@@ -114,6 +131,7 @@ INT_KEYS = (
     "strategy_drawdown_trades",
     "strategy_drawdown_lock_sessions",
     "stop_cooldown_sessions",
+    "max_new_entries_per_session",
 )
 DECIMAL_KEYS = ("session_drawdown_lock_pct", "strategy_drawdown_lock_pct", "strategy_allocation_fraction")
 
@@ -184,6 +202,7 @@ class ProtectionConfig:
     strategy_drawdown_lock_pct: Decimal = Decimal("0.05")
     strategy_allocation_fraction: Decimal = Decimal("0.10")
     stop_cooldown_sessions: int = 10
+    max_new_entries_per_session: int = 0
 
     def as_dict(self) -> dict:
         return {key: (str(value) if isinstance(value, Decimal) else value) for key, value in self.__dict__.items()}
@@ -551,6 +570,16 @@ def model_monitoring_block(breaches: Iterable[str], strategy: str | None) -> dic
     ))
 
 
+def entry_cap_block(entries: int, config: ProtectionConfig, session_close: datetime | None = None) -> dict | None:
+    """Block once ``entries`` new entries were taken this session (``max_new_entries_per_session``; 0 = off)."""
+    cap = int(config.max_new_entries_per_session or 0)
+    if cap <= 0 or entries < cap:
+        return None
+    return _block("entry_cap", (
+        f"{entries} new entries already this session (cap {cap}); further BUYs wait for the next session"
+    ), session_close)
+
+
 @dataclass
 class EntryProtections:
     now: datetime
@@ -568,6 +597,20 @@ class EntryProtections:
     # The SPY frame behind ``market_states``; ``setup_shadow`` decides the
     # candidate windows from it without a second load.
     market_history: Any = field(default=None, repr=False)
+    # strategy_type -> sector SMA window; sector ETF -> its daily frame (None
+    # when it could not be loaded); (ETF, window) -> market_gate.sector_state
+    sector_gates: dict = field(default_factory=dict)
+    sector_history: dict = field(default_factory=dict, repr=False)
+    sector_states: dict = field(default_factory=dict)
+    # strategy_type -> breadth floor (percent); the cycle's latest gauges
+    # (``market_gauges.latest_gauges``); floor -> market_gauges.breadth_state
+    breadth_gates: dict = field(default_factory=dict)
+    gauges: dict = field(default_factory=dict, repr=False)
+    breadth_states: dict = field(default_factory=dict)
+    # New entries filled this session before the cycle, and the BUYs this
+    # cycle submitted (``record_entry``), for ``max_new_entries_per_session``.
+    session_entries: int = 0
+    cycle_entries: int = 0
 
     def market_gate_block(self, strategy: str | None) -> dict | None:
         window = self.market_gates.get(strategy, 0) if strategy else 0
@@ -578,6 +621,50 @@ class EntryProtections:
             return None
         return _block("market_gate", f"{state['reason']}; {strategy} takes no new longs while the market falls")
 
+    def sector_gate_state(self, symbol: str, window: int) -> dict | None:
+        """The sector gate's state for ``symbol`` at ``window``; None when the symbol has no sector ETF."""
+        from app.services.market_gate import sector_state, sector_symbol
+
+        etf = sector_symbol(symbol)
+        if etf is None or not window:
+            return None
+        key = (etf, int(window))
+        if key not in self.sector_states:
+            self.sector_states[key] = sector_state(self.sector_history.get(etf), int(window), etf)
+        return self.sector_states[key]
+
+    def sector_gate_block(self, symbol: str, strategy: str | None) -> dict | None:
+        window = self.sector_gates.get(strategy, 0) if strategy else 0
+        if not window:
+            return None
+        state = self.sector_gate_state(symbol, window)
+        if state is None or state["allowed"]:
+            return None
+        return _block("sector_gate", (f"{state['reason']}; {strategy} takes no new longs in {symbol.upper()} "
+                                      f"while its sector falls"))
+
+    def breadth_gate_state(self, minimum: float) -> dict:
+        from app.services.market_gauges import breadth_state
+
+        key = float(minimum)
+        if key not in self.breadth_states:
+            self.breadth_states[key] = breadth_state(self.gauges, key)
+        return self.breadth_states[key]
+
+    def breadth_gate_block(self, strategy: str | None) -> dict | None:
+        minimum = self.breadth_gates.get(strategy, 0.0) if strategy else 0.0
+        if not minimum:
+            return None
+        state = self.breadth_gate_state(minimum)
+        if state["allowed"]:
+            return None
+        return _block("breadth_gate", f"{state['reason']}; {strategy} takes no new longs while breadth is weak")
+
+    def record_entry(self, symbol: str | None = None) -> int:
+        """A BUY this cycle submitted: counts toward the session entry cap for the rest of the cycle."""
+        self.cycle_entries += 1
+        return self.session_entries + self.cycle_entries
+
     def check(self, symbol: str, strategy: str | None) -> dict | None:
         """Block dict for a new BUY entry, or None to let existing gates decide."""
         if self.load_error:
@@ -585,6 +672,10 @@ class EntryProtections:
         for outcome in (
             model_monitoring_block(self.model_breaches, strategy),
             self.market_gate_block(strategy),
+            self.sector_gate_block(symbol, strategy),
+            self.breadth_gate_block(strategy),
+            entry_cap_block(self.session_entries + self.cycle_entries, self.config,
+                            self.bounds[1] if self.bounds else None),
             time_of_day_block(self.now, self.bounds, self.config),
             drawdown_block(self.drawdown, self.config, self.bounds[1] if self.bounds else None),
             stoploss_guard_block(self.events, strategy, self.now, self.config),
@@ -610,6 +701,18 @@ class EntryProtections:
         if self.market_states:
             out["market_gate"] = {"gates": dict(sorted(self.market_gates.items())),
                                   "states": {str(k): v for k, v in sorted(self.market_states.items())}}
+        if self.sector_gates:
+            out["sector_gate"] = {"gates": dict(sorted(self.sector_gates.items())),
+                                  "loaded": sorted(etf for etf, frame in self.sector_history.items() if frame is not None),
+                                  "unavailable": sorted(etf for etf, frame in self.sector_history.items() if frame is None),
+                                  "states": {f"{etf}:{window}": state
+                                             for (etf, window), state in sorted(self.sector_states.items())}}
+        if self.breadth_gates:
+            out["breadth_gate"] = {"gates": dict(sorted(self.breadth_gates.items())),
+                                   "states": {f"{k:g}": v for k, v in sorted(self.breadth_states.items())}}
+        if self.config.max_new_entries_per_session:
+            out["entry_cap"] = {"cap": self.config.max_new_entries_per_session,
+                                "session_entries": self.session_entries, "cycle_entries": self.cycle_entries}
         if self.model_breaches:
             out["model_monitoring_lock"] = {"breaches": sorted(self.model_breaches),
                                             "strategies": sorted(MODEL_DEPENDENT_STRATEGIES)}
@@ -627,9 +730,16 @@ class EntryProtections:
 def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
                            type_by_id: dict, bounds_for: Callable = session_bounds,
                            market_gates: dict | None = None,
-                           market_frame: Callable | None = None) -> EntryProtections:
+                           market_frame: Callable | None = None,
+                           sector_gates: dict | None = None, symbols: Iterable[str] | None = None,
+                           sector_frame: Callable | None = None,
+                           breadth_gates: dict | None = None, gauges: dict | None = None) -> EntryProtections:
     """Load fills/orders/equity once per cycle and build the evaluator.
 
+    ``sector_gates`` (strategy -> window) with ``symbols`` (the cycle's
+    symbols) loads each needed sector ETF once via ``sector_frame(etf)``
+    (default: the trusted daily history); ``breadth_gates`` (strategy ->
+    floor) is decided from ``gauges`` (``market_gauges.latest_gauges``).
     Any load failure fails closed for entries only (``check`` withholds every
     BUY); the caller's sell/exit path is unaffected.
     """
@@ -658,6 +768,30 @@ def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
             protections.market_states = {window: market_state(spy, window)
                                          for window in sorted(set(protections.market_gates.values()))}
             protections.market_history = spy
+        protections.sector_gates = {k: int(v) for k, v in (sector_gates or {}).items() if v}
+        if protections.sector_gates:
+            from app.services.market_gate import sector_symbol
+
+            etfs = sorted({etf for etf in (sector_symbol(s) for s in (symbols or ())) if etf is not None})
+            for etf in etfs:
+                try:
+                    if sector_frame is None:
+                        from app.services.trusted_data import trusted_history
+
+                        frame = trusted_history(db, etf, require_active=False)[0]
+                    else:
+                        frame = sector_frame(etf)
+                except Exception as exc:  # this ETF's symbols fail closed for gated strategies; others unaffected
+                    logger.warning("sector gate: %s history unavailable: %s", etf, exc)
+                    frame = None
+                protections.sector_history[etf] = frame
+            for window in sorted(set(protections.sector_gates.values())):
+                for symbol in symbols or ():
+                    protections.sector_gate_state(symbol, window)
+        protections.breadth_gates = {k: float(v) for k, v in (breadth_gates or {}).items() if v}
+        protections.gauges = dict(gauges or {})
+        for minimum in sorted(set(protections.breadth_gates.values())):
+            protections.breadth_gate_state(minimum)
         protections.model_breaches = [
             row.breach_key for row in db.query(StockMonitoringBreach).filter(
                 StockMonitoringBreach.breach_key.like("model.%"),
@@ -692,6 +826,11 @@ def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
                 stop_out=stop_out,
             ))
         protections.events, protections.trades = reconstruct_trades(records)
+        if config.max_new_entries_per_session and protections.bounds is not None:
+            opened = _utc(protections.bounds[0])
+            session_buys = [row for row in records if row.side == "buy" and _utc(row.at) >= opened]
+            protections.session_entries = len({row.order_id if row.order_id is not None else id(row)
+                                               for row in session_buys})
         equity = getattr(account, "equity", None)
         if equity is not None and Decimal(equity) > 0:
             protections.allocated_notional = Decimal(equity) * config.strategy_allocation_fraction

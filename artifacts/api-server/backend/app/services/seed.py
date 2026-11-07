@@ -571,6 +571,93 @@ def enable_market_gates(db: Session) -> list[str]:
     return changed
 
 
+SECTOR_GATE_ACTION = "sector_gate_update"
+BREADTH_GATE_ACTION = "breadth_gate_update"
+ENTRY_CAP_ACTION = "entry_cap_update"
+# Sector / breadth gates and the session entry cap are adopted by the
+# experiment engine (``sector_gate`` / ``breadth_gate`` / ``entry_cluster_cap``
+# templates); no hand-run report has adopted a value yet, so these ship
+# empty.  A report that does fills them in and the steps below apply them
+# once, under the same contract as ``enable_market_gates``: a row (or the
+# risk rule) that already carries the key, or had it set by an earlier
+# update event (the engine's adoption or revert included), is left alone.
+SECTOR_GATED_STRATEGIES: dict[str, int] = {}
+BREADTH_GATED_STRATEGIES: dict[str, float] = {}
+ENTRY_CAP_PER_SESSION: int = 0
+LESSON_TEMPLATES_REPORT = "reports/lesson-templates-20261106.md"
+
+
+def apply_governed_parameter(db: Session, *, key: str, action: str, values: dict, report: str,
+                             describe) -> list[str]:
+    """One-time strategy-row parameter under a governance action; ``describe(value)`` words the audit message."""
+    from app.services.audit import write_audit_log
+
+    changed: list[str] = []
+    if not values:
+        return changed
+    rows = db.query(Strategy).filter(Strategy.strategy_type.in_(values)).order_by(Strategy.id).all()
+    for row in rows:
+        params = dict(row.parameters or {})
+        if key in params:
+            continue
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance", AuditLog.action == action,
+            AuditLog.entity_type == "strategy", AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        value = values[row.strategy_type]
+        row.parameters = params | {key: value}
+        write_audit_log(
+            db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id, action=action,
+            status="complete", message=f"{report}: {describe(value)}. Sells and exits are unchanged.",
+            payload={key: value, "source": report, "paper_only": True},
+        )
+        changed.append(row.strategy_type)
+    if changed:
+        db.flush()
+    return changed
+
+
+def apply_sector_gates(db: Session) -> list[str]:
+    return apply_governed_parameter(
+        db, key="sector_gate_sma", action=SECTOR_GATE_ACTION, values=SECTOR_GATED_STRATEGIES,
+        report=LESSON_TEMPLATES_REPORT,
+        describe=lambda n: f"no new longs in a symbol while its sector ETF is at or below its {n}-day average")
+
+
+def apply_breadth_gates(db: Session) -> list[str]:
+    return apply_governed_parameter(
+        db, key="breadth_gate_min", action=BREADTH_GATE_ACTION, values=BREADTH_GATED_STRATEGIES,
+        report=LESSON_TEMPLATES_REPORT,
+        describe=lambda p: f"no new longs while under {p:g}% of S&P 500 members are above their 200-day average")
+
+
+def apply_entry_cap(db: Session) -> bool:
+    """One-time ``max_new_entries_per_session`` on the active risk rule (same contract, risk-rule entity)."""
+    from app.services.audit import write_audit_log
+    from app.services.risk_settings import get_active_risk_rule, update_risk_settings
+
+    if not ENTRY_CAP_PER_SESSION:
+        return False
+    rule = get_active_risk_rule(db)
+    if "max_new_entries_per_session" in (rule.value or {}):
+        return False
+    already = db.query(AuditLog.id).filter(
+        AuditLog.event_type == "strategy_governance", AuditLog.action == ENTRY_CAP_ACTION,
+        AuditLog.entity_type == "risk_rule",
+    ).first()
+    if already:
+        return False
+    message = f"{LESSON_TEMPLATES_REPORT}: at most {ENTRY_CAP_PER_SESSION} new entries per session across the book."
+    update_risk_settings(db, {"max_new_entries_per_session": ENTRY_CAP_PER_SESSION}, reason=message, actor="seed")
+    write_audit_log(db, event_type="strategy_governance", entity_type="risk_rule", action=ENTRY_CAP_ACTION,
+                    status="complete", message=message,
+                    payload={"max_new_entries_per_session": ENTRY_CAP_PER_SESSION,
+                             "source": LESSON_TEMPLATES_REPORT, "paper_only": True})
+    return True
+
+
 HEDGE_ADMISSION_ACTION = "hedge_admission"
 HEDGE_STRATEGY_NAME = "Market Hedge"
 
