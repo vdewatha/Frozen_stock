@@ -1,0 +1,17 @@
+# Output of: python3 -I blend_check.py <scratchpad>/px.csv (price cache written by etf_rotation_backtest.py; md5 8042865bca1be9a6ebb96e1ce1862747), run 2026-11-07
+[2015+ @11bp] monthly 50/50: CAGR 7.89% Sharpe 0.699 DD -17.6%
+   pro-rata 10% A: CAGR 7.49% Sh 0.697 DD -16.7% | replace-BIL 10% A: CAGR 8.07% Sh 0.697 DD -18.4%
+   pro-rata 20% A: CAGR 7.09% Sh 0.693 DD -15.7% | replace-BIL 20% A: CAGR 8.25% Sh 0.695 DD -19.1%
+   pro-rata 30% A: CAGR 6.69% Sh 0.685 DD -14.8% | replace-BIL 30% A: CAGR 8.42% Sh 0.691 DD -19.8%
+[2008+ @11bp] monthly 50/50: CAGR 6.94% Sharpe 0.611 DD -26.4%
+   pro-rata 10% A: CAGR 6.67% Sh 0.625 DD -23.9% | replace-BIL 10% A: CAGR 7.22% Sh 0.625 DD -26.3%
+   pro-rata 20% A: CAGR 6.40% Sh 0.640 DD -21.2% | replace-BIL 20% A: CAGR 7.50% Sh 0.636 DD -26.1%
+   pro-rata 30% A: CAGR 6.12% Sh 0.654 DD -18.5% | replace-BIL 30% A: CAGR 7.77% Sh 0.645 DD -25.9%
+[2015+ @25bp] monthly 50/50: CAGR 7.89% Sharpe 0.699 DD -17.6%
+   pro-rata 10% A: CAGR 7.42% Sh 0.689 DD -16.7% | replace-BIL 10% A: CAGR 8.00% Sh 0.690 DD -18.4%
+   pro-rata 20% A: CAGR 6.95% Sh 0.676 DD -15.7% | replace-BIL 20% A: CAGR 8.11% Sh 0.681 DD -19.1%
+   pro-rata 30% A: CAGR 6.48% Sh 0.657 DD -14.8% | replace-BIL 30% A: CAGR 8.22% Sh 0.671 DD -19.9%
+[2008+ @25bp] monthly 50/50: CAGR 6.94% Sharpe 0.611 DD -26.4%
+   pro-rata 10% A: CAGR 6.61% Sh 0.618 DD -23.9% | replace-BIL 10% A: CAGR 7.15% Sh 0.618 DD -26.3%
+   pro-rata 20% A: CAGR 6.27% Sh 0.625 DD -21.2% | replace-BIL 20% A: CAGR 7.36% Sh 0.624 DD -26.1%
+   pro-rata 30% A: CAGR 5.92% Sh 0.629 DD -18.6% | replace-BIL 30% A: CAGR 7.57% Sh 0.627 DD -26.0%

@@ -1,0 +1,13 @@
+# Output of: python3 -I static_check.py <scratchpad>/px.csv (price cache written by etf_rotation_backtest.py; md5 8042865bca1be9a6ebb96e1ce1862747), run 2026-11-07
+20% SPY / 80% BIL 2015+: CAGR 4.37% Sharpe 0.70 MaxDD -7.1%
+20% SPY / 80% BIL 2008+: CAGR 3.60% Sharpe 0.61 MaxDD -11.1%
+30% SPY / 70% BIL 2015+: CAGR 5.56% Sharpe 0.70 MaxDD -10.7%
+30% SPY / 70% BIL 2008+: CAGR 4.73% Sharpe 0.61 MaxDD -16.5%
+50% SPY / 50% BIL 2015+: CAGR 7.89% Sharpe 0.70 MaxDD -17.6%
+50% SPY / 50% BIL 2008+: CAGR 6.94% Sharpe 0.61 MaxDD -26.4%
+60% SPY / 40% BIL 2015+: CAGR 9.04% Sharpe 0.70 MaxDD -21.0%
+60% SPY / 40% BIL 2008+: CAGR 8.03% Sharpe 0.61 MaxDD -31.0%
+80% SPY / 20% BIL 2015+: CAGR 11.30% Sharpe 0.70 MaxDD -27.5%
+80% SPY / 20% BIL 2008+: CAGR 10.15% Sharpe 0.61 MaxDD -39.5%
+100% SPY / 0% BIL 2015+: CAGR 13.51% Sharpe 0.70 MaxDD -33.7%
+100% SPY / 0% BIL 2008+: CAGR 12.20% Sharpe 0.62 MaxDD -47.2%

@@ -1,0 +1,45 @@
+# Output of: python3 -I blend_check_daily.py <scratchpad>/px.csv (price cache written by etf_rotation_backtest.py; md5 8042865bca1be9a6ebb96e1ce1862747), run 2026-11-07
+[2015+ @11bp] passive 50/50: CAGR 8.00% Sharpe 0.700 DD -17.9%
+   50% SPY + 10% Design A + 40% BIL: CAGR 8.17% Sharpe 0.699 DD -18.6%
+   50% SPY + 20% Design A + 30% BIL: CAGR 8.35% Sharpe 0.697 DD -19.3%
+   50% SPY + 30% Design A + 20% BIL: CAGR 8.52% Sharpe 0.693 DD -20.0%
+   50% SPY + 50% Design A + 0% BIL: CAGR 8.85% Sharpe 0.684 DD -21.4%
+[2008+ @11bp] passive 50/50: CAGR 7.13% Sharpe 0.616 DD -25.5%
+   50% SPY + 10% Design A + 40% BIL: CAGR 7.41% Sharpe 0.630 DD -25.3%
+   50% SPY + 20% Design A + 30% BIL: CAGR 7.68% Sharpe 0.641 DD -25.1%
+   50% SPY + 30% Design A + 20% BIL: CAGR 7.95% Sharpe 0.651 DD -24.9%
+   50% SPY + 50% Design A + 0% BIL: CAGR 8.49% Sharpe 0.665 DD -24.6%
+[2015+ @25bp] passive 50/50: CAGR 8.00% Sharpe 0.700 DD -17.9%
+   50% SPY + 10% Design A + 40% BIL: CAGR 8.11% Sharpe 0.692 DD -18.6%
+   50% SPY + 20% Design A + 30% BIL: CAGR 8.21% Sharpe 0.683 DD -19.3%
+   50% SPY + 30% Design A + 20% BIL: CAGR 8.31% Sharpe 0.673 DD -20.0%
+   50% SPY + 50% Design A + 0% BIL: CAGR 8.51% Sharpe 0.653 DD -21.4%
+[2008+ @25bp] passive 50/50: CAGR 7.13% Sharpe 0.616 DD -25.5%
+   50% SPY + 10% Design A + 40% BIL: CAGR 7.34% Sharpe 0.623 DD -25.3%
+   50% SPY + 20% Design A + 30% BIL: CAGR 7.55% Sharpe 0.629 DD -25.1%
+   50% SPY + 30% Design A + 20% BIL: CAGR 7.75% Sharpe 0.633 DD -25.0%
+   50% SPY + 50% Design A + 0% BIL: CAGR 8.15% Sharpe 0.638 DD -24.7%
+[2015+ RSI2 proxy @5bp/side] 50% SPY + 10% proxy: CAGR 8.40% Sharpe 0.726 DD -18.2% (passive 0.700/-17.9%)
+[2015+ RSI2 proxy @5bp/side] 50% SPY + 20% proxy: CAGR 8.80% Sharpe 0.748 DD -18.6% (passive 0.700/-17.9%)
+[2015+ RSI2 proxy @5bp/side] 50% SPY + 30% proxy: CAGR 9.20% Sharpe 0.766 DD -19.0% (passive 0.700/-17.9%)
+   RSI2 proxy alone @5: CAGR 5.85% Sharpe 0.646 DD -9.4%
+[2008+ RSI2 proxy @5bp/side] 50% SPY + 10% proxy: CAGR 7.49% Sharpe 0.638 DD -25.5% (passive 0.616/-25.5%)
+[2008+ RSI2 proxy @5bp/side] 50% SPY + 20% proxy: CAGR 7.85% Sharpe 0.657 DD -25.5% (passive 0.616/-25.5%)
+[2008+ RSI2 proxy @5bp/side] 50% SPY + 30% proxy: CAGR 8.21% Sharpe 0.673 DD -25.5% (passive 0.616/-25.5%)
+   RSI2 proxy alone @5: CAGR 4.80% Sharpe 0.562 DD -14.9%
+[2015+ RSI2 proxy @13.5bp/side] 50% SPY + 10% proxy: CAGR 8.24% Sharpe 0.710 DD -18.2% (passive 0.700/-17.9%)
+[2015+ RSI2 proxy @13.5bp/side] 50% SPY + 20% proxy: CAGR 8.48% Sharpe 0.716 DD -18.6% (passive 0.700/-17.9%)
+[2015+ RSI2 proxy @13.5bp/side] 50% SPY + 30% proxy: CAGR 8.71% Sharpe 0.720 DD -19.0% (passive 0.700/-17.9%)
+   RSI2 proxy alone @13.5: CAGR 4.30% Sharpe 0.402 DD -12.0%
+[2008+ RSI2 proxy @13.5bp/side] 50% SPY + 10% proxy: CAGR 7.34% Sharpe 0.625 DD -25.5% (passive 0.616/-25.5%)
+[2008+ RSI2 proxy @13.5bp/side] 50% SPY + 20% proxy: CAGR 7.55% Sharpe 0.630 DD -25.5% (passive 0.616/-25.5%)
+[2008+ RSI2 proxy @13.5bp/side] 50% SPY + 30% proxy: CAGR 7.76% Sharpe 0.634 DD -25.5% (passive 0.616/-25.5%)
+   RSI2 proxy alone @13.5: CAGR 3.35% Sharpe 0.345 DD -15.7%
+[2015+ RSI2 proxy @25bp/side] 50% SPY + 10% proxy: CAGR 8.02% Sharpe 0.688 DD -18.3% (passive 0.700/-17.9%)
+[2015+ RSI2 proxy @25bp/side] 50% SPY + 20% proxy: CAGR 8.04% Sharpe 0.673 DD -18.7% (passive 0.700/-17.9%)
+[2015+ RSI2 proxy @25bp/side] 50% SPY + 30% proxy: CAGR 8.06% Sharpe 0.657 DD -19.1% (passive 0.700/-17.9%)
+   RSI2 proxy alone @25: CAGR 2.22% Sharpe 0.071 DD -15.7%
+[2008+ RSI2 proxy @25bp/side] 50% SPY + 10% proxy: CAGR 7.14% Sharpe 0.606 DD -25.5% (passive 0.616/-25.5%)
+[2008+ RSI2 proxy @25bp/side] 50% SPY + 20% proxy: CAGR 7.15% Sharpe 0.594 DD -25.5% (passive 0.616/-25.5%)
+[2008+ RSI2 proxy @25bp/side] 50% SPY + 30% proxy: CAGR 7.15% Sharpe 0.581 DD -25.5% (passive 0.616/-25.5%)
+   RSI2 proxy alone @25: CAGR 1.42% Sharpe 0.051 DD -22.6%
