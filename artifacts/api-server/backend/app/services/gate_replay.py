@@ -42,7 +42,11 @@ A *setup* is the gate configuration the strategy trades with:
 * ``stop_loss_pct`` / ``take_profit_pct`` / ``max_holding_sessions``: the exit
   geometry (``barrier_for``), the same keys a strategy row's parameters use
   to override its exit policy.  Missing keys keep the fixed barrier above, so
-  a setup built from the live policy replays exactly as before.
+  a setup built from the live policy replays exactly as before;
+* ``scope``: a one-condition entry rule in the ``rules.py`` format
+  (``{"f": "rsi_2", "op": "<", "v": 10}``) ANDed into the entries on the
+  decision bar, the live ``strategies/scope.py`` wrapper replayed; it comes
+  from the signal autopsy (``signal_autopsy.py``).
 
 ``simulate(..., universe=mask)`` takes an optional per-date membership mask
 (``symbol, dates -> bool array``, e.g. ``point_in_time_universe.Membership``)
@@ -65,6 +69,7 @@ from app.services.market_gate import above_sma, sector_symbol, spy_above_sma
 from app.services.meta_label import REVERSION_BARRIER
 from app.services.seed import RSI2_WIDENED_SCOPE
 from app.services.strategies.regime import DEFAULT_RANGE_ADX, wilder_adx
+from app.services.strategies.scope import SCOPE_KEY, scope_condition, scope_mask
 from app.services.strategy_discovery import _executable, _marked_returns
 from app.services.strategy_scorecard import trade_statistics
 from app.services.triple_barrier import BarrierConfig, CostMultipliers, label_events
@@ -81,7 +86,8 @@ MIN_CONFIDENCE = 0.55
 GATE_KEYS = ("market_gate_sma", "vix_gate", "vix_level", "earnings_blackout_sessions", "sector_gate_sma",
              "breadth_gate_min")
 EXIT_KEYS = ("stop_loss_pct", "take_profit_pct", "max_holding_sessions")
-SETUP_KEYS = (*GATE_KEYS, *EXIT_KEYS)
+SCOPE_KEYS = (SCOPE_KEY,)
+SETUP_KEYS = (*GATE_KEYS, *EXIT_KEYS, *SCOPE_KEYS)
 LATEST_CALIBRATION = object()  # ``simulate`` default: read the latest recorded cost calibration
 CALIBRATION_CACHE_SECONDS = 300.0
 _calibration_cache: dict = {"at": None, "value": None}
@@ -276,6 +282,7 @@ def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd
     setup = dict(setup or {})
     if window is not None:
         setup["market_gate_sma"] = window
+    scope_rule = scope_condition(setup)   # the setup's ``scope`` key, validated; None = no scope
     setup = setup_from_parameters(setup)
     barrier = barrier_for(strategy, setup)
     sector_frames = sectors if sectors is not None else frames
@@ -294,6 +301,8 @@ def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd
                 buy &= sector_gate_on(frame, sector_frames.get(etf), setup["sector_gate_sma"])
         if universe is not None:
             buy &= np.asarray(universe(symbol, pd.to_datetime(frame["date"])), dtype=bool)
+        if scope_rule is not None:
+            buy &= scope_mask(frame, scope_rule)
         positions = np.flatnonzero(buy)
         if not len(positions):
             continue

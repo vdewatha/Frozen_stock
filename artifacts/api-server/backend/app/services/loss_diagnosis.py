@@ -76,8 +76,11 @@ PROPOSALS = {
     "missed_sector_move": "Test a sector gate: no new longs while the sector ETF is below its short average "
                           "(experiment template sector_gate: off / 10 / 20 / 50 days).",
     "news_wrong": "Re-score these headlines with a better sentiment model and check the source before trusting it.",
-    "signal_wrong": "Compare the entry features of these losses with this strategy's wins; narrow its symbols or "
-                    "regimes, or retire it if no difference shows.",
+    "signal_wrong": "The weekly signal autopsy compares the entry features of these losses with this strategy's "
+                    "wins (rsi_2, rsi_14, dist_sma_200, dist_sma_50, atr_pct_14, gap, vol_ratio_20_100, ibs, "
+                    "bb_pctb_20, down_streak, dow, entry VIX and breadth); a feature that separates becomes a "
+                    "scope candidate the experiment engine replays, and a scope that passes the rule narrows the "
+                    "entries. Retire the strategy if no feature ever separates.",
 }
 CONTRIBUTING_PROPOSALS = {
     "crowded_symbol": "Several lots held one symbol: test one position per symbol across strategies.",

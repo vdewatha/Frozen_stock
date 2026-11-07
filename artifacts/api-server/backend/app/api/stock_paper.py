@@ -178,6 +178,14 @@ def setup_shadow(db: Session = Depends(get_db)) -> dict:
     return setup_shadow_view(db)
 
 
+@router.get("/signal-autopsy")
+def signal_autopsy(db: Session = Depends(get_db)) -> dict:
+    """Per strategy, the entry features of its losses against its wins and the scope candidates they yield (read-only)."""
+    from app.services.signal_autopsy import signal_autopsy_view
+
+    return signal_autopsy_view(db)
+
+
 @router.get("/cost-calibration")
 def cost_calibration(db: Session = Depends(get_db)) -> dict:
     """Realised paper fill costs against the replay cost model, and the multipliers in force (read-only)."""
