@@ -358,8 +358,13 @@ def _clean(value: Any) -> Any:
     return value
 
 
-def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, vix, replays, simulate) -> dict:
-    """Replay the strategy under its current setup and each candidate; apply the rule."""
+def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, vix, replays, simulate,
+                   universe: Optional[Callable] = None) -> dict:
+    """Replay the strategy under its current setup and each candidate; apply the rule.
+
+    ``universe`` is the optional point-in-time membership mask (``symbol,
+    dates -> bool array``) the replay ANDs into its entries.
+    """
     from app.services.gate_replay import window_rows
 
     baseline = current_setup(getattr(strategy, "parameters", None), strategy.strategy_type)
@@ -370,8 +375,9 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
             continue
         setups[template.label(candidate)] = setup
     rows = {}
+    extra = {"universe": universe} if universe is not None else {}
     for label, setup in setups.items():
-        trades = simulate(strategy.strategy_type, frames, spy, setup, replays, vix=vix)
+        trades = simulate(strategy.strategy_type, frames, spy, setup, replays, vix=vix, **extra)
         rows[label] = window_rows(trades, frames)
     decision = decide(rows)
     adopted = decision["adopted"]
@@ -501,6 +507,19 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
 
         simulate = simulate or gate_replay.simulate
         symbols = sorted({s.upper() for s in settings.paper_execution_symbols})
+        universe, universe_summary = None, {"mode": "today", "symbols": len(symbols)}
+        if settings.replay_point_in_time_universe:
+            from app.services import point_in_time_universe
+
+            try:  # a missing membership file falls back to today's list, never stops the run
+                context = point_in_time_universe.replay_universe(symbols, loader=loader, earnings_loader=earnings_loader,
+                                                                 now=now)
+                symbols, universe, loader, earnings_loader = (context.symbols, context.mask, context.loader,
+                                                              context.earnings_loader)
+                universe_summary = context.summary()
+            except Exception as exc:
+                logger.warning("experiment engine: point-in-time universe unavailable, using today's list: %s", exc)
+                universe_summary["fallback"] = f"{exc.__class__.__name__}: {exc}"
         frames, missing = load_frames(symbols, loader=loader, start=settings.experiment_engine_history_start,
                                       earnings_loader=earnings_loader)
         spy = frames.get("SPY")
@@ -517,14 +536,14 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                 if not frames or spy is None:
                     raise RuntimeError("no price history to replay")
                 experiment = run_experiment(strategy, template, frames=frames, spy=spy, vix=vix, replays=replays,
-                                            simulate=simulate)
+                                            simulate=simulate, universe=universe)
             except Exception as exc:  # one experiment must not stop the run
                 db.rollback()
                 errors.append({**item, "error": f"{exc.__class__.__name__}: {exc}"})
                 continue
             experiment.update({"trigger": item["trigger"], "lesson_count": item["lesson_count"],
                                "lesson_scope": item["lesson_scope"], "ran_at": _iso(now),
-                               "symbols": len(frames), "missing_symbols": missing,
+                               "symbols": len(frames), "missing_symbols": missing, "universe": universe_summary,
                                "applied": bool(experiment["adopted"]) and settings.experiment_engine_adoption_enabled})
             change = None
             if experiment["adopted"] and settings.experiment_engine_adoption_enabled:
