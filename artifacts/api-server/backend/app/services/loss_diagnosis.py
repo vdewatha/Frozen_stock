@@ -73,21 +73,24 @@ PROPOSALS = {
     "missed_earnings": "Test blacking out entries whenever a report falls inside the full planned hold.",
     "missed_market_move": "Test a market gate: no new longs while SPY is falling (e.g. below its 10-day average) "
                           "and a cap on open longs moving together.",
-    "missed_sector_move": "Test a sector gate: no new longs while the sector ETF is below its short average.",
+    "missed_sector_move": "Test a sector gate: no new longs while the sector ETF is below its short average "
+                          "(experiment template sector_gate: off / 10 / 20 / 50 days).",
     "news_wrong": "Re-score these headlines with a better sentiment model and check the source before trusting it.",
     "signal_wrong": "Compare the entry features of these losses with this strategy's wins; narrow its symbols or "
                     "regimes, or retire it if no difference shows.",
 }
 CONTRIBUTING_PROPOSALS = {
     "crowded_symbol": "Several lots held one symbol: test one position per symbol across strategies.",
-    "clustered_stops": "Stops fired together: positions were one bet. Test a cap on correlated entries per day.",
+    "clustered_stops": "Stops fired together: positions were one bet. Test a cap on correlated entries per day "
+                       "(experiment template entry_cluster_cap: at most 2 or 4 new entries per session, book-wide).",
     "exit_untested": "The exits were not the backtested ones, so the result does not test the strategy.",
     "macro_event_in_hold": "A Fed, CPI or jobs release landed inside these holds: test a longer announcement "
                            "blackout for this strategy.",
     "high_vix_entry": "These losses were opened with the VIX at 25 or more: backtest half size or no entries "
                       "above a VIX level.",
     "weak_breadth_entry": "These losses were opened while most stocks were below their 200-day average: "
-                          "backtest a breadth gate for this strategy.",
+                          "backtest a breadth gate for this strategy (experiment template breadth_gate: no entry "
+                          "under 40 / 50 / 60% of members above their 200-day average).",
     "premature_stop": "Stopped out, then the price got back to the entry before the planned horizon: test a "
                       "wider stop for this strategy.",
     "gave_back_gains": "These trades gave back more than half of their best open gain: test a shorter time stop "

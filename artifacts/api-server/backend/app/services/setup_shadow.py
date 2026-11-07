@@ -181,6 +181,27 @@ class CycleContext:
                 self._vix = {"vix": None, "vix_date": None, "vix_change_pct": None, "reason": "vix_unavailable"}
         return self._vix
 
+    def sector_allows(self, symbol: str, window: int) -> Optional[bool]:
+        """The sector gate's decision at ``window`` from the ETF frames the protections loaded; None when not loaded."""
+        from app.services.market_gate import sector_state, sector_symbol
+
+        etf = sector_symbol(symbol)
+        if etf is None:
+            return True  # no sector ETF: never sector-gated
+        history = getattr(self.protections, "sector_history", None) or {}
+        if etf not in history:
+            return None
+        return bool(sector_state(history[etf], int(window), etf)["allowed"])
+
+    def breadth_allows(self, minimum: float) -> Optional[bool]:
+        """The breadth gate's decision from the cycle's gauges (fail open without one); None when no gauges were read."""
+        from app.services.market_gauges import breadth_state
+
+        gauges = getattr(self.protections, "gauges", None)
+        if gauges is None:
+            return None
+        return bool(breadth_state(gauges, float(minimum))["allowed"])
+
     def earnings_block(self, symbol: str, sessions: int) -> Optional[bool]:
         """True when a report falls inside ``sessions``; None when the calendar is not cached for the symbol."""
         from app.services.earnings_calendar import earnings_blackout, earnings_known
@@ -227,6 +248,12 @@ def decide_candidate(template: Template, candidate: Mapping, *, symbol: str, con
             return True
         blocked = context.earnings_block(symbol, sessions)
         return None if blocked is None else not blocked
+    if template.name == "sector_gate":
+        window = int(candidate.get("sector_gate_sma") or 0)
+        return True if window <= 0 else context.sector_allows(symbol, window)
+    if template.name == "breadth_gate":
+        minimum = float(candidate.get("breadth_gate_min") or 0.0)
+        return True if minimum <= 0 else context.breadth_allows(minimum)
     return None
 
 

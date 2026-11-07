@@ -30,6 +30,15 @@ A *setup* is the gate configuration the strategy trades with:
 * ``earnings_blackout_sessions``: no entry when an earnings report lands
   within the next N sessions (the live ``earnings_calendar`` rule, replayed
   from the ``earn_surprise`` reaction bars that ``earnings_history`` attaches);
+* ``sector_gate_sma``: no entry in a symbol while its sector ETF's close is at
+  or below its N-day average (``market_gate.sector_symbol`` names the ETF;
+  ``sector_gate_on``); the ETF frames come from ``frames`` (or ``sectors=``),
+  a missing ETF frame fails closed as live, a symbol without a sector ETF is
+  never gated;
+* ``breadth_gate_min``: no entry while the share of S&P 500 members above
+  their 200-day average (``breadth=``, the ``market_gauges.breadth_series``
+  of the point-in-time history) is below P percent on the decision bar
+  (``breadth_gate_on``); an unknown reading fails open as live;
 * ``stop_loss_pct`` / ``take_profit_pct`` / ``max_holding_sessions``: the exit
   geometry (``barrier_for``), the same keys a strategy row's parameters use
   to override its exit policy.  Missing keys keep the fixed barrier above, so
@@ -52,7 +61,7 @@ import pandas as pd
 
 from app.services import meta_label_primary as primary
 from app.services.earnings_history import SURPRISE_COLUMN
-from app.services.market_gate import spy_above_sma
+from app.services.market_gate import above_sma, sector_symbol, spy_above_sma
 from app.services.meta_label import REVERSION_BARRIER
 from app.services.seed import RSI2_WIDENED_SCOPE
 from app.services.strategies.regime import DEFAULT_RANGE_ADX, wilder_adx
@@ -69,7 +78,8 @@ REVERSION = ("rsi2_pullback", "ibs_mean_reversion")
 STRATEGIES = (*TECHNICAL, *REVERSION)
 WINDOWS = {"all": None, "2015+": "2015-01-01", "2020+": "2020-01-01"}
 MIN_CONFIDENCE = 0.55
-GATE_KEYS = ("market_gate_sma", "vix_gate", "vix_level", "earnings_blackout_sessions")
+GATE_KEYS = ("market_gate_sma", "vix_gate", "vix_level", "earnings_blackout_sessions", "sector_gate_sma",
+             "breadth_gate_min")
 EXIT_KEYS = ("stop_loss_pct", "take_profit_pct", "max_holding_sessions")
 SETUP_KEYS = (*GATE_KEYS, *EXIT_KEYS)
 LATEST_CALIBRATION = object()  # ``simulate`` default: read the latest recorded cost calibration
@@ -156,6 +166,35 @@ def vix_gate_on(frame: pd.DataFrame, vix: Optional[pd.DataFrame], gate: Optional
     raise ValueError(f"unsupported vix_gate {gate!r} for replay")
 
 
+def sector_gate_on(frame: pd.DataFrame, sector_frame: Optional[pd.DataFrame], window: int) -> np.ndarray:
+    """Per bar: the sector gate lets an entry through (always when ``window`` is 0 or ``sector_frame`` is the symbol's own).
+
+    ``sector_frame`` is the symbol's sector ETF history; ``None`` fails closed
+    as the live gate does when the ETF cannot be loaded.  The caller passes
+    ``None`` only for symbols that *have* a sector ETF; a symbol without one
+    is never gated (see ``simulate``).
+    """
+    if not window:
+        return np.ones(len(frame), dtype=bool)
+    if sector_frame is None or "close" not in sector_frame or len(sector_frame) < window:
+        return np.zeros(len(frame), dtype=bool)
+    above = pd.Series(above_sma(sector_frame["close"], window), index=pd.to_datetime(sector_frame["date"]))
+    return _aligned(frame, above, False).astype(bool)
+
+
+def breadth_gate_on(frame: pd.DataFrame, breadth_series: Optional[pd.Series], min_pct: float) -> np.ndarray:
+    """Per bar: breadth on the decision bar at or above ``min_pct`` (0 = off).  Unknown readings fail open, as live."""
+    if not min_pct or float(min_pct) <= 0:
+        return np.ones(len(frame), dtype=bool)
+    if breadth_series is None or not len(breadth_series):
+        return np.ones(len(frame), dtype=bool)
+    series = pd.Series(pd.to_numeric(breadth_series, errors="coerce").to_numpy(float),
+                       index=pd.DatetimeIndex(pd.to_datetime(breadth_series.index)).normalize()).sort_index()
+    reading = _aligned(frame, series, np.nan)
+    known = np.isfinite(reading)
+    return ~known | (reading >= float(min_pct))
+
+
 def earnings_gate_on(frame: pd.DataFrame, sessions: int) -> np.ndarray:
     """Per bar: no report reacts within the next ``sessions`` bars (decision on bar t, entry at t+1)."""
     if not sessions or SURPRISE_COLUMN not in frame:
@@ -192,8 +231,10 @@ def setup_from_parameters(parameters: Optional[Mapping]) -> dict:
         return value if np.isfinite(value) and valid(value) else None
 
     hold = number("max_holding_sessions", lambda v: v >= 1 and v == int(v))
+    breadth = number("breadth_gate_min", lambda v: 0 < v <= 100)
     return {"market_gate_sma": integer("market_gate_sma"), "vix_gate": gate if gate in ("below", "above") else None,
             "vix_level": level, "earnings_blackout_sessions": integer("earnings_blackout_sessions"),
+            "sector_gate_sma": integer("sector_gate_sma"), "breadth_gate_min": float(breadth or 0.0),
             "stop_loss_pct": number("stop_loss_pct", lambda v: 0 < v < 1),
             "take_profit_pct": number("take_profit_pct", lambda v: v >= 0),
             "max_holding_sessions": int(hold) if hold is not None else None}
@@ -217,13 +258,18 @@ def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd
              setup: Optional[Mapping] = None, replays: Optional[Mapping[str, dict]] = None, *,
              vix: Optional[pd.DataFrame] = None, window: Optional[int] = None,
              calibration=LATEST_CALIBRATION,
-             universe: Optional[Callable[[str, pd.DatetimeIndex], np.ndarray]] = None) -> pd.DataFrame:
+             universe: Optional[Callable[[str, pd.DatetimeIndex], np.ndarray]] = None,
+             sectors: Optional[Mapping[str, pd.DataFrame]] = None,
+             breadth: Optional[pd.Series] = None) -> pd.DataFrame:
     """Every executable trade of ``strategy`` under ``setup`` (``window`` is the legacy market-gate-only form).
 
     ``calibration`` is a ``paper_cost_calibration.CostCalibration`` (or
     ``None`` for the published cost model); by default the latest recorded one.
     ``universe(symbol, dates)`` is an optional per-bar membership mask ANDed
     into the entries (point-in-time universe); ``None`` keeps today's list.
+    ``sectors`` maps a sector ETF to its daily frame for the sector gate
+    (default: ``frames`` itself, which carries the ETFs); ``breadth`` is the
+    breadth history (``market_gauges.breadth_series``) for the breadth gate.
     """
     if calibration is LATEST_CALIBRATION:
         calibration = cost_calibration()
@@ -232,6 +278,7 @@ def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd
         setup["market_gate_sma"] = window
     setup = setup_from_parameters(setup)
     barrier = barrier_for(strategy, setup)
+    sector_frames = sectors if sectors is not None else frames
     out = []
     for symbol in scope(strategy, list(frames)):
         frame = frames[symbol]
@@ -239,7 +286,12 @@ def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd
         buy = (entries(strategy, frame, replay)
                & spy_gate_on(frame, spy, setup["market_gate_sma"])
                & vix_gate_on(frame, vix, setup["vix_gate"], setup["vix_level"])
-               & earnings_gate_on(frame, setup["earnings_blackout_sessions"]))
+               & earnings_gate_on(frame, setup["earnings_blackout_sessions"])
+               & breadth_gate_on(frame, breadth, setup["breadth_gate_min"]))
+        if setup["sector_gate_sma"]:
+            etf = sector_symbol(symbol)
+            if etf is not None:  # a symbol without a sector ETF is never sector-gated
+                buy &= sector_gate_on(frame, sector_frames.get(etf), setup["sector_gate_sma"])
         if universe is not None:
             buy &= np.asarray(universe(symbol, pd.to_datetime(frame["date"])), dtype=bool)
         positions = np.flatnonzero(buy)
