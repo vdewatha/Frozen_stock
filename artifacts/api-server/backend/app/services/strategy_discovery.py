@@ -126,9 +126,30 @@ SHORT_EXITS = {"first_up_close": FIRST_UP_CLOSE, "close_above_sma5": ABOVE_SMA5}
 # ``news_articles`` features from ``news_history``; 0 without a tone history,
 # so the candidates fire only where the backfill reaches.
 NEWS_FAMILIES = frozenset({"positive_news_trend", "negative_news_dip", "post_upgrade_drift"})
+# Sector-relative reversal (reports/sector-reversal-20261107.md): the
+# ``rel_*`` features against the stock's sector ETF (``sector_relative``);
+# NaN on ETFs, so single stocks only.
+SECTOR_FAMILIES = frozenset({"sector_reversal"})
+SECTOR_REVERSAL_EXITS = {
+    "hysteresis": [_c("rel_rsi_2", ">", 70), *ABOVE_SMA5],
+    "relative_recovered": [_c("rel_rsi_2", ">", 70)],
+}
 # Families that only make sense on some universes (ETFs have no earnings and no company news).
 FAMILY_UNIVERSES = {"earnings_drift": frozenset({"single_stocks"}),
-                    **{family: frozenset({"single_stocks"}) for family in NEWS_FAMILIES}}
+                    **{family: frozenset({"single_stocks"}) for family in NEWS_FAMILIES},
+                    **{family: frozenset({"single_stocks"}) for family in SECTOR_FAMILIES}}
+
+
+def sector_reversal_variants() -> list[tuple[str, dict, dict]]:
+    """(name, rule, exit plan) of every sector-reversal variant; the first is the strategy's default rule."""
+    reversion = {"stop_loss_pct": 0.10, "take_profit_pct": 0.0, "max_holding_sessions": 10}
+    out = []
+    for (feature_name, level), (exit_name, exit_rule) in product(
+            [("rel_z_5", -2), ("rel_z_5", -1.5), ("rel_rsi_2", 5), ("rel_rsi_2", 10)], SECTOR_REVERSAL_EXITS.items()):
+        out.append((f"{feature_name}<{level:g}/{exit_name}",
+                    {"entry": [*TREND, _c(feature_name, "<", level)], "exit": [dict(c) for c in exit_rule]},
+                    dict(reversion)))
+    return out
 GAP_FLOOR = -0.03  # bigger opening gaps are news, not noise, and rarely fill the same day
 
 
@@ -190,6 +211,9 @@ def _families() -> Iterable[tuple[str, str, dict, dict]]:
         yield ("post_upgrade_drift", "An analyst upgrade met by a gap up keeps drifting (recommendation drift).",
                {"entry": [*(TREND if trend else []), _c("news_tone", ">=", 1.0), _c("gap", ">", 0.01)], "exit": []},
                {"stop_loss_pct": 0.10, "take_profit_pct": 0.0, "max_holding_sessions": hold})
+    for _name, rule, plan in sector_reversal_variants():
+        yield ("sector_reversal", "A stock's fall that its own sector did not share is a liquidity overshoot "
+               "and reverts (Hameed & Mian 2015; Da, Liu & Schaumburg 2014).", rule, plan)
     filters = {"none": [], "trend": TREND, "calm": [_c("vol_ratio_20_100", "<", 1.0)]}
     for gap, (filter_name, conditions), stop in product((-0.003, -0.005, -0.01), filters.items(), (0.01, 0.03)):
         yield ("opening_gap_fill", "Small opening gaps down fill back to the prior close within the session.",
@@ -603,13 +627,17 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
 # ---------------------------------------------------------------- scheduled run
 
 def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optional[str] = None,
-                earnings_loader=None, news_loader=None) -> tuple[dict, list]:
+                earnings_loader=None, news_loader=None, sector_close: bool = True) -> tuple[dict, list]:
     """Adjusted daily bars per symbol (shared cache with the meta-label retrainer).
 
     Single stocks also get the ``earn_surprise`` column and the
     ``news_tone`` / ``news_articles`` columns (``news_history`` cache); a
     missing earnings or news history leaves them empty rather than dropping
-    the symbol.
+    the symbol.  With ``sector_close`` (default) they also get the
+    ``sector_close`` column of the sector-relative features
+    (``sector_relative.attach_sector_closes``: the static map for today's
+    names, the statistical one for past members), when the sector ETFs are
+    among ``symbols``.
     """
     from app.services.meta_label_learning import history_dir
     from app.services.strategy_scorecard import load_daily_history, normalize_prices
@@ -642,6 +670,10 @@ def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optiona
             frames[symbol] = frame
         else:
             missing.append(symbol)
+    if sector_close:
+        from app.services.sector_relative import attach_sector_closes
+
+        frames, _method = attach_sector_closes(frames)
     return frames, missing
 
 
