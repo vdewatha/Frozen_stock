@@ -5,6 +5,7 @@ import hmac
 import re
 from decimal import Decimal
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -433,6 +434,18 @@ class Settings(BaseSettings):
     replay_point_in_time_universe: bool = True
     experiment_verdict_min_trades: int = Field(default=20, ge=5, le=500)
     experiment_verdict_max_trades: int = Field(default=60, ge=5, le=1000)
+    # Which forward judge acts on an adopted change (verdict_stats.py):
+    # "fixed_20" (20 trades after vs 20 before, 10 bps revert margin) or
+    # "e_process" (always-valid betting e-process on SPY-adjusted paired
+    # differences, e-LOND confirmations, 120-trade cap).  Both are computed
+    # and recorded in every change_verdict payload; only this one acts.
+    experiment_verdict_method: Literal["fixed_20", "e_process"] = "fixed_20"
+    # Multiplicity hurdle on adoption: the adopted candidate's backtest
+    # expectancy must clear t >= 3 or a deflated Sharpe > 0.95 counting every
+    # candidate ever tried for the strategy; an additional check beside RULE,
+    # reported in the decision payload.  Default from the pre-registered rule
+    # of scripts/replay_verdicts.py (reports/verdict-replay-20261107.md).
+    experiment_multiplicity_hurdle: bool = True
     # Gate cost: each withheld BUY of the last N sessions is replayed under the
     # strategy's tested exits; a gate needs min_scored resolved trades before
     # it is called costly or earning its keep (gate_cost.py).

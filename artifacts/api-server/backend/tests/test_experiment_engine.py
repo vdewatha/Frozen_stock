@@ -168,6 +168,10 @@ def _fake_replay(monkeypatch, scores, baseline_label="off"):
         return {w: _window(*scores.get(label, scores["baseline"])) for w in engine.WINDOWS}
 
     monkeypatch.setattr(gate_replay, "window_rows", window_rows)
+    # The fake rows carry no confidence interval or trade moments, so the multiplicity hurdle
+    # (verdict_stats.multiplicity_hurdle, tested in test_verdict_stats.py) could never pass them;
+    # these tests are about RULE.
+    monkeypatch.setattr(settings, "experiment_multiplicity_hurdle", False)
     return simulate
 
 

@@ -195,3 +195,33 @@ operator pause of scheduled learning pauses it; `drift_retrain_enabled` turns
 it off. `GET /stock/learning-cycles/schedule-control` carries the state under
 `drift_retraining`; the ledger is the `drift_retrain` audit rows. See
 `reports/drift-retraining-20261106.md`.
+
+## Always-valid verdicts (shadow mode) and the multiplicity hurdle
+
+Every adopted change now has two forward judges. The `fixed_20` rule (20
+trades after vs the 20 before, 10 bps revert margin, watch to 60) still acts.
+Beside it `verdict_stats.py` runs an always-valid judge on the same review:
+betting e-processes (Waudby-Smith & Ramdas 2023) on the paired difference per
+BUY decision from the setup shadow (the adopted value minus the value it
+replaced, SPY-adjusted over the hold except for the market, VIX and breadth
+gates; exits, scope and book changes use the live trades minus the 20 before),
+same-date trades averaged into one observation. Harm at alpha 0.10 reverts;
+confirmation needs the e-LOND level of the change's place in the adoption
+stream (Xu & Ramdas 2024, FDR 0.10 under arbitrary dependence); with neither
+by 120 trades the change is kept only if the lower confidence bound is above
+-10 bps. A trade beyond the measured loss bound raises an alarm and switches
+the judge to the heavy-tailed Catoni process (Wang & Ramdas 2023). Its verdict
+is `verdict_e_process` in every `change_verdict` payload and pending entry;
+`experiment_verdict_method = "e_process"` makes it the acting judge (it falls
+back to `fixed_20` when its data is unreadable). The e-LOND stream is an
+`e_lond` audit row; the measured inputs (loss bound, variance bound, rho) are
+constants in `verdict_stats.MEASURED_INPUTS`, overridden by a `verdict_inputs`
+row (`scripts/measure_verdict_inputs.py --database-url ... --record`). Both
+verdicts show in `GET /stock-paper/learning-experiments` (`verdict_methods`)
+and the engine audit (`judges`). The adoption path also runs a multiplicity
+hurdle: the adopted candidate's paired backtest gain needs t >= 3 (entry-date
+clustered) or a deflated Sharpe > 0.95 counting every candidate ever tried for
+the strategy (`experiment_multiplicity_hurdle`, on by default); `RULE` is
+unchanged and the hurdle is reported in each decision payload. Paper only;
+audit rows only. See `reports/verdict-inputs-20261107.md` and
+`reports/verdict-replay-20261107.md`.
