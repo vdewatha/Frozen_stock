@@ -24,6 +24,14 @@ traded on that bar, NaN on every other bar; it comes from an
 ``earn_surprise`` column (``earnings_history.attach_surprises``) and is NaN
 when the frame has none.
 
+``news_tone`` / ``news_articles`` are the session's news tone (directional
+mean of the stories published before that bar's close) and story count from
+the ``news_tone`` / ``news_articles`` columns (``news_history.attach_tone``);
+``news_tone_N`` / ``news_articles_N`` are the same N bars earlier, so
+``news_tone_1`` is the previous session's tone.  Both are 0 on a bar with no
+news and 0 everywhere when the frame carries no news columns, so a news rule
+simply does not fire without a tone history.
+
 Every feature is a trailing window (or the trading calendar, which is known in
 advance), so ``rule_frame`` over a whole history equals the value computed on
 each prefix: discovery evaluates rules vectorised over decades of bars and the
@@ -55,6 +63,7 @@ from app.services.strategies.base import (
 from app.services.strategies.short_term_reversion import internal_bar_strength, wilder_rsi
 
 RULE_SLUG_PREFIX = "rule_"
+NEWS_TONE_COLUMN = "news_tone"  # news_history.TONE_COLUMN (not imported: rules stays light)
 MAX_RULE_LOOKBACK = 252
 # Indicators that need warm-up (Wilder RSI, rolling std) are computed on at
 # most this many trailing bars at runtime; enough for exact thresholds.
@@ -62,6 +71,7 @@ _RUNTIME_TAIL = 400
 _OPS: dict[str, Callable] = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operator.ge,
                              "==": operator.eq}
 TIMINGS = frozenset({"close", "open"})
+NEWS_FEATURES = frozenset({"news_tone", "news_articles"})
 # Features known at the open of their own bar (everything else is shifted a bar for open-timed rules).
 _OPEN_FEATURES = frozenset({"gap"})
 _FEATURE = re.compile(r"^(?P<name>[a-z_]+?)(?:_(?P<n>\d+))?(?:_(?P<m>\d+))?$")
@@ -90,7 +100,8 @@ def feature(frame: pd.DataFrame, name: str, cache: Optional[dict] = None) -> pd.
     ``dist_sma_N``, ``at_low_N`` / ``at_high_N`` (close is the N-bar
     min / max), ``down_streak`` / ``up_streak``, ``ibs``, ``gap``,
     ``bb_pctb_N``, ``atr_pct_N``, ``vol_ratio_N_M`` (N- over M-bar realised
-    volatility), ``tdom``, ``tdays_left``, ``dow``, ``earn_surprise``.
+    volatility), ``tdom``, ``tdays_left``, ``dow``, ``earn_surprise``,
+    ``news_tone[_N]``, ``news_articles[_N]``.
     """
     if cache is not None and name in cache:
         return cache[name]
@@ -141,6 +152,10 @@ def feature(frame: pd.DataFrame, name: str, cache: Optional[dict] = None) -> pd.
     elif kind == "earn_surprise" and n is None:
         value = pd.to_numeric(frame[kind], errors="coerce").astype(float).reset_index(drop=True) \
             if kind in frame.columns else pd.Series(np.nan, index=close.index)
+    elif kind in NEWS_FEATURES and m is None:
+        column = (pd.to_numeric(frame[kind], errors="coerce").astype(float).reset_index(drop=True)
+                  if kind in frame.columns else pd.Series(0.0, index=close.index))
+        value = column.shift(n or 0).fillna(0.0) if n else column.fillna(0.0)
     else:
         raise ValueError(f"Unknown rule feature: {name}")
     value = value.reset_index(drop=True).astype(float)
@@ -166,6 +181,15 @@ def timing(rule: dict) -> str:
 
 def uses_feature(rule: dict, name: str) -> bool:
     return any(c["f"] == name for c in [*rule.get("entry", []), *rule.get("exit", [])])
+
+
+def uses_news(rule: dict) -> bool:
+    """Whether any condition reads a ``news_tone`` / ``news_articles`` feature (at any lag)."""
+    for condition in [*rule.get("entry", []), *rule.get("exit", [])]:
+        match = _FEATURE.match(str(condition.get("f", "")))
+        if match and match["name"] in NEWS_FEATURES:
+            return True
+    return False
 
 
 def validate_rule(rule: Any) -> dict:
@@ -264,6 +288,14 @@ class RuleStrategy(BaseStrategy):
                 return neutral_signal(f"Rule {self.slug}: earnings history unavailable.",
                                       {"rule": describe_rule(self.rule)})
             frame = earnings_history.attach_surprises(frame, events)
+        if uses_news(self.rule) and NEWS_TONE_COLUMN not in frame.columns:
+            from app.services import news_history
+
+            series = news_history.runtime_tone(symbol)
+            if series is None:
+                return neutral_signal(f"Rule {self.slug}: news tone history unavailable.",
+                                      {"rule": describe_rule(self.rule)})
+            frame = news_history.attach_tone(frame, series)
         cache: dict = {}
         fire = bool(entry_signals(frame, self.rule, cache)[-1])
         features = {c["f"]: (None if not np.isfinite(v := float(feature(frame, c["f"], cache).iloc[-1])) else v)

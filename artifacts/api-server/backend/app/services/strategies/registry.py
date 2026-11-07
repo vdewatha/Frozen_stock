@@ -4,6 +4,7 @@ from typing import Optional
 
 from app.services.strategies.base import BaseStrategy
 from app.services.strategies.market_hedge import MarketHedgeStrategy, fenced_class
+from app.services.strategies.news_tone import NewsToneStrategy
 from app.services.strategies.regime import apply_regime_gate
 from app.services.strategies.rules import RULE_SLUG_PREFIX, RuleStrategy
 from app.services.strategies.short_term_reversion import IBSMeanReversionStrategy, RSI2PullbackStrategy
@@ -35,6 +36,7 @@ STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     # Long SH while the SPY market gate is closed (reports/hedge-20261106.md);
     # seeded by ``seed.admit_market_hedge`` as a candidate or paused.
     MarketHedgeStrategy.slug: MarketHedgeStrategy,
+    NewsToneStrategy.slug: NewsToneStrategy,  # reports/news-entries-20261106.md; never seeded, operator-admitted
 }
 
 # Registered strategies that must never be seeded or traded. Empty since the

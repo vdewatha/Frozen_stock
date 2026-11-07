@@ -27,6 +27,8 @@ NOW = datetime.now(UTC).replace(microsecond=0)
 @pytest.fixture(autouse=True)
 def _enabled(monkeypatch):
     monkeypatch.setattr(settings, "news_discovery_enabled", True)
+    # The tone-history backfill is tested in test_news_entries.py; nothing here may call Alpaca.
+    monkeypatch.setattr(settings, "news_history_backfill_requests_per_run", 0)
     nd.clear_cache()
     yield
     nd.clear_cache()
