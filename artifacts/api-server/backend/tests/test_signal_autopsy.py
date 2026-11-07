@@ -240,7 +240,8 @@ def test_scope_template_is_dynamic_and_static_templates_are_unchanged():
     for other in engine.TEMPLATES:
         if other.name != "scope":
             assert other.dynamic is None and other.candidates
-    assert engine.TEMPLATES[-1] is template
+    # The only dynamic template; the static ones (the lesson-template block included) keep fixed candidates.
+    assert [t for t in engine.TEMPLATES if t.dynamic is not None] == [template]
 
 
 def test_plan_plans_the_scope_template_only_with_candidates(db):  # noqa: F811
