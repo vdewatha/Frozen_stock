@@ -17,7 +17,8 @@ would execute it:
   vertical exits exactly as the backtester orders them.  A fixed
   ``take_profit_pct`` of 0 means no upper barrier (stop, time and indicator
   exits only), which is the RSI(2)/IBS paper exit policy;
-* gaps through a level fill at the open (never at the better level price);
+* gaps through a level fill at the open (never at the better level price):
+  a stop gapped through fills at ``min(stop, open)`` (``gapped_stop_fill``);
   when one bar touches both levels the stop is assumed to have been hit first.
 
 The label is ``1`` when the trade's **net** return after both sides' costs and
@@ -170,6 +171,16 @@ LABEL_COLUMNS = [
 ]
 
 
+def gapped_stop_fill(stop_level: float, open_: float) -> float:
+    """A long's stop that the open gapped through fills at ``min(stop, open)``, never at the better stop.
+
+    A broker sell stop elects on the first consolidated trade at or below the
+    stop and then fills as a market order, so an open below the stop is the
+    fill, not the stop level.
+    """
+    return min(float(stop_level), float(open_))
+
+
 def label_events(prices: pd.DataFrame, event_positions: Iterable[int],
                  config: BarrierConfig | None = None, exit_signals: Sequence[bool] | None = None,
                  calibration: CostMultipliers | None = None) -> pd.DataFrame:
@@ -226,7 +237,7 @@ def label_events(prices: pd.DataFrame, event_positions: Iterable[int],
             if idx > entry:
                 open_ = opens[idx]
                 if open_ <= stop_level:
-                    exit_idx, exit_raw, barrier = idx, open_, "stop_loss_gap"
+                    exit_idx, exit_raw, barrier = idx, gapped_stop_fill(stop_level, open_), "stop_loss_gap"
                 elif open_ >= target_level:
                     exit_idx, exit_raw, barrier = idx, open_, "take_profit_gap"
                 elif idx - entry >= horizon:

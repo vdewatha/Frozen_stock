@@ -26,6 +26,16 @@ result measured against SPY and the sector ETF over the same hold, earnings
 inside the hold, crowding, clustered stops and whether the exits were the
 backtested ones.
 
+``slippage`` also carries the consolidated benchmark (``feed_hygiene``): the
+existing ``entry_bps`` / ``exit_bps`` are measured against the decision price,
+which for entries is the latest IEX minute close (``reference_feed: "iex"``);
+``sip_reference`` holds each side's delayed-SIP reference (the official SIP
+open for an entry at the open, else the SIP minute bar containing the fill,
+quantity-weighted over the side's fills) and ``sip_bps`` the slippage against
+it.  ``entry_time_in_force``, ``paper`` and ``auction`` tag the entry order;
+a paper ``opg`` / ``cls`` fill only imitates the auction.  Both are ``None``
+until the after-close SIP job has referenced the fills.
+
 Every closed trade (trial lots and round trips) also records what the price
 did *after* the exit, up to the planned horizon (``max_holding_sessions``
 from the entry session): ``post_exit`` holds the return from the exit price
@@ -220,6 +230,45 @@ def slippage_bps(fill_price: Optional[float], reference: Optional[float], side: 
     return round(raw if side == "buy" else -raw, 4)
 
 
+def sip_slippage(references: dict, *, entry_order: Any, exit_order_ids: Iterable[Optional[int]],
+                 entry_price: Optional[float], exit_price: Optional[float]) -> dict:
+    """The delayed-SIP benchmark of one trade's entry and exit, next to the IEX decision-price numbers."""
+    from app.services import feed_hygiene
+
+    entry_id = getattr(entry_order, "id", None)
+    exit_ids = [order_id for order_id in exit_order_ids if order_id]
+    by_order = feed_hygiene.order_sip_references(references, [entry_id, *exit_ids]) if references else {}
+    entry = by_order.get(entry_id)
+    exits = [by_order[order_id] for order_id in exit_ids if order_id in by_order]
+    exit_ref = None
+    if exits:
+        quantity = sum(item["quantity"] for item in exits)
+        exit_ref = {"price": _round(sum(item["price"] * item["quantity"] for item in exits) / quantity, 6),
+                    "fills": sum(item["fills"] for item in exits), "quantity": _round(quantity, 9),
+                    "kinds": sorted({kind for item in exits for kind in item["kinds"]}),
+                    "orders": [order_id for order_id in exit_ids if order_id in by_order], "feed": "sip"}
+    tif = getattr(entry_order, "time_in_force", None)
+    tif = str(tif).lower() if tif else None
+    return {
+        "reference_feed": "iex",
+        "sip_reference": {"entry": entry, "exit": exit_ref},
+        "sip_bps": {"entry": slippage_bps(entry_price, entry["price"], "buy") if entry else None,
+                    "exit": slippage_bps(exit_price, exit_ref["price"], "sell") if exit_ref else None},
+        "entry_time_in_force": tif, "paper": True,
+        "auction": tif in feed_hygiene.AUCTION_TIFS,
+    }
+
+
+def _sip_references(db: Session, since: Optional[datetime]) -> dict:
+    from app.services import feed_hygiene
+
+    try:
+        return feed_hygiene.sip_references(db, since=since)
+    except Exception:  # evidence only; the attribution must not fail for want of a benchmark
+        db.rollback()
+        return {}
+
+
 def signal_quality(*, probability: Optional[float] = None, threshold: Optional[float] = None,
                    confidence: Optional[float] = None) -> dict:
     """Bucket the entry signal: strong / moderate / marginal / unknown."""
@@ -378,11 +427,12 @@ def _record(**values) -> dict:
 # ----------------------------------------------------------------- trial lots
 
 def attribute_trial(db: Session, trial: StockPaperTrial, *, regime_cache: Optional[dict] = None,
-                    now: Optional[datetime] = None) -> list[StockTradeAttribution]:
+                    now: Optional[datetime] = None, sip_references: Optional[dict] = None) -> list[StockTradeAttribution]:
     """Attribute every fully closed lot of one forward trial (idempotent)."""
     from app.services.trade_mistakes import classify_trade, trial_lot_trades
 
     cache = regime_cache if regime_cache is not None else {}
+    references = sip_references if sip_references is not None else _sip_references(db, None)
     strategy = db.get(Strategy, trial.strategy_id) if trial.strategy_id else None
     strategy_type = strategy.strategy_type if strategy else "stock_forward_trial"
     created = []
@@ -414,6 +464,9 @@ def attribute_trial(db: Session, trial: StockPaperTrial, *, regime_cache: Option
                 "exit_reference_price": _f(lot.exit_reference_price) if lot else None,
                 "exit_price": exit_price,
                 "exit_bps": slippage_bps(exit_price, _f(lot.exit_reference_price) if lot else None, "sell"),
+                **sip_slippage(references, entry_order=entry_order,
+                               exit_order_ids=[lot.exit_order_id] if lot else [],
+                               entry_price=entry_price, exit_price=exit_price),
             },
             holding={"sessions": sessions, "minutes": round((closed_at - opened_at).total_seconds() / 60, 2),
                      "rule_sessions": trade.get("planned_horizon_sessions"),
@@ -442,8 +495,9 @@ def attribute_trials(db: Session, *, since: Optional[datetime] = None,
         statement = statement.where(StockPaperTrial.created_at >= since - timedelta(days=60))
     cache: dict = {}
     created = []
+    references = _sip_references(db, since)
     for trial in db.scalars(statement).all():
-        created.extend(attribute_trial(db, trial, regime_cache=cache, now=now))
+        created.extend(attribute_trial(db, trial, regime_cache=cache, now=now, sip_references=references))
     return created
 
 
@@ -526,6 +580,7 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
                                                           _f(signal.probability_up) if signal else None)
     overlaps, stops_by_day = _diagnosis_context(rebuilt["lots"], trades, now=now)
     prices = loss_diagnosis.PriceLookup(db)
+    references = _sip_references(db, since)
     et = ZoneInfo("America/New_York")
     cache: dict = {}
     policies: dict = {}
@@ -603,6 +658,8 @@ def attribute_round_trips(db: Session, *, account_id: Optional[int] = None,
                 "entry_bps": slippage_bps(trade["entry_price"], decision_price, "buy"),
                 "exit_reference_price": _round(exit_reference, 6), "exit_price": trade["exit_price"],
                 "exit_bps": slippage_bps(trade["exit_price"], exit_reference, "sell"),
+                **sip_slippage(references, entry_order=lot.entry_order, exit_order_ids=exit_ids,
+                               entry_price=trade["entry_price"], exit_price=trade["exit_price"]),
             },
             holding={"sessions": sessions, "minutes": trade["holding_minutes"], "rule_sessions": max_hold,
                      "relation": holding_relation(sessions, max_hold)},
