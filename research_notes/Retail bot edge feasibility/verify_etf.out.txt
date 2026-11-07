@@ -1,0 +1,30 @@
+# Output of: python3 -I verify_etf.py <scratchpad>/px.csv (price cache written by etf_rotation_backtest.py; md5 8042865bca1be9a6ebb96e1ce1862747), run 2026-11-07
+data 2007-05-30 2026-11-06
+A TSMOM-IV 2015+ single-day offsets 0-15 @5bp: CAGR 3.59%..4.39% Sharpe 0.33..0.50 MaxDD -13.6%..-8.0% median -11.1%
+  A TSMOM-IV 2015+ 4 tranches @5bp/side: CAGR 4.07% vol 4.9% Sharpe 0.44 MaxDD -10.6% excess over BIL +2.10 pts/yr
+  A TSMOM-IV 2015+ 4 tranches @11bp/side: CAGR 3.78% vol 4.9% Sharpe 0.38 MaxDD -10.6% excess over BIL +1.81 pts/yr
+  A TSMOM-IV 2015+ 4 tranches @25bp/side: CAGR 3.12% vol 4.9% Sharpe 0.25 MaxDD -10.7% excess over BIL +1.15 pts/yr
+  A TSMOM-IV 2015+ 4 tranches @11bp, BIL earning 0 in ledger: CAGR 2.88%
+A TSMOM-IV 2008+ single-day offsets 0-15 @5bp: CAGR 4.05%..4.76% Sharpe 0.53..0.66 MaxDD -13.6%..-8.0% median -11.1%
+  A TSMOM-IV 2008+ 4 tranches @5bp/side: CAGR 4.32% vol 5.3% Sharpe 0.59 MaxDD -10.6% excess over BIL +3.03 pts/yr
+  A TSMOM-IV 2008+ 4 tranches @11bp/side: CAGR 4.04% vol 5.3% Sharpe 0.53 MaxDD -10.6% excess over BIL +2.75 pts/yr
+  A TSMOM-IV 2008+ 4 tranches @25bp/side: CAGR 3.40% vol 5.3% Sharpe 0.42 MaxDD -10.7% excess over BIL +2.11 pts/yr
+  A TSMOM-IV 2008+ 4 tranches @11bp, BIL earning 0 in ledger: CAGR 3.45%
+B GTAA5-ENS 2015+ single-day offsets 0-15 @5bp: CAGR 4.20%..5.58% Sharpe 0.32..0.55 MaxDD -21.0%..-8.6% median -17.3%
+  B GTAA5-ENS 2015+ 4 tranches @5bp/side: CAGR 4.75% vol 7.0% Sharpe 0.42 MaxDD -13.6% excess over BIL +2.78 pts/yr
+  B GTAA5-ENS 2015+ 4 tranches @11bp/side: CAGR 4.52% vol 7.0% Sharpe 0.39 MaxDD -13.7% excess over BIL +2.55 pts/yr
+  B GTAA5-ENS 2015+ 4 tranches @25bp/side: CAGR 3.98% vol 7.0% Sharpe 0.32 MaxDD -13.9% excess over BIL +2.01 pts/yr
+  B GTAA5-ENS 2015+ 4 tranches @11bp, BIL earning 0 in ledger: CAGR 3.90%
+B GTAA5-ENS 2008+ single-day offsets 0-15 @5bp: CAGR 4.50%..5.53% Sharpe 0.42..0.57 MaxDD -21.0%..-11.3% median -17.3%
+  B GTAA5-ENS 2008+ 4 tranches @5bp/side: CAGR 4.81% vol 7.7% Sharpe 0.48 MaxDD -13.8% excess over BIL +3.52 pts/yr
+  B GTAA5-ENS 2008+ 4 tranches @11bp/side: CAGR 4.59% vol 7.7% Sharpe 0.45 MaxDD -13.8% excess over BIL +3.29 pts/yr
+  B GTAA5-ENS 2008+ 4 tranches @25bp/side: CAGR 4.07% vol 7.7% Sharpe 0.39 MaxDD -14.0% excess over BIL +2.77 pts/yr
+  B GTAA5-ENS 2008+ 4 tranches @11bp, BIL earning 0 in ledger: CAGR 4.17%
+2015+ BIL CAGR 1.97%; SPY CAGR 13.51% vol 17.5% Sharpe 0.70 MaxDD -33.7%
+  static 28% SPY/72% BIL (vol-matched to A): CAGR 5.34% vol 4.8% Sharpe 0.71 MaxDD -9.8% excess +3.37
+  static 40% SPY/60% BIL (vol-matched to B): CAGR 6.72% vol 6.8% Sharpe 0.70 MaxDD -13.9% excess +4.75
+2008+ BIL CAGR 1.29%; SPY CAGR 12.20% vol 19.7% Sharpe 0.62 MaxDD -47.2%
+  static 27% SPY/73% BIL (vol-matched to A): CAGR 4.43% vol 5.1% Sharpe 0.62 MaxDD -14.4% excess +3.14
+  static 39% SPY/61% BIL (vol-matched to B): CAGR 5.83% vol 7.5% Sharpe 0.62 MaxDD -20.7% excess +4.54
+A tranched @11bp yearly: 2015:-3.6 2016:+2.7 2017:+8.5 2018:-2.0 2019:+9.0 2020:+2.3 2021:+7.2 2022:-5.4 2023:+4.9 2024:+5.4 2025:+11.2 2026:+4.8
+B tranched @11bp yearly: 2015:-4.4 2016:+2.2 2017:+8.2 2018:-2.3 2019:+10.0 2020:-2.9 2021:+22.0 2022:-4.9 2023:+3.5 2024:+5.1 2025:+7.0 2026:+10.8
