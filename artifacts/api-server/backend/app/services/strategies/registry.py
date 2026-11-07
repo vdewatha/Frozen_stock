@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from app.services.strategies.base import BaseStrategy
+from app.services.strategies.market_hedge import MarketHedgeStrategy, fenced_class
 from app.services.strategies.regime import apply_regime_gate
 from app.services.strategies.rules import RULE_SLUG_PREFIX, RuleStrategy
 from app.services.strategies.short_term_reversion import IBSMeanReversionStrategy, RSI2PullbackStrategy
@@ -31,6 +32,9 @@ STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     # their own exit policy and index-ETF symbol scope (see seed.py).
     RSI2PullbackStrategy.slug: RSI2PullbackStrategy,
     IBSMeanReversionStrategy.slug: IBSMeanReversionStrategy,
+    # Long SH while the SPY market gate is closed (reports/hedge-20261106.md);
+    # seeded by ``seed.admit_market_hedge`` as a candidate or paused.
+    MarketHedgeStrategy.slug: MarketHedgeStrategy,
 }
 
 # Registered strategies that must never be seeded or traded. Empty since the
@@ -47,9 +51,9 @@ def is_known_strategy(slug: str) -> bool:
 
 def get_strategy(slug: str, parameters: Optional[dict] = None) -> BaseStrategy:
     if isinstance(slug, str) and slug.startswith(RULE_SLUG_PREFIX):
-        return _apply_gates(RuleStrategy(parameters, slug=slug), parameters)
+        return _apply_gates(fenced_class(RuleStrategy)(parameters, slug=slug), parameters)
     try:
-        strategy = STRATEGY_REGISTRY[slug](parameters)
+        strategy = fenced_class(STRATEGY_REGISTRY[slug])(parameters)
     except KeyError as exc:
         raise ValueError(f"Unknown strategy: {slug}") from exc
     return _apply_gates(strategy, parameters)
@@ -57,5 +61,7 @@ def get_strategy(slug: str, parameters: Optional[dict] = None) -> BaseStrategy:
 
 def _apply_gates(strategy: BaseStrategy, parameters: Optional[dict]) -> BaseStrategy:
     # Opt-in ``regime_gate`` (strategies/regime.py) and ``vix_gate``
-    # (strategies/vix_gate.py) parameters; each is a no-op when unset.
+    # (strategies/vix_gate.py) parameters; each is a no-op when unset.  The
+    # strategy itself is a ``fenced_class`` (strategies/market_hedge.py), so
+    # no strategy but the hedge can buy a hedge instrument.
     return apply_vix_gate(apply_regime_gate(strategy, parameters), parameters)
