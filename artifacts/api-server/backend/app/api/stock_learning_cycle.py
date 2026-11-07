@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.core.config import settings
 from app.models import StockLearningCycle, StockPaperPromotionDecision, StockTrainingJob
 from app.services.audit import write_audit_log
+from app.services.drift_retraining import drift_retraining_projection
 from app.services.stock_learning_cycle import (
     _decision_projection,
     StockTrainingError,
@@ -158,7 +159,8 @@ def get_cycles(
 
 @router.get("/schedule-control")
 def get_schedule_control(db: Session = Depends(get_db)) -> dict:
-    return scheduled_learning_control_projection(db)
+    """Scheduled-learning control plus the drift-triggered retraining state (additive)."""
+    return scheduled_learning_control_projection(db) | {"drift_retraining": drift_retraining_projection(db)}
 
 
 @router.get("/launch-prerequisites")
