@@ -53,6 +53,18 @@ applied the result.  This module lets the bot run that loop itself.
    ``min_trades`` overlapping decisions reverts the change early, and a
    candidate that beats the live setup is a ``shadow_evidence`` lesson for
    the next weekly run, replayed under the same rule.
+   That is the ``fixed_20`` judge.  Beside it, every review also runs the
+   always-valid judge of ``verdict_stats.py`` (``e_process_judgement``:
+   betting e-processes on SPY-adjusted paired shadow differences, a harm
+   test at alpha 0.10, confirmation at the e-LOND level of the change's place
+   in the adoption stream, a 120-trade cap) and records it as
+   ``verdict_e_process`` in each verdict and pending entry; only the judge
+   named by ``experiment_verdict_method`` acts (``fixed_20`` by default).
+5. **Multiplicity hurdle** (``apply_multiplicity_hurdle``).  After ``RULE``
+   picks a candidate, its paired backtest gain over the live setup must
+   clear t >= 3 or a deflated Sharpe > 0.95 counting every candidate ever
+   tried for the strategy (``experiment_multiplicity_hurdle``); ``RULE``'s
+   checks are unchanged and the hurdle is reported in the decision payload.
 
 Paper only.  Nothing here places, sizes or blocks an order directly; it only
 changes the entry-gate parameters the autotrader already honours.
@@ -92,6 +104,7 @@ MIN_TRADES_PER_WINDOW = 30
 DRAWDOWN_TOLERANCE = 1.10
 REVERT_EXPECTANCY_BPS = 10.0
 RECENT_TRADES = 20
+METHOD_FIXED_20 = "fixed_20"   # verdict_stats.METHOD_FIXED (the verdict before the e-process judge existed)
 BASELINE = "baseline"
 RULE = ("Adopt a candidate only if, in every window (all, 2015+, 2020+), it keeps >= 30 trades, net expectancy per "
         "trade is not lower, total net profit is not lower and portfolio max drawdown is <= 1.10x the current "
@@ -520,7 +533,8 @@ def _clean(value: Any) -> Any:
 
 
 def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, vix, replays, simulate,
-                   universe: Optional[Callable] = None, breadth=None, calibration: float = 1.0) -> dict:
+                   universe: Optional[Callable] = None, breadth=None, calibration: float = 1.0,
+                   prior_trials: int = 0, prior_sharpes: Optional[Iterable[float]] = None) -> dict:
     """Replay the strategy under its current setup and each candidate; apply the rule.
 
     ``universe`` is the optional point-in-time membership mask (``symbol,
@@ -528,7 +542,10 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
     optional breadth history (``market_gauges.breadth_series``) the breadth
     gate reads.  Either is passed to ``simulate`` only when set.
     ``calibration`` is the engine audit's factor ``decide`` multiplies into
-    each candidate's expected gain.
+    each candidate's expected gain.  ``prior_trials`` / ``prior_sharpes`` are
+    the candidates tried for this strategy in earlier experiments and their
+    paired Sharpes, for the multiplicity hurdle (``apply_multiplicity_hurdle``)
+    on each candidate's paired backtest difference (``paired_moments``).
     """
     from app.services.gate_replay import window_rows
 
@@ -546,17 +563,74 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
     extra = {"universe": universe} if universe is not None else {}
     if breadth is not None:
         extra["breadth"] = breadth
+    trades_by_label = {}
     for label, setup in setups.items():
         trades = simulate(strategy.strategy_type, frames, spy, setup, replays, vix=vix, **extra)
         rows[label] = window_rows(trades, frames)
+        trades_by_label[label] = trades
     decision = decide(rows, calibration=calibration)
-    adopted = decision["adopted"]
+    paired = _paired_moments(trades_by_label, spy, template)
+    adopted = apply_multiplicity_hurdle(decision, paired, prior_trials=prior_trials, prior_sharpes=prior_sharpes,
+                                        tried_now=len(setups) - 1)
     return {"strategy_type": strategy.strategy_type, "strategy_id": strategy.id, "template": template.name,
             "key": template.key, "baseline_setup": baseline, "setups": setups, "rows": rows, "decision": decision,
             "candidate_keys": sorted(candidates[0]) if candidates else [template.key],
-            "calibration": decision["calibration"],
+            "calibration": decision["calibration"], "paired_moments": paired,
+            "multiplicity_hurdle": decision.get("multiplicity_hurdle"),
             "adopted": adopted, "adopted_setup": setups.get(adopted),
             "adopted_description": template.describe(setups[adopted]) if adopted else None}
+
+
+def _paired_moments(trades_by_label: Mapping, spy, template: Template) -> dict:
+    """Per candidate: the paired backtest difference against the baseline (``verdict_stats.paired_stats``); empty when unreadable."""
+    from app.services import verdict_stats as vs
+
+    base = trades_by_label.get(BASELINE)
+    out = {}
+    for label, trades in trades_by_label.items():
+        if label == BASELINE:
+            continue
+        try:
+            frame = vs.paired_backtest(base, trades, spy=spy, adjust=vs.adjusts_for_spy(template.name))
+            out[label] = vs.paired_stats(frame)
+        except Exception:
+            out[label] = {}
+    return out
+
+
+def apply_multiplicity_hurdle(decision: dict, paired: Mapping, *, prior_trials: int = 0,
+                              prior_sharpes: Optional[Iterable[float]] = None,
+                              tried_now: Optional[int] = None) -> Optional[str]:
+    """The adopted label after the multiplicity hurdle (``verdict_stats.multiplicity_hurdle``).
+
+    ``RULE``'s checks are untouched: ``decision["adopted"]`` stays the rule's
+    pick, the hurdle's result is added as ``decision["multiplicity_hurdle"]``,
+    and only when ``experiment_multiplicity_hurdle`` is on does a candidate
+    that fails it go unadopted (``decision["blocked_by_hurdle"]``).  The
+    hurdle tests the paired backtest gain (``paired[label]``); trials = every
+    candidate tried for the strategy before (``prior_trials``) plus this
+    experiment's.  An unavailable hurdle (no paired data) never blocks.
+    """
+    from app.services.verdict_stats import multiplicity_hurdle
+
+    adopted = decision.get("adopted")
+    if not adopted:
+        return None
+    tried = int(tried_now if tried_now is not None else max(len(paired), 1))
+    sharpes = [m.get("sharpe") for m in paired.values() if m and m.get("sharpe") is not None]
+    sharpes += [s for s in (prior_sharpes or []) if s is not None]
+    try:
+        hurdle = multiplicity_hurdle(paired.get(adopted), trials=int(prior_trials or 0) + max(tried, 1),
+                                     trial_sharpes=sharpes, label=adopted)
+    except Exception as exc:  # an unreadable hurdle never blocks; it is reported as unavailable
+        logger.warning("experiment engine: multiplicity hurdle unavailable: %s", exc)
+        hurdle = {"label": adopted, "passed": None, "error": f"{exc.__class__.__name__}: {exc}"}
+    hurdle["enabled"] = bool(settings.experiment_multiplicity_hurdle)
+    decision["multiplicity_hurdle"] = hurdle
+    if hurdle["enabled"] and hurdle.get("passed") is False:
+        decision["blocked_by_hurdle"] = adopted
+        return None
+    return adopted
 
 
 def book_baseline(rules: Optional[Mapping]) -> dict:
@@ -569,7 +643,8 @@ def book_baseline(rules: Optional[Mapping]) -> dict:
 
 def run_book_experiment(strategies: Mapping[str, Any], template: Template, *, frames: Mapping, spy, vix, replays,
                         simulate, rules: Optional[Mapping] = None, universe: Optional[Callable] = None,
-                        breadth=None, book_candidates: Optional[Callable] = None, calibration: float = 1.0) -> dict:
+                        breadth=None, book_candidates: Optional[Callable] = None, calibration: float = 1.0,
+                        prior_trials: int = 0) -> dict:
     """Replay the whole book under the current book policy and each candidate; apply the same rule.
 
     Every active replayable strategy's trades (each under its own live setup)
@@ -602,10 +677,10 @@ def run_book_experiment(strategies: Mapping[str, Any], template: Template, *, fr
         accepted = book_replay.allocate(rows_in, frames, policy)
         rows[label] = book_replay.book_rows(accepted, frames, weight=1.0 / policy["caps"]["total"])
     decision = decide(rows, calibration=calibration)
-    adopted = decision["adopted"]
+    adopted = apply_multiplicity_hurdle(decision, {}, prior_trials=prior_trials, tried_now=len(setups) - 1)
     return {"strategy_type": BOOK, "strategy_id": None, "template": template.name, "key": template.key,
             "baseline_setup": baseline, "setups": setups, "rows": rows, "decision": decision,
-            "calibration": decision["calibration"],
+            "calibration": decision["calibration"], "multiplicity_hurdle": decision.get("multiplicity_hurdle"),
             "adopted": adopted, "adopted_setup": setups.get(adopted),
             "adopted_description": template.describe(setups[adopted]) if adopted else None,
             "book": {"strategies": sorted(live_setups), "candidate_trades": int(len(rows_in)),
@@ -719,6 +794,22 @@ def experiment_history(db: Session, *, limit: Optional[int] = None) -> list[dict
     return [row.payload or {} for row in _history_rows(db, ACTION_EXPERIMENT, limit)]
 
 
+def prior_trials_by_strategy(history: Iterable[Mapping]) -> dict:
+    """Per strategy: candidate setups tried in earlier experiments (baseline excluded) and their per-trade Sharpes."""
+    out: dict[str, dict] = {}
+    for item in history:
+        key = item.get("strategy_type")
+        if not key:
+            continue
+        entry = out.setdefault(key, {"trials": 0, "sharpes": []})
+        setups = item.get("setups") or item.get("rows") or {}
+        entry["trials"] += max(len(setups) - 1, 0)
+        for label, moment in (item.get("paired_moments") or {}).items():
+            if label != BASELINE and (moment or {}).get("sharpe") is not None:
+                entry["sharpes"].append(float(moment["sharpe"]))
+    return out
+
+
 def _costly_gate_lessons(db: Session) -> list[dict]:
     """Gates the gate-cost audit flags costly, as lessons (an unreadable ledger is no lesson)."""
     from app.services.gate_cost import costly_gate_lessons
@@ -810,6 +901,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                             max_experiments=settings.experiment_engine_max_experiments)
     experiments, adopted, errors = [], [], []
     calibration = _calibration_factor(db)
+    prior = prior_trials_by_strategy(experiment_history(db))
     if plan["planned"]:
         from app.services import gate_replay
         from app.services import meta_label_primary as primary
@@ -858,11 +950,14 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                     experiment = run_book_experiment(strategies, template, frames=frames, spy=spy, vix=vix,
                                                      replays=replays, simulate=simulate, rules=rules,
                                                      universe=universe, breadth=breadth,
-                                                     book_candidates=book_candidates, calibration=calibration)
+                                                     book_candidates=book_candidates, calibration=calibration,
+                                                     prior_trials=prior.get(BOOK, {}).get("trials", 0))
                 else:
+                    tried = prior.get(item["strategy_type"], {})
                     experiment = run_experiment(strategy, template, frames=frames, spy=spy, vix=vix, replays=replays,
                                                 simulate=simulate, universe=universe, breadth=breadth,
-                                                calibration=calibration)
+                                                calibration=calibration, prior_trials=tried.get("trials", 0),
+                                                prior_sharpes=tried.get("sharpes", []))
             except Exception as exc:  # one experiment must not stop the run
                 db.rollback()
                 errors.append({**item, "error": f"{exc.__class__.__name__}: {exc}"})
@@ -884,7 +979,9 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                 status="adopted" if change else ("eligible" if experiment["adopted"] else "rejected"),
                 message=(f"{item['strategy_type']} / {template.name} ({item['trigger']} x{item['lesson_count']}): "
                          + (f"adopt {experiment['adopted']}: {experiment['adopted_description']}" if experiment["adopted"]
-                            else "no candidate beat the current setup")),
+                            else (f"{experiment['decision']['blocked_by_hurdle']} passed the rule but not the "
+                                  "multiplicity hurdle" if experiment["decision"].get("blocked_by_hurdle")
+                                  else "no candidate beat the current setup"))),
                 payload=_clean(experiment),
             )
             experiments.append(experiment)
@@ -924,6 +1021,11 @@ def adopted_changes(db: Session) -> list[dict]:
         if history:
             change["state"] = history[-1]["state"]
             change["verdict"] = history[-1]["verdict"]
+            # Both judges side by side (verdict_stats.py): which one acted, and what each said.
+            change["verdict_method"] = history[-1].get("verdict_method", METHOD_FIXED_20)
+            change["verdict_fixed_20"] = history[-1].get("verdict_fixed_20", history[-1]["verdict"]
+                                                         if change["verdict_method"] == METHOD_FIXED_20 else None)
+            change["verdict_e_process"] = history[-1].get("verdict_e_process")
         out.append(change)
     return out
 
@@ -1008,22 +1110,161 @@ def _fmt_bps(value: Any) -> str:
     return f"{float(value):+.1f}" if isinstance(value, (int, float)) else "n/a"
 
 
+def _spy_frame(db: Session):
+    """Trusted SPY daily bars for the residual (SPY-adjusted) returns; None when unavailable."""
+    from app.services.gate_cost import daily_frame
+
+    try:
+        return daily_frame(db, "SPY")
+    except Exception as exc:
+        db.rollback()
+        logger.warning("experiment engine: SPY bars unavailable for the e-process verdict: %s", exc)
+        return None
+
+
+def _shadow_decisions(db: Session, change: Mapping, since: datetime) -> list[dict]:
+    """Scored setup-shadow decisions of the change's strategy from the session after the change."""
+    from app.services import gate_cost
+    from app.services.setup_shadow import latest_scores
+
+    latest = latest_scores(db) or {}
+    first = gate_cost.last_completed_session(since).isoformat()
+    return [d for d in latest.get("decisions") or [] if d.get("strategy") == change["strategy_type"]
+            and str(d.get("session")) > first]
+
+
+def e_process_judgement(db: Session, change: Mapping, *, after_rows: list, now: datetime, state: dict,
+                        inputs: Mapping, spy=None) -> dict:
+    """The always-valid judge's verdict for one change (``verdict_stats.e_process_verdict``); updates ``state``.
+
+    Gate templates are judged on paired differences from the setup shadow
+    (the adopted value minus the value it replaced, on the same BUY
+    decisions); exit, scope and book templates, or a gate without a shadow
+    record, on the live trades after the change minus the mean of the 20
+    before.  SPY-adjusted except for market-timing gates.  The first decision
+    is frozen in the e-LOND state so later data cannot undo a stopped test.
+    """
+    from app.services import verdict_stats as vs
+    from app.services.engine_audit import _before_label
+    from app.services.trade_attribution import current_attributions
+
+    cid = change["change_id"]
+    entry = state["changes"].setdefault(cid, {"index": len(state["changes"]) + 1, "levels": [], "discovered": False})
+    if entry.get("decision"):
+        return {**entry["decision"], "frozen": True}
+    template = TEMPLATE_BY_NAME[change["template"]]
+    adjust = vs.adjusts_for_spy(template.name)
+    cls = vs.strategy_class(change["strategy_type"])
+    bound = float(inputs["loss_bound_bps"][cls])
+    sigma = float(inputs["sigma_bps"][cls])
+    rho = float(inputs.get("rho") or 0.0)
+    adopted_at = _parse(change["adopted_at"])
+    observations, source, baseline = [], None, None
+    if template.kind == "gate":
+        before_label = _before_label(change)
+        if before_label:
+            observations = vs.paired_observations(_shadow_decisions(db, change, adopted_at), template.name,
+                                                  before_label, spy=spy, adjust=adjust)
+            source = "shadow_paired" if observations else None
+    if not observations:
+        scope = None if change["strategy_type"] == BOOK else [change["strategy_type"]]
+        before_rows = [row for row in current_attributions(db, sources=SOURCES, strategy_types=scope)
+                       if _parse(_iso(row.closed_at)) < adopted_at]
+        observations, baseline = vs.unpaired_observations(after_rows, before_rows, spy=spy, adjust=adjust,
+                                                          baseline_trades=RECENT_TRADES)
+        source = "live_unpaired" if baseline is not None else None
+        if baseline is not None:
+            bound += abs(baseline)
+    if source is None:
+        return {"method": vs.METHOD_E_PROCESS, "verdict": "watching", "status": "no_observations", "trades": 0,
+                "reason": "no paired shadow decisions and no live baseline yet"}
+    clusters = vs.cluster_by_entry_date(observations)
+    j, discoveries, level = vs.level_for(state, cid)
+    levels = vs.levels_by_observation(entry, clusters, level)
+    result = vs.e_process_verdict(clusters, bound_bps=bound, sigma_bps=sigma, improvement_level=level,
+                                  levels=levels, rho=rho)
+    seen = [int(t) for t, _ in entry.get("levels") or []]
+    if result["trades"] and (not seen or result["trades"] > max(seen)):
+        entry.setdefault("levels", []).append([int(result["trades"]), level])
+    result.update({"source": source, "adjusted_for_spy": adjust, "baseline_bps": baseline,
+                   "elond_index": j, "elond_discoveries_before": discoveries, "inputs_as_of": inputs.get("as_of"),
+                   "inputs_recorded": bool(inputs.get("recorded"))})
+    if result["verdict"] != "watching":
+        if result["verdict"] == "working":
+            entry["discovered"] = True
+        entry["decision"] = {**result, "judged_at": _iso(now)}
+    return result
+
+
+def _e_process_safe(db: Session, change: Mapping, **kwargs) -> dict:
+    try:
+        return e_process_judgement(db, change, **kwargs)
+    except Exception as exc:  # the shadow judge must never stop the acting one
+        db.rollback()
+        logger.warning("experiment engine: e-process verdict unavailable for %s: %s", change.get("change_id"), exc)
+        return {"method": "e_process", "verdict": None, "status": "unavailable",
+                "error": f"{exc.__class__.__name__}: {exc}"}
+
+
+def _fixed_verdict(change: Mapping, after: Mapping, beaten_by: Optional[Mapping], *, min_trades: int,
+                   max_trades: int) -> dict:
+    """The fixed 20-trade rule (with the shadow early revert): verdict and reason, or ``watching`` with what it needs."""
+    if beaten_by is not None:
+        return {"verdict": "not_helping", "shadow": True,
+                "reason": (f"in shadow, {change['template']} = {beaten_by['candidate']} beat the adopted "
+                           f"{beaten_by['live']} by {_fmt_bps(beaten_by['delta_expectancy_bps'])} bps per trade over "
+                           f"{beaten_by['overlap']} of the same BUY decisions ({beaten_by['trades']} forward trades)")}
+    if after["trades"] < min_trades:
+        return {"verdict": "watching", "needed": min_trades - after["trades"], "shadow": False}
+    verdict = judge(change.get("recent_before") or {}, after, max_trades=max_trades)
+    if verdict == "watching":
+        return {"verdict": "watching", "needed": max_trades - after["trades"], "so_far": "mixed", "shadow": False}
+    return {"verdict": verdict, "shadow": False,
+            "reason": (f"after {after['trades']} trades expectancy {_fmt_bps(after['expectancy_bps'])} bps vs "
+                       f"{_fmt_bps((change.get('recent_before') or {}).get('expectancy_bps'))} before, and "
+                       f"{change['trigger']} losses no rarer")}
+
+
+def _compact_e(e_verdict: Mapping) -> dict:
+    keys = ("method", "verdict", "status", "reason", "trades", "observations", "effective_trades", "source",
+            "adjusted_for_spy", "mean_difference_bps", "e_harm", "e_improvement", "harm_threshold",
+            "improvement_level", "improvement_threshold", "elond_index", "elond_discoveries_before",
+            "decided_at_trades", "bound_bps", "sigma_bps", "bound_breach", "breach_at_observation", "process",
+            "lcb_bps", "kept_at_cap", "cap_trades", "rho", "baseline_bps", "inputs_as_of", "inputs_recorded",
+            "frozen", "judged_at", "error")
+    return {k: e_verdict.get(k) for k in keys if k in e_verdict}
+
+
 def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
     """Daily: give each watched change a verdict once enough paper trades closed after it.
 
-    The alternatives' shadow record (``setup_shadow``) rides in every verdict
-    and pending entry, and a change is ``not_helping`` as soon as an
-    alternative beats the adopted value by ``REVERT_EXPECTANCY_BPS`` over at
-    least ``min_trades`` overlapping decisions, before the live trades reach
-    ``min_trades``: the same decisions judge every value at once.
+    Two judges run on every watched change.  The fixed 20-trade rule (with
+    the shadow early revert: an alternative that beats the adopted value by
+    ``REVERT_EXPECTANCY_BPS`` over ``min_trades`` overlapping decisions) and
+    the always-valid e-process judge (``verdict_stats``).  Only
+    ``experiment_verdict_method`` acts (``fixed_20`` by default); the other is
+    recorded beside it in every ``change_verdict`` payload
+    (``verdict_fixed_20`` / ``verdict_e_process``) and in each pending entry.
+    When the e-process judge is the acting one but cannot read its data, the
+    fixed rule acts and the payload says so.
     """
+    from app.services import verdict_stats as vs
     from app.services.trade_attribution import current_attributions
 
     now = now or datetime.now(UTC)
+    method = settings.experiment_verdict_method
     reviewed, pending = [], []
-    for change in adopted_changes(db):
+    changes = adopted_changes(db)
+    state = vs.assign_indices(vs.elond_state(db), changes)
+    before_state = json.dumps(state, sort_keys=True, default=str)
+    inputs = vs.current_inputs(db)
+    spy = None
+    spy_loaded = False
+    for change in changes:
         if change.get("state") != "watching":
             continue
+        if not spy_loaded:
+            spy, spy_loaded = _spy_frame(db), True
         adopted_at = _parse(change["adopted_at"])
         # A book change is judged on every strategy's trades after it.
         scope = None if change["strategy_type"] == BOOK else [change["strategy_type"]]
@@ -1037,53 +1278,71 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
         shadow_summary = ({"decisions": shadow.get("decisions"), "beating": shadow.get("beating"),
                            "candidates": shadow.get("candidates")} if shadow else None)
         beaten_by = shadow_beats_adopted(shadow)
-        if beaten_by is None:
-            if after["trades"] < min_trades:
-                pending.append({"change_id": change["change_id"], "strategy_type": change["strategy_type"],
-                                "trades": after["trades"], "needed": min_trades - after["trades"],
-                                "shadow": shadow_summary})
-                continue
-            verdict = judge(change.get("recent_before") or {}, after, max_trades=max_trades)
-            if verdict == "watching":
-                pending.append({"change_id": change["change_id"], "strategy_type": change["strategy_type"],
-                                "trades": after["trades"], "needed": max_trades - after["trades"], "so_far": "mixed",
-                                "shadow": shadow_summary})
-                continue
-            reason = (f"after {after['trades']} trades expectancy {_fmt_bps(after['expectancy_bps'])} bps vs "
-                      f"{_fmt_bps((change.get('recent_before') or {}).get('expectancy_bps'))} before, and "
-                      f"{change['trigger']} losses no rarer")
+        fixed = _fixed_verdict(change, after, beaten_by, min_trades=min_trades, max_trades=max_trades)
+        e_verdict = _e_process_safe(db, change, after_rows=rows, now=now, state=state, inputs=inputs, spy=spy)
+        e_compact = _compact_e(e_verdict)
+        acting = method
+        if method == vs.METHOD_E_PROCESS and e_verdict.get("status") == "unavailable":
+            acting = vs.METHOD_FIXED
+        if acting == vs.METHOD_E_PROCESS:
+            verdict = e_verdict.get("verdict") or "watching"
+            reason = (f"e-process: {e_verdict.get('reason')} after {e_verdict.get('decided_at_trades')} trades "
+                      f"(mean difference {_fmt_bps(e_verdict.get('mean_difference_bps'))} bps)")
+            shadow_acted = False
         else:
-            verdict = "not_helping"
-            reason = (f"in shadow, {change['template']} = {beaten_by['candidate']} beat the adopted "
-                      f"{beaten_by['live']} by {_fmt_bps(beaten_by['delta_expectancy_bps'])} bps per trade over "
-                      f"{beaten_by['overlap']} of the same BUY decisions ({beaten_by['trades']} forward trades)")
-        state = {"working": "confirmed", "not_helping": "reverted", "inconclusive": "closed"}[verdict]
+            verdict, reason, shadow_acted = fixed["verdict"], fixed.get("reason"), fixed["shadow"]
+        if verdict == "watching":
+            needed = (fixed.get("needed") if acting == vs.METHOD_FIXED else
+                      max(int(e_verdict.get("cap_trades") or vs.CAP_TRADES) - int(e_verdict.get("trades") or 0), 0))
+            entry = {"change_id": change["change_id"], "strategy_type": change["strategy_type"],
+                     "trades": after["trades"], "needed": needed, "shadow": shadow_summary,
+                     "verdict_method": acting, "verdict_fixed_20": fixed["verdict"], "verdict_e_process": e_compact}
+            if fixed.get("so_far") and acting == vs.METHOD_FIXED:
+                entry["so_far"] = fixed["so_far"]
+            pending.append(entry)
+            continue
+        state_name = {"working": "confirmed", "not_helping": "reverted", "inconclusive": "closed"}[verdict]
         reverted = False
         if verdict == "not_helping":
             reverted = revert_change(db, change, now=now, reason=reason)
             if not reverted:
-                state = "closed"
+                state_name = "closed"
+        acted_beaten = beaten_by if shadow_acted else None
         payload = {"change_id": change["change_id"], "strategy_id": change["strategy_id"],
                    "strategy_type": change["strategy_type"], "template": change["template"],
-                   "trigger": change["trigger"], "verdict": verdict, "state": state, "reverted": reverted,
+                   "trigger": change["trigger"], "verdict": verdict, "state": state_name, "reverted": reverted,
                    "before": change.get("recent_before"), "after": after, "judged_at": _iso(now),
-                   "shadow": shadow_summary, "shadow_verdict": beaten_by is not None,
+                   "shadow": shadow_summary, "shadow_verdict": acted_beaten is not None,
                    **_verdict_audit_fields(change, after, shadow_summary),
                    "beaten_by": ({k: beaten_by.get(k) for k in ("candidate", "live", "overlap", "trades",
                                                                  "expectancy_bps", "delta_expectancy_bps",
-                                                                 "delta_total_bps")} if beaten_by else None),
+                                                                 "delta_total_bps")} if acted_beaten else None),
+                   "verdict_method": acting, "verdict_method_setting": method, "reason": reason,
+                   "verdict_fixed_20": fixed["verdict"], "verdict_e_process": e_compact,
                    "paper_only": True}
-        message = (f"{change['strategy_type']}: {change['description']} -> {verdict} "
-                   + (f"on shadow evidence: {reason}" if beaten_by else
-                      f"after {after['trades']} trades ({_fmt_bps(after['expectancy_bps'])} bps vs "
-                      f"{(change.get('recent_before') or {}).get('expectancy_bps')} before)"))
+        if acting == vs.METHOD_E_PROCESS:
+            message = f"{change['strategy_type']}: {change['description']} -> {verdict} ({reason})"
+        else:
+            message = (f"{change['strategy_type']}: {change['description']} -> {verdict} "
+                       + (f"on shadow evidence: {reason}" if acted_beaten else
+                          f"after {after['trades']} trades ({_fmt_bps(after['expectancy_bps'])} bps vs "
+                          f"{(change.get('recent_before') or {}).get('expectancy_bps')} before)"))
         write_audit_log(db, event_type=EVENT, entity_type="risk_rule" if change["strategy_type"] == BOOK else "strategy",
                         entity_id=change["strategy_id"],
-                        action=ACTION_VERDICT, status=state, message=message, payload=_clean(payload))
+                        action=ACTION_VERDICT, status=state_name, message=message, payload=_clean(payload))
         reviewed.append(payload)
-    if reviewed:
+    wrote_state = False
+    if json.dumps(state, sort_keys=True, default=str) != before_state:
+        try:
+            vs.write_elond_state(db, _clean(state), now=now)
+            wrote_state = True
+        except Exception as exc:
+            db.rollback()
+            logger.warning("experiment engine: e-LOND state not recorded: %s", exc)
+    if reviewed or wrote_state:
         db.commit()
-    return {"status": "complete", "reviewed": reviewed, "pending": pending, "paper_only": True}
+    return {"status": "complete", "reviewed": reviewed, "pending": pending, "verdict_method": method,
+            "paper_only": True}
 
 
 # ---------------------------------------------------------------- projection
@@ -1105,10 +1364,31 @@ def scoreboard_changes(db: Session) -> list[dict]:
 
 def experiment_ledger(db: Session, *, limit: int = 30) -> dict:
     runs = _history_rows(db, ACTION_RUN, 1)
-    return {"rule": RULE, "templates": [{"name": t.name, "kind": t.kind, "triggers": sorted(t.triggers), "key": t.key,
+    return {"rule": RULE, "verdict_methods": verdict_methods_view(db), "templates": [{"name": t.name, "kind": t.kind, "triggers": sorted(t.triggers), "key": t.key,
                                          "candidates": [t.label(c) for c in t.candidates], "dynamic": t.dynamic is not None,
                                          "reversion_candidates": ([t.label(c) for c in t.reversion_candidates]
                                                                   if t.reversion_candidates else None)}
                                         for t in TEMPLATES],
             "changes": adopted_changes(db), "experiments": experiment_history(db, limit=limit),
             "latest_run": (runs[0].payload if runs else None), "paper_only": True}
+
+
+def verdict_methods_view(db: Session) -> dict:
+    """Which forward judge acts, the measured inputs the e-process judge reads, and the e-LOND stream."""
+    from app.services import verdict_stats as vs
+
+    state = vs.elond_state(db)
+    inputs = vs.current_inputs(db)
+    changes = state.get("changes") or {}
+    return {"acting": settings.experiment_verdict_method, "available": list(vs.METHODS),
+            "multiplicity_hurdle": bool(settings.experiment_multiplicity_hurdle),
+            "e_process": {"harm_alpha": vs.HARM_ALPHA, "improvement_fdr_alpha": vs.IMPROVEMENT_FDR_ALPHA,
+                          "cap_trades": vs.CAP_TRADES, "keep_lcb_bps": vs.KEEP_LCB_BPS,
+                          "market_timing_templates_unadjusted": sorted(vs.MARKET_TIMING_TEMPLATES)},
+            "inputs": {k: inputs.get(k) for k in ("as_of", "source", "recorded", "loss_bound_bps", "sigma_bps", "rho")},
+            "e_lond": {"alpha": state.get("alpha"), "gamma": state.get("gamma"), "changes": len(changes),
+                       "confirmed": sum(1 for v in changes.values() if v.get("discovered")),
+                       "as_of": state.get("as_of")},
+            "fixed_20": {"min_trades": settings.experiment_verdict_min_trades,
+                         "max_trades": settings.experiment_verdict_max_trades,
+                         "revert_margin_bps": REVERT_EXPECTANCY_BPS}}

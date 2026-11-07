@@ -200,7 +200,40 @@ def change_record(change: Mapping, verdict: Optional[Mapping] = None, shadow: Op
         "realised_source": realised["source"], "forward_trades": realised["forward_trades"], "min_trades": min_trades,
         "shortfall_bps": shortfall, "realised_over_expected": ratio, "judged": judged,
         "shadow": realised["shadow"],
+        # Both forward judges (verdict_stats.py): the one that acted and the e-process one in shadow.
+        "verdict_method": (verdict or {}).get("verdict_method") or change.get("verdict_method"),
+        "verdict_fixed_20": (verdict or {}).get("verdict_fixed_20") or change.get("verdict_fixed_20"),
+        "verdict_e_process": _e_verdict_label((verdict or {}).get("verdict_e_process")
+                                              or change.get("verdict_e_process")),
     }
+
+
+def _e_verdict_label(block: Optional[Mapping]) -> Optional[str]:
+    if not isinstance(block, Mapping):
+        return None
+    return block.get("verdict") or block.get("status")
+
+
+def judge_agreement(records: Iterable[Mapping]) -> dict:
+    """How the fixed 20-trade rule and the e-process judge compare on the judged changes (both recorded)."""
+    pairs = [(r.get("verdict_fixed_20"), r.get("verdict_e_process")) for r in records
+             if r.get("verdict_fixed_20") and r.get("verdict_e_process")]
+    acted = {"keep": ("working", "inconclusive"), "revert": ("not_helping",)}
+
+    def action(verdict: Optional[str]) -> str:
+        for name, verdicts in acted.items():
+            if verdict in verdicts:
+                return name
+        return "watching"
+
+    table: dict[str, int] = {}
+    for fixed, eproc in pairs:
+        key = f"{action(fixed)}/{action(eproc)}"
+        table[key] = table.get(key, 0) + 1
+    decided = [(action(a), action(b)) for a, b in pairs if action(a) != "watching" and action(b) != "watching"]
+    agree = sum(1 for a, b in decided if a == b)
+    return {"pairs": len(pairs), "fixed_20/e_process": table, "both_decided": len(decided),
+            "agreement": _r(agree / len(decided), 4) if decided else None}
 
 
 def verdict_fields(change: Mapping, after: Mapping, shadow: Optional[Mapping]) -> dict:
@@ -264,6 +297,7 @@ def hit_rate(records: Iterable[Mapping], experiments: Iterable[Mapping]) -> dict
                                    "n": len(ratios), "min_judged": MIN_JUDGED,
                                    "mean_shortfall_bps": _r(sum(shortfalls) / len(shortfalls), 2) if shortfalls else None},
         "multiple_testing": multiple_testing(experiments),
+        "judges": judge_agreement(records),
     }
 
 
@@ -397,7 +431,8 @@ def record_engine_audit(db: Session, *, now: Optional[datetime] = None) -> dict:
     audit = build_engine_audit(db, now=now)
     calibration = audit["calibration"]
     rate = audit["hit_rate"]
-    compact = [{k: r.get(k) for k in ("change_id", "strategy_type", "template", "verdict", "expected_gain_bps",
+    compact = [{k: r.get(k) for k in ("change_id", "strategy_type", "template", "verdict", "verdict_method",
+                                      "verdict_fixed_20", "verdict_e_process", "expected_gain_bps",
                                       "realised_gain_bps", "realised_source", "forward_trades", "shortfall_bps",
                                       "realised_over_expected", "judged")} for r in audit["changes"]]
     payload = {"as_of": audit["as_of"], "calibration": calibration, "hit_rate": rate, "changes": compact,
@@ -419,7 +454,7 @@ def record_engine_audit(db: Session, *, now: Optional[datetime] = None) -> dict:
 
 TABLE_KEYS = ("change_id", "strategy_type", "template", "description", "adopted_at", "state", "verdict",
               "expected_gain_bps", "realised_gain_bps", "realised_source", "forward_trades", "shortfall_bps",
-              "realised_over_expected", "judged")
+              "realised_over_expected", "judged", "verdict_method", "verdict_fixed_20", "verdict_e_process")
 
 
 def _section(audit: Mapping) -> dict:
@@ -438,7 +473,8 @@ def _section(audit: Mapping) -> dict:
                          "working_share": rate["working_share"], "ratio_median": ratio["median"], "ratio_ci": ratio["ci"],
                          "candidates_per_adoption": rate["multiple_testing"]["candidates_per_adoption"],
                          "luck_share_of_adoptions": rate["multiple_testing"]["luck_share_of_adoptions"],
-                         "multiple_testing_method": MULTIPLE_TESTING_METHOD},
+                         "multiple_testing_method": MULTIPLE_TESTING_METHOD, "judges": rate.get("judges"),
+                         "verdict_method": settings.experiment_verdict_method},
             "calibration": {"in_force": calibration["in_force"], "in_force_as_of": calibration["in_force_as_of"],
                             "proposed": calibration["factor"], "status": calibration["status"],
                             "reason": calibration["reason"], "required_gain_bps": calibration["required_gain_bps"]}}
