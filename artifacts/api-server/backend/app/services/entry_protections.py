@@ -89,6 +89,14 @@ Protections (each disabled by a value of 0):
     submitted), every further BUY waits for the next session.  The
     ``clustered_stops`` lesson: positions opened together were one bet.
 
+13. **Exploration date caps** (``ExplorationDateCaps``) — exploration
+    (learning-sized) entries only: at most
+    ``exploration_max_entries_per_strategy_per_date`` per strategy and
+    ``exploration_max_entries_per_sector_per_date`` per sector group per entry
+    date (this session's exploration BUYs plus the cycle's own); the
+    exploration lane's names use their assigned sector ETF
+    (``exploration_universe.sector_for``).  Read from the settings only.
+
 Configuration: each key is read from the active ``RiskRule.value`` first and
 falls back to ``settings.paper_<key>``.  Unparseable or negative risk-rule
 values fall back to the setting.
@@ -855,3 +863,92 @@ def load_entry_protections(db, account, *, now: datetime, rules: dict | None,
             pass
         protections.load_error = f"{exc.__class__.__name__}: {exc}"
     return protections
+
+
+# --------------------------------------------------------------------------
+# per-entry-date caps on exploration entries
+
+
+@dataclass
+class ExplorationDateCaps:
+    """At most ``per_strategy`` exploration entries per strategy and ``per_sector`` per sector on one entry date.
+
+    Same-day learning lots of one strategy, or in one sector, are one bet
+    (a market-wide move stops them together), so the exploration lane spreads
+    them over dates.  Counts are this session's exploration-source BUY orders
+    that were not cancelled or rejected, plus the BUYs this cycle submits
+    (``record``).  Only exploration entries are checked; scheduled entries
+    keep the core caps.  0 disables a cap.
+    """
+
+    per_strategy: int = 0
+    per_sector: int = 0
+    by_strategy: dict = field(default_factory=dict)
+    by_sector: dict = field(default_factory=dict)
+    load_error: str | None = None
+
+    def check(self, strategy: str | None, sector: str | None) -> dict | None:
+        if self.load_error:
+            return _block("exploration_date_cap",
+                          f"exploration entry counts could not be loaded ({self.load_error}); entry withheld")
+        if self.per_strategy and strategy and self.by_strategy.get(strategy, 0) >= self.per_strategy:
+            return _block("exploration_date_cap", (
+                f"{strategy} already took {self.by_strategy[strategy]} exploration entries this session "
+                f"(cap {self.per_strategy} per strategy per entry date)"))
+        if self.per_sector and sector and self.by_sector.get(sector, 0) >= self.per_sector:
+            return _block("exploration_date_cap", (
+                f"sector {sector} already has {self.by_sector[sector]} exploration entries this session "
+                f"(cap {self.per_sector} per sector per entry date)"))
+        return None
+
+    def record(self, strategy: str | None, sector: str | None) -> None:
+        if strategy:
+            self.by_strategy[strategy] = self.by_strategy.get(strategy, 0) + 1
+        if sector:
+            self.by_sector[sector] = self.by_sector.get(sector, 0) + 1
+
+    def summary(self) -> dict:
+        out = {"per_strategy": self.per_strategy, "per_sector": self.per_sector,
+               "by_strategy": dict(sorted(self.by_strategy.items())), "by_sector": dict(sorted(self.by_sector.items()))}
+        if self.load_error:
+            out["load_error"] = self.load_error
+        return out
+
+
+DEAD_ORDER_STATUSES = frozenset({"cancelled", "canceled", "rejected", "expired", "unknown"})
+
+
+def load_exploration_date_caps(db, account, *, now: datetime, type_by_id: dict,
+                               sector_of: Callable[[str], str], bounds_for: Callable = session_bounds,
+                               per_strategy: int | None = None, per_sector: int | None = None) -> ExplorationDateCaps:
+    """This session's exploration BUYs by strategy and sector (``sector_of(symbol)``); fails closed for exploration entries only."""
+    from app.models.stock_paper import StockPaperOrder
+    from app.services.stock_paper_ledger import EXPLORATION_SOURCE
+
+    caps = ExplorationDateCaps(
+        per_strategy=int(settings.exploration_max_entries_per_strategy_per_date if per_strategy is None else per_strategy),
+        per_sector=int(settings.exploration_max_entries_per_sector_per_date if per_sector is None else per_sector))
+    if not caps.per_strategy and not caps.per_sector:
+        return caps
+    now = _utc(now)
+    try:
+        bounds = bounds_for(now.astimezone(ET).date())
+        start = _utc(bounds[0]) if bounds is not None else datetime.combine(
+            now.astimezone(ET).date(), datetime.min.time(), tzinfo=ET).astimezone(UTC)
+        rows = db.query(StockPaperOrder).filter(
+            StockPaperOrder.account_id == account.id, StockPaperOrder.source == EXPLORATION_SOURCE,
+            StockPaperOrder.side == "buy", StockPaperOrder.created_at >= start,
+        ).all()
+        for row in rows:
+            if str(row.status) in DEAD_ORDER_STATUSES or _utc(row.created_at) < start:
+                continue
+            caps.record(type_by_id.get(row.strategy_id) if row.strategy_id is not None else None,
+                        sector_of(str(row.symbol).upper()))
+    except Exception as exc:  # fail closed for exploration entries only
+        logger.warning("exploration date caps unavailable: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        caps.load_error = f"{exc.__class__.__name__}: {exc}"
+    return caps

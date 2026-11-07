@@ -1706,6 +1706,17 @@ def news_discovery_job() -> dict:
 
 
 @celery_app.task
+def exploration_universe_job() -> dict:
+    """Refresh the exploration lane: screen the liquid S&P 500 members, admit today's BUY candidates."""
+    def work(db):
+        from app.services.exploration_universe import run_exploration_universe
+
+        return {"job": "exploration_universe_job", **run_exploration_universe(db)}
+
+    return _run_job("exploration_universe_job", work)
+
+
+@celery_app.task
 def market_events_job() -> dict:
     """Refresh the Fed, CPI and jobs-report calendar for the BUY blackout."""
     def work(db):

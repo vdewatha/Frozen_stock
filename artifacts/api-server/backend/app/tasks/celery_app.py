@@ -130,6 +130,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
     "app.tasks.jobs.trade_attribution_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.news_discovery_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.exploration_universe_job": {"queue": "learning"},
     "app.tasks.jobs.meta_label_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
     "app.tasks.jobs.experiment_engine_job": {"queue": "learning"},
@@ -308,6 +309,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.news_discovery_job",
         "schedule": crontab(minute="10,40", hour="8-15", day_of_week="mon-fri"),
         "options": {"expires": 25 * 60},
+    },
+    # Exploration lane (exploration_universe.py): screen the liquid S&P 500
+    # members and admit the day's BUY candidates before the open, so the
+    # intraday feed starts on them; a skip when the setting is "core".
+    "exploration-universe": {
+        "task": "app.tasks.jobs.exploration_universe_job",
+        "schedule": crontab(minute=20, hour=7, day_of_week="mon-fri"),
+        "options": {"expires": 2 * 60 * 60},
     },
     # The meta-label filter retrains itself when due (missing, a week old, or
     # enough new closed paper trades); the job itself skips the session.

@@ -175,7 +175,7 @@ def test_an_already_spent_session_skips_everything_and_a_roomy_one_takes_all():
 
 def test_lift_needs_a_far_item_with_a_positive_backtest():
     far = xb.make_item("strategy", "strategy:x", "x", strategy_type="x", trades=5, wins=3, minimum=30, expectancy_bps=20.0)
-    near = dict(far, trades=15, needed=15)
+    near = dict(far, trades=15, effective_trades=15.0, needed=15)
     no_edge = dict(far, expectancy_bps=None)
     losing = dict(far, expectancy_bps=-5.0)
     with patch.object(settings, "exploration_lift_max", 2.0):
@@ -389,3 +389,104 @@ def test_the_view_renders_before_any_trade_or_plan(db, monkeypatch):  # noqa: F8
 def test_viewers_can_read_the_budget_route():
     assert required_role("GET", "/stock-paper/exploration-budget") == "viewer"
     assert required_role("GET", "/stock-paper/learning-scoreboard") == "viewer"
+
+
+# ------------------------------------------------------ effective trades
+
+def test_effective_trades_discount_same_date_clusters():
+    d1, d2 = datetime(2026, 11, 2).date(), datetime(2026, 11, 3).date()
+    assert xb.effective_trades([d1, d1, d1, d2], rho=0.5) == pytest.approx(3 / 2 + 1)
+    assert xb.effective_trades([d1, d1, d1, d2], rho=0.0) == 4            # independent: raw count
+    assert xb.effective_trades([d1, d1, d1, d2], rho=1.0) == 2            # perfectly correlated: one per date
+    assert xb.effective_trades([], rho=0.3) == 0
+    with patch.object(settings, "exploration_effective_rho", 0.25):
+        assert xb.effective_trades([d1] * 5) == pytest.approx(5 / 2)
+    rows = [SimpleNamespace(opened_at=datetime(2026, 11, 2, 15, tzinfo=UTC)),
+            SimpleNamespace(opened_at=datetime(2026, 11, 2, 19, tzinfo=UTC)),
+            SimpleNamespace(opened_at=datetime(2026, 11, 3, 2, tzinfo=UTC)),   # 21:00 ET on the 2nd: same ET date
+            SimpleNamespace(opened_at=None)]                                   # unknown entry: its own date
+    assert xb.effective_count(rows, rho=0.5) == pytest.approx(3 / 2 + 1)
+
+
+def test_same_date_correlation_detects_a_shared_date_shock():
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    clusters = np.repeat(np.arange(300), 6)
+    shared = rng.normal(0, 1.0, 300)[clusters]
+    clustered = xb.same_date_correlation(shared + rng.normal(0, 1.0, len(clusters)), clusters)
+    independent = xb.same_date_correlation(rng.normal(0, 1.0, len(clusters)), clusters)
+    assert 0.4 < clustered["rho"] < 0.6                    # equal shared and own variance: rho = 0.5
+    assert independent["rho"] < 0.05
+    assert clustered["clusters"] == 300 and clustered["m0"] == pytest.approx(6.0)
+    assert xb.same_date_correlation([1.0, 2.0], ["a", "b"])["rho"] is None   # no cluster of two
+
+
+def test_evidence_map_judges_minimums_on_effective_trades(db, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(settings, "exploration_effective_rho", 0.25)
+    _strategy(db, "rule_ibs", parameters=DISCOVERED, status="paper_trading_candidate")
+    for i in range(5):  # five round trips opened on one day: one cluster
+        _attribution(db, strategy_type="rule_ibs", net_return=0.01, source="exploration_round_trip",
+                     closed_at=NOW - timedelta(days=3, minutes=i))
+    out = xb.evidence_map(db, now=NOW)
+    rule = {item["key"]: item for item in out["items"]}["strategy:rule_ibs"]
+    assert rule["trades"] == 5 and rule["effective_trades"] == pytest.approx(2.5)
+    assert rule["needed"] == xb.STRATEGY_MIN_TRADES - 2       # ceil(30 - 2.5), not 30 - 5
+    assert out["effective_rho"] == 0.25
+    # The lift reads the effective count too: 2.5 of 30 is still far from the minimum.
+    assert xb.lift_multiplier(rule)["reason"] == xb.LIFT_FAR
+    verdicts = {row["key"]: row for row in xb.next_verdicts(out["items"])}
+    assert verdicts["strategy:rule_ibs"]["effective_trades"] == pytest.approx(2.5)
+
+
+def test_make_item_effective_count_never_exceeds_the_raw_count():
+    item = xb.make_item("strategy", "k", "k", strategy_type="x", trades=4, wins=2, minimum=30, expectancy_bps=None,
+                        effective=9.0)
+    assert item["effective_trades"] == 4 and item["needed"] == 26
+    clustered = xb.make_item("strategy", "k", "k", strategy_type="x", trades=10, wins=6, minimum=30,
+                             expectancy_bps=None, effective=4.0)
+    raw = xb.make_item("strategy", "k", "k", strategy_type="x", trades=10, wins=6, minimum=30, expectancy_bps=None)
+    assert clustered["win_rate"] == raw["win_rate"] == 0.6
+    assert clustered["half_width"] > raw["half_width"]        # four independent bets say less than ten
+
+
+# ----------------------------------------------------- exploration lane
+
+def test_lane_entries_of_active_strategies_are_ranked_as_learning_buys():
+    active = SimpleNamespace(strategy_type="macd_momentum", current_status="paper_trading_active", parameters={})
+    outcomes = {("LANE", "macd_momentum"): {"signal_action": "BUY", "reference_price": "50"},
+                ("AAPL", "macd_momentum"): {"signal_action": "BUY", "reference_price": "50"}}
+    with patch.object(settings, "paper_exploration_enabled", True):
+        entries = xb.pending_entries(outcomes, [active], {}, {"LANE": {"symbol": "LANE"}})
+    assert [(e["symbol"], e["lane"], e["exploring"]) for e in entries] == [("LANE", True, True)]
+    with patch.object(settings, "paper_exploration_enabled", False):
+        assert xb.pending_entries(outcomes, [active], {}, {"LANE": {"symbol": "LANE"}}) == []
+    items = [xb.make_item("lane", "lane:macd_momentum", "x", strategy_type="macd_momentum", trades=0, wins=0,
+                          minimum=30, expectancy_bps=None),
+             xb.make_item("lane", "lane:trend_pullback", "x", strategy_type="trend_pullback", trades=0, wins=0,
+                          minimum=30, expectancy_bps=None)]
+    assert [i["key"] for i in xb.items_for_entry(items, "macd_momentum", lane=True)] == ["lane:macd_momentum"]
+    assert xb.items_for_entry(items, "macd_momentum") == []
+    decisions = xb.rank_entries(entries or [dict(symbol="LANE", strategy_type="macd_momentum", price=50.0,
+                                                 exploring=True, news=False, lane=True, expectancy_bps=None)],
+                                items, equity=Decimal("100000"), budget=Decimal("1000"), spent=Decimal("0"))
+    decision = decisions[("LANE", "macd_momentum")]
+    assert decision["status"] == "taken" and decision["lane"] is True and decision["items"] == ["lane:macd_momentum"]
+
+
+def test_evidence_map_has_a_lane_item_per_strategy_while_the_lane_is_open(db, monkeypatch):  # noqa: F811
+    _attribution(db, strategy_type="macd_momentum", symbol="LANE", net_return=0.01, source="exploration_round_trip",
+                 closed_at=NOW - timedelta(days=2))
+    _attribution(db, strategy_type="macd_momentum", symbol="AAPL", net_return=0.01, closed_at=NOW - timedelta(days=2))
+    state = {"candidates": [{"symbol": "LANE", "expires_at": (NOW + timedelta(days=1)).isoformat()}],
+             "holding": [], "managed": ["LANE"]}
+    monkeypatch.setattr("app.services.exploration_universe.latest_state", lambda _db: state)
+    monkeypatch.setattr(settings, "exploration_universe", "liquid_pit")
+    out = xb.evidence_map(db, now=NOW, lane_strategies=["macd_momentum"])
+    lane_item = {item["key"]: item for item in out["items"]}["lane:macd_momentum"]
+    assert lane_item["trades"] == 1 and lane_item["needed"] == xb.LANE_MIN_TRADES - 1
+    assert out["minimums"]["lane"] == xb.LANE_MIN_TRADES
+    monkeypatch.setattr(settings, "exploration_universe", "core")
+    monkeypatch.setattr("app.services.exploration_universe.latest_state", lambda _db: {})
+    assert not [i for i in xb.evidence_map(db, now=NOW, lane_strategies=["macd_momentum"])["items"]
+                if i["kind"] == "lane"]

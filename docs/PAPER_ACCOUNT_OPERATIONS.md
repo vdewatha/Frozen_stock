@@ -195,3 +195,28 @@ operator pause of scheduled learning pauses it; `drift_retrain_enabled` turns
 it off. `GET /stock/learning-cycles/schedule-control` carries the state under
 `drift_retraining`; the ledger is the `drift_retrain` audit rows. See
 `reports/drift-retraining-20261106.md`.
+
+## Exploration lane (liquid point-in-time universe)
+
+Setting `exploration_universe` (`"core"` by default) opens a learning-only
+lane beyond the 45-name core list. With `"liquid_pit"`, `exploration_universe_job`
+(07:20 ET, weekdays, `learning`) screens today's S&P 500 members from the
+cached daily history: 20-day median dollar volume ranked into terciles (the
+top `exploration_universe_terciles` admitted), a Corwin-Schultz spread proxy
+under `exploration_universe_max_spread` (1%), and a price under the one-share
+learning floor (a name whose one share exceeds it is skipped and logged). Of
+the admitted names, only those where a broad-scope strategy's daily replica
+BUYs on the last bar (at most `exploration_universe_max_candidates`, 30)
+become active assets and join the cycle and the intraday feed, for
+`exploration_universe_admit_hours` (30). Every lane entry is a learning-sized
+exploration order, whatever the strategy's status. Scheduled (full-size)
+entries stay on the core list. Lane positions use their own
+`exploration_max_open` slots (40) and never count toward the core caps. Every
+exploration entry is also capped per entry date: 3 per strategy and 3 per
+sector (`exploration_max_entries_per_{strategy,sector}_per_date`). A held lane
+name whose admission lapsed stays in the cycle for exits only. The state is
+the `exploration_universe` audit rows. The exploration budget's evidence map
+now counts effective trades, `m / (1 + (m - 1) rho)` per entry date, with
+`exploration_effective_rho = 0.17`. On 2026-11-07 the pre-registered check
+(`scripts/run_liquid_universe_check.py`) kept the lane closed: no tercile
+traded within 5 bps of the core list. See `reports/liquid-universe-20261107.md`.

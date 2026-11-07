@@ -56,6 +56,7 @@ from decimal import Decimal, ROUND_DOWN
 from typing import Any, Callable, Iterable, Mapping, Optional
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -73,6 +74,7 @@ LEARNING_SOURCES = ("exploration_round_trip", "scheduled_round_trip")
 # The scorecard's evidence bar (paper_trade_scorecard.MIN_TRADES_FOR_EVIDENCE).
 STRATEGY_MIN_TRADES = 30
 NEWS_MIN_TRADES = 30
+LANE_MIN_TRADES = 30
 Z = 1.96
 MAX_LIFT = 2.0
 IN_FLIGHT_DAYS = 45  # longer than the longest tested hold (20 sessions)
@@ -159,11 +161,23 @@ def _window_expectancy(rows: Any) -> Optional[float]:
 
 
 def make_item(kind: str, key: str, label: str, *, strategy_type: Optional[str], trades: int, wins: int,
-              minimum: int, expectancy_bps: Optional[float], **extra) -> dict:
+              minimum: int, expectancy_bps: Optional[float], effective: Optional[float] = None, **extra) -> dict:
+    """One evidence item; ``effective`` (default: ``trades``) is the clustering-adjusted count the minimum is judged on.
+
+    ``needed`` is the effective trades still missing, rounded up; the Wilson
+    half-width is taken at the effective sample size, so a cluster of
+    same-day trades narrows it only as much as it informs.
+    """
     trades, minimum = int(trades), int(minimum)
+    effective = float(trades if effective is None else min(max(float(effective), 0.0), float(trades)))
+    n_eff = int(round(effective))
+    wins_eff = int(round(int(wins) * n_eff / trades)) if trades else 0
+    interval = wilson(wins_eff, n_eff) if n_eff else wilson(0, 0)
+    interval["win_rate"] = wilson(wins, trades)["win_rate"]
     return {"kind": kind, "key": key, "label": label, "strategy_type": strategy_type, "trades": trades,
-            "wins": int(wins), "minimum": minimum, "needed": max(minimum - trades, 0),
-            "expectancy_bps": expectancy_bps, **wilson(wins, trades), **extra}
+            "effective_trades": round(effective, 2), "wins": int(wins), "minimum": minimum,
+            "needed": max(int(math.ceil(minimum - effective - 1e-9)), 0),
+            "expectancy_bps": expectancy_bps, **interval, **extra}
 
 
 def _guarded(db: Session, loader: Callable[[], Any], default: Any, what: str) -> Any:
@@ -213,7 +227,7 @@ def strategy_items(db: Session, strategies: Iterable, *, current_cell: Optional[
         wins = sum(1 for t in trades if not t.is_loss)
         out.append(make_item("strategy", f"strategy:{strategy_type}", strategy_type, strategy_type=strategy_type,
                              trades=len(trades), wins=wins, minimum=STRATEGY_MIN_TRADES, expectancy_bps=expectancy,
-                             status=getattr(row, "current_status", None),
+                             effective=effective_count(trades), status=getattr(row, "current_status", None),
                              sources={source: sum(1 for t in trades if t.source == source) for source in LEARNING_SOURCES}))
         by_cell: dict[str, list] = {}
         for trade in trades:
@@ -228,7 +242,8 @@ def strategy_items(db: Session, strategies: Iterable, *, current_cell: Optional[
             out.append(make_item("regime", f"regime:{strategy_type}:{cell}", f"{strategy_type} in {cell}",
                                  strategy_type=strategy_type, trades=len(members),
                                  wins=sum(1 for t in members if not t.is_loss), minimum=minimum_cell,
-                                 expectancy_bps=expectancy, cell=cell, current=cell == current_cell))
+                                 expectancy_bps=expectancy, effective=effective_count(members), cell=cell,
+                                 current=cell == current_cell))
     return out
 
 
@@ -283,7 +298,8 @@ def experiment_items(db: Session, *, now: datetime) -> list[dict]:
                              f"{change['strategy_type']}: {change.get('description')}",
                              strategy_type=change["strategy_type"], trades=len(rows),
                              wins=sum(1 for row in rows if not row.is_loss), minimum=minimum,
-                             expectancy_bps=potential, change_id=change["change_id"], template=change.get("template"),
+                             expectancy_bps=potential, effective=effective_count(rows),
+                             change_id=change["change_id"], template=change.get("template"),
                              adopted_at=change.get("adopted_at"), max_trades=watch.get("max_trades")))
     return out
 
@@ -307,11 +323,36 @@ def news_item(db: Session, news_admitted: Optional[Mapping] = None) -> Optional[
     rows = [row for row in current_attributions(db, sources=LEARNING_SOURCES) if str(row.symbol).upper() in symbols]
     return make_item("news", "news", "news-found symbols", strategy_type=None, trades=len(rows),
                      wins=sum(1 for row in rows if not row.is_loss), minimum=NEWS_MIN_TRADES, expectancy_bps=None,
-                     symbols=sorted(symbols))
+                     effective=effective_count(rows), symbols=sorted(symbols))
+
+
+def lane_items(db: Session, strategy_types: Iterable[str]) -> list[dict]:
+    """One ``lane`` item per strategy: its closed round trips on exploration-lane names (``exploration_universe``).
+
+    Only while the lane is open, or once it has a book: the lane is where a
+    strategy's evidence beyond the core list comes from, so its minimum is
+    the scorecard's bar in effective trades.
+    """
+    from app.services.exploration_universe import enabled, lane_book
+    from app.services.trade_attribution import current_attributions
+
+    book = {str(symbol).upper() for symbol in lane_book(db)}
+    if not enabled() and not book:
+        return []
+    rows = [row for row in current_attributions(db, sources=LEARNING_SOURCES)
+            if str(row.symbol).upper() in book and row.closed_at is not None] if book else []
+    out = []
+    for strategy_type in sorted(set(strategy_types)):
+        mine = [row for row in rows if row.strategy_type == strategy_type]
+        out.append(make_item("lane", f"lane:{strategy_type}", f"{strategy_type} on exploration-lane names",
+                             strategy_type=strategy_type, trades=len(mine),
+                             wins=sum(1 for row in mine if not row.is_loss), minimum=LANE_MIN_TRADES,
+                             expectancy_bps=None, effective=effective_count(mine)))
+    return out
 
 
 def evidence_map(db: Session, *, now: Optional[datetime] = None, strategies: Optional[Iterable] = None,
-                 news_admitted: Optional[Mapping] = None) -> dict:
+                 news_admitted: Optional[Mapping] = None, lane_strategies: Optional[Iterable[str]] = None) -> dict:
     """Every item the bot is learning about, with trades so far, trades still needed and the Wilson half-width."""
     from app.services.regime_allocation import current_regime
 
@@ -326,6 +367,8 @@ def evidence_map(db: Session, *, now: Optional[datetime] = None, strategies: Opt
     news = _guarded(db, lambda: news_item(db, news_admitted), None, "news symbols")
     if news is not None:
         items.append(news)
+    lane_types = set(lane_strategies or ()) | {row.strategy_type for row in rows}
+    items += _guarded(db, lambda: lane_items(db, lane_types), [], "exploration-lane records")
     # A strategy with no record yet still needs its full minimum: the map must
     # name it even when its round trips could not be read.
     known = {item["key"] for item in items}
@@ -343,13 +386,18 @@ def evidence_map(db: Session, *, now: Optional[datetime] = None, strategies: Opt
                    "trades_needed": sum(item["needed"] for item in items)},
         "minimums": {"strategy": STRATEGY_MIN_TRADES, "regime": int(settings.paper_allocation_min_trades),
                      "shadow": int(settings.experiment_verdict_min_trades),
-                     "experiment": int(settings.experiment_verdict_min_trades), "news": NEWS_MIN_TRADES},
+                     "experiment": int(settings.experiment_verdict_min_trades), "news": NEWS_MIN_TRADES,
+                     "lane": LANE_MIN_TRADES},
+        # Minimums are judged on effective trades: m trades opened on one
+        # date count m / (1 + (m - 1) rho) (``effective_trades``).
+        "effective_rho": float(settings.exploration_effective_rho),
         "paper_only": True,
     }
 
 
-def items_for_entry(items: Iterable[Mapping], strategy_type: str, *, news: bool = False) -> list[dict]:
-    """The items one learning BUY would add a trade to: its strategy, the current regime cell, watched changes, news."""
+def items_for_entry(items: Iterable[Mapping], strategy_type: str, *, news: bool = False,
+                    lane: bool = False) -> list[dict]:
+    """The items one learning BUY would add a trade to: its strategy, the current regime cell, watched changes, news, lane."""
     out = []
     for item in items:
         kind = item.get("kind")
@@ -360,6 +408,8 @@ def items_for_entry(items: Iterable[Mapping], strategy_type: str, *, news: bool 
         elif kind == "experiment" and item.get("strategy_type") == strategy_type:
             out.append(item)
         elif kind == "news" and news:
+            out.append(item)
+        elif kind == "lane" and lane and item.get("strategy_type") == strategy_type:
             out.append(item)
     return out
 
@@ -391,7 +441,9 @@ def lift_multiplier(item: Optional[Mapping], *, max_lift: Optional[float] = None
     if expectancy is None or expectancy <= 0:
         return {"multiplier": 1.0, "reason": LIFT_NO_EDGE}
     minimum = int(item.get("minimum") or 0)
-    if minimum <= 0 or int(item.get("trades") or 0) * 2 >= minimum:
+    have = _float(item.get("effective_trades"))
+    have = float(item.get("trades") or 0) if have is None else have
+    if minimum <= 0 or have * 2 >= minimum:
         return {"multiplier": 1.0, "reason": LIFT_NEAR}
     return {"multiplier": round(max(1.0, cap), 4), "reason": LIFT_FAR}
 
@@ -484,12 +536,14 @@ def in_flight_by_strategy(db: Session, account, now: datetime) -> dict[str, int]
 
 # ---------------------------------------------------------------- the plan
 
-def pending_entries(signal_outcomes: Mapping, strategies: Iterable, news_admitted: Optional[Mapping] = None) -> list[dict]:
-    """The learning-sized BUYs a cycle could place: candidate / research strategies, and active ones on news symbols."""
+def pending_entries(signal_outcomes: Mapping, strategies: Iterable, news_admitted: Optional[Mapping] = None,
+                    lane_admitted: Optional[Mapping] = None) -> list[dict]:
+    """The learning-sized BUYs a cycle could place: candidate / research strategies, active ones on news and lane symbols."""
     by_type = {}
     for row in strategies:
         by_type.setdefault(row.strategy_type, row)
     news_admitted = news_admitted or {}
+    lane_admitted = lane_admitted or {}
     out = []
     for key, signal in signal_outcomes.items():
         if not isinstance(signal, Mapping) or signal.get("signal_action") != "BUY":
@@ -502,11 +556,13 @@ def pending_entries(signal_outcomes: Mapping, strategies: Iterable, news_admitte
         exploring = (status != "paper_trading_active" and settings.paper_exploration_enabled
                      and status in EXPLORATION_STRATEGY_STATUSES)
         news = symbol in news_admitted
-        if not exploring and not (news and status == "paper_trading_active"):
+        lane = symbol in lane_admitted and settings.paper_exploration_enabled
+        if not exploring and not (news and status == "paper_trading_active") \
+                and not (lane and status == "paper_trading_active"):
             continue
         price = _float(signal.get("reference_price"))
         out.append({"symbol": str(symbol), "strategy_type": strategy_type, "price": price,
-                    "exploring": exploring, "news": news,
+                    "exploring": exploring or lane, "news": news, "lane": lane,
                     "expectancy_bps": backtest_expectancy_bps(getattr(strategy, "parameters", None))})
     out.sort(key=lambda entry: (entry["symbol"], entry["strategy_type"]))
     return out
@@ -563,7 +619,7 @@ def rank_entries(entries: list[dict], items: Iterable[Mapping], *, in_flight: Op
     while pending:
         scored = []
         for entry in pending:
-            linked = items_for_entry(items, entry["strategy_type"], news=entry["news"])
+            linked = items_for_entry(items, entry["strategy_type"], news=entry["news"], lane=entry.get("lane", False))
             strategy_item = next((item for item in linked if item.get("kind") == "strategy"), None)
             expectancy = entry.get("expectancy_bps")
             if expectancy is None and strategy_item is not None:
@@ -593,7 +649,7 @@ def rank_entries(entries: list[dict], items: Iterable[Mapping], *, in_flight: Op
             "multiplier": lift["multiplier"] if taken else 1.0, "reason": lift["reason"] if taken else
             f"session learning budget spent on higher-priority entries ({remaining:.2f} left of {budget}; lot {notional:.2f})",
             "estimated_notional": str(notional) if price else None, "budget_remaining": str(remaining),
-            "news": entry["news"], "exploring": entry["exploring"],
+            "news": entry["news"], "exploring": entry["exploring"], "lane": entry.get("lane", False),
         }
         if taken:
             remaining -= notional
@@ -606,7 +662,8 @@ def rank_entries(entries: list[dict], items: Iterable[Mapping], *, in_flight: Op
 
 
 def plan_exploration(db: Session, account, signal_outcomes: Mapping, strategies: Iterable,
-                     news_admitted: Optional[Mapping] = None, *, now: datetime) -> ExplorationPlan:
+                     news_admitted: Optional[Mapping] = None, *, now: datetime,
+                     lane_admitted: Optional[Mapping] = None) -> ExplorationPlan:
     """Rank this cycle's learning BUYs against the evidence map and allot the session's budget.
 
     Every read degrades explicitly: without the map each strategy needs its
@@ -615,7 +672,8 @@ def plan_exploration(db: Session, account, signal_outcomes: Mapping, strategies:
     BUY is taken at learning size, as before the budget existed.
     """
     try:
-        return _plan_exploration(db, account, signal_outcomes, strategies, news_admitted, now=now)
+        return _plan_exploration(db, account, signal_outcomes, strategies, news_admitted, now=now,
+                                 lane_admitted=lane_admitted)
     except Exception as exc:
         logger.warning("exploration budget: plan unavailable, learning BUYs taken unranked: %s", exc.__class__.__name__)
         return ExplorationPlan(session=_utc(now).astimezone(ET).date().isoformat(), budget=Decimal("0"),
@@ -624,7 +682,8 @@ def plan_exploration(db: Session, account, signal_outcomes: Mapping, strategies:
 
 
 def _plan_exploration(db: Session, account, signal_outcomes: Mapping, strategies: Iterable,
-                      news_admitted: Optional[Mapping], *, now: datetime) -> ExplorationPlan:
+                      news_admitted: Optional[Mapping], *, now: datetime,
+                      lane_admitted: Optional[Mapping] = None) -> ExplorationPlan:
     now = _utc(now)
     strategies = list(strategies)
     try:
@@ -633,12 +692,13 @@ def _plan_exploration(db: Session, account, signal_outcomes: Mapping, strategies
         session = now.astimezone(ET).date().isoformat()
     equity = max(Decimal(str(getattr(account, "equity", 0) or 0)), Decimal("0"))
     budget = equity * Decimal(str(settings.exploration_budget_fraction))
-    entries = pending_entries(signal_outcomes, strategies, news_admitted)
+    entries = pending_entries(signal_outcomes, strategies, news_admitted, lane_admitted)
     if not entries:
         return ExplorationPlan(session=session, budget=budget, spent_before=Decimal("0"), decisions={})
     degraded = []
-    evidence = _guarded(db, lambda: evidence_map(db, now=now, strategies=strategies, news_admitted=news_admitted),
-                        None, "evidence map")
+    lane_types = sorted({entry["strategy_type"] for entry in entries if entry.get("lane")})
+    evidence = _guarded(db, lambda: evidence_map(db, now=now, strategies=strategies, news_admitted=news_admitted,
+                                                 lane_strategies=lane_types), None, "evidence map")
     if evidence is None:
         degraded.append("evidence map unreadable; every item needs its full minimum")
         evidence = {"as_of": now.isoformat(), "current_cell": None, "items": [
@@ -698,7 +758,8 @@ def record_plan(db: Session, plan: ExplorationPlan, results: Iterable[Mapping], 
     return True
 
 
-ITEM_KEYS = ("kind", "key", "label", "strategy_type", "trades", "wins", "minimum", "needed", "expectancy_bps",
+ITEM_KEYS = ("kind", "key", "label", "strategy_type", "trades", "effective_trades", "wins", "minimum", "needed",
+             "expectancy_bps",
              "win_rate", "low", "high", "half_width", "cell", "current", "template", "candidate", "overlap",
              "delta_expectancy_bps", "change_id")
 
@@ -717,6 +778,7 @@ def next_verdicts(items: Iterable[Mapping]) -> list[dict]:
             continue
         rows.append({"key": item.get("key"), "kind": item.get("kind"), "label": item.get("label"),
                      "strategy_type": item.get("strategy_type"), "trades": item.get("trades"),
+                     "effective_trades": item.get("effective_trades"),
                      "minimum": item.get("minimum"), "trades_until_verdict": item.get("needed"),
                      "win_rate": item.get("win_rate"), "half_width": item.get("half_width"),
                      "expectancy_bps": item.get("expectancy_bps")})
@@ -779,3 +841,61 @@ def scoreboard_exploration(db: Session, *, now: Optional[datetime] = None) -> di
         "budget": budget, "next_verdicts": verdicts,
         "today": {"taken": len(today.get("taken") or []), "skipped": len(today.get("skipped") or [])},
     }
+
+
+# ------------------------------------------------------- effective trades
+#
+# Trades opened on the same day are not independent bets: a market-wide move
+# stops many of them together (the clustered stops lesson).  With a same-date
+# correlation rho, m trades opened on one date carry the information of
+# m / (1 + (m - 1) rho) independent ones (the design effect of a cluster of
+# size m), so the evidence map counts effective trades per entry date and
+# the time to a verdict reflects the clustering.
+
+def effective_trades(entry_dates: Iterable, rho: Optional[float] = None) -> float:
+    """Sum over entry dates of ``m / (1 + (m - 1) rho)``; ``rho`` defaults to ``exploration_effective_rho``."""
+    rho = float(settings.exploration_effective_rho if rho is None else rho)
+    rho = min(max(rho, 0.0), 1.0)
+    counts: dict = {}
+    for value in entry_dates:
+        key = value.date() if isinstance(value, datetime) else value
+        counts[key] = counts.get(key, 0) + 1
+    return float(sum(m / (1.0 + (m - 1) * rho) for m in counts.values()))
+
+
+def _entry_day(value: Any) -> Optional[date]:
+    parsed = _parse(value)
+    return parsed.astimezone(ET).date() if parsed is not None else None
+
+
+def effective_count(rows: Iterable, rho: Optional[float] = None) -> float:
+    """Effective trades of attribution rows, clustered by their ET entry date (``opened_at``)."""
+    days = [_entry_day(getattr(row, "opened_at", None)) for row in rows]
+    known = [day for day in days if day is not None]
+    # A row without an entry time counts as its own date (an independent trade).
+    return effective_trades(known, rho) + float(len(days) - len(known))
+
+
+def same_date_correlation(values: Iterable[float], clusters: Iterable) -> dict:
+    """One-way ANOVA intraclass correlation of ``values`` within ``clusters`` (e.g. trades by entry date).
+
+    ``rho = (MSB - MSW) / (MSB + (m0 - 1) MSW)`` with the unbalanced-design
+    cluster size ``m0``; ``None`` without at least two clusters and one
+    cluster of two.  Bounded to [0, 1] (a negative estimate is noise here).
+    """
+    frame = pd.DataFrame({"y": list(values), "g": list(clusters)}).dropna()
+    groups = frame.groupby("g")["y"]
+    sizes = groups.size()
+    k, n = len(sizes), int(sizes.sum())
+    if k < 2 or n <= k or not (sizes > 1).any():
+        return {"rho": None, "clusters": int(k), "trades": n, "m0": None}
+    grand = frame["y"].mean()
+    means = groups.mean()
+    ssb = float((sizes * (means - grand) ** 2).sum())
+    ssw = float(((frame["y"] - frame["g"].map(means)) ** 2).sum())
+    msb, msw = ssb / (k - 1), ssw / (n - k)
+    m0 = (n - float((sizes ** 2).sum()) / n) / (k - 1)
+    denominator = msb + (m0 - 1) * msw
+    rho = (msb - msw) / denominator if denominator > 0 else None
+    return {"rho": None if rho is None else round(min(max(rho, 0.0), 1.0), 4), "raw_rho": rho,
+            "clusters": int(k), "trades": n, "m0": round(m0, 3), "mean_cluster": round(n / k, 3)}

@@ -5,6 +5,7 @@ import hmac
 import re
 from decimal import Decimal
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -218,6 +219,34 @@ class Settings(BaseSettings):
     # times the learning size (never above the scheduled size).
     exploration_budget_fraction: float = Field(default=0.01, gt=0, le=0.05)
     exploration_lift_max: float = Field(default=2.0, ge=1.0, le=2.0)
+    # Exploration lane (exploration_universe.py, reports/liquid-universe-*.md):
+    # "core" keeps every entry on the execution list; "liquid_pit" admits the
+    # top ``exploration_universe_terciles`` liquidity terciles of today's
+    # S&P 500 members (spread proxy under ``exploration_universe_max_spread``)
+    # for learning-sized exploration entries only.  At most
+    # ``exploration_universe_max_candidates`` names with a daily-replica BUY
+    # join the cycle (and the intraday feed) each day, admitted for
+    # ``exploration_universe_admit_hours``.  Lane positions have their own
+    # ``exploration_max_open`` slots, apart from the core caps.  Defaults set
+    # by the pre-registered rule in scripts/run_liquid_universe_check.py: on
+    # 2026-11-07 no tercile traded within 5 bps of the core list (T1 -45 bps
+    # vs +7 per trade, 2015+), so the lane stays closed.
+    exploration_universe: Literal["core", "liquid_pit"] = "core"
+    exploration_universe_terciles: int = Field(default=1, ge=1, le=3)
+    exploration_universe_max_spread: float = Field(default=0.01, gt=0, le=0.05)
+    exploration_universe_min_price: float = Field(default=10.0, ge=1)
+    exploration_universe_max_candidates: int = Field(default=30, ge=0, le=60)
+    exploration_universe_admit_hours: int = Field(default=30, ge=1, le=96)
+    exploration_max_open: int = Field(default=40, ge=0, le=100)
+    # Per-entry-date caps on exploration entries (entry_protections.py):
+    # same-day lots of one strategy, or in one sector, are one bet.
+    exploration_max_entries_per_strategy_per_date: int = Field(default=3, ge=0, le=50)
+    exploration_max_entries_per_sector_per_date: int = Field(default=3, ge=0, le=50)
+    # Same-date correlation of trade returns for evidence accounting: m trades
+    # opened on one date count as m / (1 + (m - 1) rho) effective trades.
+    # 0.17: the raw same-date correlation within (strategy, date), 2015+
+    # (residual 0.08; reports/liquid-universe-20261107.md).
+    exploration_effective_rho: float = Field(default=0.17, ge=0, le=1)
     # Parallel read-only data loads for the signal batch (one session each);
     # 1 keeps the sequential path.
     paper_signal_load_workers: int = Field(default=6, ge=1, le=16)
