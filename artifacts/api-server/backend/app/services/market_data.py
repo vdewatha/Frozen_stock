@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.request import Request, urlopen
 from urllib.parse import quote as urlquote, urlencode
@@ -200,19 +200,46 @@ def fetch_yahoo_chart_prices(symbol: str, period: str = "5y") -> pd.DataFrame:
     return _validated_provider_frame(pd.DataFrame(rows))
 
 
+# The free Alpaca plan serves consolidated (SIP) bars only for queries that
+# end at least 15 minutes ago; one minute of margin.
+SIP_DAILY_DELAY_MINUTES = 16
+
+
 def fetch_alpaca_iex_daily_prices(symbol: str, period: str = "5y") -> pd.DataFrame:
     """Fetch real daily research bars when Yahoo is unavailable.
 
     This is a read-only Alpaca market-data request using the paper-scoped
     research credentials. IEX daily bars are valid historical observations
     for research, but they do not satisfy the separate consolidated intraday
-    execution gate.
+    execution gate. IEX carries about 3% of US volume, so its daily open,
+    high, low and close are a sample of the tape: ``import_market_prices``
+    tries the delayed consolidated bars (``fetch_alpaca_sip_daily_prices``)
+    first and keeps this only as the last resort.
     """
+    return _fetch_alpaca_daily_prices(symbol, period, feed="iex")
+
+
+def fetch_alpaca_sip_daily_prices(symbol: str, period: str = "5y") -> pd.DataFrame:
+    """Consolidated (SIP) daily bars from Alpaca's free plan, 15-minute delayed.
+
+    Same read-only request and validation as the IEX fallback, with
+    ``feed=sip`` and the query end held ``SIP_DAILY_DELAY_MINUTES`` behind now
+    (the plan rejects anything more recent).  These are the same tape the
+    yfinance history and the broker's stop elections use.
+    """
+    return _fetch_alpaca_daily_prices(symbol, period, feed="sip")
+
+
+def _fetch_alpaca_daily_prices(symbol: str, period: str, *, feed: str) -> pd.DataFrame:
+    if feed not in {"iex", "sip"}:
+        raise ValueError("Unsupported Alpaca daily feed")
     symbol = _provider_symbol(symbol)
     key, secret = settings.research_alpaca_credentials()
     if not key or not secret:
         return pd.DataFrame()
     end = datetime.now(timezone.utc)
+    if feed == "sip":
+        end = (end - timedelta(minutes=SIP_DAILY_DELAY_MINUTES)).replace(second=0, microsecond=0)
     start = end - pd.Timedelta(days=_period_to_days(period) + 10).to_pytimedelta()
     bars: list[dict] = []
     page_token: str | None = None
@@ -224,7 +251,7 @@ def fetch_alpaca_iex_daily_prices(symbol: str, period: str = "5y") -> pd.DataFra
             "start": start.isoformat().replace("+00:00", "Z"),
             "end": end.isoformat().replace("+00:00", "Z"),
             "adjustment": "all",
-            "feed": "iex",
+            "feed": feed,
             "limit": "1000",
         }
         if page_token:
@@ -347,11 +374,12 @@ def upsert_prices(db: Session, symbol: str, prices: pd.DataFrame, source: str = 
 def import_market_prices(db: Session, symbol: str, period: str = "5y", *, provider: str = "auto") -> dict:
     symbol = _clean_symbol(symbol)
     attempts: list[dict[str, str | None]] = []
-    if provider not in {"auto", "yfinance", "yahoo_chart", "alpaca_iex_daily"}:
+    if provider not in {"auto", "yfinance", "yahoo_chart", "alpaca_sip_daily", "alpaca_iex_daily"}:
         raise ValueError("Unsupported market-data provider")
     explicit_fetchers = {
         "yfinance": fetch_yfinance_prices,
         "yahoo_chart": fetch_yahoo_chart_prices,
+        "alpaca_sip_daily": fetch_alpaca_sip_daily_prices,
         "alpaca_iex_daily": fetch_alpaca_iex_daily_prices,
     }
     if provider in explicit_fetchers:
@@ -399,13 +427,19 @@ def import_market_prices(db: Session, symbol: str, period: str = "5y", *, provid
     if prices.empty:
         key, secret = settings.research_alpaca_credentials()
         if key and secret:
-            prices = fetch_alpaca_iex_daily_prices(symbol, period)
-            source = "alpaca_iex_daily" if not prices.empty else "unavailable"
-            attempts.append({
-                "provider": "alpaca_iex_daily",
-                "status": "ready" if not prices.empty else "unavailable",
-                "reason": None if not prices.empty else "empty_or_invalid_response",
-            })
+            # Consolidated first (same tape as yfinance and the broker's stop
+            # elections); the IEX sample only when the delayed SIP is refused.
+            for name, fetcher in (("alpaca_sip_daily", fetch_alpaca_sip_daily_prices),
+                                  ("alpaca_iex_daily", fetch_alpaca_iex_daily_prices)):
+                prices = fetcher(symbol, period)
+                source = name if not prices.empty else "unavailable"
+                attempts.append({
+                    "provider": name,
+                    "status": "ready" if not prices.empty else "unavailable",
+                    "reason": None if not prices.empty else "empty_or_invalid_response",
+                })
+                if not prices.empty:
+                    break
     rows_imported = upsert_prices(db, symbol, prices, source)
     return {
         "symbol": symbol,
@@ -413,7 +447,7 @@ def import_market_prices(db: Session, symbol: str, period: str = "5y", *, provid
         "start_date": prices["date"].min() if not prices.empty else None,
         "end_date": prices["date"].max() if not prices.empty else None,
         "source": source,
-        "trusted": source in {"yfinance", "yahoo_chart", "alpaca_iex_daily"} and not prices.empty,
+        "trusted": source in {"yfinance", "yahoo_chart", "alpaca_sip_daily", "alpaca_iex_daily"} and not prices.empty,
         "synthetic_fallback_used": False,
         "provider_attempts": attempts,
         "unavailable_reason": None if not prices.empty else "No trusted market-data provider returned a valid history",

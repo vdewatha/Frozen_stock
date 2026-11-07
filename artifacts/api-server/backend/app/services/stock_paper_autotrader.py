@@ -38,6 +38,7 @@ from app.services.stock_paper_ledger import (
     reserve_stock_paper_order,
 )
 from app.services.earnings_calendar import earnings_blackout, earnings_known, strategy_blackout_sessions
+from app.services.exploration_universe import sector_for
 from app.services.exploration_budget import (
     SKIP_REASON as EXPLORATION_BUDGET_REASON,
     apply_lift,
@@ -49,6 +50,7 @@ from app.services.market_gauges import breadth_gate_min, entry_context, gauge_si
 from app.services.entry_protections import (
     SELL_RETRY_LIMIT,
     load_entry_protections,
+    load_exploration_date_caps,
     protective_stop_idempotency_key,
     sell_retry_key,
 )
@@ -609,13 +611,23 @@ class _EntryLimits:
     """
 
     def __init__(self, held: set[str], max_open: int, exploration_lots: int | None,
-                 max_lots: int, min_confidence: float | None):
+                 max_lots: int, min_confidence: float | None, *, lane_book: set[str] | None = None,
+                 lane_lots: int | None = None, lane_max: int | None = None):
         self.held, self.max_open = held, max_open
         self.exploration_lots, self.max_lots = exploration_lots, max_lots
         self.min_confidence = min_confidence
+        # Exploration-lane names (exploration_universe.py) use their own
+        # slots: they never count toward, or are blocked by, the core cap.
+        self.lane_book = set(lane_book or ())
+        self.lane_lots = lane_lots
+        self.lane_max = int(settings.exploration_max_open if lane_max is None else lane_max)
 
     def check(self, symbol: str, signal: dict, *, exploring: bool) -> str | None:
-        if symbol not in self.held and len(self.held) >= self.max_open:
+        lane = symbol in self.lane_book
+        if lane:
+            if symbol not in self.held and len(self.held & self.lane_book) >= self.lane_max:
+                return "Exploration lane slots are full"
+        elif symbol not in self.held and len(self.held - self.lane_book) >= self.max_open:
             return "Order exceeds the configured open-position risk limit"
         if exploring:
             try:
@@ -626,23 +638,33 @@ class _EntryLimits:
                 not math.isfinite(confidence) or confidence < self.min_confidence
             ):
                 return "Exploration signal confidence is below the minimum threshold"
-            if self.exploration_lots is not None and self.exploration_lots >= self.max_lots:
+            if lane:
+                if self.lane_lots is not None and self.lane_lots >= self.lane_max:
+                    return "Exploration lane slots are full"
+            elif self.exploration_lots is not None and self.exploration_lots >= self.max_lots:
                 return "Exploration lot limit reached"
         return None
 
     def record_buy(self, symbol: str, *, exploring: bool) -> None:
         self.held.add(symbol)
-        if exploring and self.exploration_lots is not None:
+        if exploring and symbol in self.lane_book:
+            if self.lane_lots is not None:
+                self.lane_lots += 1
+        elif exploring and self.exploration_lots is not None:
             self.exploration_lots += 1
 
 
-def _entry_limit_state(db: Session, account, rules: dict) -> _EntryLimits:
+def _entry_limit_state(db: Session, account, rules: dict, lane_book: set[str] | None = None) -> _EntryLimits:
     from app.services.stock_paper_ledger import _open_exploration_lots
 
+    lane_book = set(lane_book or ())
     try:
         held = {row.symbol for row in db.query(StockPaperPosition).filter(
             StockPaperPosition.account_id == account.id, StockPaperPosition.quantity > 0).all()}
-        lots = _open_exploration_lots(db, account) if settings.paper_exploration_enabled else None
+        lots = _open_exploration_lots(db, account, exclude_symbols=lane_book) \
+            if settings.paper_exploration_enabled else None
+        lane_lots = _open_exploration_lots(db, account, only_symbols=lane_book) \
+            if settings.paper_exploration_enabled and lane_book else (0 if lane_book else None)
     except Exception as exc:  # fall back to the reservation's own checks
         db.rollback()
         logger.info("entry limit pre-check unavailable: %s", exc.__class__.__name__)
@@ -656,7 +678,8 @@ def _entry_limit_state(db: Session, account, rules: dict) -> _EntryLimits:
         max_open = int(rules["max_open_positions"]) if "max_open_positions" in rules else 10**9
     except (TypeError, ValueError):
         max_open = 10**9
-    return _EntryLimits(held, max_open, lots, int(settings.paper_exploration_max_positions), min_confidence)
+    return _EntryLimits(held, max_open, lots, int(settings.paper_exploration_max_positions), min_confidence,
+                        lane_book=lane_book, lane_lots=lane_lots)
 
 
 def _max_positions_per_sector(rules: dict) -> int:
@@ -681,6 +704,28 @@ def _news_universe(db: Session, now: datetime, core: set[str]) -> tuple[dict[str
         return {}, set()
     return ({symbol: row for symbol, row in admitted.items() if symbol not in core},
             exits_only - core - set(admitted))
+
+
+def _lane_universe(db: Session, now: datetime, taken: set[str]) -> tuple[dict[str, dict], set[str], set[str], dict]:
+    """Exploration-lane candidates for entries, lane names kept for exits only, the lane book and its sectors.
+
+    ``taken`` (the core list and news-found names) is never the lane's.  An
+    unreadable state closes the lane for entries; held names it cannot see
+    stay with the reservation's own checks.
+    """
+    from app.services.exploration_universe import lane_book, lane_sectors, lane_universe, latest_state
+
+    try:
+        state = latest_state(db)
+        admitted, exits_only = lane_universe(db, now, state=state)
+        book = lane_book(db, state=state)
+        sectors = lane_sectors(state=state)
+    except Exception as exc:  # the lane must never stop the cycle
+        db.rollback()
+        logger.info("exploration lane state unavailable: %s", exc.__class__.__name__)
+        return {}, set(), set(), {}
+    return ({symbol: row for symbol, row in admitted.items() if symbol not in taken},
+            exits_only - taken - set(admitted), book - taken, sectors)
 
 
 def _news_context(news: dict) -> dict:
@@ -880,6 +925,15 @@ def _run_signal_cycle(db: Session) -> dict:
         symbols = [*symbols, *sorted(set(news_admitted) | news_exits_only)]
         base["symbols"] = list(symbols)
         base["news_discovered"] = {"admitted": sorted(news_admitted), "exits_only": sorted(news_exits_only)}
+    # Exploration lane: today's liquid point-in-time S&P 500 BUY candidates
+    # (exploration_universe.py) take learning-sized exploration entries only,
+    # in their own slots; a lane name still held stays in for exits.
+    lane_admitted, lane_exits_only, lane_book, lane_sectors = _lane_universe(
+        db, now, set(symbols) | set(news_admitted) | news_exits_only)
+    if lane_admitted or lane_exits_only:
+        symbols = [*symbols, *sorted((set(lane_admitted) | lane_exits_only) - set(symbols))]
+        base["symbols"] = list(symbols)
+        base["exploration_universe"] = {"candidates": sorted(lane_admitted), "exits_only": sorted(lane_exits_only)}
     market_events, gauges = _market_backdrop(db, now)
     market_context = entry_context(gauges, market_events, now)
     base["market_context"] = market_context
@@ -968,12 +1022,17 @@ def _run_signal_cycle(db: Session) -> dict:
     # reservation (~10 queries under the account lock) only to hit one of
     # these; they are decided here from one lookup and the reservation still
     # re-checks every order that passes.
-    entry_limits = _entry_limit_state(db, account, rules)
+    entry_limits = _entry_limit_state(db, account, rules, lane_book)
+    # Per-entry-date caps on exploration entries, per strategy and per
+    # sector (lane names by their assigned sector ETF).
+    date_caps = load_exploration_date_caps(db, account, now=now, type_by_id=type_by_id,
+                                           sector_of=lambda name: sector_for(name, lane_sectors))
     # Exploration budget: this session's learning-sized lots go to the
     # learning BUYs whose evidence is scarcest (exploration_budget.py), in
     # priority order until the budget is spent.  Scheduled entries, exits
     # and every cap are untouched; the plan never raises into the cycle.
-    exploration_plan = plan_exploration(db, account, signal_outcomes, strategies, news_admitted, now=now)
+    exploration_plan = plan_exploration(db, account, signal_outcomes, strategies, news_admitted, now=now,
+                                        lane_admitted=lane_admitted)
     base["exploration_budget"] = exploration_plan.summary()
     # Time spent reserving (account row lock, gates, risk checks) and
     # dispatching (broker POST), so a slow orders phase shows its cause.
@@ -1022,6 +1081,11 @@ def _run_signal_cycle(db: Session) -> dict:
                     research_only
                     and settings.paper_exploration_enabled
                     and getattr(strategy, "current_status", None) in EXPLORATION_STRATEGY_STATUSES
+                ) or (
+                    # Any strategy explores a lane candidate (learning-sized).
+                    symbol in lane_admitted and settings.paper_exploration_enabled
+                    and getattr(strategy, "current_status", "paper_trading_active")
+                    in EXPLORATION_STRATEGY_STATUSES | {"paper_trading_active"}
                 )
                 if exploring and signal["signal_action"] in {"BUY", "SELL"}:
                     # Small tagged learning order; never promotion evidence.
@@ -1132,6 +1196,13 @@ def _run_signal_cycle(db: Session) -> dict:
                                        "reason": "news admission expired; the symbol stays in the cycle for exits only"})
                         results.append(result)
                         continue
+                    if symbol in lane_book and (symbol not in lane_admitted or result.get("mode") != "explore"):
+                        result.update({"status": "skipped", "reason": (
+                            "exploration-lane name: learning-sized exploration entries only, while it is a candidate"
+                            if symbol in lane_admitted else
+                            "exploration-lane admission lapsed; the symbol stays in the cycle for exits only")})
+                        results.append(result)
+                        continue
                     holders = _other_holders(symbol, strategy.strategy_type, holdings, pending, type_by_id,
                                              cycle_buyers, entry_limits.held) \
                         if settings.paper_one_position_per_symbol else []
@@ -1179,6 +1250,12 @@ def _run_signal_cycle(db: Session) -> dict:
                         })
                         results.append(result)
                         continue
+                    if result.get("mode") == "explore":
+                        date_block = date_caps.check(strategy.strategy_type, sector_for(symbol, lane_sectors))
+                        if date_block is not None:
+                            result.update(date_block)
+                            results.append(result)
+                            continue
                     limit_block = entry_limits.check(symbol, signal, exploring=result.get("mode") == "explore")
                     if limit_block is not None:
                         result.update({"status": "blocked", "reason": limit_block})
@@ -1327,6 +1404,13 @@ def _run_signal_cycle(db: Session) -> dict:
                 exploring = result.get("mode") == "explore"
                 if side == "buy" and symbol in news_admitted:
                     _tag_signal_news(db, signal["signal_id"], news_admitted[symbol])
+                if side == "buy" and symbol in lane_admitted:
+                    lane_row = lane_admitted[symbol]
+                    _tag_signal(db, signal["signal_id"], "exploration_lane", {
+                        "source": "exploration_universe", "tercile": lane_row.get("tercile"),
+                        "rank": lane_row.get("rank"), "dollar_volume_20d": lane_row.get("dollar_volume_20d"),
+                        "spread_20d": lane_row.get("spread_20d"), "sector": sector_for(symbol, lane_sectors),
+                        "admitted_at": lane_row.get("admitted_at")})
                 if side == "buy":
                     _tag_signal(db, signal["signal_id"], "market_context", market_context)
                 if side == "buy" and "allocation_weight" in result:
@@ -1416,6 +1500,8 @@ def _run_signal_cycle(db: Session) -> dict:
                 if side == "buy" and order_status != "cancelled":
                     sector_groups.setdefault(sector_group(symbol), set()).add(symbol)
                     entry_limits.record_buy(symbol, exploring=result.get("mode") == "explore")
+                    if result.get("mode") == "explore":
+                        date_caps.record(strategy.strategy_type, sector_for(symbol, lane_sectors))
                     cycle_buyers.setdefault(symbol, set()).add(strategy.strategy_type)
                     if hasattr(protections, "record_entry"):  # session entry cap counts this cycle's BUYs too
                         protections.record_entry(symbol)
@@ -1464,6 +1550,8 @@ def _run_signal_cycle(db: Session) -> dict:
         len(symbols), len(strategies), timing["signals_ms"], timing["orders_ms"], timing["total_ms"],
         timing["reserve_ms"], timing["dispatch_ms"], submitted, blocked,
     )
+    # This session's exploration entries per strategy and sector after the cycle.
+    base["exploration_date_caps"] = date_caps.summary()
     return base | {
         "status": "complete" if blocked == 0 else "partially_complete",
         "strategy_count": len(strategies),

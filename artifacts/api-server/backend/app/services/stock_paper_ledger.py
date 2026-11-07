@@ -2662,8 +2662,40 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     return signal, evidence
 
 
-def _open_exploration_lots(db: Session, account: StockPaperAccount, *, exclude_order_id: int | None = None) -> int:
+def _lane_state(db: Session) -> dict:
+    """The exploration lane's latest state (``exploration_universe``); empty when unreadable."""
+    try:
+        from app.services.exploration_universe import latest_state
+
+        return latest_state(db)
+    except Exception as exc:  # an unreadable lane state is a closed lane
+        logger.info("exploration lane state unavailable: %s", exc.__class__.__name__)
+        return {}
+
+
+def _lane_book(db: Session, state: dict | None = None) -> set[str]:
+    """Symbols whose positions use the exploration lane's slots instead of the core caps."""
+    from app.services.exploration_universe import lane_book
+
+    return lane_book(db, state=_lane_state(db) if state is None else state)
+
+
+def _lane_entry_open(db: Session, symbol: str, now: datetime, state: dict | None = None) -> bool:
+    """``symbol`` is a current exploration-lane candidate (setting on, admission not expired)."""
+    from app.services.exploration_universe import lane_universe
+
+    admitted, _exits = lane_universe(db, now, state=_lane_state(db) if state is None else state)
+    return symbol in admitted
+
+
+def _open_exploration_lots(db: Session, account: StockPaperAccount, *, exclude_order_id: int | None = None,
+                           only_symbols: set[str] | None = None, exclude_symbols: set[str] | None = None) -> int:
     """Count (strategy, symbol) exploration lots that are held or being bought.
+
+    ``only_symbols`` / ``exclude_symbols`` restrict the count to (or away from) a
+    set of symbols: the exploration lane's lots have their own limit
+    (``exploration_max_open``), apart from the core list's
+    ``paper_exploration_max_positions``.
 
     Exploration buy fills open a lot. Every sell fill of the symbol closes it,
     whatever the sell's source: a sell attributed to the lot's strategy (an
@@ -2726,6 +2758,10 @@ def _open_exploration_lots(db: Session, account: StockPaperAccount, *, exclude_o
         (row.strategy_id, row.symbol) for row in exploration_orders
         if row.side == "buy" and row.status in NONTERMINAL_ORDER_STATUSES and row.id != exclude_order_id
     }
+    if only_symbols is not None:
+        open_lots = {lot for lot in open_lots if lot[1] in only_symbols}
+    if exclude_symbols:
+        open_lots = {lot for lot in open_lots if lot[1] not in exclude_symbols}
     return len(open_lots)
 
 
@@ -2762,7 +2798,13 @@ def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: s
     if not signal.strategy_id or not signal.signal_time or _utc(signal.signal_time) < now - timedelta(minutes=5):
         raise StockPaperError("Signal is stale or has no bound strategy")
     strategy = db.get(Strategy, signal.strategy_id)
-    if not strategy or not strategy.is_active or strategy.current_status not in EXPLORATION_STRATEGY_STATUSES:
+    lane_state = _lane_state(db)
+    # The exploration lane (exploration_universe.py): any active strategy may
+    # take a learning-sized lot on a lane candidate; elsewhere only candidate
+    # and research strategies explore.
+    lane = _lane_entry_open(db, symbol, now, lane_state)
+    allowed = EXPLORATION_STRATEGY_STATUSES | ({"paper_trading_active"} if lane else set())
+    if not strategy or not strategy.is_active or strategy.current_status not in allowed:
         raise StockPaperError("Only active candidate or research strategies may explore")
     confidence = float(signal.confidence or 0)
     if not math.isfinite(confidence) or confidence < float(rules["min_confidence"]):
@@ -2774,7 +2816,13 @@ def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: s
     budget *= _exploration_lift(signal)
     if account.equity <= 0 or quantity * reference_price > budget * Decimal("1.0001"):
         raise StockPaperError("Exploration order exceeds the per-trade exploration budget")
-    if _open_exploration_lots(db, account, exclude_order_id=dispatching_order_id) >= settings.paper_exploration_max_positions:
+    book = _lane_book(db, lane_state)
+    if symbol in book:
+        if _open_exploration_lots(db, account, exclude_order_id=dispatching_order_id,
+                                  only_symbols=book) >= settings.exploration_max_open:
+            raise StockPaperError("Exploration lane slots are full")
+    elif _open_exploration_lots(db, account, exclude_order_id=dispatching_order_id,
+                                exclude_symbols=book) >= settings.paper_exploration_max_positions:
         raise StockPaperError("Exploration lot limit reached")
     return signal
 
@@ -2814,6 +2862,12 @@ def _load_signal_inputs(db: Session, symbol: str) -> tuple[Any, str, dict]:
     return prices, source, observation
 
 
+def _signal_feed(source: str, observation: dict, now: datetime) -> dict:
+    from app.services.feed_hygiene import signal_feed
+
+    return signal_feed(source, observation, now=now)
+
+
 def _build_stock_paper_signal(strategy: Strategy, symbol: str, generated: Any, source: str,
                               observation: dict, research_only: bool, now: datetime) -> StrategySignal:
     observation_payload = {
@@ -2827,6 +2881,9 @@ def _build_stock_paper_signal(strategy: Strategy, symbol: str, generated: Any, s
             **generated.features,
             "source": source,
             "execution_observation": observation_payload,
+            # Which tape each input came from: consolidated daily bars for the
+            # rule, the execution feed's minute close for the decision price.
+            "feed": _signal_feed(source, observation, now),
             "stock_paper": True,
             "research_only": research_only,
         })
@@ -3105,10 +3162,19 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             ))
             if Decimal(str(aggregate_pending)) + reserved_cash > aggregate_cap:
                 raise StockPaperError("Order exceeds the approved aggregate exposure cap")
-        open_count = db.query(StockPaperPosition).filter(
+        held = [row.symbol for row in db.query(StockPaperPosition.symbol).filter(
             StockPaperPosition.account_id == account.id, StockPaperPosition.quantity > 0
-        ).count()
-        if current is None and open_count >= int(rules.get("max_open_positions", 1)):
+        ).all()]
+        # Exploration-lane positions (exploration_universe.py) have their own
+        # slots and never count toward, or are blocked by, the core cap.
+        book = _lane_book(db)
+        if symbol in book:
+            if source != EXPLORATION_SOURCE:
+                raise StockPaperError("Exploration-lane names take learning-sized exploration entries only")
+            if current is None and sum(1 for held_symbol in held if held_symbol in book) >= settings.exploration_max_open:
+                raise StockPaperError("Exploration lane slots are full")
+        elif current is None and sum(1 for held_symbol in held if held_symbol not in book) >= int(
+                rules.get("max_open_positions", 1)):
             raise StockPaperError("Order exceeds the configured open-position risk limit")
     order = StockPaperOrder(account_id=account.id, client_order_id=client_order_id, symbol=symbol, side=side, quantity=quantity,
         strategy_id=signal.strategy_id if signal else (strategy_id if side == "sell" else None),

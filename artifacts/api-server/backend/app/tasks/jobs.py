@@ -1706,6 +1706,17 @@ def news_discovery_job() -> dict:
 
 
 @celery_app.task
+def exploration_universe_job() -> dict:
+    """Refresh the exploration lane: screen the liquid S&P 500 members, admit today's BUY candidates."""
+    def work(db):
+        from app.services.exploration_universe import run_exploration_universe
+
+        return {"job": "exploration_universe_job", **run_exploration_universe(db)}
+
+    return _run_job("exploration_universe_job", work)
+
+
+@celery_app.task
 def market_events_job() -> dict:
     """Refresh the Fed, CPI and jobs-report calendar for the BUY blackout."""
     def work(db):
@@ -1855,6 +1866,22 @@ def paper_cost_calibration_job() -> dict:
         return {"job": "paper_cost_calibration_job", **result, "live_authorized": False}
 
     return _run_job("paper_cost_calibration_job", work)
+
+
+@celery_app.task
+def feed_hygiene_job() -> dict:
+    """Weekdays after the close (past the 15-minute SIP delay): benchmark the session's paper fills
+    against delayed consolidated (SIP) bars and log IEX-vs-SIP stop/target touch disagreements (paper only)."""
+    def work(db):
+        from app.services.feed_hygiene import record_feed_divergence, record_sip_references
+
+        references = record_sip_references(db)
+        divergence = record_feed_divergence(db)
+        db.commit()
+        return {"job": "feed_hygiene_job", "sip_references": references, "feed_divergence": divergence,
+                "live_authorized": False}
+
+    return _run_job("feed_hygiene_job", work)
 
 
 @celery_app.task
