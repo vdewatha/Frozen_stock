@@ -134,6 +134,17 @@ def _cost_calibration_section(db: Session) -> Optional[dict]:
         return None
 
 
+def _engine_audit_section(db: Session) -> Optional[dict]:
+    """Expected vs realised per adopted change, hit rate and the calibration factor (``engine_audit``)."""
+    try:
+        from app.services.engine_audit import weekly_report_section
+
+        return weekly_report_section(db)
+    except Exception:  # the audit is optional; the report must not fail
+        db.rollback()
+        return None
+
+
 # ------------------------------------------------------------ change narrative
 
 def _field(row: Any, name: str, default=None):
@@ -374,6 +385,7 @@ def build_weekly_report(db: Session, *, now: Optional[datetime] = None) -> dict:
         "changes": change_narrative(db, now - timedelta(days=CHANGE_WINDOW_DAYS), now),
         "short_pilot": _short_pilot_summary(db),
         "cost_calibration": _cost_calibration_section(db),
+        "engine_audit": _engine_audit_section(db),
         "open_unrealized_pnl": (all_time.get("open_mark_to_market") or {}).get("unrealized_pnl"),
         "paper_only": True,
         "mutates_strategy_state": False,

@@ -186,6 +186,14 @@ def cost_calibration(db: Session = Depends(get_db)) -> dict:
     return calibration_view(db)
 
 
+@router.get("/engine-audit")
+def engine_audit(db: Session = Depends(get_db)) -> dict:
+    """Expected vs realised per adopted change, the engine's hit rate and the calibration factor in force (read-only)."""
+    from app.services.engine_audit import engine_audit_view
+
+    return engine_audit_view(db)
+
+
 @router.get("/self-healing")
 def self_healing(db: Session = Depends(get_db)) -> dict:
     """What the bot fixes on its own, what it did lately and what it leaves to a person (read-only)."""

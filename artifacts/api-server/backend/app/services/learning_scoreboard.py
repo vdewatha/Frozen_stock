@@ -15,6 +15,8 @@ One read-only snapshot for the Learning > Scoreboard page:
   (``gate_cost.py``).
 * ``setup_shadow``: every candidate gate value's forward record from the
   live BUY decisions, against the live value (``setup_shadow.py``).
+* ``engine_audit``: expected vs realised per adopted change, the engine's
+  hit rate and the calibration factor in force (``engine_audit.py``).
 * ``regime``: each strategy's record per regime cell and the regime-aware
   multiplier the current cell would give (``regime_allocation.py``; off
   until its backtest says otherwise).
@@ -455,6 +457,17 @@ def _setup_shadow(db: Session) -> dict:
                 "records": [], "beating": []}
 
 
+def _engine_audit(db: Session) -> dict:
+    from app.services.engine_audit import scoreboard_engine_audit
+
+    try:
+        return scoreboard_engine_audit(db)
+    except Exception:  # the scoreboard must render without the engine ledger
+        db.rollback()
+        return {"as_of": None, "status": "unavailable", "detail": "The engine audit could not be read.",
+                "changes": [], "hit_rate": None, "calibration": None}
+
+
 def _regime(db: Session, now: datetime) -> dict:
     """Each strategy's record per regime cell and the regime-aware multiplier (off until its backtest says so)."""
     from app.services.regime_allocation import regime_allocation_view
@@ -497,6 +510,7 @@ def build_learning_scoreboard(db: Session, *, now: Optional[datetime] = None) ->
         "changes": _changes(rows, _engine_changes(db)),
         "gate_costs": _gate_costs(db),
         "setup_shadow": _setup_shadow(db),
+        "engine_audit": _engine_audit(db),
         "regime": _regime(db, now),
         "paper_only": True,
     }
