@@ -35,6 +35,10 @@ def _no_network_earnings_calendar(monkeypatch):
     # The announcement blackout would make cycle tests depend on today's date
     # (a run the session before an FOMC meeting); its tests enable it.
     monkeypatch.setattr(settings, "market_event_blackout_enabled", False)
+    # The point-in-time replay universe downloads the S&P 500 membership file
+    # and every past member's history; its tests enable it with injected
+    # membership and loaders.
+    monkeypatch.setattr(settings, "replay_point_in_time_universe", False)
     from app.services import market_events
     market_events.clear_cache()
 

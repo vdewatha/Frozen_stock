@@ -90,3 +90,41 @@ latest actions, and the weekly report's `changes` section narrates them with
 the governance, experiment-engine and gate-cost rows. It never touches
 orders, exits, the kill switch, risk settings or the resume logic. Switch
 with `self_healing_enabled`. See `reports/self-healing-20261106.md`.
+
+## Setup shadow: every candidate gate value earns a forward record
+
+An adopted gate change used to be judged only after 20 live trades on the new
+setup, and the values the engine did not adopt earned nothing. Now every
+paper cycle records, for each strategy with a BUY signal, what each candidate
+value of each gate template (market gate off/10/20/50, VIX below 20/25/30/off,
+earnings blackout 0/10/20) would have decided next to the live decision, from
+the states the cycle already loaded (one `setup_shadow` audit row per cycle
+whose picture changed; no broker call). `setup_shadow_job` (17:25 New York
+time, weekdays, `learning_fast`) scores each decision's hypothetical trade from
+the next open under the strategy's tested exits, the same scoring the gate-cost
+audit uses, and stores the per-candidate record (forward trades, expectancy,
+win rate, delta against the live value on the same decisions) as a
+`setup_shadow_score` row. `GET /stock-paper/setup-shadow` (viewer) shows the
+table; the learning scoreboard has a `setup_shadow` section. The experiment
+verdict carries the alternatives' record and reverts a change early when an
+alternative beats the adopted value by 10 bps per trade over at least
+`experiment_verdict_min_trades` overlapping decisions; a candidate that beats
+the live setup becomes a `shadow_evidence` lesson for the weekly engine run,
+replayed and adopted only under the unchanged pre-registered rule. Paper only;
+nothing here places, blocks or exits an order. Window:
+`setup_shadow_lookback_sessions` (120). See `reports/setup-shadow-20261106.md`.
+
+## Point-in-time replay universe
+
+The experiment engine and strategy discovery replay daily history over the
+S&P 500 as it stood on each date, not over today's survivor list: every past
+member whose history yfinance still serves is loaded, and a single stock can
+only be entered while it was a member (index and sector ETFs always).
+Membership comes from the MIT-licensed `fja05680/sp500` start/end file,
+cached monthly with its coverage under `history_dir()/universe/`
+(`app/services/point_in_time_universe.py` documents the files). The first
+run with the setting on downloads every past member's bars once (about 20
+minutes), later runs refresh bars older than a week. Switch with
+`replay_point_in_time_universe`; `scripts/run_survivorship_check.py` measures
+the bias and holds the rule that decided the default. See
+`reports/survivorship-20261106.md`.
