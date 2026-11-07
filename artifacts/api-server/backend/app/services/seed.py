@@ -724,6 +724,87 @@ def admit_market_hedge(db: Session) -> Optional[str]:
     return status
 
 
+SECTOR_REVERSAL_ACTION = "sector_reversal_admission"
+SECTOR_REVERSAL_NAME = "Sector Reversal"
+SECTOR_RANK_ACTION = "sector_rank_update"
+# Strategies for which ``scripts/run_sector_reversal_backtest.py`` adopted
+# sector-relative ranking of same-day candidates (``sector_ranking``):
+# expectancy not lower and drawdown not worse in every window.  Written as
+# ``{slug: {"rank_by": "rel_z_5"}}``.  2026-11-07: none (RSI(2) lost expectancy
+# over all history and drawdown since 2020; trend pullback lost expectancy;
+# IBS trades only index ETFs, which have no sector benchmark).
+SECTOR_RANKED_STRATEGIES: dict[str, dict] = {}
+
+
+def admit_sector_reversal(db: Session) -> Optional[str]:
+    """One-time admission of the ``sector_reversal`` row (``reports/sector-reversal-20261107.md``).
+
+    Created ``paper_trading_candidate`` (learning-sized exploration, like a
+    discovered rule) only when the pre-registered backtest admitted it
+    (``strategies.sector_reversal.ADMITTED``: the default rule reached the
+    discovery gate's ``explore`` tier on its own); otherwise ``paused``, so
+    the forward loop's re-admission gates or an operator decide later.  Acts
+    once: an existing row of this type or name, or an earlier
+    ``sector_reversal_admission`` event (the operator deleted or re-statused
+    the row), means the operator's choice stands.  Returns the status it
+    created, or None.
+    """
+    from app.core.config import DEFAULT_PAPER_EXECUTION_SYMBOLS
+    from app.services.audit import write_audit_log
+    from app.services.sector_relative import static_sector
+    from app.services.strategies.sector_reversal import (
+        ADMISSION, ADMITTED, DEFAULT_RULE, REPORT, SECTOR_REVERSAL_EXIT_POLICY, SectorReversalStrategy,
+    )
+
+    slug = SectorReversalStrategy.slug
+    exists = db.query(Strategy.id).filter(
+        (Strategy.strategy_type == slug) | (Strategy.name == SECTOR_REVERSAL_NAME)).first()
+    already = db.query(AuditLog.id).filter(
+        AuditLog.event_type == "strategy_governance", AuditLog.action == SECTOR_REVERSAL_ACTION).first()
+    if exists or already:
+        return None
+    status = "paper_trading_candidate" if ADMITTED else "paused"
+    scope = [s for s in dict.fromkeys(str(x).upper() for x in DEFAULT_PAPER_EXECUTION_SYMBOLS) if static_sector(s)]
+    row = Strategy(
+        name=SECTOR_REVERSAL_NAME, strategy_type=slug,
+        description=("Sector-relative short-term reversal: close above the 200-day SMA and the 5-day return "
+                     "relative to the stock's sector ETF more than two standard deviations under its 60-day norm; "
+                     "exit when the relative RSI(2) recovers above 70 or the close is back above its 5-day "
+                     "average, a 10-session time stop or a 10% catastrophe stop. Single stocks with a sector ETF."),
+        parameters={"rule": DEFAULT_RULE, "stop_loss_pct": SECTOR_REVERSAL_EXIT_POLICY.stop_loss_pct,
+                    "take_profit_pct": SECTOR_REVERSAL_EXIT_POLICY.take_profit_pct,
+                    "max_holding_sessions": SECTOR_REVERSAL_EXIT_POLICY.max_holding_sessions,
+                    "symbol_scope": scope, "rank_by": "rel_z_5"},
+        is_active=True, current_status=status,
+    )
+    db.add(row)
+    db.flush()
+    message = (f"{REPORT}: {ADMISSION}" + (" Admitted as a learning-sized paper candidate; promotion needs forward "
+                                           "evidence like any other candidate." if ADMITTED else
+                                           " Created paused; the forward loop's re-admission gates decide whether it "
+                                           "trades."))
+    write_audit_log(
+        db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+        action=SECTOR_REVERSAL_ACTION, status="complete", message=message,
+        payload={"new_status": status, "admitted": ADMITTED, "rule": DEFAULT_RULE, "symbol_scope": scope,
+                 "source": REPORT, "paper_only": True},
+    )
+    db.flush()
+    return status
+
+
+def apply_sector_ranking(db: Session) -> list[str]:
+    """One-time ``rank_by = rel_z_5`` for the strategies the sector-reversal backtest adopted it for."""
+    from app.services.strategies.sector_reversal import REPORT
+
+    return _enable_gate_once(
+        db, SECTOR_RANKED_STRATEGIES, key="rank_by", action=SECTOR_RANK_ACTION, source=REPORT,
+        message=lambda gate: (f"{REPORT}: when several symbols signal this strategy on the same day, take them by "
+                              "the 5-day return relative to their sector (most negative first); the ranking kept "
+                              "expectancy and drawdown in every backtest window. Signals and exits are unchanged."),
+    )
+
+
 def ensure_strategy_lineup(db: Session) -> dict:
     """Idempotent strategy lineup reconciliation run by every seed pass."""
     return {
@@ -738,6 +819,8 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "paused_paper_losers": pause_paper_evidence_losers(db),
         "sizing_modes_applied": apply_sizing_modes(db),
         "hedge_admission": admit_market_hedge(db),
+        "sector_reversal_admission": admit_sector_reversal(db),
+        "sector_ranking_applied": apply_sector_ranking(db),
     }
 
 

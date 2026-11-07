@@ -8,6 +8,7 @@ from app.services.strategies.news_tone import NewsToneStrategy
 from app.services.strategies.regime import apply_regime_gate
 from app.services.strategies.rules import RULE_SLUG_PREFIX, RuleStrategy
 from app.services.strategies.scope import apply_scope
+from app.services.strategies.sector_reversal import SectorReversalStrategy
 from app.services.strategies.short_term_reversion import IBSMeanReversionStrategy, RSI2PullbackStrategy
 from app.services.strategies.vix_gate import apply_vix_gate
 from app.services.strategies.technical import (
@@ -38,6 +39,8 @@ STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     # seeded by ``seed.admit_market_hedge`` as a candidate or paused.
     MarketHedgeStrategy.slug: MarketHedgeStrategy,
     NewsToneStrategy.slug: NewsToneStrategy,  # reports/news-entries-20261106.md; never seeded, operator-admitted
+    # Sector-relative reversal (reports/sector-reversal-20261107.md); seeded once by seed.admit_sector_reversal.
+    SectorReversalStrategy.slug: SectorReversalStrategy,
 }
 
 # Registered strategies that must never be seeded or traded. Empty since the

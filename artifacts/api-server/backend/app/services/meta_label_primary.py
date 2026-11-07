@@ -14,6 +14,13 @@ call, which is infeasible per bar over this history.
 RSI(2) pullback and IBS mean reversion are replayed at their seeded default
 parameters, and also expose their indicator exits (``replay_exit_signals``)
 so their labels follow the exit rule the paper path actually uses.
+
+``sector_reversal`` (``strategies/sector_reversal.py``) is replayed from its
+default rule through ``strategies.rules`` (the same vectorised evaluation the
+class runs on its last bar) and needs the frame's ``sector_close`` column
+(``sector_relative``); without it every bar is HOLD.  It is not one of
+``REPLAYABLE_STRATEGIES`` (that tuple fixes the meta-label feature set), so
+``replay_signals`` adds it only when asked (``SECTOR_STRATEGIES``).
 """
 from __future__ import annotations
 
@@ -40,6 +47,8 @@ CONSENSUS_STRATEGIES = (
     "trend_pullback",
 )
 REPLAYABLE_STRATEGIES = (*CONSENSUS_STRATEGIES, "rsi2_pullback", "ibs_mean_reversion")
+SECTOR_STRATEGIES = ("sector_reversal",)
+SECTOR_REVERSAL_CONFIDENCE = 0.6  # ``RuleStrategy``'s fixed BUY confidence / probability
 
 
 def _clamp(values) -> np.ndarray:
@@ -199,6 +208,28 @@ def ibs_exit(prices: pd.DataFrame, exit_threshold: float = 0.8) -> np.ndarray:
     return internal_bar_strength(prices).to_numpy() > exit_threshold
 
 
+def sector_reversal(prices: pd.DataFrame, rule: dict | None = None) -> pd.DataFrame:
+    """``SectorReversalStrategy.generate_signal`` on every bar (default rule; HOLD without ``sector_close``)."""
+    from app.services.strategies import rules
+    from app.services.strategies.sector_reversal import DEFAULT_RULE
+
+    rule = rule or DEFAULT_RULE
+    buy = np.asarray(rules.entry_signals(prices, rule), dtype=bool)
+    if rules.SECTOR_CLOSE_COLUMN not in prices.columns:
+        buy = np.zeros(len(prices), dtype=bool)
+    valid = _valid_history(prices["close"].astype(float), rules.rule_lookback(rule))
+    return _frame(np.where(buy, "BUY", "HOLD"), np.where(buy, SECTOR_REVERSAL_CONFIDENCE, 0.5),
+                  np.where(buy, SECTOR_REVERSAL_CONFIDENCE, 0.5), valid)
+
+
+def sector_reversal_exit(prices: pd.DataFrame, rule: dict | None = None) -> np.ndarray:
+    """``SectorReversalStrategy.exit_signal`` on the close of each bar (any exit condition)."""
+    from app.services.strategies import rules
+    from app.services.strategies.sector_reversal import DEFAULT_RULE
+
+    return np.asarray(rules.exit_signals(prices, rule or DEFAULT_RULE), dtype=bool)
+
+
 _REPLAY = {
     "moving_average_crossover": moving_average_crossover,
     "rsi_mean_reversion": rsi_mean_reversion,
@@ -209,8 +240,9 @@ _REPLAY = {
     "trend_pullback": trend_pullback,
     "rsi2_pullback": rsi2_pullback,
     "ibs_mean_reversion": ibs_mean_reversion,
+    "sector_reversal": sector_reversal,
 }
-_EXITS = {"rsi2_pullback": rsi2_exit, "ibs_mean_reversion": ibs_exit}
+_EXITS = {"rsi2_pullback": rsi2_exit, "ibs_mean_reversion": ibs_exit, "sector_reversal": sector_reversal_exit}
 
 
 def replay_signals(prices: pd.DataFrame, strategies: tuple[str, ...] = REPLAYABLE_STRATEGIES) -> dict[str, pd.DataFrame]:
