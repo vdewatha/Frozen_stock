@@ -136,6 +136,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.experiment_verdict_job": {"queue": "learning"},
     "app.tasks.jobs.gate_cost_job": {"queue": "learning"},
     "app.tasks.jobs.setup_shadow_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.signal_autopsy_job": {"queue": "learning"},
     "app.tasks.jobs.paper_cost_calibration_job": {"queue": "learning"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.engine_audit_job": {"queue": "learning"},
@@ -353,6 +354,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.setup_shadow_job",
         "schedule": crontab(minute=25, hour=17, day_of_week="mon-fri"),
         "options": {"expires": 6 * 60 * 60},
+    },
+    # Sunday before the experiment engine (noon): contrast the entry features
+    # of each strategy's losses with its wins and record the scope candidates
+    # the engine's scope template replays (signal_autopsy.py).
+    "signal-autopsy": {
+        "task": "app.tasks.jobs.signal_autopsy_job",
+        "schedule": crontab(minute=30, hour=11, day_of_week="sun"),
+        "options": {"expires": 12 * 60 * 60},
     },
     # Saturday, before the weekly report and the Sunday experiment run: fit the
     # replay cost model to the week's paper fills so experiments and gate-cost

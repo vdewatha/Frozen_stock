@@ -35,9 +35,22 @@ survives costs and selection.  This module looks for new ones:
    qualifying is retired.  Open-timed candidates are graded and reported but
    never admitted: the daily paper path cannot place an order at the open.
 
+5. ``evolve_library`` lets the library grow on its own (``rule_mutation``):
+   the parents are the candidates that came closest to the gate (at most one
+   failed check, ranked by the lower bound of their net expectancy) plus the
+   ``explore`` survivors; each run breeds up to ``MUTATION_CHILDREN`` children
+   by one edit each, never one whose canonical rule and universe were tested
+   before, evaluates them inside a wall-clock budget and gates them with the
+   same bar.  Children that came close (``retained``) are re-evaluated on
+   later runs so they can be parents in turn; nothing else is re-tried.
+
 Re-running the same library on more data is not a new trial; growing the
-library is, and ``trials`` grows with it.  The holdout is re-read on every
-run, so it is a sanity check, not a pristine test set.  Paper only.
+library is, and ``trials`` grows with it: a ``discovery_trials`` audit row
+per run lists the hash of every rule ever evaluated (library and children),
+and the deflated Sharpe ratio of every candidate is charged for that
+cumulative count.  Three runs in a row without a child better than its
+parent pause mutation for one run.  The holdout is re-read on every run, so
+it is a sanity check, not a pristine test set.  Paper only.
 """
 from __future__ import annotations
 
@@ -45,16 +58,17 @@ import hashlib
 import json
 import logging
 import math
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import product
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from app.services import earnings_history, news_history
+from app.services import earnings_history, news_history, rule_mutation
 from app.services.backtest_statistics import deflated_sharpe_ratio, return_moments
 from app.services.strategies import rules
 from app.services.strategies.rules import RULE_SLUG_PREFIX
@@ -86,6 +100,14 @@ GATE = Gate()
 EXPLORE_CHECKS = frozenset({"enough_trades", "net_expectancy_ci_low_gt_0", "excess_over_drift_ci_low_gt_0",
                             "post_period_positive", "holdout_positive"})
 TIER_ORDER = {"proven": 2, "explore": 1, "rejected": 0}
+# Evolution step (rule_mutation): parents per run, children per run, runs
+# without an improving child before mutation pauses, near-miss children kept
+# for re-evaluation (and parenthood) on later runs.
+MUTATION_PARENTS = 10
+MUTATION_CHILDREN = 40
+MUTATION_STALE_RUNS = 3
+RETAINED_MAX = 60
+TRIALS_EVENT = "discovery_trials"
 
 
 # ---------------------------------------------------------------- library
@@ -311,7 +333,8 @@ def summarize_candidate(candidate: Mapping, evaluation: dict, holdout_start: pd.
         "sharpe_per_period": float(moments["sharpe_per_period"]),
         "sharpe_annualized": round(float(moments["sharpe_per_period"]) * math.sqrt(252), 4),
         "observations": int(moments["observations"]), "skewness": float(moments["skewness"]),
-        "kurtosis": float(moments["kurtosis"]),
+        "kurtosis": float(moments["kurtosis"]), "hash": rule_mutation.candidate_hash(candidate),
+        **({"lineage": candidate["lineage"]} if candidate.get("lineage") else {}),
     }
 
 
@@ -343,22 +366,155 @@ def rank_key(row: dict) -> tuple:
     return (TIER_ORDER[row["gate"]["tier"]], excess[0], row["gate"]["deflated_sharpe"] or 0.0)
 
 
+def apply_gate(result: dict, *, trials: int) -> dict:
+    """(Re)gate every candidate in ``result`` against ``trials`` and re-rank; the trial Sharpes are this run's."""
+    summaries = result["candidates"]
+    sharpes = [row["sharpe_per_period"] for row in summaries if row["observations"] > 1]
+    for row in summaries:
+        row["gate"] = gate(row, trials=trials, trial_sharpes=sharpes)
+    summaries.sort(key=rank_key, reverse=True)
+    result.update({"trials": trials, "proven": [row for row in summaries if row["gate"]["tier"] == "proven"],
+                   "explore": [row for row in summaries if row["gate"]["tier"] == "explore"]})
+    return result
+
+
 def run_discovery(frames: Mapping[str, pd.DataFrame], symbols: Iterable[str], *,
-                  data_end: Optional[str] = None, library: Optional[list[dict]] = None, universe=None) -> dict:
+                  data_end: Optional[str] = None, library: Optional[list[dict]] = None, universe=None,
+                  caches: Optional[dict] = None, trials: Optional[int] = None) -> dict:
+    """Evaluate and gate ``library`` (default: the fixed library); ``trials`` defaults to its size."""
     library = library if library is not None else candidate_library(symbols)
     end = pd.Timestamp(data_end) if data_end else max(pd.Timestamp(str(f["date"].iloc[-1])[:10]) for f in frames.values())
     holdout_start = end - pd.DateOffset(years=HOLDOUT_YEARS)
-    caches: dict = {}
+    caches = caches if caches is not None else {}
     summaries = [summarize_candidate(candidate, evaluate_candidate(candidate, frames, caches, universe=universe),
                                      holdout_start) for candidate in library]
-    sharpes = [row["sharpe_per_period"] for row in summaries if row["observations"] > 1]
-    for row in summaries:
-        row["gate"] = gate(row, trials=len(library), trial_sharpes=sharpes)
-    summaries.sort(key=rank_key, reverse=True)
-    return {"data_end": str(end.date()), "holdout_start": str(holdout_start.date()), "trials": len(library),
-            "gate": GATE.__dict__, "proven": [row for row in summaries if row["gate"]["tier"] == "proven"],
-            "explore": [row for row in summaries if row["gate"]["tier"] == "explore"],
-            "candidates": summaries}
+    result = {"data_end": str(end.date()), "holdout_start": str(holdout_start.date()), "gate": GATE.__dict__,
+              "candidates": summaries}
+    return apply_gate(result, trials=max(len(library), trials or 0))
+
+
+# ---------------------------------------------------------------- evolution
+
+def failed_checks(row: Mapping) -> list[str]:
+    return [key for key, value in row["gate"]["checks"].items() if not value]
+
+
+def net_ci_low(row: Mapping) -> float:
+    ci = row["discovery"]["net"].get("expectancy_ci_bps")
+    return float(ci[0]) if ci else -1e9
+
+
+def near_miss(row: Mapping) -> bool:
+    """Paper-executable and at most one failed check: a parent, and a child worth keeping."""
+    return paper_executable(row) and len(failed_checks(row)) <= 1
+
+
+def select_parents(candidates: Iterable[Mapping], k: int = MUTATION_PARENTS) -> list[dict]:
+    """Top ``k`` near-misses by the lower bound of their net expectancy, plus every explore / proven survivor."""
+    rows = [row for row in candidates if paper_executable(row)]
+    near = sorted((row for row in rows if near_miss(row)), key=net_ci_low, reverse=True)[:k]
+    survivors = [row for row in rows if row["gate"]["tier"] in ("explore", "proven")]
+    out, seen = [], set()
+    for row in [*near, *survivors]:
+        if row["id"] not in seen:
+            seen.add(row["id"])
+            out.append(row)
+    return out
+
+
+def improves_on(child: Mapping, parent: Mapping) -> bool:
+    """A higher tier, or the same tier with a higher net-expectancy lower bound."""
+    tiers = (TIER_ORDER[child["gate"]["tier"]], TIER_ORDER[parent["gate"]["tier"]])
+    return tiers[0] > tiers[1] or (tiers[0] == tiers[1] and net_ci_low(child) > net_ci_low(parent))
+
+
+def candidate_spec(row: Mapping) -> dict:
+    """What a later run needs to evaluate the candidate again (no statistics)."""
+    return {key: row[key] for key in ("id", "family", "rule", "universe", "stop_loss_pct", "take_profit_pct",
+                                      "max_holding_sessions", "lineage")}
+
+
+def evolve_library(result: dict, frames: Mapping[str, pd.DataFrame], *, seen_hashes: Iterable[str], seed: int,
+                   groups: Mapping[str, Sequence[str]], universe=None, caches: Optional[dict] = None,
+                   parents: int = MUTATION_PARENTS, children: int = MUTATION_CHILDREN,
+                   budget_seconds: float = 300.0, clock=time.monotonic) -> dict:
+    """One evolution step: breed children of this run's parents, evaluate them inside the budget, add them to ``result``.
+
+    Children are gated against the current ``result["trials"]`` here so the
+    improvement check has a verdict; the caller re-gates everything against
+    the cumulative trial count afterwards.  Returns the step's record.
+    """
+    started = clock()
+    parent_rows = select_parents(result["candidates"], parents)
+    by_id = {row["id"]: row for row in parent_rows}
+    seen = set(seen_hashes) | {row["hash"] for row in result["candidates"]}
+    offspring = rule_mutation.evolve(parent_rows, count=children, seed=seed, seen=seen, groups=groups)
+    holdout_start = pd.Timestamp(result["holdout_start"])
+    caches = caches if caches is not None else {}
+    sharpes = [row["sharpe_per_period"] for row in result["candidates"] if row["observations"] > 1]
+    evaluated, budget_exhausted = [], False
+    for child in offspring:
+        if clock() - started > budget_seconds:
+            budget_exhausted = True
+            break
+        row = summarize_candidate(child, evaluate_candidate(child, frames, caches, universe=universe), holdout_start)
+        row["gate"] = gate(row, trials=result["trials"] + len(offspring), trial_sharpes=sharpes)
+        row["lineage"] = dict(child["lineage"], improved_on_parent=improves_on(row, by_id[child["lineage"]["parent_id"]]))
+        evaluated.append(row)
+    result["candidates"].extend(evaluated)
+    improved = [row for row in evaluated if row["lineage"]["improved_on_parent"]]
+    best = max(evaluated, key=rank_key, default=None)
+    return {"status": "complete", "seed": int(seed), "parents": [row["id"] for row in parent_rows],
+            "children_generated": len(offspring), "children_evaluated": len(evaluated),
+            "children_improved": len(improved), "improved": bool(improved),
+            "budget_seconds": budget_seconds, "elapsed_seconds": round(clock() - started, 1),
+            "budget_exhausted": budget_exhausted,
+            "operators": {name: sum(1 for row in evaluated if row["lineage"]["operator"] == name)
+                          for name in rule_mutation.OPERATORS},
+            "best_child": None if best is None else {
+                "id": best["id"], "parent_id": best["lineage"]["parent_id"], "operator": best["lineage"]["operator"],
+                "tier": best["gate"]["tier"], "description": best["description"], "universe": best["universe"],
+                "net_ci_low_bps": net_ci_low(best), "parent_net_ci_low_bps": net_ci_low(by_id[best["lineage"]["parent_id"]]),
+                "parent_tier": by_id[best["lineage"]["parent_id"]]["gate"]["tier"]}}
+
+
+def load_trials(db: Session) -> dict:
+    """The latest ``discovery_trials`` row: every hash ever evaluated and the retained near-miss children."""
+    from app.models import AuditLog
+    from sqlalchemy import select
+
+    row = db.scalars(select(AuditLog).where(AuditLog.event_type == TRIALS_EVENT, AuditLog.action == "run")
+                     .order_by(AuditLog.id.desc()).limit(1)).first()
+    payload = (row.payload if row is not None else None) or {}
+    return {"hashes": set(payload.get("hashes") or []), "retained": list(payload.get("retained") or []),
+            "runs": int(payload.get("runs") or 0)}
+
+
+def last_run_mutation(db: Session) -> dict:
+    from app.models import AuditLog
+    from sqlalchemy import select
+
+    row = db.scalars(select(AuditLog).where(AuditLog.event_type == "strategy_discovery", AuditLog.action == "run")
+                     .order_by(AuditLog.id.desc()).limit(1)).first()
+    return dict(((row.payload or {}).get("mutation") or {})) if row is not None else {}
+
+
+def retained_children(result: dict, *, limit: int = RETAINED_MAX) -> list[dict]:
+    """Children (this run's and earlier runs') that are near-misses now, best first, capped."""
+    rows = [row for row in result["candidates"] if row.get("lineage") and near_miss(row)]
+    rows.sort(key=rank_key, reverse=True)
+    return [candidate_spec(row) for row in rows[:limit]]
+
+
+def record_trials(db: Session, *, hashes: Iterable[str], retained: list[dict], runs: int, data_end: str) -> None:
+    from app.services.audit import write_audit_log
+
+    hashes = sorted(set(hashes))
+    write_audit_log(db, event_type=TRIALS_EVENT, action="run", status="complete",
+                    message=f"discovery trials: {len(hashes)} rules ever evaluated, {len(retained)} children retained",
+                    entity_type="strategy_discovery",
+                    payload={"hashes": hashes, "count": len(hashes), "retained": retained, "runs": runs,
+                             "data_end": data_end, "paper_only": True})
 
 
 # ---------------------------------------------------------------- admission
@@ -375,7 +531,8 @@ def strategy_parameters(row: dict, *, now: datetime) -> dict:
                       "evaluated_symbols": row.get("evaluated_symbols", len(row["symbols"])),
                       "evaluated_at": now.isoformat(), "gate": row["gate"], "discovery": row["discovery"],
                       "post_period_expectancy_bps": row["post_period"]["expectancy_bps"],
-                      "holdout": {k: row["holdout"].get(k) for k in ("trades", "win_rate", "expectancy_bps")}},
+                      "holdout": {k: row["holdout"].get(k) for k in ("trades", "win_rate", "expectancy_bps")},
+                      "lineage": row.get("lineage")},
     }
 
 
@@ -438,7 +595,7 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
         write_audit_log(db, event_type="strategy_discovery", action="admit", status="complete",
                         message=f"{slug} ({row['gate']['tier']}): {row['description']}", entity_type="strategy",
                         entity_id=strategy.id,
-                        payload={"slug": slug, "gate": row["gate"], "paper_only": True})
+                        payload={"slug": slug, "gate": row["gate"], "lineage": row.get("lineage"), "paper_only": True})
     db.flush()
     return {"admitted": admitted, "retired": retired, "refreshed": refreshed, "live": live}
 
@@ -501,8 +658,34 @@ def report_rows(rows: list[dict], limit: int = 20) -> list[dict]:
                     "excess_ci_bps": excess.get("expectancy_ci_bps"),
                     "post_period_expectancy_bps": row["post_period"]["expectancy_bps"],
                     "holdout_trades": row["holdout"]["trades"], "holdout_expectancy_bps": row["holdout"]["expectancy_bps"],
-                    "sharpe_annualized": row["sharpe_annualized"], "deflated_sharpe": row["gate"]["deflated_sharpe"]})
+                    "sharpe_annualized": row["sharpe_annualized"], "deflated_sharpe": row["gate"]["deflated_sharpe"],
+                    "lineage": row.get("lineage")})
     return out
+
+
+def evolution_step(db: Session, result: dict, frames: Mapping[str, pd.DataFrame], *, groups: Mapping,
+                   seen_hashes: Iterable[str], universe=None, caches: Optional[dict] = None, clock=time.monotonic) -> dict:
+    """The scheduled run's mutation step: settings, the stale-run pause, then ``evolve_library``.
+
+    ``stale_runs`` counts consecutive runs without a child better than its
+    parent; at ``MUTATION_STALE_RUNS`` the next run skips mutation and the
+    count starts again, so a dead search costs one run in four.
+    """
+    from app.core.config import settings
+
+    previous = last_run_mutation(db)
+    stale = int(previous.get("stale_runs") or 0)
+    if not settings.strategy_discovery_mutation_enabled:
+        return {"status": "disabled", "stale_runs": stale}
+    if stale >= MUTATION_STALE_RUNS:
+        return {"status": "skipped", "reason": f"no child better than its parent for {stale} runs", "stale_runs": 0}
+    seen = set(seen_hashes)
+    seed = int(hashlib.sha256(f"{result['data_end']}:{len(seen)}".encode()).hexdigest()[:8], 16)
+    step = evolve_library(result, frames, seen_hashes=seen, seed=seed, groups=groups, universe=universe,
+                          caches=caches, budget_seconds=float(settings.strategy_discovery_mutation_budget_seconds),
+                          clock=clock)
+    step["stale_runs"] = 0 if step["improved"] else stale + 1
+    return step
 
 
 def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loader=None,
@@ -534,7 +717,25 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
                                   earnings_loader=earnings_loader)
     if not frames:
         return base | {"status": "blocked", "reason": "no price history", "missing_symbols": missing}
-    result = run_discovery(frames, frames.keys(), universe=universe)
+    trials = load_trials(db)
+    groups = {name: list(members) for name, members in universes(frames.keys()).items() if members}
+    library = candidate_library(frames.keys())
+    known = {rule_mutation.candidate_hash(candidate) for candidate in library}
+    for spec in trials["retained"]:  # near-miss children of earlier runs: re-evaluated, not re-charged
+        if spec.get("universe") in groups and rule_mutation.candidate_hash(spec) not in known:
+            known.add(rule_mutation.candidate_hash(spec))
+            library.append({**spec, "symbols": list(groups[spec["universe"]]),
+                            "hypothesis": f"Retained child of {spec['lineage']['parent_id']}"})
+    caches: dict = {}
+    result = run_discovery(frames, frames.keys(), universe=universe, library=library, caches=caches,
+                           trials=len(trials["hashes"] | known))
+    mutation = evolution_step(db, result, frames, groups=groups, universe=universe, caches=caches,
+                              seen_hashes=trials["hashes"] | known)
+    ever = trials["hashes"] | known | {row["hash"] for row in result["candidates"]}
+    apply_gate(result, trials=len(ever))
+    mutation["trials_cumulative"] = len(ever)
+    record_trials(db, hashes=ever, retained=retained_children(result), runs=trials["runs"] + 1,
+                  data_end=result["data_end"])
     if universe is not None:
         # The candidate was judged on every past member; the paper row it may
         # become can only trade today's list, so its scope is that subset.
@@ -547,12 +748,13 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
                                     max_live=settings.strategy_discovery_max_live,
                                     require_proven=settings.strategy_discovery_require_proven)
     summary = {"data_end": result["data_end"], "holdout_start": result["holdout_start"], "trials": result["trials"],
-               "proven": len(result["proven"]), "explore": len(result["explore"]), "missing_symbols": missing,
-               "universe": universe_summary,
+               "library": len(library), "proven": len(result["proven"]), "explore": len(result["explore"]),
+               "missing_symbols": missing, "universe": universe_summary, "mutation": mutation,
                "require_proven": settings.strategy_discovery_require_proven, **admission,
                "top": report_rows(result["candidates"], 10)}
     write_audit_log(db, event_type="strategy_discovery", action="run", status="complete",
-                    message=(f"strategy discovery: {result['trials']} candidates, {len(result['proven'])} proven, "
+                    message=(f"strategy discovery: {len(library)} candidates, {mutation.get('children_evaluated', 0)} "
+                             f"children, {result['trials']} trials ever, {len(result['proven'])} proven, "
                              f"{len(result['explore'])} explore, admitted {len(admission['admitted'])}, "
                              f"retired {len(admission['retired'])}"),
                     entity_type="strategy_discovery", payload=json.loads(json.dumps(summary, default=str)))
