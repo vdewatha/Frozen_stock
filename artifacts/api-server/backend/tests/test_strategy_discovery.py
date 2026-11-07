@@ -193,7 +193,8 @@ def test_scheduled_run_admits_and_audits(db):  # noqa: F811
             patch.object(settings, "strategy_discovery_history_start", "2014-01-01"):
         result = sd.run_strategy_discovery(db, now=datetime(2026, 11, 8, 15, tzinfo=UTC),
                                            loader=lambda symbol: frames[symbol].copy())
-        assert result["status"] == "complete" and result["trials"] == len(sd.candidate_library(frames))
+        assert result["status"] == "complete" and result["library"] == len(sd.candidate_library(frames))
+        assert result["trials"] >= result["library"] and result["mutation"]["status"] == "complete"
         assert len(result["top"]) == 10 and result["missing_symbols"] == []
         audit = db.scalars(select(AuditLog).where(AuditLog.event_type == "strategy_discovery",
                                                   AuditLog.action == "run")).one()

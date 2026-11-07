@@ -398,6 +398,11 @@ class Settings(BaseSettings):
     strategy_discovery_max_new: int = Field(default=3, ge=0, le=20)
     strategy_discovery_max_live: int = Field(default=10, ge=0, le=50)
     strategy_discovery_history_start: str = "2000-01-01"
+    # Mutation: each run breeds children of the near-misses (rule_mutation),
+    # charges every child ever tried to the deflated Sharpe, and stops when
+    # three runs in a row produced no child better than its parent.
+    strategy_discovery_mutation_enabled: bool = True
+    strategy_discovery_mutation_budget_seconds: int = Field(default=300, ge=0, le=3600)
     # Experiment engine: weekly, the repeating loss lessons choose which gate
     # experiments to replay; a candidate that passes the pre-registered rule is
     # adopted on the strategy row (adoption_enabled) and judged on its forward
