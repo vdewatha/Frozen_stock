@@ -114,6 +114,28 @@ replayed and adopted only under the unchanged pre-registered rule. Paper only;
 nothing here places, blocks or exits an order. Window:
 `setup_shadow_lookback_sessions` (120). See `reports/setup-shadow-20261106.md`.
 
+## Engine audit: expected vs realised, and the calibration factor
+
+The experiment engine adopts changes on its own, so `engine_audit.py` keeps
+it honest. For every adopted change it puts the replay's promised gain (adopted
+minus baseline expectancy, 2020+ window) next to the realised gain (forward
+expectancy after the change minus the last trades before it, or the adopted
+value against the value it replaced over the same shadow decisions while the
+live trades are too few), the shortfall and the forward trade count. Across
+all experiments it reports adoptions, verdict counts, the median
+realised-over-expected ratio with a bootstrap interval over the judged changes
+and a Bonferroni-style share of adoptions expected by luck. When the median
+ratio over at least 5 judged changes is below 0.5 the Saturday job
+(`engine_audit_job`, 14:30 New York time, `learning`, after the weekly
+report) stores an `engine_audit` row with a calibration factor in [0.5, 1.0];
+the Sunday engine run multiplies it into each candidate's expected gain and
+requires the deflated gain to cover the optimism's share of the 10 bps revert
+margin, so a candidate must beat the baseline by more. The factor returns to
+1.0 once the median recovers above 0.8. `GET /stock-paper/engine-audit`
+(viewer); the weekly report and the learning scoreboard each have an
+`engine_audit` section. Paper only; audit rows only. See
+`reports/engine-audit-20261106.md`.
+
 ## Point-in-time replay universe
 
 The experiment engine and strategy discovery replay daily history over the

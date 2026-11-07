@@ -1843,6 +1843,19 @@ def weekly_performance_report_job() -> dict:
 
 
 @celery_app.task
+def engine_audit_job() -> dict:
+    """Weekly (Saturday, after the report): expected vs realised per adopted change; set the engine's calibration factor (paper only)."""
+    def work(db):
+        from app.services.engine_audit import record_engine_audit
+
+        result = record_engine_audit(db)
+        db.commit()
+        return {"job": "engine_audit_job", **result, "live_authorized": False}
+
+    return _run_job("engine_audit_job", work)
+
+
+@celery_app.task
 def parameter_application_job() -> dict:
     """Advance governed paper parameter sets through their learning cycles."""
     def work(db):
