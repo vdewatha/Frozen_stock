@@ -730,7 +730,9 @@ SECTOR_RANK_ACTION = "sector_rank_update"
 # Strategies for which ``scripts/run_sector_reversal_backtest.py`` adopted
 # sector-relative ranking of same-day candidates (``sector_ranking``):
 # expectancy not lower and drawdown not worse in every window.  Written as
-# ``{slug: {"rank_by": "rel_z_5"}}``.
+# ``{slug: {"rank_by": "rel_z_5"}}``.  2026-11-07: none (RSI(2) lost expectancy
+# over all history and drawdown since 2020; trend pullback lost expectancy;
+# IBS trades only index ETFs, which have no sector benchmark).
 SECTOR_RANKED_STRATEGIES: dict[str, dict] = {}
 
 

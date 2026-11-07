@@ -51,8 +51,14 @@ DEFAULT_RULE = {
 }
 # The pre-registered decision of scripts/run_sector_reversal_backtest.py
 # (``seed.admit_sector_reversal`` creates the row as a paper candidate only when True).
+# 2026-11-07 run: the default rule is ``rejected`` (+21 bps gross per trade
+# against ~33 bps of modelled round-trip cost; net -12 bps [-23, -2], excess
+# over drift -34 bps), so the row is created paused.
 ADMITTED = False
-ADMISSION = "pending the backtest run."
+ADMISSION = ("the default rule (close > SMA200, rel_z_5 < -2, hysteresis exit) failed the discovery gate's "
+             "explore checks on the point-in-time S&P 500: net expectancy -12.2 bps [-23, -2] per trade, excess "
+             "over drift -33.9 bps, -10.3 bps since 2015, -6.5 bps on the holdout; about +21 bps gross against "
+             "~33 bps of modelled costs.")
 SECTOR_REVERSAL_EXIT_POLICY = ExitPolicy(stop_loss_pct=0.10, take_profit_pct=0.0, max_holding_sessions=10,
                                          indicator_exit=True)
 
