@@ -388,6 +388,13 @@ class Settings(BaseSettings):
     experiment_engine_max_experiments: int = Field(default=4, ge=0, le=20)
     experiment_engine_cooldown_days: int = Field(default=28, ge=1, le=365)
     experiment_engine_history_start: str = "2000-01-01"
+    # Point-in-time universe: the experiment engine and strategy discovery
+    # replay every past S&P 500 member that still has history, and a single
+    # stock can only be entered while it was a member (ETFs always).  Off =
+    # today's survivorship-biased list.  On by the pre-registered rule of
+    # scripts/run_survivorship_check.py (coverage since 2010 80.9% >= 70%,
+    # worst-case engine run 2 min of 30; reports/survivorship-20261106.md).
+    replay_point_in_time_universe: bool = True
     experiment_verdict_min_trades: int = Field(default=20, ge=5, le=500)
     experiment_verdict_max_trades: int = Field(default=60, ge=5, le=1000)
     # Gate cost: each withheld BUY of the last N sessions is replayed under the

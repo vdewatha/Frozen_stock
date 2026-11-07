@@ -35,12 +35,17 @@ A *setup* is the gate configuration the strategy trades with:
   to override its exit policy.  Missing keys keep the fixed barrier above, so
   a setup built from the live policy replays exactly as before.
 
+``simulate(..., universe=mask)`` takes an optional per-date membership mask
+(``symbol, dates -> bool array``, e.g. ``point_in_time_universe.Membership``)
+that is ANDed into the entries: a bar outside the symbol's membership never
+opens a trade.  ``None`` (the default) replays today's list as before.
+
 Model Predictive Long refits a forest per bar and is not replayable.
 """
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Mapping, Optional
+from typing import Callable, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -211,11 +216,14 @@ def barrier_for(strategy: str, setup: Optional[Mapping] = None) -> BarrierConfig
 def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd.DataFrame],
              setup: Optional[Mapping] = None, replays: Optional[Mapping[str, dict]] = None, *,
              vix: Optional[pd.DataFrame] = None, window: Optional[int] = None,
-             calibration=LATEST_CALIBRATION) -> pd.DataFrame:
+             calibration=LATEST_CALIBRATION,
+             universe: Optional[Callable[[str, pd.DatetimeIndex], np.ndarray]] = None) -> pd.DataFrame:
     """Every executable trade of ``strategy`` under ``setup`` (``window`` is the legacy market-gate-only form).
 
     ``calibration`` is a ``paper_cost_calibration.CostCalibration`` (or
     ``None`` for the published cost model); by default the latest recorded one.
+    ``universe(symbol, dates)`` is an optional per-bar membership mask ANDed
+    into the entries (point-in-time universe); ``None`` keeps today's list.
     """
     if calibration is LATEST_CALIBRATION:
         calibration = cost_calibration()
@@ -232,6 +240,8 @@ def simulate(strategy: str, frames: Mapping[str, pd.DataFrame], spy: Optional[pd
                & spy_gate_on(frame, spy, setup["market_gate_sma"])
                & vix_gate_on(frame, vix, setup["vix_gate"], setup["vix_level"])
                & earnings_gate_on(frame, setup["earnings_blackout_sessions"]))
+        if universe is not None:
+            buy &= np.asarray(universe(symbol, pd.to_datetime(frame["date"])), dtype=bool)
         positions = np.flatnonzero(buy)
         if not len(positions):
             continue
