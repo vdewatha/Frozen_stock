@@ -447,3 +447,102 @@ def replay_universe(base_symbols: Iterable[str], *, loader: Optional[Callable] =
     earnings = earnings_loader or budgeted_earnings_loader(base, now=now)
     return ReplayUniverse(symbols=symbols, mask=membership.mask, loader=frames_loader, earnings_loader=earnings,
                           coverage=dict(coverage_result))
+
+
+# ------------------------------------------------------------------ liquidity
+#
+# The liquidity screen behind the exploration lane (``exploration_universe``)
+# and ``scripts/run_liquid_universe_check.py``.  Both columns are known at the
+# close of the bar they are stamped on (no look-ahead):
+#
+# * ``dollar_volume``: the median of ``close x volume`` over the last
+#   ``LIQUIDITY_WINDOW`` bars (adjusted bars: split-adjusted volume times the
+#   adjusted close, so a dividend payer's old dollar volume reads a little low);
+# * ``spread``: the Corwin-Schultz (2012) high-low spread estimator, the mean
+#   of the two-bar estimates over the same window, negative two-bar estimates
+#   set to zero and the second bar's range shifted for the overnight gap as in
+#   the paper.  It is a proxy (daily ranges also carry volatility, so it
+#   overstates the quoted spread of liquid names); the lane compares it across
+#   names and against a fixed ceiling, never as a cost on its own.
+
+LIQUIDITY_WINDOW = 20
+_CS_K = 3.0 - 2.0 * np.sqrt(2.0)
+
+
+def corwin_schultz(frame: pd.DataFrame) -> np.ndarray:
+    """Per-bar two-bar Corwin-Schultz spread estimate (bar t from bars t-1 and t; NaN on the first bar)."""
+    high = pd.to_numeric(frame["high"], errors="coerce").to_numpy(float)
+    low = pd.to_numeric(frame["low"], errors="coerce").to_numpy(float)
+    close = pd.to_numeric(frame["close"], errors="coerce").to_numpy(float)
+    out = np.full(len(high), np.nan)
+    if len(high) < 2:
+        return out
+    h0, l0, c0 = high[:-1], low[:-1], close[:-1]
+    h1, l1 = high[1:].copy(), low[1:].copy()
+    # Overnight adjustment: a gap moves the second bar's whole range.
+    up = l1 > c0
+    down = h1 < c0
+    shift = np.where(up, l1 - c0, np.where(down, h1 - c0, 0.0))
+    h1, l1 = h1 - shift, l1 - shift
+    with np.errstate(divide="ignore", invalid="ignore"):
+        beta = np.log(h0 / l0) ** 2 + np.log(h1 / l1) ** 2
+        gamma = np.log(np.maximum(h0, h1) / np.minimum(l0, l1)) ** 2
+        alpha = (np.sqrt(2.0 * beta) - np.sqrt(beta)) / _CS_K - np.sqrt(gamma / _CS_K)
+        spread = 2.0 * (np.exp(alpha) - 1.0) / (1.0 + np.exp(alpha))
+    valid = np.isfinite(spread) & (h0 > 0) & (l0 > 0) & (h1 > 0) & (l1 > 0)
+    out[1:] = np.where(valid, np.maximum(spread, 0.0), np.nan)
+    return out
+
+
+def liquidity_frame(frame: pd.DataFrame, window: int = LIQUIDITY_WINDOW) -> pd.DataFrame:
+    """``date, close, dollar_volume, spread`` per bar (rolling ``window``; NaN until it fills)."""
+    close = pd.to_numeric(frame["close"], errors="coerce").astype(float)
+    volume = pd.to_numeric(frame["volume"], errors="coerce").astype(float) if "volume" in frame \
+        else pd.Series(np.nan, index=frame.index)
+    dollar = (close * volume).where(volume > 0)
+    spread = pd.Series(corwin_schultz(frame), index=frame.index)
+    return pd.DataFrame({
+        "date": pd.to_datetime(frame["date"]).dt.normalize().to_numpy(),
+        "close": close.to_numpy(),
+        "dollar_volume": dollar.rolling(window, min_periods=window).median().to_numpy(),
+        "spread": spread.rolling(window, min_periods=window).mean().to_numpy(),
+    })
+
+
+def liquidity_panel(frames: Mapping[str, pd.DataFrame], window: int = LIQUIDITY_WINDOW
+                    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(dollar volume, spread) as date x symbol frames over every frame's dates."""
+    dollar, spread = {}, {}
+    for symbol, frame in frames.items():
+        if frame is None or not len(frame) or not {"high", "low", "close"} <= set(frame.columns):
+            continue
+        liquid = liquidity_frame(frame, window).drop_duplicates("date", keep="last").set_index("date")
+        dollar[symbol], spread[symbol] = liquid["dollar_volume"], liquid["spread"]
+    return pd.DataFrame(dollar).sort_index(), pd.DataFrame(spread).sort_index()
+
+
+def tercile_panel(dollar_volume: pd.DataFrame, membership: Optional[Membership] = None) -> pd.DataFrame:
+    """Per date and single stock: liquidity tercile 1 (most liquid) .. 3, 0 when unranked.
+
+    Ranked among the stocks that were S&P 500 members on the date (all stocks
+    when ``membership`` is None) and have a full-window dollar volume; ETFs
+    are never ranked.
+    """
+    columns = [c for c in dollar_volume.columns if c not in ALWAYS_MEMBERS]
+    panel = dollar_volume[columns]
+    if membership is not None:
+        member = pd.DataFrame({c: membership.mask(c, panel.index) for c in columns}, index=panel.index)
+        panel = panel.where(member)
+    ranks = panel.rank(axis=1, ascending=False, method="first")
+    counts = panel.notna().sum(axis=1)
+    share = ranks.div(counts.where(counts > 0), axis=0)
+    out = np.ceil(share * 3).clip(1, 3)
+    return out.fillna(0).astype(int)
+
+
+def tercile_on(terciles: pd.DataFrame, symbol: str, dates) -> np.ndarray:
+    """The tercile of ``symbol`` on each of ``dates`` (0 when unranked or unknown)."""
+    index = pd.DatetimeIndex(pd.to_datetime(dates)).normalize()
+    if symbol not in terciles.columns:
+        return np.zeros(len(index), dtype=int)
+    return terciles[symbol].reindex(index).fillna(0).astype(int).to_numpy()
