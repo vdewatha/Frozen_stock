@@ -73,7 +73,7 @@ describes it (see "Not done").
 5. **The record so far** (`news_history.news_track_record`, `scripts/news_entries_report.py`): news-found
    trades vs core trades from the attributions (the scoreboard's `news_vs_core`), the `news_wrong` count and
    the loss causes of news-found trades, as a Markdown table.
-6. Tests: `tests/test_news_entries.py` (14). Full backend suite: see the PR.
+6. Tests: `tests/test_news_entries.py` (14). Full backend suite: 2762 passed, 33 skipped.
 
 ## The candidates on real history
 
