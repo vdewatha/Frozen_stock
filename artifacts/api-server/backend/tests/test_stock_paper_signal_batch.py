@@ -121,8 +121,9 @@ class SignalBatchTests(unittest.TestCase):
         # The symbol-scoped RSI(2)/IBS candidates are covered by
         # test_strategy_execution_policy and the SH-only market hedge by
         # test_market_hedge; this test checks unscoped fan-out.  The operator-
-        # admitted news_tone rule (test_news_entries) is never seeded.
-        scoped = {"rsi2_pullback", "ibs_mean_reversion", "market_hedge", "news_tone"}
+        # admitted news_tone rule (test_news_entries) is never seeded; the
+        # sector-scoped sector_reversal row is covered by test_sector_reversal.
+        scoped = {"rsi2_pullback", "ibs_mean_reversion", "market_hedge", "news_tone", "sector_reversal"}
         self.assertEqual(set(STRATEGY_STATUSES), set(STRATEGY_REGISTRY) - RESEARCH_ONLY_STRATEGY_SLUGS - scoped)
         symbols = [f"S{index:02d}" for index in range(50)]
         data = _DataDouble(symbols)

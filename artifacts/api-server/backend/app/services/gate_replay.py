@@ -53,6 +53,13 @@ A *setup* is the gate configuration the strategy trades with:
 that is ANDed into the entries: a bar outside the symbol's membership never
 opens a trade.  ``None`` (the default) replays today's list as before.
 
+``sector_reversal`` replays its default rule (``meta_label_primary.
+sector_reversal``) on the single stocks whose frame carries a
+``sector_close`` column (``sector_relative``; ``strategy_discovery.
+load_frames`` attaches it), with the reversion exits (10% stop, 10 sessions,
+its indicator exit).  A ``replays`` dict built without it is completed on the
+fly.
+
 Model Predictive Long refits a forest per bar and is not replayable.
 """
 from __future__ import annotations
@@ -79,7 +86,7 @@ BRACKET = BarrierConfig(take_profit_pct=0.06, stop_loss_pct=0.03, max_holding_da
 TECHNICAL = ("moving_average_crossover", "rsi_mean_reversion", "macd_momentum", "ensemble",
              "bollinger_mean_reversion", "channel_breakout", "trend_pullback")
 RANGE_GATED = {"rsi_mean_reversion", "bollinger_mean_reversion"}
-REVERSION = ("rsi2_pullback", "ibs_mean_reversion")
+REVERSION = ("rsi2_pullback", "ibs_mean_reversion", "sector_reversal")
 STRATEGIES = (*TECHNICAL, *REVERSION)
 WINDOWS = {"all": None, "2015+": "2015-01-01", "2020+": "2020-01-01"}
 MIN_CONFIDENCE = 0.55
@@ -126,12 +133,20 @@ def scope(strategy: str, symbols: list[str]) -> list[str]:
         return [s for s in symbols if s in RSI2_WIDENED_SCOPE]
     if strategy == "ibs_mean_reversion":
         return [s for s in symbols if s in INDEX]
+    if strategy == "sector_reversal":
+        from app.services.trading_universe import ETF_SYMBOLS
+
+        return [s for s in symbols if s not in ETF_SYMBOLS]
     return symbols
 
 
 def entries(strategy: str, frame: pd.DataFrame, replay: dict) -> np.ndarray:
-    signal = primary.ibs_mean_reversion(frame, entry_threshold=0.1) if strategy == "ibs_mean_reversion" \
-        else replay[strategy]
+    if strategy == "ibs_mean_reversion":
+        signal = primary.ibs_mean_reversion(frame, entry_threshold=0.1)
+    elif strategy not in replay and strategy in primary.SECTOR_STRATEGIES:
+        signal = primary.replay_signals(frame, (strategy,))[strategy]
+    else:
+        signal = replay[strategy]
     buy = (signal["action"].to_numpy() == "BUY") & (signal["confidence"].to_numpy() >= MIN_CONFIDENCE)
     if strategy in RANGE_GATED:
         adx = wilder_adx(frame)["adx"].to_numpy()

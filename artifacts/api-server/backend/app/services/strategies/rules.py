@@ -24,6 +24,17 @@ traded on that bar, NaN on every other bar; it comes from an
 ``earn_surprise`` column (``earnings_history.attach_surprises``) and is NaN
 when the frame has none.
 
+``rel_ret_N`` / ``rel_rsi_N`` / ``rel_z_N`` measure the stock against its
+sector ETF from an optional ``sector_close`` column
+(``sector_relative.attach_sector_close`` / ``attach_sector_closes``):
+``rel_ret_N`` is the stock's N-bar return minus the sector's, ``rel_rsi_N``
+Wilder's RSI(N) of the relative price ``close / sector_close`` and
+``rel_z_N`` the z-score of ``rel_ret_N`` against its own trailing
+``REL_Z_WINDOW`` (60) bars.  They are NaN without the column (an ETF, an
+unmapped name), so a sector rule simply does not fire there.  The paper
+cycle attaches the sector ETF's trusted closes at runtime
+(``sector_relative.runtime_sector_close``).
+
 ``news_tone`` / ``news_articles`` are the session's news tone (directional
 mean of the stories published before that bar's close) and story count from
 the ``news_tone`` / ``news_articles`` columns (``news_history.attach_tone``);
@@ -53,6 +64,7 @@ import pandas as pd
 
 from app.services import earnings_history
 from app.services.earnings_history import SURPRISE_COLUMN
+from app.services.sector_relative import SECTOR_CLOSE_COLUMN
 from app.services.strategies.base import (
     BaseStrategy,
     ExitPolicy,
@@ -72,6 +84,8 @@ _OPS: dict[str, Callable] = {"<": operator.lt, "<=": operator.le, ">": operator.
                              "==": operator.eq}
 TIMINGS = frozenset({"close", "open"})
 NEWS_FEATURES = frozenset({"news_tone", "news_articles"})
+SECTOR_FEATURES = frozenset({"rel_ret", "rel_rsi", "rel_z"})
+REL_Z_WINDOW = 60  # bars the N-bar relative return is z-scored against
 # Features known at the open of their own bar (everything else is shifted a bar for open-timed rules).
 _OPEN_FEATURES = frozenset({"gap"})
 _FEATURE = re.compile(r"^(?P<name>[a-z_]+?)(?:_(?P<n>\d+))?(?:_(?P<m>\d+))?$")
@@ -101,7 +115,8 @@ def feature(frame: pd.DataFrame, name: str, cache: Optional[dict] = None) -> pd.
     min / max), ``down_streak`` / ``up_streak``, ``ibs``, ``gap``,
     ``bb_pctb_N``, ``atr_pct_N``, ``vol_ratio_N_M`` (N- over M-bar realised
     volatility), ``tdom``, ``tdays_left``, ``dow``, ``earn_surprise``,
-    ``news_tone[_N]``, ``news_articles[_N]``.
+    ``news_tone[_N]``, ``news_articles[_N]``, ``rel_ret_N``, ``rel_rsi_N``,
+    ``rel_z_N`` (against the ``sector_close`` column).
     """
     if cache is not None and name in cache:
         return cache[name]
@@ -152,6 +167,8 @@ def feature(frame: pd.DataFrame, name: str, cache: Optional[dict] = None) -> pd.
     elif kind == "earn_surprise" and n is None:
         value = pd.to_numeric(frame[kind], errors="coerce").astype(float).reset_index(drop=True) \
             if kind in frame.columns else pd.Series(np.nan, index=close.index)
+    elif kind in SECTOR_FEATURES and n and m is None:
+        value = _relative(frame, close, kind, n)
     elif kind in NEWS_FEATURES and m is None:
         column = (pd.to_numeric(frame[kind], errors="coerce").astype(float).reset_index(drop=True)
                   if kind in frame.columns else pd.Series(0.0, index=close.index))
@@ -164,9 +181,27 @@ def feature(frame: pd.DataFrame, name: str, cache: Optional[dict] = None) -> pd.
     return value
 
 
+def _relative(frame: pd.DataFrame, close: pd.Series, kind: str, n: int) -> pd.Series:
+    """``rel_ret_N`` / ``rel_rsi_N`` / ``rel_z_N`` against ``sector_close`` (NaN without the column)."""
+    if SECTOR_CLOSE_COLUMN not in frame.columns:
+        return pd.Series(np.nan, index=close.index)
+    sector = pd.to_numeric(frame[SECTOR_CLOSE_COLUMN], errors="coerce").astype(float).reset_index(drop=True)
+    sector = sector.where(sector > 0)
+    if kind == "rel_rsi":
+        return wilder_rsi(close / sector, n)
+    relative = (close / close.shift(n)) - (sector / sector.shift(n))
+    if kind == "rel_ret":
+        return relative
+    mean = relative.rolling(REL_Z_WINDOW, min_periods=REL_Z_WINDOW).mean()
+    std = relative.rolling(REL_Z_WINDOW, min_periods=REL_Z_WINDOW).std()
+    return (relative - mean) / std.where(std > 0)
+
+
 def _lookback(name: str) -> int:
     match = _FEATURE.match(name)
     numbers = [int(x) for x in (match["n"], match["m"]) if x] if match else []
+    if match and match["name"] == "rel_z":
+        return max(numbers, default=1) + REL_Z_WINDOW + 1
     return max(numbers, default=1) + 1
 
 
@@ -190,6 +225,25 @@ def uses_news(rule: dict) -> bool:
         if match and match["name"] in NEWS_FEATURES:
             return True
     return False
+
+
+def uses_sector(rule: dict) -> bool:
+    """Whether any condition reads a sector-relative feature (``rel_ret`` / ``rel_rsi`` / ``rel_z``)."""
+    for condition in [*rule.get("entry", []), *rule.get("exit", [])]:
+        match = _FEATURE.match(str(condition.get("f", "")))
+        if match and match["name"] in SECTOR_FEATURES:
+            return True
+    return False
+
+
+def attach_runtime_sector(symbol: str, frame: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """``frame`` with the runtime ``sector_close`` column, unchanged if it has one, ``None`` when unavailable."""
+    if SECTOR_CLOSE_COLUMN in frame.columns:
+        return frame
+    from app.services import sector_relative
+
+    series = sector_relative.runtime_sector_close(symbol)
+    return None if series is None else sector_relative.attach_sector_close(frame, series)
 
 
 def validate_rule(rule: Any) -> dict:
@@ -296,6 +350,12 @@ class RuleStrategy(BaseStrategy):
                 return neutral_signal(f"Rule {self.slug}: news tone history unavailable.",
                                       {"rule": describe_rule(self.rule)})
             frame = news_history.attach_tone(frame, series)
+        if uses_sector(self.rule):
+            attached = attach_runtime_sector(symbol, frame)
+            if attached is None:
+                return neutral_signal(f"Rule {self.slug}: no sector ETF history for {symbol}.",
+                                      {"rule": describe_rule(self.rule)})
+            frame = attached
         cache: dict = {}
         fire = bool(entry_signals(frame, self.rule, cache)[-1])
         features = {c["f"]: (None if not np.isfinite(v := float(feature(frame, c["f"], cache).iloc[-1])) else v)
@@ -309,4 +369,9 @@ class RuleStrategy(BaseStrategy):
     def exit_signal(self, symbol: str, data: pd.DataFrame, entry_index: int) -> Optional[str]:
         if data is None or len(data) < 2 or len(data) - 1 < entry_index or not self.rule.get("exit"):
             return None
-        return "rule_exit" if bool(exit_signals(self._frame(data), self.rule)[-1]) else None
+        frame = self._frame(data)
+        if uses_sector(self.rule):
+            frame = attach_runtime_sector(symbol, frame)
+            if frame is None:  # the other exit conditions still apply; relative ones read NaN
+                frame = self._frame(data)
+        return "rule_exit" if bool(exit_signals(frame, self.rule)[-1]) else None

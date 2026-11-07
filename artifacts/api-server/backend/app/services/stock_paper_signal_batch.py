@@ -40,6 +40,7 @@ from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+from app.services import sector_ranking
 from app.services import stock_paper_ledger as ledger
 from app.services.strategy_execution_policy import daily_bar_execution, gate_daily_bar_entry, symbol_scope_for
 
@@ -274,6 +275,11 @@ def generate_cycle_signals(
         # out-of-scope pairs get no signal row and no outcome at all.
         scopes[strategy_type] = symbol_scope_for(row if not isinstance(row, BaseException) else strategy)
         daily_bar[strategy_type] = daily_bar_execution(row if not isinstance(row, BaseException) else strategy)
+    # Sector-relative ranking (``sector_ranking``): strategies whose row sets
+    # ``rank_by = "rel_z_5"`` get their same-day BUYs ranked before persisting.
+    ranked_types = {strategy_type for strategy_type, _research_only, row in bound
+                    if not isinstance(row, BaseException) and sector_ranking.ranked(getattr(row, "parameters", None))}
+    rank_values: dict[str, float | None] = {}
     resolved_at = time.perf_counter()
 
     # 2. One data load per symbol, every strategy computed on that frame.
@@ -333,6 +339,18 @@ def generate_cycle_signals(
                         meta_records[(symbol, strategy_type)] = record
                         # ``generated`` is a private copy (see _generate).
                         generated.features = {**(generated.features or {}), "meta_label": record}
+        if ranked_types and any(item[1] in ranked_types and getattr(item[4], "action", None) == "BUY"
+                                for item in pending[symbol_start:]):
+            rank_values[symbol] = sector_ranking.rank_value(symbol, prices)
+    rank_records: dict[tuple[str, str], dict] = {}
+    if rank_values:
+        rank_records = sector_ranking.assign_ranks(
+            [(item[0], item[1]) for item in pending if item[1] in ranked_types
+             and getattr(item[4], "action", None) == "BUY"], rank_values)
+        for item in pending:
+            record = rank_records.get((item[0], item[1]))
+            if record is not None:  # ``generated`` is a private copy (see _generate)
+                item[4].features = {**(item[4].features or {}), sector_ranking.FEATURE_KEY: record}
     computed_at = time.perf_counter()
 
     # 3. Persist every signal and its ledger event with a single commit.
@@ -356,6 +374,8 @@ def generate_cycle_signals(
                 outcome = ledger._stock_paper_signal_result(signal, strategy_type, observation, research_only)
                 if (symbol, strategy_type) in meta_records:
                     outcome["meta_label"] = meta_records[(symbol, strategy_type)]
+                if (symbol, strategy_type) in rank_records:
+                    outcome[sector_ranking.FEATURE_KEY] = rank_records[(symbol, strategy_type)]
                 outcomes[(symbol, strategy_type)] = outcome
     finished = time.perf_counter()
     stats["timing_ms"] = {

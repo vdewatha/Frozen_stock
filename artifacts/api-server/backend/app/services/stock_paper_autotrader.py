@@ -57,6 +57,7 @@ from app.services.entry_protections import (
 from app.services.intraday_data import session_bounds
 from app.services.meta_label_shadow import resolve_runtime as resolve_meta_label_runtime
 from app.services.position_sizing import sizing_parameters
+from app.services.sector_ranking import order_symbols
 from app.services.stock_paper_signal_batch import generate_cycle_signals
 from app.services.strategy_execution_policy import (
     evaluate_policy_exit,
@@ -999,6 +1000,9 @@ def _run_signal_cycle(db: Session) -> dict:
         parameter_overrides=feedback["overrides"] or None,
     )
     signals_done = time.perf_counter()
+    # Sector-relative ranking: a ranked strategy's same-day BUYs are taken
+    # most-negative ``rel_z_5`` first (``sector_ranking``); others keep their place.
+    symbols = order_symbols(symbols, signal_outcomes)
     sector_cap = _max_positions_per_sector(rules)
     sector_groups = _sector_exposure(db, account.id) if sector_cap else {}
     # Entry-only circuit breakers (stop-loss guard, exit cooldown, low-profit
