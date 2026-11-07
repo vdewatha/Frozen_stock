@@ -1858,6 +1858,22 @@ def paper_cost_calibration_job() -> dict:
 
 
 @celery_app.task
+def feed_hygiene_job() -> dict:
+    """Weekdays after the close (past the 15-minute SIP delay): benchmark the session's paper fills
+    against delayed consolidated (SIP) bars and log IEX-vs-SIP stop/target touch disagreements (paper only)."""
+    def work(db):
+        from app.services.feed_hygiene import record_feed_divergence, record_sip_references
+
+        references = record_sip_references(db)
+        divergence = record_feed_divergence(db)
+        db.commit()
+        return {"job": "feed_hygiene_job", "sip_references": references, "feed_divergence": divergence,
+                "live_authorized": False}
+
+    return _run_job("feed_hygiene_job", work)
+
+
+@celery_app.task
 def weekly_performance_report_job() -> dict:
     """Store the weekend paper performance report (read-only on strategies)."""
     def work(db):

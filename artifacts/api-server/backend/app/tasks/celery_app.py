@@ -138,6 +138,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.setup_shadow_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.signal_autopsy_job": {"queue": "learning"},
     "app.tasks.jobs.paper_cost_calibration_job": {"queue": "learning"},
+    "app.tasks.jobs.feed_hygiene_job": {"queue": "market_data"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.engine_audit_job": {"queue": "learning"},
     "app.tasks.jobs.self_healing_job": {"queue": LEARNING_FAST_QUEUE},
@@ -370,6 +371,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.paper_cost_calibration_job",
         "schedule": crontab(minute=30, hour=13, day_of_week="sat"),
         "options": {"expires": 12 * 60 * 60},
+    },
+    # Weekdays after the close, once the free plan's 15-minute SIP delay has
+    # passed: benchmark the session's fills against delayed consolidated bars
+    # (the calibration prices entries against them) and log where IEX and SIP
+    # disagreed on a stop or target touch.
+    "feed-hygiene": {
+        "task": "app.tasks.jobs.feed_hygiene_job",
+        "schedule": crontab(minute=40, hour=16, day_of_week="mon-fri"),
+        "options": {"expires": 3 * 60 * 60},
     },
     # Weekly paper performance report, Saturday morning after the week closes.
     "weekly-performance-report": {

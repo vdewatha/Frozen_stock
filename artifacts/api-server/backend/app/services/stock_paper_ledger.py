@@ -2814,6 +2814,12 @@ def _load_signal_inputs(db: Session, symbol: str) -> tuple[Any, str, dict]:
     return prices, source, observation
 
 
+def _signal_feed(source: str, observation: dict, now: datetime) -> dict:
+    from app.services.feed_hygiene import signal_feed
+
+    return signal_feed(source, observation, now=now)
+
+
 def _build_stock_paper_signal(strategy: Strategy, symbol: str, generated: Any, source: str,
                               observation: dict, research_only: bool, now: datetime) -> StrategySignal:
     observation_payload = {
@@ -2827,6 +2833,9 @@ def _build_stock_paper_signal(strategy: Strategy, symbol: str, generated: Any, s
             **generated.features,
             "source": source,
             "execution_observation": observation_payload,
+            # Which tape each input came from: consolidated daily bars for the
+            # rule, the execution feed's minute close for the decision price.
+            "feed": _signal_feed(source, observation, now),
             "stock_paper": True,
             "research_only": research_only,
         })

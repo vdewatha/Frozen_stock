@@ -33,6 +33,19 @@ gap and turns it into a calibration the replays can use.
    ``gate_replay.simulate`` reads the latest calibration through
    ``latest_calibration`` so the experiment engine replays with realised costs.
 
+**Consolidated benchmarks and auction fills** (``feed_hygiene``).  The
+decision price of an entry is the latest IEX minute close, a 3% sample of the
+tape, while the replay fills at the consolidated open.  When a fill has a
+delayed-SIP reference (``fill_sip_reference`` audit rows: the official SIP
+open for an entry at the open, the SIP minute bar containing the fill
+otherwise), entries, market orders and order-less fills are scored against it
+instead (``reference_feed = "sip"``); protective stops and take-profit legs
+keep their level, which is what the replay prices them against.  The IEX /
+decision-price number stays on every row (``decision_slippage_bps``).  Every
+fill is tagged with its order's time-in-force and whether it was a paper fill;
+paper ``opg`` / ``cls`` fills are excluded (Alpaca paper only imitates the
+auctions, so the calibrator would learn the simulator) and counted.
+
 A weekly job (Saturday, before the Sunday experiment run) recalibrates;
 ``GET /stock-paper/cost-calibration`` and the weekly report show the latest
 calibration and the measurement table.  Nothing here places, blocks or exits
@@ -54,10 +67,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import AuditLog
-from app.models.stock_paper import StockPaperFill, StockPaperOrder
+from app.models.stock_paper import StockPaperAccount, StockPaperFill, StockPaperOrder
 from app.services.audit import write_audit_log
 from app.services.backtester import _liquidity
 from app.services.exchange_sessions import session_bounds
+from app.services import feed_hygiene
 from app.services.gate_cost import daily_frame, last_completed_session, sessions_back
 from app.services.trade_attribution import slippage_bps
 from app.services.trading_universe import ETF_SYMBOLS, SECTOR_GROUPS
@@ -78,6 +92,10 @@ ALL = "all"
 EDGE_MINUTES = 30
 ORDER_KINDS = ("market", "limit", "bracket_take_profit", "protective_stop", "unknown")
 STOP_TYPES = {"stop", "stop_limit", "trailing_stop"}
+# Order kinds whose decision price is a feed observation (the IEX minute close
+# at decision time); a consolidated SIP reference replaces it when present.
+# Stop and take-profit legs keep their level: the replay prices them there.
+SIP_BENCHMARK_KINDS = frozenset({"market", "limit", "unknown"})
 
 MIN_FILLS = 20          # a cell is fitted only with at least this many usable fills
 SHRINK_FILLS = 20       # pseudo-fills at 1.0 the raw ratio is blended with
@@ -173,26 +191,50 @@ def model_cost(frame: Optional[pd.DataFrame], session: date, quantity: float,
 
 
 def observe_fill(fill: StockPaperFill, order: Optional[StockPaperOrder], frame: Optional[pd.DataFrame], *,
-                 config: Optional[BarrierConfig] = None) -> dict:
-    """One fill scored against its decision price and the modelled cost of the same session."""
+                 config: Optional[BarrierConfig] = None, sip: Optional[Mapping] = None,
+                 broker: Optional[str] = None) -> dict:
+    """One fill scored against its benchmark and the modelled cost of the same session.
+
+    The benchmark is the delayed-SIP reference (``sip``, from ``feed_hygiene``)
+    for entries, market orders and order-less fills when one exists, else the
+    order's decision price.  A paper auction fill is kept (and tagged) but not
+    usable.
+    """
     price, quantity = _f(fill.price), _f(fill.quantity) or 0.0
-    reference = decision_price(order)
-    slippage = slippage_bps(price, reference, fill.side)
+    decision = decision_price(order)
+    decision_slippage = slippage_bps(price, decision, fill.side)
+    kind = order_kind(order)
+    tags = feed_hygiene.fill_tags(fill, order, broker=broker)
+    sip_price = _f((sip or {}).get("price"))
+    sip_slippage = slippage_bps(price, sip_price, fill.side)
+    use_sip = sip_slippage is not None and kind in SIP_BENCHMARK_KINDS
+    slippage = sip_slippage if use_sip else decision_slippage
+    reference = sip_price if use_sip else decision
+    if use_sip:
+        reference_feed = "sip"
+    elif decision is None:
+        reference_feed = None
+    else:
+        reference_feed = "level" if kind in {"protective_stop", "bracket_take_profit"} else "iex"
     fee = _f(fill.fee)
     notional = (price or 0.0) * quantity
     fee_bps = round(fee / notional * 10_000, 4) if fee is not None and notional > 0 else None
     session = session_date(fill.filled_at)
     modelled = model_cost(frame, session, quantity, config)
     realised_total = round(slippage + (fee_bps or 0.0), 4) if slippage is not None else None
-    usable = slippage is not None and modelled["slippage_bps"] > 0
+    usable = slippage is not None and modelled["slippage_bps"] > 0 and not tags["excluded"]
     return {
         "fill_id": fill.id, "order_id": fill.order_id, "symbol": fill.symbol, "side": fill.side,
-        "symbol_class": symbol_class(fill.symbol), "order_kind": order_kind(order),
+        "symbol_class": symbol_class(fill.symbol), "order_kind": kind,
         "strategy_id": getattr(order, "strategy_id", None) if order else None,
         "filled_at": _utc(fill.filled_at).isoformat(), "session": session.isoformat(),
         "time_bucket": time_bucket(fill.filled_at),
-        "quantity": quantity, "fill_price": price, "decision_price": reference,
-        "slippage_bps": slippage, "fee_bps": fee_bps, "fee_known": fee is not None,
+        "quantity": quantity, "fill_price": price, "decision_price": decision, "reference_price": reference,
+        "reference_feed": reference_feed, "slippage_bps": slippage, "decision_slippage_bps": decision_slippage,
+        "sip_slippage_bps": sip_slippage, "sip_reference_kind": (sip or {}).get("kind") if sip else None,
+        "time_in_force": tags["time_in_force"], "paper_fill": tags["paper_fill"], "auction": tags["auction"],
+        "excluded": tags["excluded"],
+        "fee_bps": fee_bps, "fee_known": fee is not None,
         "realised_total_bps": realised_total,
         "modelled_slippage_bps": modelled["slippage_bps"], "modelled_total_bps": modelled["total_bps"],
         "modelled_sigma_bps": modelled["sigma_bps"], "history_bars": modelled["history_bars"],
@@ -200,6 +242,11 @@ def observe_fill(fill: StockPaperFill, order: Optional[StockPaperOrder], frame: 
         "residual": round(slippage / modelled["slippage_bps"], 4) if usable else None,
         "usable": usable,
     }
+
+
+def fill_brokers(db: Session) -> dict[int, str]:
+    """Broker name per paper account id (paper/live tag of each fill)."""
+    return {row.id: row.broker for row in db.query(StockPaperAccount.id, StockPaperAccount.broker).all()}
 
 
 def fill_rows(db: Session, start: datetime, end: datetime) -> list[tuple[StockPaperFill, Optional[StockPaperOrder]]]:
@@ -212,7 +259,8 @@ def fill_rows(db: Session, start: datetime, end: datetime) -> list[tuple[StockPa
 
 def measure_fills(pairs: Iterable[tuple[StockPaperFill, Optional[StockPaperOrder]]], *,
                   loader: Callable[[str], Optional[pd.DataFrame]],
-                  config: Optional[BarrierConfig] = None) -> list[dict]:
+                  config: Optional[BarrierConfig] = None, sip: Optional[Mapping[int, Mapping]] = None,
+                  brokers: Optional[Mapping[int, str]] = None) -> list[dict]:
     frames: dict[str, Optional[pd.DataFrame]] = {}
     rows = []
     for fill, order in pairs:
@@ -223,7 +271,9 @@ def measure_fills(pairs: Iterable[tuple[StockPaperFill, Optional[StockPaperOrder
             except Exception as exc:  # one symbol's bars must not stop the measurement
                 logger.warning("cost calibration: daily bars unavailable for %s: %s", symbol, exc)
                 frames[symbol] = None
-        rows.append(observe_fill(fill, order, frames[symbol], config=config))
+        rows.append(observe_fill(fill, order, frames[symbol], config=config,
+                                 sip=(sip or {}).get(fill.id),
+                                 broker=(brokers or {}).get(getattr(fill, "account_id", None))))
     return rows
 
 
@@ -241,7 +291,8 @@ def summarise(rows: Iterable[dict]) -> dict:
     """Counts, mean / median / p90 of realised cost, the modelled cost and the gap for one group."""
     rows = list(rows)
     usable = [row for row in rows if row.get("usable")]
-    priced = [row for row in rows if row.get("slippage_bps") is not None]
+    # Excluded fills (paper auction imitations) are counted, never averaged in.
+    priced = [row for row in rows if row.get("slippage_bps") is not None and not row.get("excluded")]
     realised = [row["slippage_bps"] for row in priced]
     modelled = [row["modelled_slippage_bps"] for row in usable]
     realised_usable = [row["slippage_bps"] for row in usable]
@@ -253,6 +304,8 @@ def summarise(rows: Iterable[dict]) -> dict:
     modelled_sum = float(sum(modelled))
     return {
         "fills": len(rows), "priced": len(priced), "usable": len(usable),
+        "excluded_paper_auction": sum(1 for row in rows if row.get("excluded") == "paper_auction"),
+        "sip_referenced": sum(1 for row in rows if row.get("reference_feed") == "sip" and not row.get("excluded")),
         "fee_known": sum(1 for row in rows if row.get("fee_known")),
         "realised_slippage_bps": _stats(realised),
         "realised_total_bps": _stats(totals),
@@ -287,6 +340,8 @@ def measurement_tables(rows: list[dict]) -> dict:
         "by_time_bucket": table(("time_bucket",), lambda row: (row["time_bucket"],)),
         "by_symbol_class": table(("symbol_class",), lambda row: (row["symbol_class"],)),
         "by_side": table(("side",), lambda row: (row["side"],)),
+        "by_reference_feed": table(("reference_feed",), lambda row: (str(row.get("reference_feed")),)),
+        "by_time_in_force": table(("time_in_force",), lambda row: (str(row.get("time_in_force")),)),
         "cells": table(("symbol_class", "time_bucket"), lambda row: (row["symbol_class"], row["time_bucket"])),
     }
 
@@ -374,9 +429,36 @@ class CostCalibration:
 
 def _stored_fill(row: dict) -> dict:
     keys = ("fill_id", "order_id", "symbol", "side", "symbol_class", "order_kind", "session", "filled_at",
-            "time_bucket", "quantity", "fill_price", "decision_price", "slippage_bps", "fee_bps",
+            "time_bucket", "quantity", "fill_price", "decision_price", "reference_price", "reference_feed",
+            "slippage_bps", "decision_slippage_bps", "sip_slippage_bps", "sip_reference_kind", "time_in_force",
+            "paper_fill", "auction", "excluded", "fee_bps",
             "realised_total_bps", "modelled_slippage_bps", "modelled_total_bps", "gap_bps", "residual", "usable")
     return {key: row.get(key) for key in keys}
+
+
+def sip_comparison(rows: Iterable[dict]) -> dict:
+    """IEX/decision vs SIP slippage on the fills that have both, and the auction exclusions."""
+    rows = list(rows)
+    both = [row for row in rows if row.get("decision_slippage_bps") is not None
+            and row.get("sip_slippage_bps") is not None and not row.get("excluded")]
+    by_kind = {}
+    for kind, group in sorted(_grouped(both, lambda row: row["order_kind"]).items()):
+        iex = [row["decision_slippage_bps"] for row in group]
+        sip = [row["sip_slippage_bps"] for row in group]
+        by_kind[kind] = {"fills": len(group), "decision_bps_mean": round(float(np.mean(iex)), 4),
+                         "sip_bps_mean": round(float(np.mean(sip)), 4),
+                         "difference_bps_mean": round(float(np.mean(np.subtract(sip, iex))), 4)}
+    excluded = [row for row in rows if row.get("excluded") == "paper_auction"]
+    return {"fills": len(rows),
+            "sip_referenced": sum(1 for row in rows if row.get("reference_feed") == "sip" and not row.get("excluded")),
+            "with_sip_reference": sum(1 for row in rows if row.get("sip_slippage_bps") is not None),
+            "both_benchmarks": len(both), "by_order_kind": by_kind,
+            "decision_bps_mean": round(float(np.mean([r["decision_slippage_bps"] for r in both])), 4) if both else None,
+            "sip_bps_mean": round(float(np.mean([r["sip_slippage_bps"] for r in both])), 4) if both else None,
+            "excluded_paper_auction": len(excluded),
+            "excluded_by_time_in_force": {str(k): len(v) for k, v in
+                                          sorted(_grouped(excluded, lambda r: r.get("time_in_force")).items(),
+                                                 key=lambda item: str(item[0]))}}
 
 
 def build_calibration(db: Session, *, now: Optional[datetime] = None, sessions: Optional[int] = None,
@@ -391,7 +473,10 @@ def build_calibration(db: Session, *, now: Optional[datetime] = None, sessions: 
     first = sessions_back(as_of, max(sessions - 1, 0))
     start = datetime.combine(first, datetime.min.time(), ET)
     loader = loader or (lambda symbol: daily_frame(db, symbol))
-    rows = measure_fills(fill_rows(db, start, now), loader=loader, config=config)
+    references = feed_hygiene.sip_references(db, since=start)
+    rows = measure_fills(fill_rows(db, start, now), loader=loader, config=config, sip=references,
+                         brokers=fill_brokers(db))
+    feed = sip_comparison(rows)
     cells = fit_cells(rows, min_fills=min_fills)
     window = {"sessions": sessions, "first_session": first.isoformat(), "last_session": as_of.isoformat(),
               "start": start.astimezone(UTC).isoformat(), "end": now.isoformat()}
@@ -405,10 +490,13 @@ def build_calibration(db: Session, *, now: Optional[datetime] = None, sessions: 
                      "entry_bucket": ENTRY_BUCKET, "exit_bucket": EXIT_BUCKET, "edge_minutes": EDGE_MINUTES},
         "model": config.to_dict(),
         "fills": {"count": len(rows), "usable": calibration.fills,
+                  "excluded_paper_auction": feed["excluded_paper_auction"],
+                  "sip_referenced": feed["sip_referenced"],
                   "first_fill_id": rows[0]["fill_id"] if rows else None,
                   "last_fill_id": rows[-1]["fill_id"] if rows else None,
                   "rows": [_stored_fill(row) for row in stored], "truncated": len(rows) - len(stored)},
         "tables": measurement_tables(rows),
+        "feed": feed,
         "cells": cells,
         "calibration": calibration.to_dict(),
         "fitted_cells": sum(1 for cell in cells if cell["fitted"]),
@@ -417,7 +505,10 @@ def build_calibration(db: Session, *, now: Optional[datetime] = None, sessions: 
                    "cost of the same session from the trusted daily bars before it. Per symbol class and time "
                    "bucket the multiplier is mean realised / mean modelled slippage, shrunk toward 1.0 with "
                    f"{SHRINK_FILLS} pseudo-fills, fitted only with at least {min_fills} fills and capped to "
-                   f"[{MULTIPLIER_BOUNDS[0]}, {MULTIPLIER_BOUNDS[1]}]."),
+                   f"[{MULTIPLIER_BOUNDS[0]}, {MULTIPLIER_BOUNDS[1]}]. Entries, market orders and order-less fills "
+                   "with a delayed-SIP reference are scored against it (the official SIP open for an entry at the "
+                   "open, the SIP minute bar containing the fill otherwise) instead of the IEX decision price; "
+                   "paper opg/cls fills are excluded because Alpaca paper does not run the auctions."),
         "paper_only": True, "mutates_strategy_state": False,
     }
 
@@ -501,14 +592,42 @@ def calibration_view(db: Session) -> dict:
     }
 
 
-def weekly_report_section(db: Session) -> dict:
+def feed_hygiene_section(db: Session, latest: Optional[Mapping], *, now: Optional[datetime] = None) -> dict:
+    """IEX vs SIP: the week's touch log, SIP-referenced slippage and the paper auction fills left out."""
+    try:
+        divergence = feed_hygiene.divergence_summary(db, now=now)
+    except Exception as exc:  # the report must render without the touch log
+        logger.warning("cost calibration: feed divergence summary unavailable: %s", exc)
+        db.rollback()
+        divergence = None
+    feed = (latest or {}).get("feed") or {}
+    detail = []
+    if divergence is not None:
+        detail.append(f"{divergence['sessions_checked']} sessions checked, {divergence['divergent_sessions']} with "
+                      f"an IEX/SIP touch disagreement ({divergence.get('iex_only', 0)} IEX-only, "
+                      f"{divergence.get('sip_only', 0)} SIP-only of {divergence['levels']} levels)")
+    if feed:
+        detail.append(f"{feed.get('sip_referenced', 0)} fills priced against delayed SIP, "
+                      f"{feed.get('excluded_paper_auction', 0)} paper opg/cls fills excluded")
+        if feed.get("decision_bps_mean") is not None:
+            detail.append(f"slippage {feed['decision_bps_mean']:+.1f} bps vs the IEX decision price, "
+                          f"{feed['sip_bps_mean']:+.1f} bps vs SIP on {feed['both_benchmarks']} fills")
+    return {"divergence": divergence, "sip_referenced": feed.get("sip_referenced"),
+            "excluded_paper_auction": feed.get("excluded_paper_auction"),
+            "decision_bps_mean": feed.get("decision_bps_mean"), "sip_bps_mean": feed.get("sip_bps_mean"),
+            "both_benchmarks": feed.get("both_benchmarks"),
+            "detail": "; ".join(detail) + "." if detail else "No feed hygiene evidence yet."}
+
+
+def weekly_report_section(db: Session, *, now: Optional[datetime] = None) -> dict:
     """The ``cost_calibration`` section of the weekly report: realised vs modelled, multiplier in force."""
     latest = latest_calibration_report(db)
+    feed = feed_hygiene_section(db, latest, now=now)
     if not latest:
         return {"status": "waiting", "as_of": None, "fills": 0, "usable": 0,
                 "detail": "No cost calibration yet; the first runs on Saturday after the week's fills are in.",
                 "realised_total_bps": None, "modelled_total_bps": None, "gap_bps": None, "residual": None,
-                "multipliers": []}
+                "multipliers": [], "feed_hygiene": feed}
     overall = (latest.get("tables") or {}).get("overall") or {}
     fitted = _in_force(latest)
     multipliers = [{"symbol_class": c["symbol_class"], "time_bucket": c["time_bucket"],
@@ -524,4 +643,4 @@ def weekly_report_section(db: Session) -> dict:
             "fills": latest["fills"]["count"], "usable": latest["fills"]["usable"],
             "realised_total_bps": realised, "modelled_total_bps": modelled,
             "gap_bps": overall.get("gap_bps_mean"), "residual": overall.get("residual"),
-            "multipliers": multipliers, "detail": detail}
+            "multipliers": multipliers, "detail": detail, "feed_hygiene": feed}

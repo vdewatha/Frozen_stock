@@ -239,8 +239,14 @@ def normalise_frame(prices: pd.DataFrame) -> Optional[pd.DataFrame]:
     return frame[["date", "open", "high", "low", "close", "volume"]]
 
 
+# Only consolidated minute bars give the opening print the replay is scored
+# against; an IEX-only first trade (about 3% of volume) is a sample of it, so
+# without a SIP bar the consolidated daily open stands.
+CONSOLIDATED_FEED_CLASSES = ("sip", "sip_delayed")
+
+
 def intraday_open(db: Session, symbol: str, session: date) -> Optional[float]:
-    """The first minute bar's open of ``session`` where 1m bars exist (the real opening print)."""
+    """The first consolidated minute bar's open of ``session`` where SIP 1m bars exist (the real opening print)."""
     bounds = session_bounds(session)
     if bounds is None:
         return None
@@ -248,6 +254,7 @@ def intraday_open(db: Session, symbol: str, session: date) -> Optional[float]:
     try:
         row = db.query(IntradayBar).filter(
             IntradayBar.symbol == symbol, IntradayBar.timeframe == "1m",
+            IntradayBar.feed_class.in_(CONSOLIDATED_FEED_CLASSES),
             IntradayBar.opened_at >= opened, IntradayBar.opened_at < opened + timedelta(minutes=5),
         ).order_by(IntradayBar.opened_at).first()
     except Exception:

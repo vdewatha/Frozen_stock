@@ -21,6 +21,36 @@ convert IEX observations into SIP data and does not authorize live orders.
 The backfill chunk setting only increases the number of bounded one-hour
 requests a worker may process per cycle; it never fills absent intervals.
 
+## Feed hygiene: IEX, delayed SIP and paper auctions
+
+IEX carries about 3% of US volume, so IEX opens, highs and lows are a sample
+of the consolidated tape. The free plan also serves consolidated (SIP) bars
+for any query that ends at least 15 minutes ago. The app uses them like this:
+
+- Daily decision bars are consolidated (yfinance). When Yahoo is unavailable
+  the fallback is delayed SIP daily bars (`alpaca_sip_daily`), and IEX daily
+  bars only if SIP is refused. Every stock paper signal records the feed of
+  each input in `features.feed`. The decision price is the latest IEX minute
+  close, because entries are decided inside the session and real-time SIP is
+  not free.
+- At 16:40 ET on weekdays, `feed_hygiene_job` gives every paper fill a
+  delayed-SIP reference (`fill_sip_reference` audit rows). An entry at the
+  open gets the official SIP open; any other fill gets the SIP minute bar
+  that contains it. Trade attribution stores these as `slippage.sip_reference`
+  and `slippage.sip_bps`, next to the IEX-based numbers. The cost calibration
+  prices entries and market orders against SIP when a reference exists.
+- The same job writes a `feed_divergence` audit row per session. The row
+  lists each stop or target level live that day that IEX touched and SIP did
+  not, or the reverse. Broker stops elect on the consolidated tape, while
+  app-side stops read IEX. The weekly report's `cost_calibration.feed_hygiene`
+  block summarises these rows.
+- Alpaca paper does not run the opening or closing auction, so every fill is
+  tagged with its time in force. Paper `opg` and `cls` fills are left out of
+  cost calibration and counted in `fills.excluded_paper_auction`.
+- `delayed_sip_research_enabled` only controls the research-symbol minute
+  collector. The feed-hygiene job fetches its own bounded requests: paced
+  0.35 s apart, retried on 429, and capped at 120 per run.
+
 ## Cost evidence
 
 `ALPACA_PAPER_ZERO_COMMISSION_CONTRACT` defaults to `false`. Enabling it is a
