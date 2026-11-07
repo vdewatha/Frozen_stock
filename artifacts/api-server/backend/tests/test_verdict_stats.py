@@ -257,6 +257,8 @@ def test_hurdle_passes_on_the_deflated_sharpe_and_more_trials_make_it_harder():
     assert few["deflated_sharpe"] > many["deflated_sharpe"]
     assert few["passed"] and not many["passed"]
     assert vs.multiplicity_hurdle({}, trials=5)["passed"] is None   # no paired data: unavailable, not a fail
+    same = vs.paired_stats(pd.DataFrame({"value_bps": [0.0] * 50, "entry_date": ["2026-01-02"] * 50}))
+    assert vs.multiplicity_hurdle(same, trials=5)["passed"] is False   # a no-op candidate never clears it
 
 
 def test_hurdle_in_the_adoption_path_is_reported_and_acts_only_when_on(monkeypatch):

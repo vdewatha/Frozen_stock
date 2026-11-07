@@ -97,9 +97,22 @@ def discovered_symbols() -> frozenset[str]:
     return _discovered()
 
 
+def exploration_lane_symbols() -> frozenset[str]:
+    """Exploration-lane names in the cycle today: BUY candidates and lane names still held (``exploration_universe``).
+
+    Only admitted names whose daily replica BUYs on the last bar are
+    candidates, so the minute-bar load is bounded by
+    ``exploration_universe_max_candidates`` plus what is held.
+    """
+    from app.services.exploration_universe import lane_symbols
+
+    return lane_symbols()
+
+
 def intraday_symbols() -> frozenset[str]:
     """Symbols the intraday feed may ingest and evaluate."""
-    return RESEARCH_CORE_SYMBOLS | frozenset(execution_symbols()) | discovered_symbols()
+    return (RESEARCH_CORE_SYMBOLS | frozenset(execution_symbols()) | discovered_symbols()
+            | exploration_lane_symbols())
 
 
 def sector_group(symbol: str) -> str:

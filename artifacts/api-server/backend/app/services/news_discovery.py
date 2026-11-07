@@ -375,11 +375,15 @@ def _held_symbols(db: Session, symbols: set[str]) -> set[str]:
     return {str(symbol).upper() for (symbol,) in rows}
 
 
-def _activate(db: Session, symbol: str, name: str | None) -> bool:
-    """Make the symbol an active asset; True when discovery owns that row."""
+def _activate(db: Session, symbol: str, name: str | None, *, sector: str = "News discovered") -> bool:
+    """Make the symbol an active asset; True when discovery owns that row.
+
+    Shared with the exploration lane (``exploration_universe``), which admits
+    its names the same way under its own ``sector`` label.
+    """
     asset = db.query(Asset).filter(Asset.symbol == symbol).one_or_none()
     if asset is None:
-        db.add(Asset(symbol=symbol, name=name or symbol, asset_type="stock", sector="News discovered",
+        db.add(Asset(symbol=symbol, name=name or symbol, asset_type="stock", sector=sector,
                      is_active=True))
         db.flush()
         return True
@@ -389,7 +393,7 @@ def _activate(db: Session, symbol: str, name: str | None) -> bool:
     if name and asset.name in (None, "", symbol):
         asset.name = name
     if not asset.sector:
-        asset.sector = "News discovered"
+        asset.sector = sector
     return True
 
 

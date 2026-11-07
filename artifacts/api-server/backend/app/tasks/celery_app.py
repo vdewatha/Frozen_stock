@@ -130,6 +130,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.loss_feedback_job": {"queue": "learning"},
     "app.tasks.jobs.trade_attribution_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.news_discovery_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.exploration_universe_job": {"queue": "learning"},
     "app.tasks.jobs.meta_label_retrain_job": {"queue": "learning"},
     "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
     "app.tasks.jobs.experiment_engine_job": {"queue": "learning"},
@@ -138,6 +139,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.setup_shadow_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.signal_autopsy_job": {"queue": "learning"},
     "app.tasks.jobs.paper_cost_calibration_job": {"queue": "learning"},
+    "app.tasks.jobs.feed_hygiene_job": {"queue": "market_data"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.engine_audit_job": {"queue": "learning"},
     "app.tasks.jobs.self_healing_job": {"queue": LEARNING_FAST_QUEUE},
@@ -309,6 +311,14 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute="10,40", hour="8-15", day_of_week="mon-fri"),
         "options": {"expires": 25 * 60},
     },
+    # Exploration lane (exploration_universe.py): screen the liquid S&P 500
+    # members and admit the day's BUY candidates before the open, so the
+    # intraday feed starts on them; a skip when the setting is "core".
+    "exploration-universe": {
+        "task": "app.tasks.jobs.exploration_universe_job",
+        "schedule": crontab(minute=20, hour=7, day_of_week="mon-fri"),
+        "options": {"expires": 2 * 60 * 60},
+    },
     # The meta-label filter retrains itself when due (missing, a week old, or
     # enough new closed paper trades); the job itself skips the session.
     "meta-label-retrain": {
@@ -370,6 +380,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.paper_cost_calibration_job",
         "schedule": crontab(minute=30, hour=13, day_of_week="sat"),
         "options": {"expires": 12 * 60 * 60},
+    },
+    # Weekdays after the close, once the free plan's 15-minute SIP delay has
+    # passed: benchmark the session's fills against delayed consolidated bars
+    # (the calibration prices entries against them) and log where IEX and SIP
+    # disagreed on a stop or target touch.
+    "feed-hygiene": {
+        "task": "app.tasks.jobs.feed_hygiene_job",
+        "schedule": crontab(minute=40, hour=16, day_of_week="mon-fri"),
+        "options": {"expires": 3 * 60 * 60},
     },
     # Weekly paper performance report, Saturday morning after the week closes.
     "weekly-performance-report": {

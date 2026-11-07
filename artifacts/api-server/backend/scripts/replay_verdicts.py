@@ -144,6 +144,7 @@ def obf_110(clusters: list) -> dict:
 
 
 def e_process(clusters: list, cls: str, inputs: dict, level: float) -> dict:
+    cls = cls.split(",")[0]
     out = vs.e_process_verdict(clusters, bound_bps=float(inputs["loss_bound_bps"][cls]),
                                sigma_bps=float(inputs["sigma_bps"][cls]), improvement_level=level,
                                rho=float(inputs.get("rho") or 0.0))
@@ -154,6 +155,7 @@ def e_process(clusters: list, cls: str, inputs: dict, level: float) -> dict:
 def e_catoni(clusters: list, cls: str, inputs: dict, level: float) -> dict:
     """Variant (not the engine's judge): the Catoni-style process from the first trade, sigma = the class's paired
     difference std bound (``paired_sigma_bps``), the same harm / e-LOND / cap rules."""
+    cls = cls.split(",")[0]
     sigma = float((inputs.get("paired_sigma_bps") or {}).get(cls) or inputs["sigma_bps"][cls])
     out = vs.e_process_verdict(clusters, bound_bps=0.0, sigma_bps=sigma, improvement_level=level,
                                rho=float(inputs.get("rho") or 0.0), process="catoni")
@@ -214,8 +216,8 @@ def simulate_class(paired_pool: list[np.ndarray], raw_pool: list[np.ndarray], cl
     level = vs.elond_level(SIM_ELOND_INDEX, 0)
     rows = []
     for effect in EFFECTS:
-        tallies = {name: {"keep": 0, "revert": 0, "undecided": 0, "confirmed": 0, "trades": []}
-                   for name in RULES}
+        tallies = {name: {"keep": 0, "revert": 0, "undecided": 0, "confirmed": 0, "trades": [], "lcb": [],
+                          "by_test": 0} for name in RULES}
         breaches = 0
         for _ in range(replications):
             stream = draw_stream(paired_pool, rng, vs.CAP_TRADES + 40, effect)
@@ -230,6 +232,10 @@ def simulate_class(paired_pool: list[np.ndarray], raw_pool: list[np.ndarray], cl
                 tally["confirmed"] += result["verdict"] == "working"
                 if action(result["verdict"]) != "undecided":
                     tally["trades"].append(result["trades"])
+                if result.get("lcb_bps") is not None:
+                    tally["lcb"].append(result["lcb_bps"])
+                if "kept_at_cap" in result and result["kept_at_cap"] is None and action(result["verdict"]) != "undecided":
+                    tally["by_test"] += 1
         for name, tally in tallies.items():
             rows.append({"class": cls, "effect_bps": effect, "rule": name,
                          "revert": round(tally["revert"] / replications, 4),
@@ -237,7 +243,10 @@ def simulate_class(paired_pool: list[np.ndarray], raw_pool: list[np.ndarray], cl
                          "confirmed": round(tally["confirmed"] / replications, 4),
                          "undecided": round(tally["undecided"] / replications, 4),
                          "median_trades": float(np.median(tally["trades"])) if tally["trades"] else None,
-                         "breach_rate": round(breaches / replications, 4) if name == "e_process" else None})
+                         "breach_rate": round(breaches / replications, 4) if name == "e_process" else None,
+                         "median_lcb_at_cap_bps": round(float(np.median(tally["lcb"])), 1) if tally["lcb"] else None,
+                         "decided_by_test": (round(tally["by_test"] / replications, 4)
+                                             if name in ("e_process", "e_catoni") else None)})
     return rows
 
 
@@ -515,11 +524,13 @@ def render(result: dict) -> str:
               f"which treats a per-decision paired gain as a per-trade expectancy gain. e-LOND level of the "
               f"{SIM_ELOND_INDEX}th adoption with no earlier confirmation: {vs.elond_level(SIM_ELOND_INDEX, 0):.4f} "
               f"(threshold {1 / vs.elond_level(SIM_ELOND_INDEX, 0):.0f}).", "",
-              "| Class | Effect bps | Rule | Revert | Keep | of which confirmed | Undecided | Median trades to decision | Bound breach |",
-              "|---|---|---|---|---|---|---|---|---|"]
+              "| Class | Effect bps | Rule | Revert | Keep | of which confirmed | Undecided | Median trades to decision | Decided by a test (not the cap) | Median LCB at cap | Bound breach |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in result["parametric"]:
         lines.append(f"| {r['class']} | {r['effect_bps']:+d} | {r['rule']} | {_p(r['revert'])} | {_p(r['keep'])} | "
                      f"{_p(r['confirmed'])} | {_p(r['undecided'])} | {_n(r['median_trades'])} | "
+                     f"{_p(r.get('decided_by_test')) if r.get('decided_by_test') is not None else ''} | "
+                     f"{_n(r.get('median_lcb_at_cap_bps'), 0, True) if r.get('median_lcb_at_cap_bps') is not None else ''} | "
                      f"{_p(r['breach_rate']) if r['breach_rate'] is not None else ''} |")
     lines += ["", "Implied error rates (false revert of a null change, mean false revert over the positive effects, "
               "mean false keep over the effects of -10 bps or worse):", "",
@@ -580,7 +591,7 @@ def render(result: dict) -> str:
 def readings(result: dict) -> list[str]:
     er = result["error_rates"]
     out = ["## Readings", ""]
-    for cls in ("technical", "reversion"):
+    for cls in ("technical", "reversion", "technical, one trade per date", "reversion, one trade per date"):
         f, e, o = er.get(f"{cls}/fixed_20"), er.get(f"{cls}/e_process"), er.get(f"{cls}/obf_110")
         if not f:
             continue
@@ -616,6 +627,9 @@ def main() -> None:
     measured = (json.loads(args.inputs.read_text()) if args.inputs else cache.get("measured") or {}).get("all") or {}
     inputs.setdefault("paired_sigma_bps", paired_sigma(measured))
     cache["inputs"] = inputs
+    from measure_verdict_inputs import clean_trades
+
+    cache["trades"], _ = clean_trades(cache["trades"])
     rng = np.random.default_rng(SEED)
     pools: dict[str, dict[str, list]] = {"technical": {"paired": [], "raw": []}, "reversion": {"paired": [], "raw": []}}
     seen_base = set()
@@ -640,6 +654,12 @@ def main() -> None:
         if pool["paired"] and pool["raw"]:
             parametric += simulate_class(pool["paired"], pool["raw"], cls, inputs, replications=args.replications,
                                          rng=rng)
+            # The same values one trade per entry date: the live book's slot caps keep same-day entries few,
+            # where the point-in-time replay enters dozens of names a day.
+            singles = [np.array([v]) for cluster in pool["paired"] for v in cluster]
+            raw_singles = [np.array([v]) for cluster in pool["raw"] for v in cluster]
+            rows = simulate_class(singles, raw_singles, cls, inputs, replications=args.replications, rng=rng)
+            parametric += [{**r, "class": f"{cls}, one trade per date"} for r in rows]
     stream = replay_stream(cache, inputs)
     ledger = ledger_rows(args.database_url)
     result = {"ran_at": datetime.now(timezone.utc).isoformat(), "paper_only": True, "inputs": inputs,

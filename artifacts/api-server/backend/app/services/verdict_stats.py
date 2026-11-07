@@ -90,11 +90,11 @@ TECHNICAL_CLASS = "technical"
 MEASURED_INPUTS: dict = {
     "as_of": "2026-11-07",
     "source": "replay_point_in_time",
-    "loss_bound_bps": {TECHNICAL_CLASS: 1200.0, REVERSION_CLASS: 2500.0},
-    "sigma_bps": {TECHNICAL_CLASS: 450.0, REVERSION_CLASS: 650.0},
-    "rho": 0.10,
-    "per_trade_std_bps": {},
-    "paired_std_bps": {},
+    "loss_bound_bps": {TECHNICAL_CLASS: 1600.0, REVERSION_CLASS: 1100.0},
+    "sigma_bps": {TECHNICAL_CLASS: 450.0, REVERSION_CLASS: 300.0},
+    "rho": 0.0696,
+    "per_trade_std_bps": {"moving_average_crossover": 428.3, "rsi_mean_reversion": 438.0, "macd_momentum": 434.6, "ensemble": 433.3, "bollinger_mean_reversion": 432.3, "channel_breakout": 410.8, "trend_pullback": 419.5, "rsi2_pullback": 271.8, "ibs_mean_reversion": 265.7},
+    "paired_std_bps": {"moving_average_crossover": 226.7, "rsi_mean_reversion": 225.2, "macd_momentum": 195.1, "ensemble": 211.8, "bollinger_mean_reversion": 219.0, "channel_breakout": 154.7, "trend_pullback": 149.1, "rsi2_pullback": 110.0, "ibs_mean_reversion": 116.2},
 }
 
 
@@ -535,6 +535,10 @@ def multiplicity_hurdle(stats: Optional[Mapping], *, trials: int, trial_sharpes:
             "dsr_required": HURDLE_DSR,
             "rule": (f"t >= {HURDLE_T:g} (entry-date clustered) on the backtest paired gain, or deflated Sharpe > "
                      f"{HURDLE_DSR:g} counting all {int(trials)} candidates ever tried for this strategy")}
+    if (stats.get("decisions") or 0) >= 2 and stats.get("std_bps") == 0:
+        # The candidate takes exactly the live setup's trades: no difference to adopt.
+        return base | {"t_stat": None, "deflated_sharpe": None, "passed": False, "mean_bps": stats.get("mean_bps"),
+                       "decisions": stats.get("decisions"), "reason": "candidate trades are identical to the live setup's"}
     if not stats.get("decisions") or stats.get("decisions", 0) < 2 or stats.get("sharpe") is None:
         return base | {"t_stat": stats.get("t_stat"), "deflated_sharpe": None, "passed": None,
                        "mean_bps": stats.get("mean_bps"), "decisions": stats.get("decisions", 0),

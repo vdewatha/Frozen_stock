@@ -181,6 +181,38 @@ def paired(base: pd.DataFrame, cand: pd.DataFrame, *, adjust: bool) -> dict | No
                                     "exit_date": exit_.loc[d.index].to_numpy()})}
 
 
+INTRABAR_EXITS = ("stop_loss", "take_profit")
+
+
+def cost_artifacts(trades: pd.DataFrame) -> np.ndarray:
+    """Trades no real fill can produce: an intrabar stop or target exit losing more than 2 x the stop + 100 bps.
+
+    An intrabar stop fills at the stop level, so such a loss can only come
+    from the cost model blowing up on corrupt bars (a few delisted names in
+    the cached history: CPWR, EP, PARA, SII, GENZ).  Gaps through the stop
+    (``stop_loss_gap``) are real and kept.
+    """
+    if trades is None or trades.empty or "stop_loss_pct" not in trades:
+        return np.zeros(0 if trades is None else len(trades), dtype=bool)
+    stop = trades["stop_loss_pct"].fillna(0.0).to_numpy(float)
+    return (trades["barrier"].astype(str).isin(INTRABAR_EXITS).to_numpy()
+            & (trades["net_return"].to_numpy(float) < -(2 * stop + 0.01)))
+
+
+def clean_trades(trades: dict) -> tuple[dict, dict]:
+    """Drop cost artifacts from every replayed setup; returns the cleaned map and what was dropped."""
+    out, dropped, symbols = {}, 0, {}
+    for key, frame in trades.items():
+        mask = cost_artifacts(frame)
+        if mask.any():
+            dropped += int(mask.sum())
+            for symbol, count in frame.loc[mask, "symbol"].value_counts().items():
+                symbols[symbol] = max(symbols.get(symbol, 0), int(count))
+        out[key] = frame.loc[~mask].reset_index(drop=True) if mask.any() else frame
+    return out, {"trades_dropped_all_setups": dropped, "symbols": dict(sorted(symbols.items(), key=lambda kv: -kv[1])),
+                 "rule": "intrabar stop/target exit losing more than 2 x stop + 100 bps (cost model on corrupt bars)"}
+
+
 def _round_up(value: float, step: float) -> float:
     return float(math.ceil(value / step) * step)
 
@@ -464,6 +496,16 @@ def render(result: dict) -> str:
     lines += ["", f"Book (all strategies pooled): rho {_fmt(br.get('rho'), 3)} over {br.get('groups')} entry dates, "
               f"mean cluster {_fmt(br.get('mean_cluster_size'), 2)}. The verdict judges one strategy's change, so the "
               f"per-strategy trade-weighted value ({_fmt(m['rho'], 3)}) is the one it reads.", ""]
+    art = result.get("artifacts") or {}
+    if art.get("trades_dropped_all_setups"):
+        lines += ["## Data hygiene", "",
+                  f"Dropped before every measurement: {art['trades_dropped_all_setups']} replayed trades across all "
+                  f"setups that no real fill can produce ({art['rule']}), from "
+                  + ", ".join(f"{k} ({v})" for k, v in list(art["symbols"].items())[:12])
+                  + ". They are corrupt daily bars of delisted names in the cached point-in-time history; at a "
+                  "51% loss each they set the technical class's 0.1% tail on their own. The engine's replay rows "
+                  "(and the decisions in `reports/verdict-replay-20261107.md`, experiment 3) still contain them, "
+                  "mostly on both sides of each comparison.", ""]
     lines += result.get("findings", [])
     led = result.get("ledger") or {}
     lines += ["", "## 5. The bot's own ledger", ""]
@@ -518,15 +560,28 @@ def main() -> None:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--cache", type=Path)
     parser.add_argument("--record", action="store_true", help="write a verdict_inputs audit row (needs --database-url)")
+    parser.add_argument("--from-cache", type=Path,
+                        help="reuse a --cache pickle (and the JSON of that run via --meta) instead of replaying")
+    parser.add_argument("--meta", type=Path, help="the JSON output of the run that wrote --from-cache (timings, symbols)")
     args = parser.parse_args()
     warnings.filterwarnings("ignore")
     ledger = measure_ledger(args.database_url) if args.database_url else {"reachable": False}
-    replay = run_replay(args)
+    if args.from_cache:
+        with open(args.from_cache, "rb") as fh:
+            cached = pickle.load(fh)
+        meta = json.loads(args.meta.read_text()) if args.meta else {}
+        replay = {"experiments": cached["experiments"], "trades": cached["trades"], "spy": cached["spy"],
+                  "symbols": meta.get("symbols"), "missing": meta.get("missing") or [],
+                  "timings": meta.get("timings") or {}, "breadth": meta.get("breadth"), "vix": meta.get("vix"),
+                  "coverage_since_2010": meta.get("coverage_since_2010")}
+    else:
+        replay = run_replay(args)
+    replay["trades"], artifacts = clean_trades(replay["trades"])
     result = {"ran_at": datetime.now(timezone.utc).isoformat(), "paper_only": True, "data_dir": str(args.data_dir),
               "start": args.start, "all": measure(replay), "2020+": measure(replay, since="2020-01-01"),
               "ledger": ledger, "timings": replay["timings"], "symbols": replay["symbols"],
               "missing": replay["missing"], "vix": replay["vix"], "breadth": replay["breadth"],
-              "coverage_since_2010": replay["coverage_since_2010"]}
+              "coverage_since_2010": replay["coverage_since_2010"], "artifacts": artifacts}
     enough = [s for s, v in (ledger.get("strategies") or {}).items() if v.get("enough")]
     result["source_note"] = (
         (f"the bot's ledger for {', '.join(enough)}; the replay for the rest. " if enough else
@@ -543,7 +598,7 @@ def main() -> None:
     args.output.write_text(json.dumps(result, indent=2, default=str))
     if args.report:
         args.report.write_text(render(result))
-    if args.cache:
+    if args.cache and args.cache != args.from_cache:
         with open(args.cache, "wb") as fh:
             pickle.dump({"experiments": replay["experiments"], "trades": replay["trades"], "spy": replay["spy"],
                          "inputs": result["inputs"], "measured": {"all": m, "2020+": result["2020+"]}}, fh)

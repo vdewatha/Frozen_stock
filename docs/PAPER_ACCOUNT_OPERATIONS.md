@@ -21,6 +21,36 @@ convert IEX observations into SIP data and does not authorize live orders.
 The backfill chunk setting only increases the number of bounded one-hour
 requests a worker may process per cycle; it never fills absent intervals.
 
+## Feed hygiene: IEX, delayed SIP and paper auctions
+
+IEX carries about 3% of US volume, so IEX opens, highs and lows are a sample
+of the consolidated tape. The free plan also serves consolidated (SIP) bars
+for any query that ends at least 15 minutes ago. The app uses them like this:
+
+- Daily decision bars are consolidated (yfinance). When Yahoo is unavailable
+  the fallback is delayed SIP daily bars (`alpaca_sip_daily`), and IEX daily
+  bars only if SIP is refused. Every stock paper signal records the feed of
+  each input in `features.feed`. The decision price is the latest IEX minute
+  close, because entries are decided inside the session and real-time SIP is
+  not free.
+- At 16:40 ET on weekdays, `feed_hygiene_job` gives every paper fill a
+  delayed-SIP reference (`fill_sip_reference` audit rows). An entry at the
+  open gets the official SIP open; any other fill gets the SIP minute bar
+  that contains it. Trade attribution stores these as `slippage.sip_reference`
+  and `slippage.sip_bps`, next to the IEX-based numbers. The cost calibration
+  prices entries and market orders against SIP when a reference exists.
+- The same job writes a `feed_divergence` audit row per session. The row
+  lists each stop or target level live that day that IEX touched and SIP did
+  not, or the reverse. Broker stops elect on the consolidated tape, while
+  app-side stops read IEX. The weekly report's `cost_calibration.feed_hygiene`
+  block summarises these rows.
+- Alpaca paper does not run the opening or closing auction, so every fill is
+  tagged with its time in force. Paper `opg` and `cls` fills are left out of
+  cost calibration and counted in `fills.excluded_paper_auction`.
+- `delayed_sip_research_enabled` only controls the research-symbol minute
+  collector. The feed-hygiene job fetches its own bounded requests: paced
+  0.35 s apart, retried on 429, and capped at 120 per run.
+
 ## Cost evidence
 
 `ALPACA_PAPER_ZERO_COMMISSION_CONTRACT` defaults to `false`. Enabling it is a
@@ -195,6 +225,31 @@ operator pause of scheduled learning pauses it; `drift_retrain_enabled` turns
 it off. `GET /stock/learning-cycles/schedule-control` carries the state under
 `drift_retraining`; the ledger is the `drift_retrain` audit rows. See
 `reports/drift-retraining-20261106.md`.
+
+## Exploration lane (liquid point-in-time universe)
+
+Setting `exploration_universe` (`"core"` by default) opens a learning-only
+lane beyond the 45-name core list. With `"liquid_pit"`, `exploration_universe_job`
+(07:20 ET, weekdays, `learning`) screens today's S&P 500 members from the
+cached daily history: 20-day median dollar volume ranked into terciles (the
+top `exploration_universe_terciles` admitted), a Corwin-Schultz spread proxy
+under `exploration_universe_max_spread` (1%), and a price under the one-share
+learning floor (a name whose one share exceeds it is skipped and logged). Of
+the admitted names, only those where a broad-scope strategy's daily replica
+BUYs on the last bar (at most `exploration_universe_max_candidates`, 30)
+become active assets and join the cycle and the intraday feed, for
+`exploration_universe_admit_hours` (30). Every lane entry is a learning-sized
+exploration order, whatever the strategy's status. Scheduled (full-size)
+entries stay on the core list. Lane positions use their own
+`exploration_max_open` slots (40) and never count toward the core caps. Every
+exploration entry is also capped per entry date: 3 per strategy and 3 per
+sector (`exploration_max_entries_per_{strategy,sector}_per_date`). A held lane
+name whose admission lapsed stays in the cycle for exits only. The state is
+the `exploration_universe` audit rows. The exploration budget's evidence map
+now counts effective trades, `m / (1 + (m - 1) rho)` per entry date, with
+`exploration_effective_rho = 0.17`. On 2026-11-07 the pre-registered check
+(`scripts/run_liquid_universe_check.py`) kept the lane closed: no tercile
+traded within 5 bps of the core list. See `reports/liquid-universe-20261107.md`.
 
 ## Always-valid verdicts (shadow mode) and the multiplicity hurdle
 
