@@ -58,6 +58,17 @@ from app.services.stock_recovery import (
 RECOVERY_TEST_NOW = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
 
 
+def session_window_around(now):
+    """A regular-session window that always contains ``now``, whatever the wall-clock hour.
+
+    The earlier ``(now.replace(hour=0), now.replace(hour=23))`` closed the session
+    at 23:00 UTC, so every reservation in the last hour of the UTC day was refused
+    as "outside the regular market session" (the Backend tests check failed that
+    way on three branches at 22:58 UTC on 2026-11-06).
+    """
+    return now - timedelta(hours=1), now + timedelta(hours=1)
+
+
 class DeterministicRecoveryClock:
     def __init__(self, start: datetime):
         self.current = start
@@ -140,7 +151,7 @@ class StockPaperLedgerTests(unittest.TestCase):
                 "updated_at": "2026-01-01T15:00:00Z"}
 
     def reserve_context(self, now):
-        return patch("app.services.stock_paper_ledger.session_bounds", return_value=(now.replace(hour=0), now.replace(hour=23))), \
+        return patch("app.services.stock_paper_ledger.session_bounds", return_value=session_window_around(now)), \
             patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}), \
             patch("app.services.stock_paper_ledger._validate_reference_price")
 
@@ -615,13 +626,13 @@ class StockPaperLedgerTests(unittest.TestCase):
                    observed_at=datetime.now(timezone.utc), raw_payload={}))
             db.commit()
             now = datetime.now(timezone.utc)
-            with patch("app.services.stock_paper_ledger.session_bounds", return_value=(now.replace(hour=0), now.replace(hour=23))), \
+            with patch("app.services.stock_paper_ledger.session_bounds", return_value=session_window_around(now)), \
                  patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}), \
                  patch("app.services.stock_paper_ledger._validate_reference_price"):
                 order = reserve_stock_paper_order(db, symbol="SPY", side="sell", quantity=Decimal("1"),
                     reference_price=Decimal("100"), idempotency_key="exit-1", source="manual_close")
             gateway = FakeAlpaca()
-            with patch("app.services.stock_paper_ledger.session_bounds", return_value=(now.replace(hour=0), now.replace(hour=23))), \
+            with patch("app.services.stock_paper_ledger.session_bounds", return_value=session_window_around(now)), \
                  patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}), \
                  patch("app.services.stock_paper_ledger._validate_reference_price"):
                 first = dispatch_reserved_order(db, order.id, gateway)
@@ -647,7 +658,7 @@ class StockPaperLedgerTests(unittest.TestCase):
             raise failure
 
         gateway.submit_order = refuse
-        with patch("app.services.stock_paper_ledger.session_bounds", return_value=(now.replace(hour=0), now.replace(hour=23))), \
+        with patch("app.services.stock_paper_ledger.session_bounds", return_value=session_window_around(now)), \
              patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}), \
              patch("app.services.stock_paper_ledger._validate_reference_price"):
             order = reserve_stock_paper_order(db, symbol="SPY", side="sell", quantity=Decimal("1"),
@@ -1016,14 +1027,14 @@ class StockPaperLedgerTests(unittest.TestCase):
         with Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())
             now = datetime.now(timezone.utc)
-            with patch("app.services.stock_paper_ledger.session_bounds", return_value=(now.replace(hour=0), now.replace(hour=23))), \
+            with patch("app.services.stock_paper_ledger.session_bounds", return_value=session_window_around(now)), \
                  patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "stale"}):
                 with self.assertRaisesRegex(StockPaperError, "stale"):
                     reserve_stock_paper_order(db, symbol="SPY", side="buy", quantity=Decimal("1"),
                         reference_price=Decimal("10"), idempotency_key="stale-key", source="test")
             db.add(RiskRule(name="test-kill", value={"kill_switch_enabled": True}))
             db.commit()
-            with patch("app.services.stock_paper_ledger.session_bounds", return_value=(now.replace(hour=0), now.replace(hour=23))), \
+            with patch("app.services.stock_paper_ledger.session_bounds", return_value=session_window_around(now)), \
                  patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}), \
                  patch("app.services.stock_paper_ledger._validate_reference_price"):
                 with self.assertRaisesRegex(StockPaperError, "kill switch"):
@@ -1039,7 +1050,7 @@ class StockPaperLedgerTests(unittest.TestCase):
                    observed_at=datetime.now(timezone.utc), raw_payload={}))
             db.commit()
             now = datetime.now(timezone.utc)
-            with patch("app.services.stock_paper_ledger.session_bounds", return_value=(now.replace(hour=0), now.replace(hour=23))), \
+            with patch("app.services.stock_paper_ledger.session_bounds", return_value=session_window_around(now)), \
                  patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}), \
                  patch("app.services.stock_paper_ledger._validate_reference_price"):
                 first = reserve_stock_paper_order(db, symbol="SPY", side="sell", quantity=Decimal("0.6"),
@@ -1218,7 +1229,7 @@ class StockPaperLedgerTests(unittest.TestCase):
                 probability_up=Decimal("0.8"), probability_down=Decimal("0.2"), confidence=Decimal("0.8"), features={})
             db.add(good)
             db.commit()
-            with patch("app.services.stock_paper_ledger.session_bounds", return_value=(now.replace(hour=0), now.replace(hour=23))), \
+            with patch("app.services.stock_paper_ledger.session_bounds", return_value=session_window_around(now)), \
                  patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}), \
                  patch("app.services.stock_paper_ledger._validate_reference_price"):
                 order = reserve_stock_paper_order(db, symbol="SPY", side="buy", quantity=Decimal("0.01"),

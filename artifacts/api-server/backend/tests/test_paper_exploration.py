@@ -27,6 +27,17 @@ from tests.test_stock_paper_ledger import FakeAlpaca
 from tests.test_stock_paper_autotrader import signal_source
 
 
+def session_window_around(now):
+    """A regular-session window that always contains ``now``, whatever the wall-clock hour.
+
+    The earlier ``(now.replace(hour=0), now.replace(hour=23))`` closed the session
+    at 23:00 UTC, so every reservation in the last hour of the UTC day was refused
+    as "outside the regular market session" (the Backend tests check failed that
+    way on three branches at 22:58 UTC on 2026-11-06).
+    """
+    return now - timedelta(hours=1), now + timedelta(hours=1)
+
+
 class ExplorationLedgerTests(unittest.TestCase):
     def setUp(self):
         self.patches = [
@@ -51,8 +62,7 @@ class ExplorationLedgerTests(unittest.TestCase):
     def gates(self):
         now = self.now
         return [
-            patch("app.services.stock_paper_ledger.session_bounds",
-                  return_value=(now.replace(hour=0), now.replace(hour=23))),
+            patch("app.services.stock_paper_ledger.session_bounds", return_value=session_window_around(now)),
             patch("app.services.stock_paper_ledger.feed_status", return_value={"status": "ready"}),
             patch("app.services.stock_paper_ledger._validate_reference_price"),
             patch("app.services.stock_learning_cycle.evaluate_launch_admission_prerequisites",
