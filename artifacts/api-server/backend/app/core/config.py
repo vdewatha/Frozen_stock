@@ -19,6 +19,12 @@ DEFAULT_PAPER_EXECUTION_SYMBOLS: tuple[str, ...] = (
     "WMT", "NFLX", "AMD", "CRM", "ORCL", "ADBE",
 )
 MAX_PAPER_EXECUTION_SYMBOLS = 60
+# Hedge instruments the paper cycle may trade on top of the execution
+# universe: SH (inverse S&P 500) only when reports/hedge-20261106.md adopted a
+# hedge size (``strategies.market_hedge.ADOPTED_HEDGE_FRACTION``).  Research
+# scripts replay ``DEFAULT_PAPER_EXECUTION_SYMBOLS`` and never see them.
+DEFAULT_PAPER_HEDGE_SYMBOLS: tuple[str, ...] = ()
+MAX_PAPER_HEDGE_SYMBOLS = 5
 
 
 class Settings(BaseSettings):
@@ -164,6 +170,10 @@ class Settings(BaseSettings):
     # The default is a liquid ~45-name list (index/sector ETFs + megacaps);
     # PAPER_EXECUTION_SYMBOLS in .replit carries the same list.
     paper_execution_symbols: list[str] = list(DEFAULT_PAPER_EXECUTION_SYMBOLS)
+    # Hedge instruments (``trading_universe.hedge_symbols``); see
+    # DEFAULT_PAPER_HEDGE_SYMBOLS.  An operator admitting the market hedge
+    # later sets PAPER_HEDGE_SYMBOLS=SH.
+    paper_hedge_symbols: list[str] = list(DEFAULT_PAPER_HEDGE_SYMBOLS)
     # Stale market data blocks only the affected symbol unless more than this
     # fraction of the execution universe (or SPY/QQQ) is stale: a broad outage
     # still blocks everything.
@@ -388,6 +398,13 @@ class Settings(BaseSettings):
     experiment_engine_max_experiments: int = Field(default=4, ge=0, le=20)
     experiment_engine_cooldown_days: int = Field(default=28, ge=1, le=365)
     experiment_engine_history_start: str = "2000-01-01"
+    # Point-in-time universe: the experiment engine and strategy discovery
+    # replay every past S&P 500 member that still has history, and a single
+    # stock can only be entered while it was a member (ETFs always).  Off =
+    # today's survivorship-biased list.  On by the pre-registered rule of
+    # scripts/run_survivorship_check.py (coverage since 2010 80.9% >= 70%,
+    # worst-case engine run 2 min of 30; reports/survivorship-20261106.md).
+    replay_point_in_time_universe: bool = True
     experiment_verdict_min_trades: int = Field(default=20, ge=5, le=500)
     experiment_verdict_max_trades: int = Field(default=60, ge=5, le=1000)
     # Gate cost: each withheld BUY of the last N sessions is replayed under the
@@ -395,6 +412,10 @@ class Settings(BaseSettings):
     # it is called costly or earning its keep (gate_cost.py).
     gate_cost_lookback_sessions: int = Field(default=60, ge=1, le=250)
     gate_cost_min_scored: int = Field(default=30, ge=1, le=500)
+    # Setup shadow: every candidate gate value is decided alongside the live
+    # one on each BUY and scored from the next open; the per-candidate
+    # record covers the last N sessions (setup_shadow.py).
+    setup_shadow_lookback_sessions: int = Field(default=120, ge=1, le=500)
     # Paper cost calibration: the replay cost model is fitted to the last N
     # sessions of paper fills; a (symbol class, time bucket) cell needs
     # min_fills fills before its multiplier is fitted (paper_cost_calibration.py).
@@ -459,6 +480,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"Paper execution universe requires 1 to {MAX_PAPER_EXECUTION_SYMBOLS} valid stock symbols"
             )
+        return symbols
+
+    @field_validator("paper_hedge_symbols")
+    @classmethod
+    def validate_paper_hedge_symbols(cls, values: list[str]) -> list[str]:
+        symbols = sorted({value.strip().upper() for value in values if str(value).strip()})
+        if len(symbols) > MAX_PAPER_HEDGE_SYMBOLS or any(
+            not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,15}", symbol) for symbol in symbols
+        ):
+            raise ValueError(f"Paper hedge universe allows at most {MAX_PAPER_HEDGE_SYMBOLS} valid stock symbols")
         return symbols
 
     @field_validator("database_url", mode="before")

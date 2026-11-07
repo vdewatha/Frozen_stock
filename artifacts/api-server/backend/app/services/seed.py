@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -571,6 +571,72 @@ def enable_market_gates(db: Session) -> list[str]:
     return changed
 
 
+HEDGE_ADMISSION_ACTION = "hedge_admission"
+HEDGE_STRATEGY_NAME = "Market Hedge"
+
+
+def admit_market_hedge(db: Session) -> Optional[str]:
+    """One-time admission of the ``market_hedge`` row (``reports/hedge-20261106.md``).
+
+    Long SH while SPY trades below a falling 50-day average, through the
+    normal paper long path.  The row is created ``paper_trading_candidate``
+    (learning-sized exploration, like a discovered rule) only when the hedge
+    backtest adopted a size (``market_hedge.ADOPTED_HEDGE_FRACTION``);
+    otherwise it is created ``paused`` so the forward loop can admit it later
+    through its normal re-admission gates.  Acts once: a row of this type that
+    already exists, or an earlier ``hedge_admission`` event (the operator
+    deleted or re-statused the row), means the operator's choice stands.
+    Returns the status it created, or None.
+    """
+    from app.services.audit import write_audit_log
+    from app.services.strategies.market_hedge import (
+        ADOPTED_HEDGE_FRACTION, FAST_WINDOW, HEDGE_EXIT_POLICY, HEDGE_REPORT, HEDGE_SYMBOL, TREND_WINDOW,
+        MarketHedgeStrategy,
+    )
+
+    slug = MarketHedgeStrategy.slug
+    exists = db.query(Strategy.id).filter(
+        (Strategy.strategy_type == slug) | (Strategy.name == HEDGE_STRATEGY_NAME)).first()
+    already = db.query(AuditLog.id).filter(
+        AuditLog.event_type == "strategy_governance", AuditLog.action == HEDGE_ADMISSION_ACTION).first()
+    if exists or already:
+        return None
+    adopted = ADOPTED_HEDGE_FRACTION is not None
+    status = "paper_trading_candidate" if adopted else "paused"
+    row = Strategy(
+        name=HEDGE_STRATEGY_NAME, strategy_type=slug,
+        description=(f"Long {HEDGE_SYMBOL} (inverse S&P 500) while SPY closes below its {TREND_WINDOW}-day average "
+                     f"with the {FAST_WINDOW}-day average below it; exit when SPY closes back above the "
+                     f"{TREND_WINDOW}-day average or on the {HEDGE_EXIT_POLICY.stop_loss_pct:.0%} catastrophe stop. "
+                     "The mirror image of the SPY market gate, placed through the ordinary long path."),
+        parameters={
+            "trend_sma": TREND_WINDOW, "fast_sma": FAST_WINDOW,
+            "hedge_fraction": ADOPTED_HEDGE_FRACTION if adopted else 0,
+            "stop_loss_pct": HEDGE_EXIT_POLICY.stop_loss_pct, "take_profit_pct": HEDGE_EXIT_POLICY.take_profit_pct,
+            "max_holding_sessions": HEDGE_EXIT_POLICY.max_holding_sessions, "symbol_scope": [HEDGE_SYMBOL],
+        },
+        is_active=True, current_status=status,
+    )
+    db.add(row)
+    db.flush()
+    if adopted:
+        message = (f"{HEDGE_REPORT}: a {ADOPTED_HEDGE_FRACTION:.0%} {HEDGE_SYMBOL} hedge while the market gate is closed "
+                   "kept the book's total profit and lowered its max drawdown in every window; admitted as a "
+                   "learning-sized paper candidate. Promotion needs forward evidence like any other candidate.")
+    else:
+        message = (f"{HEDGE_REPORT}: no hedge size kept the book's total profit while lowering its max drawdown in "
+                   f"every window; the {HEDGE_SYMBOL} hedge is created paused. The forward loop's re-admission gates "
+                   f"decide whether it trades; admitting it also means PAPER_HEDGE_SYMBOLS={HEDGE_SYMBOL}.")
+    write_audit_log(
+        db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+        action=HEDGE_ADMISSION_ACTION, status="complete", message=message,
+        payload={"new_status": status, "adopted": adopted, "hedge_fraction": ADOPTED_HEDGE_FRACTION,
+                 "hedge_symbol": HEDGE_SYMBOL, "source": HEDGE_REPORT, "paper_only": True},
+    )
+    db.flush()
+    return status
+
+
 def ensure_strategy_lineup(db: Session) -> dict:
     """Idempotent strategy lineup reconciliation run by every seed pass."""
     return {
@@ -584,6 +650,7 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "vix_gates_enabled": enable_vix_gates(db),
         "paused_paper_losers": pause_paper_evidence_losers(db),
         "sizing_modes_applied": apply_sizing_modes(db),
+        "hedge_admission": admit_market_hedge(db),
     }
 
 

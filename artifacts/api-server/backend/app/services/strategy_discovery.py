@@ -217,8 +217,12 @@ def _marked_returns(labels: pd.DataFrame, close: np.ndarray) -> np.ndarray:
 
 
 def evaluate_candidate(candidate: Mapping, frames: Mapping[str, pd.DataFrame],
-                       caches: Optional[dict] = None) -> dict:
-    """Executable trades and the equal-weight daily portfolio series for one candidate."""
+                       caches: Optional[dict] = None, universe=None) -> dict:
+    """Executable trades and the equal-weight daily portfolio series for one candidate.
+
+    ``universe(symbol, dates)`` is the optional point-in-time membership mask
+    ANDed into the entry signals (``point_in_time_universe``).
+    """
     barrier = BarrierConfig(take_profit_pct=float(candidate["take_profit_pct"]),
                             stop_loss_pct=float(candidate["stop_loss_pct"]),
                             max_holding_days=int(candidate["max_holding_sessions"]))
@@ -229,7 +233,10 @@ def evaluate_candidate(candidate: Mapping, frames: Mapping[str, pd.DataFrame],
         if frame is None or len(frame) <= rules.rule_lookback(candidate["rule"]):
             continue
         cache = caches.setdefault(symbol, {})
-        entries = np.flatnonzero(rules.entry_signals(frame, candidate["rule"], cache))
+        signals = np.asarray(rules.entry_signals(frame, candidate["rule"], cache), dtype=bool)
+        if universe is not None:
+            signals &= np.asarray(universe(symbol, pd.to_datetime(frame["date"].astype(str).str[:10])), dtype=bool)
+        entries = np.flatnonzero(signals)
         if not len(entries):
             continue
         if rules.timing(candidate["rule"]) == "open":
@@ -251,7 +258,8 @@ def evaluate_candidate(candidate: Mapping, frames: Mapping[str, pd.DataFrame],
     trade_frame = pd.concat(trades, ignore_index=True) if trades else pd.DataFrame(
         columns=["symbol", "t0", "entry_idx", "exit_idx", "holding_days", "barrier", "net_return", "excess",
                  "entry_price", "exit_price"])
-    portfolio = pd.concat(daily, axis=1).mean(axis=1, skipna=True).sort_index() if daily else pd.Series(dtype=float)
+    portfolio = (pd.concat(daily, axis=1).mean(axis=1, skipna=True).sort_index() if daily
+                 else pd.Series(dtype=float, index=pd.DatetimeIndex([])))  # no trade anywhere: still date-indexed
     return {"trades": trade_frame, "portfolio": portfolio}
 
 
@@ -316,13 +324,13 @@ def rank_key(row: dict) -> tuple:
 
 
 def run_discovery(frames: Mapping[str, pd.DataFrame], symbols: Iterable[str], *,
-                  data_end: Optional[str] = None, library: Optional[list[dict]] = None) -> dict:
+                  data_end: Optional[str] = None, library: Optional[list[dict]] = None, universe=None) -> dict:
     library = library if library is not None else candidate_library(symbols)
     end = pd.Timestamp(data_end) if data_end else max(pd.Timestamp(str(f["date"].iloc[-1])[:10]) for f in frames.values())
     holdout_start = end - pd.DateOffset(years=HOLDOUT_YEARS)
     caches: dict = {}
-    summaries = [summarize_candidate(candidate, evaluate_candidate(candidate, frames, caches), holdout_start)
-                 for candidate in library]
+    summaries = [summarize_candidate(candidate, evaluate_candidate(candidate, frames, caches, universe=universe),
+                                     holdout_start) for candidate in library]
     sharpes = [row["sharpe_per_period"] for row in summaries if row["observations"] > 1]
     for row in summaries:
         row["gate"] = gate(row, trials=len(library), trial_sharpes=sharpes)
@@ -344,6 +352,7 @@ def strategy_parameters(row: dict, *, now: datetime) -> dict:
         "rule": row["rule"], "stop_loss_pct": row["stop_loss_pct"], "take_profit_pct": row["take_profit_pct"],
         "max_holding_sessions": row["max_holding_sessions"], "symbol_scope": list(row["symbols"]),
         "discovery": {"candidate_id": row["id"], "family": row["family"], "universe": row["universe"],
+                      "evaluated_symbols": row.get("evaluated_symbols", len(row["symbols"])),
                       "evaluated_at": now.isoformat(), "gate": row["gate"], "discovery": row["discovery"],
                       "post_period_expectancy_bps": row["post_period"]["expectancy_bps"],
                       "holdout": {k: row["holdout"].get(k) for k in ("trades", "win_rate", "expectancy_bps")}},
@@ -479,11 +488,31 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
     if not settings.strategy_discovery_enabled:
         return base | {"status": "disabled"}
     symbols = sorted({s.upper() for s in settings.paper_execution_symbols})
+    tradeable = set(symbols)
+    universe, universe_summary = None, {"mode": "today", "symbols": len(symbols)}
+    if settings.replay_point_in_time_universe:
+        from app.services import point_in_time_universe
+
+        try:  # a missing membership file falls back to today's list, never stops the run
+            context = point_in_time_universe.replay_universe(symbols, loader=loader, earnings_loader=earnings_loader,
+                                                             now=now)
+            symbols, universe, loader, earnings_loader = (context.symbols, context.mask, context.loader,
+                                                          context.earnings_loader)
+            universe_summary = context.summary()
+        except Exception as exc:
+            logger.warning("strategy discovery: point-in-time universe unavailable, using today's list: %s", exc)
+            universe_summary["fallback"] = f"{exc.__class__.__name__}: {exc}"
     frames, missing = load_frames(symbols, loader=loader, start=settings.strategy_discovery_history_start,
                                   earnings_loader=earnings_loader)
     if not frames:
         return base | {"status": "blocked", "reason": "no price history", "missing_symbols": missing}
-    result = run_discovery(frames, frames.keys())
+    result = run_discovery(frames, frames.keys(), universe=universe)
+    if universe is not None:
+        # The candidate was judged on every past member; the paper row it may
+        # become can only trade today's list, so its scope is that subset.
+        for row in result["candidates"]:
+            row["evaluated_symbols"] = len(row["symbols"])
+            row["symbols"] = [s for s in row["symbols"] if s in tradeable]
     admission = {"admitted": [], "retired": [], "refreshed": [], "live": None}
     if settings.strategy_discovery_admission_enabled:
         admission = admit_survivors(db, result, now=now, max_new=settings.strategy_discovery_max_new,
@@ -491,6 +520,7 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
                                     require_proven=settings.strategy_discovery_require_proven)
     summary = {"data_end": result["data_end"], "holdout_start": result["holdout_start"], "trials": result["trials"],
                "proven": len(result["proven"]), "explore": len(result["explore"]), "missing_symbols": missing,
+               "universe": universe_summary,
                "require_proven": settings.strategy_discovery_require_proven, **admission,
                "top": report_rows(result["candidates"], 10)}
     write_audit_log(db, event_type="strategy_discovery", action="run", status="complete",

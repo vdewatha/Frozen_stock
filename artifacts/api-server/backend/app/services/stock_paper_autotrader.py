@@ -1390,6 +1390,16 @@ def _run_signal_cycle(db: Session) -> dict:
     except Exception as exc:  # evidence only; never fail the cycle
         db.rollback()
         logger.info("buy outcome record unavailable: %s", exc.__class__.__name__)
+    try:
+        # Every candidate value of every gate template decided for this
+        # cycle's BUYs from the states already loaded (setup_shadow.py);
+        # evidence only, after the orders phase.
+        from app.services.setup_shadow import record_cycle_decisions
+
+        record_cycle_decisions(db, results, cycle_rows, now=now, protections=protections)
+    except Exception as exc:  # evidence only; never fail the cycle
+        db.rollback()
+        logger.info("setup shadow record unavailable: %s", exc.__class__.__name__)
     finished = time.perf_counter()
     timing = {
         "signals_ms": round((signals_done - cycle_started) * 1000, 1),
