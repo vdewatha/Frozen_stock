@@ -226,8 +226,19 @@ def current_setup(parameters: Optional[Mapping], strategy_type: Optional[str] = 
 # ------------------------------------------------------------ decision rule
 
 def decide(rows: Mapping[str, Mapping[str, dict]], baseline: str = BASELINE, *,
-           min_trades: int = MIN_TRADES_PER_WINDOW, drawdown_tolerance: float = DRAWDOWN_TOLERANCE) -> dict:
-    """The pre-registered rule: ``rows[label][window]`` -> adopted label (or None) and why."""
+           min_trades: int = MIN_TRADES_PER_WINDOW, drawdown_tolerance: float = DRAWDOWN_TOLERANCE,
+           calibration: float = 1.0) -> dict:
+    """The pre-registered rule: ``rows[label][window]`` -> adopted label (or None) and why.
+
+    ``calibration`` is the engine audit's factor (``engine_audit.py``; 1.0
+    unless the engine has been over-optimistic).  It multiplies into each
+    candidate's expected gain (candidate minus baseline expectancy), and the
+    deflated gain must cover the optimism's share of the revert margin:
+    ``factor x gain >= (1 - factor) x REVERT_EXPECTANCY_BPS``.  At 1.0 that
+    is exactly ``expectancy not lower``; the rule is otherwise unchanged.
+    """
+    calibration = min(1.0, max(0.0, float(calibration if calibration is not None else 1.0)))
+    required = (1.0 - calibration) * REVERT_EXPECTANCY_BPS
     base = rows[baseline]
     eligible: dict[str, float] = {}
     failed: dict[str, str] = {}
@@ -244,8 +255,13 @@ def decide(rows: Mapping[str, Mapping[str, dict]], baseline: str = BASELINE, *,
             if c.get("expectancy_bps") is None or b.get("expectancy_bps") is None:
                 reason = f"{window}: expectancy unavailable"
                 break
-            if c["expectancy_bps"] < b["expectancy_bps"]:
+            gain = c["expectancy_bps"] - b["expectancy_bps"]
+            if calibration * gain < required:
                 reason = f"{window}: expectancy {c['expectancy_bps']:+.1f} < {b['expectancy_bps']:+.1f} bps"
+                if calibration < 1.0:
+                    reason = (f"{window}: expectancy {c['expectancy_bps']:+.1f} vs {b['expectancy_bps']:+.1f} bps; "
+                              f"deflated gain {calibration * gain:+.1f} < {required:.1f} bps required at "
+                              f"calibration {calibration:g}")
                 break
             if (c.get("total_profit_bps") or 0.0) < (b.get("total_profit_bps") or 0.0):
                 reason = f"{window}: total profit {c.get('total_profit_bps', 0):+.0f} < {b.get('total_profit_bps', 0):+.0f} bps"
@@ -254,13 +270,15 @@ def decide(rows: Mapping[str, Mapping[str, dict]], baseline: str = BASELINE, *,
                 reason = (f"{window}: drawdown {c.get('portfolio_max_drawdown', 0):.1%} > "
                           f"{drawdown_tolerance:.2f}x {b.get('portfolio_max_drawdown', 0):.1%}")
                 break
-            gains.append(c["expectancy_bps"] - b["expectancy_bps"])
+            gains.append(calibration * gain)
         if reason is None:
             eligible[label] = round(min(gains), 2)
         else:
             failed[label] = reason
     adopted = max(eligible, key=eligible.get) if eligible else None
-    return {"adopted": adopted, "eligible": eligible, "failed": failed, "rule": RULE}
+    return {"adopted": adopted, "eligible": eligible, "failed": failed, "rule": RULE,
+            "calibration": {"factor": calibration, "required_gain_bps": round(required / calibration, 2) if calibration
+                            else None, "margin_bps": REVERT_EXPECTANCY_BPS}}
 
 
 # ------------------------------------------------------------------ planning
@@ -370,11 +388,13 @@ def _clean(value: Any) -> Any:
 
 
 def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, vix, replays, simulate,
-                   universe: Optional[Callable] = None) -> dict:
+                   universe: Optional[Callable] = None, calibration: float = 1.0) -> dict:
     """Replay the strategy under its current setup and each candidate; apply the rule.
 
     ``universe`` is the optional point-in-time membership mask (``symbol,
-    dates -> bool array``) the replay ANDs into its entries.
+    dates -> bool array``) the replay ANDs into its entries.  ``calibration``
+    is the engine audit's factor ``decide`` multiplies into each candidate's
+    expected gain.
     """
     from app.services.gate_replay import window_rows
 
@@ -390,10 +410,11 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
     for label, setup in setups.items():
         trades = simulate(strategy.strategy_type, frames, spy, setup, replays, vix=vix, **extra)
         rows[label] = window_rows(trades, frames)
-    decision = decide(rows)
+    decision = decide(rows, calibration=calibration)
     adopted = decision["adopted"]
     return {"strategy_type": strategy.strategy_type, "strategy_id": strategy.id, "template": template.name,
             "key": template.key, "baseline_setup": baseline, "setups": setups, "rows": rows, "decision": decision,
+            "calibration": decision["calibration"],
             "adopted": adopted, "adopted_setup": setups.get(adopted),
             "adopted_description": template.describe(setups[adopted]) if adopted else None}
 
@@ -454,7 +475,9 @@ def adopt_change(db: Session, strategy: Strategy, experiment: dict, *, now: date
         "description": experiment["adopted_description"], "before": before, "after": after,
         "adopted_at": _iso(now), "state": "watching",
         "expected": {"baseline": experiment["rows"][BASELINE], "adopted": experiment["rows"][experiment["adopted"]],
-                     "label": experiment["adopted"]},
+                     "label": experiment["adopted"],
+                     "calibration_factor": (experiment.get("calibration") or {}).get("factor", 1.0),
+                     "required_gain_bps": (experiment.get("calibration") or {}).get("required_gain_bps", 0.0)},
         "recent_before": recent,
         "watch": {"min_trades": settings.experiment_verdict_min_trades,
                   "max_trades": settings.experiment_verdict_max_trades, "cause": experiment["trigger"],
@@ -497,6 +520,13 @@ def _shadow_lessons(db: Session) -> list[dict]:
         return []
 
 
+def _calibration_factor(db: Session) -> float:
+    """The engine audit's calibration factor (``engine_audit.py``); 1.0 without an audit or when unreadable."""
+    from app.services.engine_audit import current_calibration_factor
+
+    return current_calibration_factor(db)
+
+
 def _load_vix(start: str):
     from app.services.strategies.vix_gate import download_vix_history
 
@@ -524,6 +554,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                             cooldown_days=settings.experiment_engine_cooldown_days,
                             max_experiments=settings.experiment_engine_max_experiments)
     experiments, adopted, errors = [], [], []
+    calibration = _calibration_factor(db)
     if plan["planned"]:
         from app.services import gate_replay
         from app.services import meta_label_primary as primary
@@ -560,7 +591,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                 if not frames or spy is None:
                     raise RuntimeError("no price history to replay")
                 experiment = run_experiment(strategy, template, frames=frames, spy=spy, vix=vix, replays=replays,
-                                            simulate=simulate, universe=universe)
+                                            simulate=simulate, universe=universe, calibration=calibration)
             except Exception as exc:  # one experiment must not stop the run
                 db.rollback()
                 errors.append({**item, "error": f"{exc.__class__.__name__}: {exc}"})
@@ -595,7 +626,8 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                                for e in experiments],
                "adopted": [c["change_id"] for c in adopted], "errors": errors, "deferred": plan["deferred"],
                "skipped": plan["skipped"], "untemplated": plan["untemplated"],
-               "adoption_enabled": settings.experiment_engine_adoption_enabled}
+               "adoption_enabled": settings.experiment_engine_adoption_enabled,
+               "calibration_factor": calibration}
     write_audit_log(db, event_type=EVENT, entity_type="experiment_engine", action=ACTION_RUN, status="complete",
                     message=(f"experiment engine: {len(lessons)} lessons, {len(experiments)} experiments, "
                              f"{len(adopted)} adopted, {len(plan['untemplated'])} without a template"),
@@ -677,6 +709,18 @@ def shadow_beats_adopted(shadow: Optional[Mapping]) -> Optional[dict]:
     return max(better, key=lambda c: (c.get("delta_expectancy_bps") or 0.0))
 
 
+def _verdict_audit_fields(change: Mapping, after: Mapping, shadow: Optional[Mapping]) -> dict:
+    """Expected vs realised gain for the verdict payload (``engine_audit.verdict_fields``); empty when unavailable."""
+    from app.services.engine_audit import verdict_fields
+
+    try:
+        return verdict_fields(change, after, shadow)
+    except Exception as exc:
+        logger.warning("experiment engine: expected-vs-realised fields unavailable for %s: %s",
+                       change.get("change_id"), exc)
+        return {}
+
+
 def _fmt_bps(value: Any) -> str:
     return f"{float(value):+.1f}" if isinstance(value, (int, float)) else "n/a"
 
@@ -740,6 +784,7 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
                    "trigger": change["trigger"], "verdict": verdict, "state": state, "reverted": reverted,
                    "before": change.get("recent_before"), "after": after, "judged_at": _iso(now),
                    "shadow": shadow_summary, "shadow_verdict": beaten_by is not None,
+                   **_verdict_audit_fields(change, after, shadow_summary),
                    "beaten_by": ({k: beaten_by.get(k) for k in ("candidate", "live", "overlap", "trades",
                                                                  "expectancy_bps", "delta_expectancy_bps",
                                                                  "delta_total_bps")} if beaten_by else None),
