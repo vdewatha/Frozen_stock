@@ -211,6 +211,13 @@ class Settings(BaseSettings):
     paper_exploration_enabled: bool = False
     paper_exploration_risk_fraction: float = Field(default=0.0025, gt=0, le=0.01)
     paper_exploration_max_positions: int = Field(default=12, ge=1, le=40)
+    # Exploration budget (exploration_budget.py): each session may spend this
+    # fraction of equity on learning-sized lots, allotted to the learning
+    # BUYs whose evidence is scarcest; an item far from its evidence minimum
+    # with a positive backtest expectancy may trade up to exploration_lift_max
+    # times the learning size (never above the scheduled size).
+    exploration_budget_fraction: float = Field(default=0.01, gt=0, le=0.05)
+    exploration_lift_max: float = Field(default=2.0, ge=1.0, le=2.0)
     # Parallel read-only data loads for the signal batch (one session each);
     # 1 keeps the sequential path.
     paper_signal_load_workers: int = Field(default=6, ge=1, le=16)
