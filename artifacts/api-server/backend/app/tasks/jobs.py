@@ -1819,6 +1819,19 @@ def setup_shadow_job() -> dict:
 
 
 @celery_app.task
+def signal_autopsy_job() -> dict:
+    """Weekly (Sunday, before the experiment engine): per strategy, the entry features of losses vs wins and the scope candidates (paper only)."""
+    def work(db):
+        from app.services.signal_autopsy import record_autopsies
+
+        result = record_autopsies(db)
+        db.commit()
+        return {"job": "signal_autopsy_job", **result, "live_authorized": False}
+
+    return _run_job("signal_autopsy_job", work)
+
+
+@celery_app.task
 def paper_cost_calibration_job() -> dict:
     """Weekly (Saturday): fit the replay cost model to the last sessions of paper fills (paper only)."""
     def work(db):

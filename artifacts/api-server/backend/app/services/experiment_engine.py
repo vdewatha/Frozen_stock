@@ -31,6 +31,13 @@ applied the result.  This module lets the bot run that loop itself.
    exit policy reads (``strategy_execution_policy.exit_policy_for``); the
    broker legs of lots already open are left as they were opened, the new
    stop applies to entries after the change.
+   The ``scope`` template (triggered by ``signal_wrong``) has no fixed
+   candidates: they come from the strategy's latest signal autopsy
+   (``signal_autopsy.scope_candidates``, a ``Template.dynamic`` callable),
+   one-condition entry rules replayed on the decision bar and written as
+   ``parameters["scope"]`` under ``scope_update``; the live
+   ``strategies/scope.py`` wrapper turns a BUY into a HOLD when the decision
+   bar fails the condition.
    Every experiment, adoption and verdict is an ``experiment_engine`` audit
    row: the ledger needs no migration and is the only state.
 4. **Forward verdict** (``review_changes``).  After ``min_trades`` closed
@@ -77,6 +84,7 @@ ACTION_ADOPTED = "change_adopted"
 ACTION_VERDICT = "change_verdict"
 GOVERNANCE_EVENT = "strategy_governance"
 EXIT_POLICY_ACTION = "exit_policy_update"
+SCOPE_ACTION = "scope_update"
 ACTIVE_STATUSES = ("paper_trading_active", "paper_trading_candidate")
 SOURCES = ("scheduled_round_trip", "exploration_round_trip")
 WINDOWS = ("all", "2015+", "2020+")
@@ -106,10 +114,16 @@ class Template:
     # short-term reversion pair, whose tested exits are wider and shorter.
     kind: str = "gate"
     reversion_candidates: Optional[tuple] = None
+    # A ``dynamic`` template derives its candidates from the strategy row at
+    # run time (``scope``: the latest signal autopsy); ``candidates`` stays
+    # empty and the static templates are unchanged.
+    dynamic: Optional[Callable[[Any], tuple]] = None
 
-    def candidates_for(self, strategy_type: str) -> tuple:
+    def candidates_for(self, strategy_type: str, strategy: Any = None) -> tuple:
         from app.services.gate_replay import REVERSION
 
+        if self.dynamic is not None:
+            return tuple(self.dynamic(strategy)) if strategy is not None else ()
         if self.reversion_candidates is not None and strategy_type in REVERSION:
             return self.reversion_candidates
         return self.candidates
@@ -160,6 +174,24 @@ def _hold_describe(candidate: dict) -> str:
     return f"time stop after {candidate['max_holding_sessions']} sessions (stop and target unchanged)"
 
 
+def _scope_label(candidate: dict) -> str:
+    from app.services.strategies.scope import scope_label
+
+    return scope_label(candidate.get("scope"))
+
+
+def _scope_describe(candidate: dict) -> str:
+    from app.services.strategies.scope import describe_scope
+
+    return describe_scope(candidate.get("scope"))
+
+
+def _scope_candidates(strategy: Any) -> tuple:
+    from app.services.signal_autopsy import scope_candidates
+
+    return scope_candidates(strategy)
+
+
 # A gate the gate-cost audit flags ``costly`` for a strategy (``gate_cost
 # .costly_gate_lessons``) is a lesson too: it plans the same template, whose
 # first candidate is always the gate turned off, under the same rule.
@@ -189,6 +221,13 @@ TEMPLATES = (
              _hold_label, _hold_describe, kind="exit",
              reversion_candidates=({"max_holding_sessions": 5}, {"max_holding_sessions": 10},
                                    {"max_holding_sessions": 15})),
+    # Entry scope: ``signal_wrong`` losses are contrasted with the strategy's
+    # wins on their decision-bar features (signal_autopsy.py); the features
+    # that separate become one-condition scope rules, replayed on the same
+    # bars and written to the row as ``parameters["scope"]``.  Candidates are
+    # dynamic: the latest autopsy row for the strategy, scope off first.
+    Template("scope", frozenset({"signal_wrong"}), "scope", SCOPE_ACTION, (), _scope_label, _scope_describe,
+             kind="scope", dynamic=_scope_candidates),
 )
 TEMPLATE_BY_NAME = {template.name: template for template in TEMPLATES}
 GATE_TEMPLATES = tuple(template for template in TEMPLATES if template.kind == "gate")
@@ -207,11 +246,17 @@ def current_setup(parameters: Optional[Mapping], strategy_type: Optional[str] = 
     keys come from ``exit_policy_for`` (class default with the row's
     overrides), so the baseline replays the exits the strategy really uses;
     without a strategy type they stay ``None`` (the replay's fixed barrier).
+    ``scope`` is the row's validated entry scope (``strategies/scope.py``),
+    present only when set, so a live scope is the baseline it is judged against.
     """
     from app.services.gate_replay import setup_from_parameters
+    from app.services.strategies.scope import SCOPE_KEY, scope_condition
     from app.services.strategy_execution_policy import exit_policy_for
 
     setup = setup_from_parameters(parameters)
+    scope = scope_condition(parameters)
+    if scope is not None:
+        setup[SCOPE_KEY] = scope
     if (parameters or {}).get("earnings_blackout_sessions") is None:
         setup["earnings_blackout_sessions"] = int(settings.paper_earnings_blackout_sessions or 0)
     if strategy_type:
@@ -306,6 +351,7 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
     wanted: dict[tuple[str, str], dict] = {}
     untemplated, skipped = [], []
     for lesson in lessons:
+        acted, no_candidates = False, None
         triggers = {lesson["cause"], *((lesson.get("contributing") or {}).keys())}
         # A shadow-evidence lesson names the template whose candidate beat
         # the live value; it plans exactly that template with its own trigger.
@@ -328,6 +374,14 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
                     skipped.append({"strategy_type": target, "template": template.name,
                                     "reason": "strategy cannot be replayed over daily history"})
                     continue
+                if template.dynamic is not None and not template.candidates_for(target, strategies[target]):
+                    # A dynamic template without candidates (no signal autopsy row, or one with nothing that
+                    # separates) cannot plan; the lesson is untemplated unless another template acts on it.
+                    no_candidates = {"strategy_type": target, "template": template.name,
+                                     "reason": f"no {template.name} candidates in the latest signal autopsy"}
+                    skipped.append(no_candidates)
+                    continue
+                acted = True
                 key = (target, template.name)
                 candidate = {"strategy_type": target, "template": template.name, "trigger": trigger,
                              "lesson_count": int(lesson["count"]), "lesson_scope": lesson["strategy_type"],
@@ -336,6 +390,10 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
                     candidate["shadow_candidate"] = lesson.get("candidate")
                 if key not in wanted or wanted[key]["lesson_count"] < candidate["lesson_count"]:
                     wanted[key] = candidate
+        if not acted and no_candidates is not None:
+            untemplated.append({"strategy_type": lesson["strategy_type"], "cause": lesson["cause"],
+                                "count": lesson["count"], "proposal": lesson.get("proposal"),
+                                "template": no_candidates["template"], "reason": no_candidates["reason"]})
     planned, deferred = [], []
     for key, candidate in sorted(wanted.items(), key=lambda pair: (-pair[1]["lesson_count"], pair[0])):
         previous = latest.get(key)
@@ -379,8 +437,11 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
     from app.services.gate_replay import window_rows
 
     baseline = current_setup(getattr(strategy, "parameters", None), strategy.strategy_type)
+    if template.kind == "scope":
+        baseline.setdefault(template.key, None)   # so "scope off" equals a baseline without one
     setups = {BASELINE: baseline}
-    for candidate in template.candidates_for(strategy.strategy_type):
+    candidates = template.candidates_for(strategy.strategy_type, strategy)
+    for candidate in candidates:
         setup = {**baseline, **candidate}
         if setup == baseline:
             continue
@@ -394,6 +455,7 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
     adopted = decision["adopted"]
     return {"strategy_type": strategy.strategy_type, "strategy_id": strategy.id, "template": template.name,
             "key": template.key, "baseline_setup": baseline, "setups": setups, "rows": rows, "decision": decision,
+            "candidate_keys": sorted(candidates[0]) if candidates else [template.key],
             "adopted": adopted, "adopted_setup": setups.get(adopted),
             "adopted_description": template.describe(setups[adopted]) if adopted else None}
 
@@ -433,7 +495,8 @@ def _apply_parameters(row: Strategy, changes: Mapping[str, Any]) -> dict:
 
 def adopt_change(db: Session, strategy: Strategy, experiment: dict, *, now: datetime, recent_rows: list) -> dict:
     template = TEMPLATE_BY_NAME[experiment["template"]]
-    candidate = {key: experiment["adopted_setup"][key] for key in template.candidates_for(strategy.strategy_type)[0]}
+    keys = experiment.get("candidate_keys") or list(template.candidates_for(strategy.strategy_type, strategy)[0])
+    candidate = {key: experiment["adopted_setup"][key] for key in keys}
     before = _apply_parameters(strategy, candidate)
     after = {key: (strategy.parameters or {}).get(key) for key in candidate}
     change_id = hashlib.sha256(f"{strategy.id}:{template.name}:{now.isoformat()}".encode()).hexdigest()[:12]
@@ -776,7 +839,7 @@ def scoreboard_changes(db: Session) -> list[dict]:
 def experiment_ledger(db: Session, *, limit: int = 30) -> dict:
     runs = _history_rows(db, ACTION_RUN, 1)
     return {"rule": RULE, "templates": [{"name": t.name, "kind": t.kind, "triggers": sorted(t.triggers), "key": t.key,
-                                         "candidates": [t.label(c) for c in t.candidates],
+                                         "candidates": [t.label(c) for c in t.candidates], "dynamic": t.dynamic is not None,
                                          "reversion_candidates": ([t.label(c) for c in t.reversion_candidates]
                                                                   if t.reversion_candidates else None)}
                                         for t in TEMPLATES],
