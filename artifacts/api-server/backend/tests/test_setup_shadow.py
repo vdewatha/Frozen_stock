@@ -235,7 +235,8 @@ def test_scores_are_recorded_once_per_session_and_feed_the_views(db, monkeypatch
     view = shadow.setup_shadow_view(db)
     assert view["as_of"] == "2026-11-06" and view["paper_only"] and view["revert_margin_bps"] == engine.REVERT_EXPECTANCY_BPS
     assert [r["candidate"] for r in view["beating"]] == ["off"]
-    assert {t["name"] for t in view["templates"]} == {"market_gate", "vix_gate", "earnings_blackout"}
+    assert {t["name"] for t in view["templates"]} == {"market_gate", "vix_gate", "earnings_blackout", "sector_gate",
+                                                      "breadth_gate"}
     assert "decisions" not in view and "live_record" not in view["records"][0]
     board = shadow.scoreboard_setup_shadow(db)
     assert board["status"] == "ok" and "6 BUY decisions in the window, 6 scored" in board["detail"]

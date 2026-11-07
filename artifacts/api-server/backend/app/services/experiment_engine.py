@@ -160,6 +160,40 @@ def _hold_describe(candidate: dict) -> str:
     return f"time stop after {candidate['max_holding_sessions']} sessions (stop and target unchanged)"
 
 
+SECTOR_GATE_KEY = "sector_gate_sma"
+BREADTH_GATE_KEY = "breadth_gate_min"
+ENTRY_CAP_KEY = "max_new_entries_per_session"
+ENTRY_CAP_ACTION = "entry_cap_update"
+
+
+def _sector_label(candidate: dict) -> str:
+    return "off" if not candidate[SECTOR_GATE_KEY] else f"sector{candidate[SECTOR_GATE_KEY]}"
+
+
+def _sector_describe(candidate: dict) -> str:
+    n = candidate[SECTOR_GATE_KEY]
+    return "no sector gate" if not n else f"no new longs in a symbol while its sector ETF is at or below its {n}-day average"
+
+
+def _breadth_label(candidate: dict) -> str:
+    return "off" if not candidate[BREADTH_GATE_KEY] else f"breadth{float(candidate[BREADTH_GATE_KEY]):g}"
+
+
+def _breadth_describe(candidate: dict) -> str:
+    p = candidate[BREADTH_GATE_KEY]
+    return ("no breadth gate" if not p else
+            f"no new longs while under {float(p):g}% of S&P 500 members are above their 200-day average")
+
+
+def _cap_label(candidate: dict) -> str:
+    return "off" if not candidate[ENTRY_CAP_KEY] else f"cap{candidate[ENTRY_CAP_KEY]}"
+
+
+def _cap_describe(candidate: dict) -> str:
+    n = candidate[ENTRY_CAP_KEY]
+    return "no session entry cap" if not n else f"at most {n} new entries per session across the book"
+
+
 # A gate the gate-cost audit flags ``costly`` for a strategy (``gate_cost
 # .costly_gate_lessons``) is a lesson too: it plans the same template, whose
 # first candidate is always the gate turned off, under the same rule.
@@ -189,10 +223,38 @@ TEMPLATES = (
              _hold_label, _hold_describe, kind="exit",
              reversion_candidates=({"max_holding_sessions": 5}, {"max_holding_sessions": 10},
                                    {"max_holding_sessions": 15})),
+    # The last three diagnosed lessons: the sector fell with the stock
+    # (``missed_sector_move``), the entry was taken while most of the market
+    # was below its 200-day average (``weak_breadth_entry``), and several
+    # stops fired in one session because the entries were one bet
+    # (``clustered_stops``).  The first two are strategy gates like the
+    # market gate (``market_gate.sector_state`` / ``market_gauges
+    # .breadth_state``, replayed by ``gate_replay.sector_gate_on`` /
+    # ``breadth_gate_on``); the third is a *book* protection
+    # (``entry_protections.entry_cap_block``, risk-rule key
+    # ``max_new_entries_per_session``), replayed on the whole book
+    # (``book_replay``) and judged by the same ``decide`` rule on book rows.
+    Template("sector_gate", frozenset({"missed_sector_move", "costly_sector_gate"}),
+             SECTOR_GATE_KEY, "sector_gate_update",
+             ({SECTOR_GATE_KEY: 0}, {SECTOR_GATE_KEY: 10}, {SECTOR_GATE_KEY: 20}, {SECTOR_GATE_KEY: 50}),
+             _sector_label, _sector_describe),
+    Template("breadth_gate", frozenset({"weak_breadth_entry", "costly_breadth_gate"}),
+             BREADTH_GATE_KEY, "breadth_gate_update",
+             ({BREADTH_GATE_KEY: 0}, {BREADTH_GATE_KEY: 40.0}, {BREADTH_GATE_KEY: 50.0}, {BREADTH_GATE_KEY: 60.0}),
+             _breadth_label, _breadth_describe),
+    Template("entry_cluster_cap", frozenset({"clustered_stops", "costly_entry_cap"}),
+             ENTRY_CAP_KEY, ENTRY_CAP_ACTION,
+             ({ENTRY_CAP_KEY: 0}, {ENTRY_CAP_KEY: 2}, {ENTRY_CAP_KEY: 4}),
+             _cap_label, _cap_describe, kind="book"),
 )
 TEMPLATE_BY_NAME = {template.name: template for template in TEMPLATES}
 GATE_TEMPLATES = tuple(template for template in TEMPLATES if template.kind == "gate")
 EXIT_TEMPLATES = tuple(template for template in TEMPLATES if template.kind == "exit")
+# Book templates turn a book-level protection (one risk-rule key for every
+# strategy) and are replayed on the whole book; ``BOOK`` is their target in a
+# plan where a gate or exit template names a strategy type.
+BOOK_TEMPLATES = tuple(template for template in TEMPLATES if template.kind == "book")
+BOOK = "book"
 
 
 def templates_for(triggers: Iterable[str]) -> list[Template]:
@@ -338,7 +400,18 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
         for template in matched:
             trigger = lesson["cause"] if (lesson["cause"] in template.triggers or template is named) else next(
                 flag for flag in (lesson.get("contributing") or {}) if flag in template.triggers)
-            for target in targets:
+            # A book template has one target, the book: whichever strategy
+            # the lesson came from, the cap is tested on every strategy's
+            # trades competing for the live slots.
+            for target in (targets if template.kind != "book" else [BOOK]):
+                if template.kind == "book":
+                    key = (BOOK, template.name)
+                    candidate = {"strategy_type": BOOK, "template": template.name, "trigger": trigger,
+                                 "lesson_count": int(lesson["count"]), "lesson_scope": lesson["strategy_type"],
+                                 "lesson": lesson.get("lesson")}
+                    if key not in wanted or wanted[key]["lesson_count"] < candidate["lesson_count"]:
+                        wanted[key] = candidate
+                    continue
                 if target not in strategies:
                     skipped.append({"strategy_type": target, "template": template.name, "reason": "not an active strategy"})
                     continue
@@ -388,13 +461,15 @@ def _clean(value: Any) -> Any:
 
 
 def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, vix, replays, simulate,
-                   universe: Optional[Callable] = None, calibration: float = 1.0) -> dict:
+                   universe: Optional[Callable] = None, breadth=None, calibration: float = 1.0) -> dict:
     """Replay the strategy under its current setup and each candidate; apply the rule.
 
     ``universe`` is the optional point-in-time membership mask (``symbol,
-    dates -> bool array``) the replay ANDs into its entries.  ``calibration``
-    is the engine audit's factor ``decide`` multiplies into each candidate's
-    expected gain.
+    dates -> bool array``) the replay ANDs into its entries; ``breadth`` the
+    optional breadth history (``market_gauges.breadth_series``) the breadth
+    gate reads.  Either is passed to ``simulate`` only when set.
+    ``calibration`` is the engine audit's factor ``decide`` multiplies into
+    each candidate's expected gain.
     """
     from app.services.gate_replay import window_rows
 
@@ -407,6 +482,8 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
         setups[template.label(candidate)] = setup
     rows = {}
     extra = {"universe": universe} if universe is not None else {}
+    if breadth is not None:
+        extra["breadth"] = breadth
     for label, setup in setups.items():
         trades = simulate(strategy.strategy_type, frames, spy, setup, replays, vix=vix, **extra)
         rows[label] = window_rows(trades, frames)
@@ -417,6 +494,59 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
             "calibration": decision["calibration"],
             "adopted": adopted, "adopted_setup": setups.get(adopted),
             "adopted_description": template.describe(setups[adopted]) if adopted else None}
+
+
+def book_baseline(rules: Optional[Mapping]) -> dict:
+    """The book-level setup in force: the keys of every book template, from the active risk rule."""
+    from app.services.entry_protections import protection_config
+
+    config = protection_config(dict(rules or {}))
+    return {ENTRY_CAP_KEY: int(config.max_new_entries_per_session)}
+
+
+def run_book_experiment(strategies: Mapping[str, Any], template: Template, *, frames: Mapping, spy, vix, replays,
+                        simulate, rules: Optional[Mapping] = None, universe: Optional[Callable] = None,
+                        breadth=None, book_candidates: Optional[Callable] = None, calibration: float = 1.0) -> dict:
+    """Replay the whole book under the current book policy and each candidate; apply the same rule.
+
+    Every active replayable strategy's trades (each under its own live setup)
+    compete for the live slots (``book_replay.allocate``); a candidate changes
+    only the template's key of the book policy.  The rows are book metrics
+    (per-trade expectancy of the accepted trades, total profit, the book's
+    drawdown with each position at 1 / total cap of equity), judged by
+    ``decide`` exactly as a strategy experiment is.
+    """
+    from app.services import book_replay
+
+    baseline = book_baseline(rules)
+    setups = {BASELINE: baseline}
+    for candidate in template.candidates:
+        setup = {**baseline, **candidate}
+        if setup == baseline:
+            continue
+        setups[template.label(candidate)] = setup
+    live_setups = {name: current_setup(getattr(row, "parameters", None), name) for name, row in strategies.items()
+                   if book_replay.gate_replay.replayable(name)}
+    extra: dict = {"vix": vix}
+    if universe is not None:
+        extra["universe"] = universe
+    if breadth is not None:
+        extra["breadth"] = breadth
+    rows_in = (book_candidates or book_replay.candidates)(frames, spy, replays, live_setups, simulate=simulate, **extra)
+    rows = {}
+    for label, setup in setups.items():
+        policy = book_replay.book_policy(rules, max_new_per_day=int(setup[ENTRY_CAP_KEY] or 0))
+        accepted = book_replay.allocate(rows_in, frames, policy)
+        rows[label] = book_replay.book_rows(accepted, frames, weight=1.0 / policy["caps"]["total"])
+    decision = decide(rows, calibration=calibration)
+    adopted = decision["adopted"]
+    return {"strategy_type": BOOK, "strategy_id": None, "template": template.name, "key": template.key,
+            "baseline_setup": baseline, "setups": setups, "rows": rows, "decision": decision,
+            "calibration": decision["calibration"],
+            "adopted": adopted, "adopted_setup": setups.get(adopted),
+            "adopted_description": template.describe(setups[adopted]) if adopted else None,
+            "book": {"strategies": sorted(live_setups), "candidate_trades": int(len(rows_in)),
+                     "policy": book_replay.book_policy(rules)}}
 
 
 def _recent_performance(rows: list, trigger: str, *, limit: Optional[int] = None) -> dict:
@@ -452,25 +582,47 @@ def _apply_parameters(row: Strategy, changes: Mapping[str, Any]) -> dict:
     return before
 
 
-def adopt_change(db: Session, strategy: Strategy, experiment: dict, *, now: datetime, recent_rows: list) -> dict:
+def _apply_book_setting(db: Session, changes: Mapping[str, Any], *, reason: str) -> dict:
+    """Write book-level keys to the active risk rule; returns the previous values."""
+    from app.services.risk_settings import get_active_risk_rule, update_risk_settings
+
+    rule = get_active_risk_rule(db)
+    before = {key: (rule.value or {}).get(key) for key in changes}
+    update_risk_settings(db, dict(changes), reason=reason, actor="experiment_engine",
+                         authorization={"source": "experiment_engine", "paper_only": True})
+    return before
+
+
+def adopt_change(db: Session, strategy: Optional[Strategy], experiment: dict, *, now: datetime,
+                 recent_rows: list) -> dict:
+    """Apply the adopted candidate: to the strategy row (gate / exit templates) or the risk rule (book templates)."""
     template = TEMPLATE_BY_NAME[experiment["template"]]
-    candidate = {key: experiment["adopted_setup"][key] for key in template.candidates_for(strategy.strategy_type)[0]}
-    before = _apply_parameters(strategy, candidate)
-    after = {key: (strategy.parameters or {}).get(key) for key in candidate}
-    change_id = hashlib.sha256(f"{strategy.id}:{template.name}:{now.isoformat()}".encode()).hexdigest()[:12]
+    book = template.kind == "book"
+    strategy_type = BOOK if book else strategy.strategy_type
+    strategy_id = None if book else strategy.id
+    first = template.candidates[0] if book else template.candidates_for(strategy.strategy_type)[0]
+    candidate = {key: experiment["adopted_setup"][key] for key in first}
+    change_id = hashlib.sha256(f"{strategy_id}:{template.name}:{now.isoformat()}".encode()).hexdigest()[:12]
     untouched = ("Entry gates are unchanged; lots already open keep the legs they were opened with."
                  if template.kind == "exit" else "Sells and exits are unchanged.")
+    message = (f"experiment {change_id}: {experiment['adopted_description']}; adopted by the experiment engine "
+               f"after the {experiment['trigger']} lesson repeated and the pre-registered backtest rule passed. "
+               + untouched)
+    if book:
+        before = _apply_book_setting(db, candidate, reason=message)
+        rule_value = _risk_rule_value(db)
+        after = {key: rule_value.get(key) for key in candidate}
+    else:
+        before = _apply_parameters(strategy, candidate)
+        after = {key: (strategy.parameters or {}).get(key) for key in candidate}
     write_audit_log(
-        db, event_type=GOVERNANCE_EVENT, entity_type="strategy", entity_id=strategy.id,
-        action=template.governance_action, status="complete",
-        message=(f"experiment {change_id}: {experiment['adopted_description']}; adopted by the experiment engine "
-                 f"after the {experiment['trigger']} lesson repeated and the pre-registered backtest rule passed. "
-                 + untouched),
+        db, event_type=GOVERNANCE_EVENT, entity_type="risk_rule" if book else "strategy", entity_id=strategy_id,
+        action=template.governance_action, status="complete", message=message,
         payload=_clean({**candidate, "source": "experiment_engine", "change_id": change_id, "paper_only": True}),
     )
     recent = _recent_performance(recent_rows, experiment["trigger"], limit=RECENT_TRADES)
     change = {
-        "change_id": change_id, "strategy_id": strategy.id, "strategy_type": strategy.strategy_type,
+        "change_id": change_id, "strategy_id": strategy_id, "strategy_type": strategy_type,
         "template": template.name, "key": template.key, "trigger": experiment["trigger"],
         "description": experiment["adopted_description"], "before": before, "after": after,
         "adopted_at": _iso(now), "state": "watching",
@@ -485,11 +637,18 @@ def adopt_change(db: Session, strategy: Strategy, experiment: dict, *, now: date
         "paper_only": True,
     }
     write_audit_log(
-        db, event_type=EVENT, entity_type="strategy", entity_id=strategy.id, action=ACTION_ADOPTED, status="watching",
-        message=f"{strategy.strategy_type}: {experiment['adopted_description']} (change {change_id})",
+        db, event_type=EVENT, entity_type="risk_rule" if book else "strategy", entity_id=strategy_id,
+        action=ACTION_ADOPTED, status="watching",
+        message=f"{strategy_type}: {experiment['adopted_description']} (change {change_id})",
         payload=_clean(change),
     )
     return change
+
+
+def _risk_rule_value(db: Session) -> dict:
+    from app.services.risk_settings import get_active_risk_rule
+
+    return dict(get_active_risk_rule(db).value or {})
 
 
 def experiment_history(db: Session, *, limit: Optional[int] = None) -> list[dict]:
@@ -533,8 +692,40 @@ def _load_vix(start: str):
     return download_vix_history(start)
 
 
+def _load_breadth(now: datetime):
+    """The point-in-time breadth history as a series (``market_gauges``); the cache is rebuilt weekly."""
+    from app.services.market_gauges import breadth_series, load_breadth_history
+
+    return breadth_series(load_breadth_history(now=now))
+
+
+def _needs_breadth(planned: Iterable[Mapping], strategies: Mapping[str, Any]) -> bool:
+    """Whether any planned experiment turns, or any planned strategy already trades with, the breadth gate."""
+    for item in planned:
+        template = TEMPLATE_BY_NAME[item["template"]]
+        if template.key == BREADTH_GATE_KEY:
+            return True
+        row = strategies.get(item["strategy_type"])
+        if row is not None and current_setup(getattr(row, "parameters", None))[BREADTH_GATE_KEY]:
+            return True
+        if template.kind == "book" and any(current_setup(getattr(r, "parameters", None))[BREADTH_GATE_KEY]
+                                           for r in strategies.values()):
+            return True
+    return False
+
+
+def _active_rules(db: Session) -> dict:
+    """The active risk rule's values (book-level protections read them); empty when unreadable."""
+    try:
+        return _risk_rule_value(db)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("experiment engine: risk rule unavailable: %s", exc)
+        return {}
+
+
 def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader=None, earnings_loader=None,
-                          vix_loader=None, simulate=None) -> dict:
+                          vix_loader=None, simulate=None, breadth_loader=None, book_candidates=None) -> dict:
     """Weekly pass: plan from the repeating failures, replay, decide, adopt (paper only)."""
     from app.services.loss_diagnosis import repeating_failures
     from app.services.trade_attribution import current_attributions
@@ -584,14 +775,30 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
             logger.warning("experiment engine: VIX history unavailable: %s", exc)
             vix = None
         replays = {symbol: primary.replay_signals(frame) for symbol, frame in frames.items()}
+        breadth = None
+        if _needs_breadth(plan["planned"], strategies):
+            try:
+                breadth = (breadth_loader or _load_breadth)(now)
+            except Exception as exc:  # the breadth gate fails open live; replay the same way
+                logger.warning("experiment engine: breadth history unavailable: %s", exc)
+                breadth = None
+        rules = _active_rules(db) if any(TEMPLATE_BY_NAME[i["template"]].kind == "book" for i in plan["planned"]) else {}
         for item in plan["planned"]:
-            strategy = strategies[item["strategy_type"]]
             template = TEMPLATE_BY_NAME[item["template"]]
+            book = template.kind == "book"
+            strategy = None if book else strategies[item["strategy_type"]]
             try:
                 if not frames or spy is None:
                     raise RuntimeError("no price history to replay")
-                experiment = run_experiment(strategy, template, frames=frames, spy=spy, vix=vix, replays=replays,
-                                            simulate=simulate, universe=universe, calibration=calibration)
+                if book:
+                    experiment = run_book_experiment(strategies, template, frames=frames, spy=spy, vix=vix,
+                                                     replays=replays, simulate=simulate, rules=rules,
+                                                     universe=universe, breadth=breadth,
+                                                     book_candidates=book_candidates, calibration=calibration)
+                else:
+                    experiment = run_experiment(strategy, template, frames=frames, spy=spy, vix=vix, replays=replays,
+                                                simulate=simulate, universe=universe, breadth=breadth,
+                                                calibration=calibration)
             except Exception as exc:  # one experiment must not stop the run
                 db.rollback()
                 errors.append({**item, "error": f"{exc.__class__.__name__}: {exc}"})
@@ -599,17 +806,19 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
             experiment.update({"trigger": item["trigger"], "lesson_count": item["lesson_count"],
                                "lesson_scope": item["lesson_scope"], "ran_at": _iso(now),
                                "symbols": len(frames), "missing_symbols": missing, "universe": universe_summary,
+                               "breadth_history": breadth is not None,
                                "applied": bool(experiment["adopted"]) and settings.experiment_engine_adoption_enabled})
             change = None
             if experiment["adopted"] and settings.experiment_engine_adoption_enabled:
-                recent = [row for row in attributions if row.strategy_type == strategy.strategy_type]
+                recent = [row for row in attributions if book or row.strategy_type == strategy.strategy_type]
                 change = adopt_change(db, strategy, experiment, now=now, recent_rows=recent)
                 experiment["change_id"] = change["change_id"]
                 adopted.append(change)
             write_audit_log(
-                db, event_type=EVENT, entity_type="strategy", entity_id=strategy.id, action=ACTION_EXPERIMENT,
+                db, event_type=EVENT, entity_type="risk_rule" if book else "strategy",
+                entity_id=None if book else strategy.id, action=ACTION_EXPERIMENT,
                 status="adopted" if change else ("eligible" if experiment["adopted"] else "rejected"),
-                message=(f"{strategy.strategy_type} / {template.name} ({item['trigger']} x{item['lesson_count']}): "
+                message=(f"{item['strategy_type']} / {template.name} ({item['trigger']} x{item['lesson_count']}): "
                          + (f"adopt {experiment['adopted']}: {experiment['adopted_description']}" if experiment["adopted"]
                             else "no candidate beat the current setup")),
                 payload=_clean(experiment),
@@ -671,15 +880,23 @@ def judge(before: Mapping, after: Mapping, *, max_trades: int) -> str:
 
 
 def revert_change(db: Session, change: Mapping, *, now: datetime, reason: str) -> bool:
-    strategy = db.get(Strategy, change["strategy_id"])
-    if strategy is None:
-        return False
     template = TEMPLATE_BY_NAME[change["template"]]
-    _apply_parameters(strategy, change["before"])
+    message = f"experiment {change['change_id']} reverted: {reason}. Parameters restored to their values before the change."
+    if template.kind == "book":
+        # A key that was absent before the change goes back to off (0): the
+        # risk rule never drops a key, and 0 is the protection's "off".
+        before = {key: (value if value is not None else 0) for key, value in change["before"].items()}
+        _apply_book_setting(db, before, reason=message)
+        entity_type, entity_id = "risk_rule", None
+    else:
+        strategy = db.get(Strategy, change["strategy_id"])
+        if strategy is None:
+            return False
+        _apply_parameters(strategy, change["before"])
+        entity_type, entity_id = "strategy", strategy.id
     write_audit_log(
-        db, event_type=GOVERNANCE_EVENT, entity_type="strategy", entity_id=strategy.id,
-        action=template.governance_action, status="complete",
-        message=f"experiment {change['change_id']} reverted: {reason}. Parameters restored to their values before the change.",
+        db, event_type=GOVERNANCE_EVENT, entity_type=entity_type, entity_id=entity_id,
+        action=template.governance_action, status="complete", message=message,
         payload=_clean({**change["before"], "source": "experiment_engine", "reverted_change": change["change_id"],
                         "paper_only": True}),
     )
@@ -690,6 +907,8 @@ def _shadow_record(db: Session, change: Mapping, *, since: datetime, min_trades:
     """The alternatives' forward record since the change (``setup_shadow``); None when unreadable."""
     from app.services.setup_shadow import shadow_track_record
 
+    if TEMPLATE_BY_NAME[change["template"]].kind == "book":
+        return None  # book protections are not shadowed per BUY decision
     try:
         return shadow_track_record(db, change["strategy_type"], change["template"], since=since,
                                    min_trades=min_trades, margin_bps=REVERT_EXPECTANCY_BPS)
@@ -742,8 +961,9 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
         if change.get("state") != "watching":
             continue
         adopted_at = _parse(change["adopted_at"])
-        rows = [row for row in current_attributions(db, since=adopted_at, sources=SOURCES,
-                                                    strategy_types=[change["strategy_type"]])
+        # A book change is judged on every strategy's trades after it.
+        scope = None if change["strategy_type"] == BOOK else [change["strategy_type"]]
+        rows = [row for row in current_attributions(db, since=adopted_at, sources=SOURCES, strategy_types=scope)
                 if _parse(_iso(row.opened_at)) >= adopted_at]
         watch = change.get("watch") or {}
         min_trades = int(watch.get("min_trades") or settings.experiment_verdict_min_trades)
@@ -793,7 +1013,8 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
                    + (f"on shadow evidence: {reason}" if beaten_by else
                       f"after {after['trades']} trades ({_fmt_bps(after['expectancy_bps'])} bps vs "
                       f"{(change.get('recent_before') or {}).get('expectancy_bps')} before)"))
-        write_audit_log(db, event_type=EVENT, entity_type="strategy", entity_id=change["strategy_id"],
+        write_audit_log(db, event_type=EVENT, entity_type="risk_rule" if change["strategy_type"] == BOOK else "strategy",
+                        entity_id=change["strategy_id"],
                         action=ACTION_VERDICT, status=state, message=message, payload=_clean(payload))
         reviewed.append(payload)
     if reviewed:

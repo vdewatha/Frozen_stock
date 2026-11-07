@@ -81,7 +81,8 @@ def test_templates_cover_the_diagnosed_causes():
     assert [t.name for t in engine.templates_for({"missed_market_move"})] == ["market_gate"]
     assert [t.name for t in engine.templates_for({"high_vix_entry"})] == ["vix_gate"]
     assert [t.name for t in engine.templates_for({"missed_earnings"})] == ["earnings_blackout"]
-    assert engine.templates_for({"signal_wrong", "news_wrong", "clustered_stops"}) == []
+    assert engine.templates_for({"signal_wrong", "news_wrong"}) == []
+    assert [t.name for t in engine.templates_for({"clustered_stops"})] == ["entry_cluster_cap"]
     assert [t.name for t in engine.templates_for({"premature_stop"})] == ["stop_width"]
     assert [t.name for t in engine.templates_for({"held_too_long"})] == ["time_stop"]
     # Turning a gate off is always one of the candidates.
@@ -96,6 +97,7 @@ def test_current_setup_falls_back_to_the_account_blackout(monkeypatch):
     assert engine.current_setup({"earnings_blackout_sessions": 0})["earnings_blackout_sessions"] == 0
     assert engine.current_setup({"market_gate_sma": "20", "vix_gate": "below", "vix_level": 25}) == {
         "market_gate_sma": 20, "vix_gate": "below", "vix_level": 25.0, "earnings_blackout_sessions": 7,
+        "sector_gate_sma": 0, "breadth_gate_min": 0.0,
         "stop_loss_pct": None, "take_profit_pct": None, "max_holding_sessions": None}
     # With the strategy type, the baseline carries the exits its policy really trades with.
     technical = engine.current_setup({}, "channel_breakout")

@@ -28,6 +28,7 @@ UPDATABLE_RISK_FIELDS = {
     "memory_replay_min_hit_rate_delta",
     "position_stop_loss_pct",
     "position_take_profit_pct",
+    "max_new_entries_per_session",
 }
 
 
@@ -54,6 +55,10 @@ RISK_FIELD_BOUNDS: dict[str, tuple[type, float, float]] = {
     # that leg).  Capped at 50% so a typo cannot place a meaningless stop.
     "position_stop_loss_pct": (float, 0, 0.5),
     "position_take_profit_pct": (float, 0, 0.5),
+    # Book-level entry protection (``entry_protections``): at most N new
+    # entries per regular session, 0 = off.  Adopted by the experiment
+    # engine's ``entry_cluster_cap`` template.
+    "max_new_entries_per_session": (int, 0, 100),
 }
 
 

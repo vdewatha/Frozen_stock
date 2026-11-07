@@ -67,7 +67,8 @@ TOO_EARLY = "too early"
 NEUTRAL = "neutral"
 # Gates the experiment engine has a template for, and the lesson cause that plans it.
 ENGINE_GATES = {"market_gate": "costly_market_gate", "vix_gate": "costly_vix_gate",
-                "earnings_blackout": "costly_earnings_blackout"}
+                "earnings_blackout": "costly_earnings_blackout", "sector_gate": "costly_sector_gate",
+                "breadth_gate": "costly_breadth_gate", "entry_cap": "costly_entry_cap"}
 LESSON_TEXT = ("The {gate} gate stopped {scored} trades that, taken with the strategy's tested exits, "
                "averaged {mean_bps:+.1f} bps net: the gate forfeits more than it saves.")
 PROPOSAL_TEXT = "Replay the strategy with the gate off against its current setup under the pre-registered rule."
