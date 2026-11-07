@@ -254,6 +254,11 @@ class Settings(BaseSettings):
     # admitted OKLO on a sales beat next to a wider loss.
     news_discovery_min_directional: int = Field(default=2, ge=1, le=10)
     news_discovery_admit_days: int = Field(default=3, ge=1, le=10)
+    # Per-session news tone history (news_history.py): each discovery run
+    # spends this many Alpaca news requests (50 items each, 200 a minute
+    # allowed) extending the cached per symbol-day tone series back to 2015
+    # for the single-stock universe. 0 turns the backfill off.
+    news_history_backfill_requests_per_run: int = Field(default=120, ge=0, le=1000)
     news_discovery_min_price: float = Field(default=5.0, ge=1)
     news_discovery_min_dollar_volume: float = Field(default=20_000_000, ge=0)
     paper_vol_target_annual: float = Field(default=0.15, ge=0, le=2)

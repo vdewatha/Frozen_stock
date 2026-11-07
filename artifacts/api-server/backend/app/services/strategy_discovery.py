@@ -54,7 +54,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from app.services import earnings_history
+from app.services import earnings_history, news_history
 from app.services.backtest_statistics import deflated_sharpe_ratio, return_moments
 from app.services.strategies import rules
 from app.services.strategies.rules import RULE_SLUG_PREFIX
@@ -100,8 +100,13 @@ ABOVE_SMA5 = [_c("dist_sma_5", ">", 0)]
 SHORT_EXITS = {"first_up_close": FIRST_UP_CLOSE, "close_above_sma5": ABOVE_SMA5}
 
 
-# Families that only make sense on some universes (ETFs have no earnings).
-FAMILY_UNIVERSES = {"earnings_drift": frozenset({"single_stocks"})}
+# News-tone families (reports/news-entries-20261106.md): the ``news_tone`` /
+# ``news_articles`` features from ``news_history``; 0 without a tone history,
+# so the candidates fire only where the backfill reaches.
+NEWS_FAMILIES = frozenset({"positive_news_trend", "negative_news_dip", "post_upgrade_drift"})
+# Families that only make sense on some universes (ETFs have no earnings and no company news).
+FAMILY_UNIVERSES = {"earnings_drift": frozenset({"single_stocks"}),
+                    **{family: frozenset({"single_stocks"}) for family in NEWS_FAMILIES}}
 GAP_FLOOR = -0.03  # bigger opening gaps are news, not noise, and rarely fill the same day
 
 
@@ -147,6 +152,21 @@ def _families() -> Iterable[tuple[str, str, dict, dict]]:
         yield ("earnings_drift", "Prices keep drifting the way of an earnings surprise for weeks (PEAD).",
                {"entry": [*(TREND if trend else []), _c("earn_surprise", ">", surprise),
                           *([_c("ret_1", ">", reaction)] if reaction is not None else [])], "exit": []},
+               {"stop_loss_pct": 0.10, "take_profit_pct": 0.0, "max_holding_sessions": hold})
+    # News tone as an entry condition. ``news_tone`` is the bar's own session
+    # (stories before that close), ``news_tone_1`` the previous session's.
+    for lag, hold in product(("", "_1"), (5, 10)):
+        yield ("positive_news_trend", "Positive, well-covered news in an uptrend keeps paying for a few sessions.",
+               {"entry": [*TREND, _c(f"news_tone{lag}", ">=", 0.5), _c(f"news_articles{lag}", ">=", 2)],
+                "exit": ABOVE_SMA5},
+               {"stop_loss_pct": 0.10, "take_profit_pct": 0.0, "max_holding_sessions": hold})
+    for lag, trend in product(("", "_1"), (True, False)):
+        yield ("negative_news_dip", "A sharp dip on bad news is overdone and reverts (news overreaction).",
+               {"entry": [*(TREND if trend else []), _c(f"news_tone{lag}", "<=", -0.5), _c("rsi_2", "<", 10)],
+                "exit": ABOVE_SMA5}, reversion)
+    for trend, hold in product((True, False), (10, 20)):
+        yield ("post_upgrade_drift", "An analyst upgrade met by a gap up keeps drifting (recommendation drift).",
+               {"entry": [*(TREND if trend else []), _c("news_tone", ">=", 1.0), _c("gap", ">", 0.01)], "exit": []},
                {"stop_loss_pct": 0.10, "take_profit_pct": 0.0, "max_holding_sessions": hold})
     filters = {"none": [], "trend": TREND, "calm": [_c("vol_ratio_20_100", "<", 1.0)]}
     for gap, (filter_name, conditions), stop in product((-0.003, -0.005, -0.01), filters.items(), (0.01, 0.03)):
@@ -426,11 +446,13 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
 # ---------------------------------------------------------------- scheduled run
 
 def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optional[str] = None,
-                earnings_loader=None) -> tuple[dict, list]:
+                earnings_loader=None, news_loader=None) -> tuple[dict, list]:
     """Adjusted daily bars per symbol (shared cache with the meta-label retrainer).
 
-    Single stocks also get the ``earn_surprise`` column; a missing earnings
-    history leaves it empty rather than dropping the symbol.
+    Single stocks also get the ``earn_surprise`` column and the
+    ``news_tone`` / ``news_articles`` columns (``news_history`` cache); a
+    missing earnings or news history leaves them empty rather than dropping
+    the symbol.
     """
     from app.services.meta_label_learning import history_dir
     from app.services.strategy_scorecard import load_daily_history, normalize_prices
@@ -453,6 +475,12 @@ def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optiona
                 logger.warning("discovery earnings history unavailable for %s: %s", symbol, exc)
                 events = None
             frame = earnings_history.attach_surprises(frame, events)
+            try:
+                tone = news_loader(symbol) if news_loader else news_history.tone_series(symbol)
+            except Exception as exc:
+                logger.warning("discovery news history unavailable for %s: %s", symbol, exc)
+                tone = None
+            frame = news_history.attach_tone(frame, tone)
         if len(frame) > rules.MAX_RULE_LOOKBACK:
             frames[symbol] = frame
         else:

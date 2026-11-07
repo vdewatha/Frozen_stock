@@ -393,6 +393,26 @@ def _activate(db: Session, symbol: str, name: str | None) -> bool:
     return True
 
 
+def _extend_history(symbols: set[str], *, now: datetime) -> dict | None:
+    """Spend the run's request budget on the per-session tone history of the single stocks."""
+    from app.services import news_history
+    from app.services.trading_universe import ETF_SYMBOLS
+
+    budget = int(settings.news_history_backfill_requests_per_run)
+    stocks = sorted(symbol for symbol in symbols if symbol not in ETF_SYMBOLS)
+    if budget <= 0 or not stocks:
+        return None
+    try:
+        result = news_history.backfill(stocks, budget=budget, now=now)
+    except Exception as exc:  # the tone history is a by-product; never fail the run
+        logger.info("news history backfill failed: %s", exc.__class__.__name__)
+        return {"stopped": f"{exc.__class__.__name__}"}
+    return {key: result[key] for key in ("requests", "windows", "stories", "stopped", "symbols")} | {
+        "complete": len(result["complete"]),
+        "earliest": min((row["start"] for row in result["coverage"].values() if row and row.get("start")),
+                        default=None)}
+
+
 def run_news_discovery(db: Session, *, now: datetime | None = None,
                        fetch_news: Callable[[datetime, datetime], list[dict]] | None = None,
                        lookup_asset: Callable[[str], dict | None] = alpaca_asset,
@@ -460,12 +480,14 @@ def run_news_discovery(db: Session, *, now: datetime | None = None,
             if asset is not None:
                 asset.is_active = False
             managed.discard(symbol)
+    history = _extend_history(core | set(admitted), now=now)
     payload = {
         "observed_at": now.isoformat(),
         "status": status,
         "error": error,
         "articles_fetched": len(articles),
         "articles_stored": stored,
+        "history": history,
         "cap": cap,
         "admitted": sorted(admitted.values(), key=lambda row: row["symbol"]),
         "newly_admitted": sorted(set(admitted) - set(previous)),
