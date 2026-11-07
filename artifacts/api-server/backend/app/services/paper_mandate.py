@@ -313,7 +313,11 @@ def mandate_fit(
             f"Cycle needs {duration} sessions but only {max(mandate.max_sessions - used, 0)} remain in the mandate"
         )
     schedule = expected.get("schedule") or {}
-    if trigger not in (mandate.schedule or {}).get("triggers", []):
+    # A drift-triggered cycle is system-initiated like a scheduled one; the
+    # mandate's "scheduled" trigger covers both (operators mint mandates for
+    # scheduled and/or manual cycles only).
+    covering_trigger = "scheduled" if trigger == "drift" else trigger
+    if covering_trigger not in (mandate.schedule or {}).get("triggers", []):
         reasons.append(f"Mandate does not cover {trigger} cycles")
     if schedule.get("timezone") not in {None, "America/New_York"}:
         reasons.append("Cycle schedule is not an America/New_York session")

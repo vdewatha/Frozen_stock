@@ -77,7 +77,11 @@ from app.services.stock_forward_trial import (
 TRADABLE_RECOVERY_STATUSES = frozenset({"armed", "resumable"})
 
 TERMINAL_STATUSES = {"complete", "promoted", "demoted", "rolled_back", "failed"}
-VALID_TRIGGERS = {"manual", "scheduled"}
+VALID_TRIGGERS = {"manual", "scheduled", "drift"}
+# Cycles the automation owns end to end (admission, handoff, promotion).
+# "drift" cycles come from app/services/drift_retraining.py and run the
+# same gates as the calendar-scheduled ones.
+AUTOMATED_TRIGGERS = frozenset({"scheduled", "drift"})
 ONE_SESSION_SYMBOLS = ["AAPL", "MSFT", "QQQ", "SPY"]
 MIN_COMPARISON_SAMPLES = 30
 
@@ -1403,7 +1407,7 @@ def create_learning_cycle(
     hashed request, so it is immutable and visible in ``evidence.request``."""
     normalized = sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
     if trigger not in VALID_TRIGGERS:
-        raise StockTrainingError("Only manual or scheduled learning cycles are allowed")
+        raise StockTrainingError("Only manual, scheduled, or drift learning cycles are allowed")
     if not normalized:
         raise StockTrainingError("At least one stock symbol is required")
     if paper_session_date is not None and session_bounds(paper_session_date) is None:
@@ -1435,7 +1439,7 @@ def create_learning_cycle(
     cycle.gates = gates
     cycle.evidence = {"request": request, "preflight_at": _now().isoformat()}
     if not _all_pass(gates):
-        deferred = trigger == "scheduled" and any(
+        deferred = trigger in AUTOMATED_TRIGGERS and any(
             gate.get("status") == "unknown" for gate in gates.values()
         )
         cycle.status = "deferred" if deferred else "blocked"
@@ -1459,9 +1463,9 @@ def create_learning_cycle(
             cutoff_at=cutoff_at, provider=provider, trigger=trigger, seed=seed,
         )
     except StockTrainingError as exc:
-        cycle.status = "deferred" if trigger == "scheduled" else "blocked"
+        cycle.status = "deferred" if trigger in AUTOMATED_TRIGGERS else "blocked"
         cycle.last_reason = str(exc)
-        _event(db, cycle=cycle, stage="dataset", decision="deferred" if trigger == "scheduled" else "blocked",
+        _event(db, cycle=cycle, stage="dataset", decision="deferred" if trigger in AUTOMATED_TRIGGERS else "blocked",
                actor=actor, reason=str(exc), evidence={"gates": gates})
         return cycle, False
     cycle.snapshot_id = job.snapshot_id
@@ -1515,10 +1519,10 @@ def sync_cycle_from_training_job(db: Session, job_id: str, *, actor: str = "trai
     )
     cycle.model_run_id = model.run_id
     cycle.stage = "admission"
-    cycle.status = "awaiting_admission" if cycle.trigger == "scheduled" else "awaiting_forward_evidence"
+    cycle.status = "awaiting_admission" if cycle.trigger in AUTOMATED_TRIGGERS else "awaiting_forward_evidence"
     cycle.last_reason = admission_deferral_reason or (
         "Training completed; awaiting automatic paper-canary admission"
-        if cycle.trigger == "scheduled"
+        if cycle.trigger in AUTOMATED_TRIGGERS
         else "Awaiting a completed, aligned forward paper trial"
     )
     _event(
@@ -1654,8 +1658,8 @@ def admit_scheduled_learning_cycle(
     cycle = db.get(StockLearningCycle, cycle_id)
     if not cycle:
         raise StockTrainingError("Learning cycle not found")
-    if cycle.trigger != "scheduled":
-        raise StockTrainingError("Automatic paper admission is limited to scheduled cycles")
+    if cycle.trigger not in AUTOMATED_TRIGGERS:
+        raise StockTrainingError("Automatic paper admission is limited to scheduled and drift cycles")
     pause_reason = _scheduled_learning_pause_reason(db)
     if pause_reason:
         _defer_scheduled_cycle_for_pause(
@@ -2252,8 +2256,8 @@ def automate_paper_promotion(
     cycle = db.get(StockLearningCycle, cycle_id)
     if cycle is None:
         raise StockTrainingError("Learning cycle not found")
-    if cycle.trigger != "scheduled":
-        raise StockTrainingError("Automatic promotion is limited to scheduled paper cycles")
+    if cycle.trigger not in AUTOMATED_TRIGGERS:
+        raise StockTrainingError("Automatic promotion is limited to scheduled and drift paper cycles")
     pause_reason = _scheduled_learning_pause_reason(db)
     if pause_reason:
         _defer_scheduled_cycle_for_pause(
@@ -2620,7 +2624,7 @@ def run_scheduled_paper_trial_handoff_job(
     """
     pause_reason = _scheduled_learning_pause_reason(db)
     rows = db.scalars(select(StockLearningCycle).where(
-        StockLearningCycle.trigger == "scheduled",
+        StockLearningCycle.trigger.in_(tuple(AUTOMATED_TRIGGERS)),
         StockLearningCycle.training_job_id.is_not(None),
         StockLearningCycle.status.not_in((
             "complete", "promoted", "demoted", "rolled_back", "failed",
@@ -2718,7 +2722,7 @@ def run_automatic_paper_promotion_job(
             "live_authorized": False,
         }
     rows = db.scalars(select(StockLearningCycle).where(
-        StockLearningCycle.trigger == "scheduled",
+        StockLearningCycle.trigger.in_(tuple(AUTOMATED_TRIGGERS)),
         StockLearningCycle.model_run_id.is_not(None),
         StockLearningCycle.stage.in_(("forward_trial", "operator_review", "promotion")),
         StockLearningCycle.status.not_in(("complete", "promoted", "demoted", "rolled_back", "failed")),
