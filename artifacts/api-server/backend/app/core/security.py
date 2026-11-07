@@ -53,6 +53,7 @@ READ_PATHS = {
     "/stock-paper/setup-shadow",
     "/stock-paper/exploration-budget",
     "/stock-paper/cost-calibration",
+    "/stock-paper/engine-audit",
     "/stock-paper/self-healing",
     "/stock-paper/venue-qualification",
     "/live-broker/status",
