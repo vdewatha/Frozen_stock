@@ -82,11 +82,13 @@ REVERSION_CLASS = "reversion"
 TECHNICAL_CLASS = "technical"
 
 # Measured on 2026-11-07 (reports/verdict-inputs-20261107.md; replay of the live
-# strategies on the point-in-time universe, the bot's own ledger was empty).
-# ``loss_bound_bps``: the realistic worst-case per-trade SPY-adjusted loss given the stops
-# (gaps through the stop included), per strategy class; ``sigma_bps``: an upper
-# bound on the per-trade standard deviation of the paired difference (the
-# Catoni fallback's variance bound); ``rho``: residual same-date correlation.
+# strategies on the point-in-time universe, 2000+: the bot's own ledger was not
+# reachable from the measuring machine and held no adoption yet).
+# ``loss_bound_bps``: the 99.9th percentile of |SPY-adjusted per-trade return| given the
+# stops (gaps through the stop included), per strategy class, rounded up; a paired
+# difference is one trade's residual return or zero, so it bounds that too.
+# ``sigma_bps``: 1.1 x the largest per-trade residual std in the class (the Catoni
+# fallback's variance bound); ``rho``: residual same-date correlation (trade-weighted).
 MEASURED_INPUTS: dict = {
     "as_of": "2026-11-07",
     "source": "replay_point_in_time",
