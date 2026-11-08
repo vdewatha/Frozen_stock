@@ -117,6 +117,10 @@ def source_label(source: Optional[str], trial_id: Optional[str] = None) -> str:
         return "manual"
     if source == "recovery_flatten":
         return "recovery"
+    if source == "cost_probe":
+        # Cost probes (cost_probes.py) measure execution cost; they are not
+        # bot trades and never reach attribution or the scoreboards.
+        return "probe"
     return "other"
 
 

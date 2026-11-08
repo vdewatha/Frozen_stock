@@ -51,6 +51,15 @@ and the deflated Sharpe ratio of every candidate is charged for that
 cumulative count.  Three runs in a row without a child better than its
 parent pause mutation for one run.  The holdout is re-read on every run, so
 it is a sanity check, not a pristine test set.  Paper only.
+
+The yardstick (``yardstick.py``): every candidate also carries its cost
+bracket (5 / 10 / 25 bps a round trip, the published model, calibrated cells
+with 20+ fills), turnover, excess over a volatility-matched SPY/T-bill arm and
+SPY residual with clustered errors, and the short-hold veto on its holdout,
+which blocks new admissions (never retires an admitted row).  The trial
+ledger keeps each hash's family, and the deflated Sharpe charges the family's
+trials made outside the library (engine and research) on top of the
+library's cumulative count.
 """
 from __future__ import annotations
 
@@ -282,6 +291,12 @@ def _marked_returns(labels: pd.DataFrame, close: np.ndarray) -> np.ndarray:
     return returns
 
 
+# ``gross_return`` (before costs) and the hold dates feed the yardstick's cost
+# bracket, short-hold veto and SPY residual (yardstick.py).
+TRADE_COLUMNS = ["symbol", "t0", "entry_idx", "exit_idx", "entry_date", "exit_date", "holding_days", "barrier",
+                 "gross_return", "net_return", "excess", "entry_price", "exit_price"]
+
+
 def evaluate_candidate(candidate: Mapping, frames: Mapping[str, pd.DataFrame],
                        caches: Optional[dict] = None, universe=None) -> dict:
     """Executable trades and the equal-weight daily portfolio series for one candidate.
@@ -318,12 +333,9 @@ def evaluate_candidate(candidate: Mapping, frames: Mapping[str, pd.DataFrame],
         dates = pd.to_datetime(frame["date"].astype(str).str[:10]).to_numpy()
         labels = labels.assign(symbol=symbol, t0=dates[labels["event_idx"].to_numpy()],
                                excess=labels["net_return"] - labels["holding_days"].clip(lower=1) * drift)
-        trades.append(labels[["symbol", "t0", "entry_idx", "exit_idx", "holding_days", "barrier", "net_return",
-                              "excess", "entry_price", "exit_price"]])
+        trades.append(labels[TRADE_COLUMNS])
         daily.append(pd.Series(_marked_returns(labels, close.to_numpy()), index=dates))
-    trade_frame = pd.concat(trades, ignore_index=True) if trades else pd.DataFrame(
-        columns=["symbol", "t0", "entry_idx", "exit_idx", "holding_days", "barrier", "net_return", "excess",
-                 "entry_price", "exit_price"])
+    trade_frame = pd.concat(trades, ignore_index=True) if trades else pd.DataFrame(columns=TRADE_COLUMNS)
     portfolio = (pd.concat(daily, axis=1).mean(axis=1, skipna=True).sort_index() if daily
                  else pd.Series(dtype=float, index=pd.DatetimeIndex([])))  # no trade anywhere: still date-indexed
     return {"trades": trade_frame, "portfolio": portfolio}
@@ -337,8 +349,37 @@ def _stats(trades: pd.DataFrame) -> dict:
                                                ("trades", "expectancy_bps", "expectancy_ci_bps")}}
 
 
-def summarize_candidate(candidate: Mapping, evaluation: dict, holdout_start: pd.Timestamp) -> dict:
+def yardstick_scores(candidate: Mapping, evaluation: dict, holdout_start: pd.Timestamp,
+                     context: Optional[Mapping]) -> Optional[dict]:
+    """The yardstick's readings for one candidate (yardstick.py); None without a context.
+
+    Cost bracket on the discovery window (month-clustered CIs), since 2015 and
+    the holdout; turnover over the discovery window; the short-hold veto on the
+    holdout (its out-of-sample window); excess over the risk-matched passive
+    arm and the SPY residual on the discovery window and since 2015.
+    """
+    if context is None:
+        return None
+    from app.services import yardstick
+
+    frames = context["frames"]
+    symbols = [s for s in candidate["symbols"] if s in frames]
+    return yardstick.score_candidate(
+        evaluation["trades"], frames, spy=context.get("spy"),
+        windows={"discovery": (None, holdout_start), "post_period": (POST_PERIOD_START, holdout_start),
+                 "holdout": (holdout_start, None)},
+        passive_windows={"discovery": (None, holdout_start), "since_2015": (POST_PERIOD_START, None)},
+        ci_windows=("discovery",), turnover_span=yardstick.span(frames, symbols, end=holdout_start),
+        oos_start=holdout_start,
+        veto_cost=yardstick.veto_cost_bps(context.get("measured"), yardstick.classes_of(symbols)),
+        cells=context.get("cells"), irx=context.get("irx"), portfolio=evaluation.get("portfolio"),
+        cache=context.setdefault("cache", {}))
+
+
+def summarize_candidate(candidate: Mapping, evaluation: dict, holdout_start: pd.Timestamp,
+                        context: Optional[dict] = None) -> dict:
     trades = evaluation["trades"]
+    score = yardstick_scores(candidate, evaluation, holdout_start, context)
     t0 = pd.to_datetime(trades["t0"])
     discovery = trades.loc[t0 < holdout_start]
     post = trades.loc[(t0 >= pd.Timestamp(POST_PERIOD_START)) & (t0 < holdout_start)]
@@ -359,11 +400,20 @@ def summarize_candidate(candidate: Mapping, evaluation: dict, holdout_start: pd.
         "observations": int(moments["observations"]), "skewness": float(moments["skewness"]),
         "kurtosis": float(moments["kurtosis"]), "hash": rule_mutation.candidate_hash(candidate),
         **({"lineage": candidate["lineage"]} if candidate.get("lineage") else {}),
+        **({"yardstick": score} if score is not None else {}),
     }
 
 
-def gate(summary: dict, *, trials: int, trial_sharpes: list[float], bar: Gate = GATE) -> dict:
-    """The fixed pass/fail bar; every check is recorded, not just the verdict."""
+def gate(summary: dict, *, trials: int, trial_sharpes: list[float], bar: Gate = GATE, family_trials: int = 0) -> dict:
+    """The fixed pass/fail bar; every check is recorded, not just the verdict.
+
+    ``family_trials`` are the candidate's family's trials made outside the
+    library (experiment engine and hand-run research, ``yardstick
+    .trial_families``); they are added to the library's cumulative count, so
+    the deflated Sharpe can only get stricter.
+    """
+    library_trials = int(trials)
+    trials = library_trials + max(int(family_trials or 0), 0)
     dsr = deflated_sharpe_ratio(summary["sharpe_per_period"], summary["observations"], trials=trials,
                                 trial_sharpes=trial_sharpes, skewness=summary["skewness"],
                                 kurtosis=summary["kurtosis"])
@@ -382,7 +432,8 @@ def gate(summary: dict, *, trials: int, trial_sharpes: list[float], bar: Gate = 
     proven = all(checks.values())
     explore = all(value for key, value in checks.items() if key in EXPLORE_CHECKS)
     return {"passed": proven, "tier": "proven" if proven else "explore" if explore else "rejected",
-            "checks": checks, "deflated_sharpe": dsr["deflated_sharpe_ratio"], "dsr_trials": trials}
+            "checks": checks, "deflated_sharpe": dsr["deflated_sharpe_ratio"], "dsr_trials": trials,
+            "library_trials": library_trials, "family_trials": max(int(family_trials or 0), 0)}
 
 
 def rank_key(row: dict) -> tuple:
@@ -390,12 +441,19 @@ def rank_key(row: dict) -> tuple:
     return (TIER_ORDER[row["gate"]["tier"]], excess[0], row["gate"]["deflated_sharpe"] or 0.0)
 
 
-def apply_gate(result: dict, *, trials: int) -> dict:
-    """(Re)gate every candidate in ``result`` against ``trials`` and re-rank; the trial Sharpes are this run's."""
+def apply_gate(result: dict, *, trials: int, family_extra: Optional[Mapping[str, int]] = None) -> dict:
+    """(Re)gate every candidate in ``result`` against ``trials`` and re-rank; the trial Sharpes are this run's.
+
+    ``family_extra`` (family -> trials outside the library) is kept on the
+    result so a later re-gate charges the same families.
+    """
+    if family_extra is not None:
+        result["family_extra"] = dict(family_extra)
+    extra = result.get("family_extra") or {}
     summaries = result["candidates"]
     sharpes = [row["sharpe_per_period"] for row in summaries if row["observations"] > 1]
     for row in summaries:
-        row["gate"] = gate(row, trials=trials, trial_sharpes=sharpes)
+        row["gate"] = gate(row, trials=trials, trial_sharpes=sharpes, family_trials=int(extra.get(row["family"], 0)))
     summaries.sort(key=rank_key, reverse=True)
     result.update({"trials": trials, "proven": [row for row in summaries if row["gate"]["tier"] == "proven"],
                    "explore": [row for row in summaries if row["gate"]["tier"] == "explore"]})
@@ -404,17 +462,23 @@ def apply_gate(result: dict, *, trials: int) -> dict:
 
 def run_discovery(frames: Mapping[str, pd.DataFrame], symbols: Iterable[str], *,
                   data_end: Optional[str] = None, library: Optional[list[dict]] = None, universe=None,
-                  caches: Optional[dict] = None, trials: Optional[int] = None) -> dict:
-    """Evaluate and gate ``library`` (default: the fixed library); ``trials`` defaults to its size."""
+                  caches: Optional[dict] = None, trials: Optional[int] = None, context: Optional[dict] = None,
+                  family_extra: Optional[Mapping[str, int]] = None) -> dict:
+    """Evaluate and gate ``library`` (default: the fixed library); ``trials`` defaults to its size.
+
+    ``context`` (frames, SPY, T-bills, calibration cells, measured costs)
+    turns on the yardstick readings per candidate; ``family_extra`` charges
+    each family's trials outside the library to its deflated Sharpe.
+    """
     library = library if library is not None else candidate_library(symbols)
     end = pd.Timestamp(data_end) if data_end else max(pd.Timestamp(str(f["date"].iloc[-1])[:10]) for f in frames.values())
     holdout_start = end - pd.DateOffset(years=HOLDOUT_YEARS)
     caches = caches if caches is not None else {}
     summaries = [summarize_candidate(candidate, evaluate_candidate(candidate, frames, caches, universe=universe),
-                                     holdout_start) for candidate in library]
+                                     holdout_start, context) for candidate in library]
     result = {"data_end": str(end.date()), "holdout_start": str(holdout_start.date()), "gate": GATE.__dict__,
               "candidates": summaries}
-    return apply_gate(result, trials=max(len(library), trials or 0))
+    return apply_gate(result, trials=max(len(library), trials or 0), family_extra=family_extra)
 
 
 # ---------------------------------------------------------------- evolution
@@ -461,7 +525,7 @@ def candidate_spec(row: Mapping) -> dict:
 def evolve_library(result: dict, frames: Mapping[str, pd.DataFrame], *, seen_hashes: Iterable[str], seed: int,
                    groups: Mapping[str, Sequence[str]], universe=None, caches: Optional[dict] = None,
                    parents: int = MUTATION_PARENTS, children: int = MUTATION_CHILDREN,
-                   budget_seconds: float = 300.0, clock=time.monotonic) -> dict:
+                   budget_seconds: float = 300.0, clock=time.monotonic, context: Optional[dict] = None) -> dict:
     """One evolution step: breed children of this run's parents, evaluate them inside the budget, add them to ``result``.
 
     Children are gated against the current ``result["trials"]`` here so the
@@ -481,8 +545,10 @@ def evolve_library(result: dict, frames: Mapping[str, pd.DataFrame], *, seen_has
         if clock() - started > budget_seconds:
             budget_exhausted = True
             break
-        row = summarize_candidate(child, evaluate_candidate(child, frames, caches, universe=universe), holdout_start)
-        row["gate"] = gate(row, trials=result["trials"] + len(offspring), trial_sharpes=sharpes)
+        row = summarize_candidate(child, evaluate_candidate(child, frames, caches, universe=universe), holdout_start,
+                                  context)
+        row["gate"] = gate(row, trials=result["trials"] + len(offspring), trial_sharpes=sharpes,
+                           family_trials=int((result.get("family_extra") or {}).get(row["family"], 0)))
         row["lineage"] = dict(child["lineage"], improved_on_parent=improves_on(row, by_id[child["lineage"]["parent_id"]]))
         evaluated.append(row)
     result["candidates"].extend(evaluated)
@@ -511,7 +577,17 @@ def load_trials(db: Session) -> dict:
                      .order_by(AuditLog.id.desc()).limit(1)).first()
     payload = (row.payload if row is not None else None) or {}
     return {"hashes": set(payload.get("hashes") or []), "retained": list(payload.get("retained") or []),
-            "runs": int(payload.get("runs") or 0)}
+            "runs": int(payload.get("runs") or 0), "hash_families": dict(payload.get("hash_families") or {})}
+
+
+def latest_trials_payload(db: Session) -> dict:
+    """The latest ``discovery_trials`` payload (hashes, their families, retained children); empty before the first run."""
+    from app.models import AuditLog
+    from sqlalchemy import select
+
+    row = db.scalars(select(AuditLog).where(AuditLog.event_type == TRIALS_EVENT, AuditLog.action == "run")
+                     .order_by(AuditLog.id.desc()).limit(1)).first()
+    return dict((row.payload if row is not None else None) or {})
 
 
 def last_run_mutation(db: Session) -> dict:
@@ -530,15 +606,24 @@ def retained_children(result: dict, *, limit: int = RETAINED_MAX) -> list[dict]:
     return [candidate_spec(row) for row in rows[:limit]]
 
 
-def record_trials(db: Session, *, hashes: Iterable[str], retained: list[dict], runs: int, data_end: str) -> None:
+def record_trials(db: Session, *, hashes: Iterable[str], retained: list[dict], runs: int, data_end: str,
+                  hash_families: Optional[Mapping[str, str]] = None) -> None:
+    """One ``discovery_trials`` row; ``hash_families`` maps each hash to its family (trials per family)."""
     from app.services.audit import write_audit_log
 
     hashes = sorted(set(hashes))
+    kept = set(hashes)
+    families = {digest: family for digest, family in (hash_families or {}).items() if digest in kept}
+    by_family: dict[str, int] = {}
+    for digest in hashes:
+        family = families.get(digest) or "unattributed"
+        by_family[family] = by_family.get(family, 0) + 1
     write_audit_log(db, event_type=TRIALS_EVENT, action="run", status="complete",
                     message=f"discovery trials: {len(hashes)} rules ever evaluated, {len(retained)} children retained",
                     entity_type="strategy_discovery",
                     payload={"hashes": hashes, "count": len(hashes), "retained": retained, "runs": runs,
-                             "data_end": data_end, "paper_only": True})
+                             "data_end": data_end, "hash_families": families, "families": by_family,
+                             "paper_only": True})
 
 
 # ---------------------------------------------------------------- admission
@@ -570,9 +655,22 @@ def admissible(row: dict, *, require_proven: bool) -> bool:
     return row["gate"]["tier"] == "proven" or (not require_proven and row["gate"]["tier"] == "explore")
 
 
+def short_hold_vetoed(row: Mapping) -> Optional[str]:
+    """The yardstick's short-hold veto reason for a candidate (``yardstick.VETO_RULE``), or None."""
+    veto = (row.get("yardstick") or {}).get("short_hold_veto") or {}
+    return veto.get("reason") if veto.get("vetoed") else None
+
+
 def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None, max_new: int = 3,
                     max_live: int = 10, require_proven: bool = False) -> dict:
-    """Create ``rule_<id>`` paper candidates for new admissible rows; retire candidates that stopped qualifying."""
+    """Create ``rule_<id>`` paper candidates for new admissible rows; retire candidates that stopped qualifying.
+
+    With ``yardstick_short_hold_veto`` on, a new admission must also clear the
+    short-hold veto (``short_hold_vetoed``); a strategy already admitted is
+    still governed by the gate and its forward evidence, so the veto never
+    retires one (it is reported in ``vetoed``).
+    """
+    from app.core.config import settings
     from app.models import Strategy
     from app.services.audit import write_audit_log
 
@@ -581,7 +679,7 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
     existing = {row.strategy_type: row for row in
                 db.query(Strategy).filter(Strategy.strategy_type.like(f"{RULE_SLUG_PREFIX}%")).all()}
     live = sum(1 for row in existing.values() if row.current_status in LIVE_STATUSES)
-    admitted, retired, refreshed = [], [], []
+    admitted, retired, refreshed, vetoed = [], [], [], []
     for slug, strategy in existing.items():
         row = by_id.get(slug[len(RULE_SLUG_PREFIX):])
         if row is None:
@@ -604,6 +702,12 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
         if not admissible(row, require_proven=require_proven):
             continue
         slug = strategy_slug(row["id"])
+        veto = short_hold_vetoed(row)
+        if veto is not None:
+            enforced = bool(settings.yardstick_short_hold_veto) and slug not in existing
+            vetoed.append({"slug": slug, "existing": slug in existing, "reason": veto, "enforced": enforced})
+            if enforced:
+                continue
         if slug in existing:
             continue
         if len(admitted) >= max_new or live >= max_live:
@@ -621,7 +725,7 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
                         entity_id=strategy.id,
                         payload={"slug": slug, "gate": row["gate"], "lineage": row.get("lineage"), "paper_only": True})
     db.flush()
-    return {"admitted": admitted, "retired": retired, "refreshed": refreshed, "live": live}
+    return {"admitted": admitted, "retired": retired, "refreshed": refreshed, "live": live, "vetoed": vetoed}
 
 
 # ---------------------------------------------------------------- scheduled run
@@ -678,6 +782,8 @@ def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optiona
 
 
 def report_rows(rows: list[dict], limit: int = 20) -> list[dict]:
+    from app.services.yardstick import compact
+
     out = []
     for row in rows[:limit]:
         net, excess = row["discovery"]["net"], row["discovery"]["excess_over_drift"]
@@ -691,12 +797,29 @@ def report_rows(rows: list[dict], limit: int = 20) -> list[dict]:
                     "post_period_expectancy_bps": row["post_period"]["expectancy_bps"],
                     "holdout_trades": row["holdout"]["trades"], "holdout_expectancy_bps": row["holdout"]["expectancy_bps"],
                     "sharpe_annualized": row["sharpe_annualized"], "deflated_sharpe": row["gate"]["deflated_sharpe"],
-                    "lineage": row.get("lineage")})
+                    "dsr_trials": row["gate"].get("dsr_trials"), "family_trials": row["gate"].get("family_trials"),
+                    "lineage": row.get("lineage"),
+                    **({"yardstick": {"discovery": compact(row["yardstick"], "discovery"),
+                                      "holdout_net_bps": compact(row["yardstick"], "holdout", "since_2015")["net_bps"],
+                                      "since_2015": compact(row["yardstick"], "post_period", "since_2015")}}
+                       if row.get("yardstick") else {})})
     return out
 
 
+def discovery_context(frames: Mapping[str, pd.DataFrame], db: Optional[Session] = None, *, irx=None,
+                      download: bool = True) -> dict:
+    """What the yardstick needs per candidate: frames, SPY, T-bills, calibrated cells, measured round trips."""
+    from app.services import yardstick
+
+    return {"frames": frames, "spy": frames.get("SPY"),
+            "irx": irx if irx is not None else yardstick.load_irx(download=download),
+            "cells": yardstick.current_cells(db) if db is not None else [],
+            "measured": yardstick.measured_costs(db) if db is not None else {}, "cache": {}}
+
+
 def evolution_step(db: Session, result: dict, frames: Mapping[str, pd.DataFrame], *, groups: Mapping,
-                   seen_hashes: Iterable[str], universe=None, caches: Optional[dict] = None, clock=time.monotonic) -> dict:
+                   seen_hashes: Iterable[str], universe=None, caches: Optional[dict] = None, clock=time.monotonic,
+                   context: Optional[dict] = None) -> dict:
     """The scheduled run's mutation step: settings, the stale-run pause, then ``evolve_library``.
 
     ``stale_runs`` counts consecutive runs without a child better than its
@@ -715,7 +838,7 @@ def evolution_step(db: Session, result: dict, frames: Mapping[str, pd.DataFrame]
     seed = int(hashlib.sha256(f"{result['data_end']}:{len(seen)}".encode()).hexdigest()[:8], 16)
     step = evolve_library(result, frames, seen_hashes=seen, seed=seed, groups=groups, universe=universe,
                           caches=caches, budget_seconds=float(settings.strategy_discovery_mutation_budget_seconds),
-                          clock=clock)
+                          clock=clock, context=context)
     step["stale_runs"] = 0 if step["improved"] else stale + 1
     return step
 
@@ -730,6 +853,7 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
     base = {"paper_only": True, "live_authorized": False}
     if not settings.strategy_discovery_enabled:
         return base | {"status": "disabled"}
+    injected = loader is not None   # a caller-supplied loader means no network for the T-bill history either
     symbols = sorted({s.upper() for s in settings.paper_execution_symbols})
     tradeable = set(symbols)
     universe, universe_summary = None, {"mode": "today", "symbols": len(symbols)}
@@ -759,22 +883,29 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
             library.append({**spec, "symbols": list(groups[spec["universe"]]),
                             "hypothesis": f"Retained child of {spec['lineage']['parent_id']}"})
     caches: dict = {}
+    from app.services import yardstick
+
+    family_extra = yardstick.external_family_trials(db, exclude="discovery")
+    context = discovery_context(frames, db, download=not injected)
     result = run_discovery(frames, frames.keys(), universe=universe, library=library, caches=caches,
-                           trials=len(trials["hashes"] | known))
+                           trials=len(trials["hashes"] | known), context=context, family_extra=family_extra)
     mutation = evolution_step(db, result, frames, groups=groups, universe=universe, caches=caches,
-                              seen_hashes=trials["hashes"] | known)
+                              seen_hashes=trials["hashes"] | known, context=context)
     ever = trials["hashes"] | known | {row["hash"] for row in result["candidates"]}
     apply_gate(result, trials=len(ever))
     mutation["trials_cumulative"] = len(ever)
+    hash_families = dict(trials.get("hash_families") or {})
+    hash_families.update({rule_mutation.candidate_hash(candidate): candidate["family"] for candidate in library})
+    hash_families.update({row["hash"]: row["family"] for row in result["candidates"]})
     record_trials(db, hashes=ever, retained=retained_children(result), runs=trials["runs"] + 1,
-                  data_end=result["data_end"])
+                  data_end=result["data_end"], hash_families=hash_families)
     if universe is not None:
         # The candidate was judged on every past member; the paper row it may
         # become can only trade today's list, so its scope is that subset.
         for row in result["candidates"]:
             row["evaluated_symbols"] = len(row["symbols"])
             row["symbols"] = [s for s in row["symbols"] if s in tradeable]
-    admission = {"admitted": [], "retired": [], "refreshed": [], "live": None}
+    admission = {"admitted": [], "retired": [], "refreshed": [], "live": None, "vetoed": []}
     if settings.strategy_discovery_admission_enabled:
         admission = admit_survivors(db, result, now=now, max_new=settings.strategy_discovery_max_new,
                                     max_live=settings.strategy_discovery_max_live,
@@ -783,6 +914,14 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
                "library": len(library), "proven": len(result["proven"]), "explore": len(result["explore"]),
                "missing_symbols": missing, "universe": universe_summary, "mutation": mutation,
                "require_proven": settings.strategy_discovery_require_proven, **admission,
+               "yardstick": {"short_hold_veto": yardstick.VETO_RULE,
+                             "short_hold_veto_enabled": bool(settings.yardstick_short_hold_veto),
+                             "vetoed_candidates": sum(1 for row in result["candidates"] if short_hold_vetoed(row)),
+                             "excess_passes": sum(1 for row in result["candidates"]
+                                                  if ((((row.get("yardstick") or {}).get("passive") or {})
+                                                       .get("windows") or {}).get("discovery") or {}).get("passes")),
+                             "family_extra_trials": family_extra,
+                             "tbill": "available" if context.get("irx") is not None else "unavailable"},
                "top": report_rows(result["candidates"], 10)}
     write_audit_log(db, event_type="strategy_discovery", action="run", status="complete",
                     message=(f"strategy discovery: {len(library)} candidates, {mutation.get('children_evaluated', 0)} "

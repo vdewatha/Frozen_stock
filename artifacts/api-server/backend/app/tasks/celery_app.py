@@ -142,6 +142,10 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.feed_hygiene_job": {"queue": "market_data"},
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.engine_audit_job": {"queue": "learning"},
+    "app.tasks.jobs.yardstick_job": {"queue": "learning"},
+    "app.tasks.jobs.cost_probe_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.dividend_check_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.sleeve_guardrail_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.self_healing_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     # Slow book (target_weight_book.py): the rebalance places paper orders, so
@@ -433,6 +437,36 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.engine_audit_job",
         "schedule": crontab(minute=30, hour=14, day_of_week="sat"),
         "options": {"expires": 12 * 60 * 60},
+    },
+    # The yardstick (yardstick.py): Saturday after the cost calibration (13:30)
+    # and before the engine audit and the Sunday runs, store the realised-cost
+    # table read straight from the fills, the measured round trips the
+    # short-hold veto uses, and the trials per family.
+    "yardstick": {
+        "task": "app.tasks.jobs.yardstick_job",
+        "schedule": crontab(minute=50, hour=13, day_of_week="sat"),
+        "options": {"expires": 12 * 60 * 60},
+    },
+    # Cost probes (cost_probes.py): every 5 minutes in session; each tick
+    # records a finished round trip, closes a due probe or opens the week's
+    # next one (default 3 a week, one share, 10:30-14:00 ET entries).
+    "cost-probes": {
+        "task": "app.tasks.jobs.cost_probe_job",
+        "schedule": crontab(minute="*/5", hour="10-15", day_of_week="mon-fri"),
+        "options": {"expires": 4 * 60},
+    },
+    # Dividends: weekly, are DIV entries booked in the paper activities feed?
+    "dividend-check": {
+        "task": "app.tasks.jobs.dividend_check_job",
+        "schedule": crontab(minute=40, hour=13, day_of_week="sat"),
+        "options": {"expires": 12 * 60 * 60},
+    },
+    # Monthly sleeves: their harm guardrail on daily active P&L against the
+    # passive arm, each weekday after the close (no sleeve or no P&L = no-op).
+    "sleeve-guardrail": {
+        "task": "app.tasks.jobs.sleeve_guardrail_job",
+        "schedule": crontab(minute=15, hour=17, day_of_week="mon-fri"),
+        "options": {"expires": 6 * 60 * 60},
     },
     "parameter-application": {"task": "app.tasks.jobs.parameter_application_job", "schedule": 60 * 15},
     # Self-healing: every 15 minutes from before the open through the evening

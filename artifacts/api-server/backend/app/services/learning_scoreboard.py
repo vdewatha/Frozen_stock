@@ -527,6 +527,22 @@ def build_learning_scoreboard(db: Session, *, now: Optional[datetime] = None) ->
         "engine_audit": _engine_audit(db),
         "regime": _regime(db, now),
         "exploration": _exploration(db, now),
+        "yardstick": _yardstick(db),
         "paper_only": True,
     }
+
+
+def _yardstick(db: Session) -> dict:
+    """Dividends booked in the paper feed, the probes' measured costs and the family trial counts (never fails the board)."""
+    from app.services import cost_probes, dividend_check, yardstick
+
+    out: dict = {}
+    for name, read in (("dividends", dividend_check.dividend_status), ("probes", cost_probes.probe_status),
+                       ("measured_round_trip_bps", yardstick.measured_costs)):
+        try:
+            out[name] = read(db)
+        except Exception as exc:
+            db.rollback()
+            out[name] = {"status": "unavailable", "error": f"{exc.__class__.__name__}: {exc}"[:200]}
+    return out
 
