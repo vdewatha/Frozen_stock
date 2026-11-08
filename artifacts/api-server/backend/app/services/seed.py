@@ -970,6 +970,13 @@ def grant_target_weight_exemption(db: Session) -> bool:
     return True
 
 
+def admit_defensive_shadow(db: Session) -> Optional[str]:
+    """One-time creation of the zero-capital Design A shadow sleeve (``defensive_sleeve``, step 3)."""
+    from app.services.defensive_sleeve import admit_shadow
+
+    return admit_shadow(db)
+
+
 def ensure_target_weight_assets(db: Session) -> list[str]:
     """Asset rows for the book's symbols, so the daily and intraday imports cover them."""
     from app.services.target_weight_book import book_symbols
@@ -1006,6 +1013,7 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "rsi2_stock_leg_shadowed": shadow_rsi2_stock_leg(db),
         "passive_arm_admission": admit_passive_arm(db),
         "target_weight_exemption_granted": grant_target_weight_exemption(db),
+        "defensive_shadow_admission": admit_defensive_shadow(db),
     }
 
 

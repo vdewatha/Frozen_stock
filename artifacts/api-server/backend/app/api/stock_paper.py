@@ -228,10 +228,18 @@ def self_healing(db: Session = Depends(get_db)) -> dict:
 
 @router.get("/target-weight-book")
 def target_weight_book(db: Session = Depends(get_db)) -> dict:
-    """The slow book: targets, holdings, tranche schedule, turnover and pass-rule cycles (read-only)."""
+    """The slow book: targets, holdings, tranche schedule, turnover and pass-rule cycles (read-only),
+    plus ``defensive_sleeve``: the step 3 decision, the zero-capital Design A shadow and its re-decision trigger."""
+    from app.services.defensive_sleeve import view as defensive_view
     from app.services.target_weight_book import book_view
 
-    return book_view(db)
+    result = book_view(db)
+    try:
+        result["defensive_sleeve"] = defensive_view(db)
+    except Exception as exc:  # the book's view never fails on the shadow
+        db.rollback()
+        result["defensive_sleeve"] = {"status": "unavailable", "error": exc.__class__.__name__}
+    return result
 
 
 class TargetWeightExemptionRequest(BaseModel):
