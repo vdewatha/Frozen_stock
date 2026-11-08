@@ -4,7 +4,8 @@ Step 1 of `reports/Retail bot edge feasibility.md` ("Fix the yardstick", no new 
 Pure measurement: the experiment engine's `RULE`, the discovery gate and `fixed_20` keep acting on the cost they
 always used; the bracket and the new scores are reported beside them. The only new decision rules are the
 pre-registered short-hold veto (it can only block an engine adoption or a new discovery admission) and the
-monthly-sleeve harm guardrail (it acts on no row today, because no sleeve exists yet). Paper only.
+monthly-sleeve harm guardrail (it acts only on the target-weight book's sleeves from PR #45, and only once their
+daily P&L rows exist). Paper only.
 
 ## What was built
 
@@ -25,9 +26,10 @@ observation per session), it is harm if, after at least 60 sessions, the date-cl
 return is at or below -2 (one-sided, about the 2.3% level), or if, at any time, the active wealth ratio
 prod(1+sleeve)/prod(1+passive) falls more than 15% from its peak. Harm pauses the sleeve row
 (`strategy_governance` / `sleeve_guardrail_pause`) and reverts an engine change on it. Daily P&L is read
-defensively from registered readers, `parameters["sleeve_daily_pnl"]`, or `sleeve_engine` / `target_weight_sleeve`
-audit rows (`daily_pnl`), as `{session, sleeve_return, passive_return}` or `{session, active_return}`. Nothing
-readable means `no_data`, and nothing is done.
+defensively: the target-weight book's `target_weight_book` / `sleeve_daily_pnl` rows (each sleeve's `return`
+against `passive_arm.return`; the arm is never judged against itself), registered readers,
+`parameters["sleeve_daily_pnl"]`, or other sleeve audit rows as `{session, sleeve_return, passive_return}` or
+`{session, active_return}`. Nothing readable means `no_data`, and nothing is done.
 
 Settings (all in `app/core/config.py`): `yardstick_slot_fraction` 0.05, `yardstick_short_hold_veto` True,
 `cost_probe_per_week` 3 (0 disables), `cost_probe_quantity` 1, `cost_probe_max_notional` 1000,
