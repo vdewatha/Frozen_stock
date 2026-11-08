@@ -202,6 +202,14 @@ def cost_calibration(db: Session = Depends(get_db)) -> dict:
     return calibration_view(db)
 
 
+@router.get("/yardstick")
+def yardstick(db: Session = Depends(get_db)) -> dict:
+    """How verdicts are measured: cost bracket, measured costs, trials per family, dividends, probes, sleeves (read-only)."""
+    from app.services.yardstick import yardstick_view
+
+    return yardstick_view(db)
+
+
 @router.get("/engine-audit")
 def engine_audit(db: Session = Depends(get_db)) -> dict:
     """Expected vs realised per adopted change, the engine's hit rate and the calibration factor in force (read-only)."""

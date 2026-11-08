@@ -488,6 +488,27 @@ class Settings(BaseSettings):
     # min_fills fills before its multiplier is fitted (paper_cost_calibration.py).
     paper_cost_calibration_lookback_sessions: int = Field(default=60, ge=1, le=250)
     paper_cost_calibration_min_fills: int = Field(default=20, ge=1, le=1000)
+    # The yardstick (yardstick.py, reports/yardstick-20261107.md): every verdict
+    # is also read at 5/10/25 bps a round trip, the published model and any
+    # calibrated cell with >= 20 fills; turnover uses this slot size (the
+    # replayed book's 5% of equity a trade). The short-hold veto (median hold
+    # < 20 sessions needs out-of-sample gross >= max(30 bps, 3 x round-trip
+    # cost)) blocks engine adoptions and new discovery admissions when on.
+    yardstick_slot_fraction: float = Field(default=0.05, gt=0, le=1)
+    yardstick_short_hold_veto: bool = True
+    # Cost probes (cost_probes.py): one-share paper round trips spread over the
+    # week on the liquid ETFs and a few large caps, so the cost cells keep
+    # filling when the strategies stop trading. 0 per week disables them.
+    cost_probe_per_week: int = Field(default=3, ge=0, le=20)
+    cost_probe_quantity: int = Field(default=1, ge=1, le=10)
+    cost_probe_max_notional: float = Field(default=1000.0, gt=0, le=10000)
+    cost_probe_hold_minutes: int = Field(default=30, ge=1, le=360)
+    cost_probe_symbols: list[str] = ["SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "AAPL", "MSFT", "AMZN", "GOOGL"]
+    # Monthly sleeves (sleeve_guardrail.py): skipped by the fixed_20 verdict and
+    # judged by the pre-registered harm guardrail on daily active P&L against
+    # the passive arm; action_enabled lets a harmful sleeve be paused.
+    sleeve_guardrail_enabled: bool = True
+    sleeve_guardrail_action_enabled: bool = True
     # Performance-weighted paper risk fractions (bounded, shrink-first).
     paper_allocation_weighting_enabled: bool = True
     paper_allocation_floor: float = Field(default=0.5, gt=0, le=1)

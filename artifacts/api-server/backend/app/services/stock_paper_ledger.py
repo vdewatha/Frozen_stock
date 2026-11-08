@@ -58,8 +58,13 @@ UNCERTAIN_ORDER_HALT_REASONS = frozenset({
 NONTERMINAL_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
 ALLOWED_ORDER_SOURCES = frozenset({
     "manual_control_room", "manual_close", "manual_reduce", "recovery_flatten",
-    "broker_import", "scheduled_paper_signal", "paper_exploration",
+    "broker_import", "scheduled_paper_signal", "paper_exploration", "cost_probe",
 })
+# Cost probes (cost_probes.py): one-share paper round trips that keep the cost
+# cells filling. Their own source and client-order-id prefix keep them out of
+# trade attribution, the loss diagnosis and every scoreboard.
+PROBE_SOURCE = "cost_probe"
+PROBE_CLIENT_PREFIX = "sp-probe-"
 # Autonomous sources that must pass the scheduled launch admission gates.
 AUTONOMOUS_ORDER_SOURCES = frozenset({"scheduled_paper_signal", "paper_exploration"})
 EXPLORATION_SOURCE = "paper_exploration"
@@ -2662,6 +2667,32 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     return signal, evidence
 
 
+def _validate_probe_buy(db: Session, account: StockPaperAccount, symbol: str, quantity: Decimal,
+                        reference_price: Decimal, *, order_id: int | None = None) -> None:
+    """A cost probe (cost_probes.py): enabled, a rotation symbol, whole shares within the size cap, a flat symbol."""
+    from app.services.cost_probes import probe_symbols
+
+    if int(settings.cost_probe_per_week) <= 0:
+        raise StockPaperError("Cost probes are disabled")
+    if symbol not in probe_symbols():
+        raise StockPaperError("Cost probe symbol is not in the probe rotation")
+    if quantity != quantity.to_integral_value() or quantity > Decimal(int(settings.cost_probe_quantity)):
+        raise StockPaperError("Cost probe must be whole shares within the probe quantity")
+    if quantity * reference_price > Decimal(str(settings.cost_probe_max_notional)):
+        raise StockPaperError("Cost probe exceeds the probe notional cap")
+    position = db.query(StockPaperPosition).filter_by(account_id=account.id, symbol=symbol).one_or_none()
+    if position is not None and position.quantity > 0:
+        raise StockPaperError("Cost probe needs a symbol with no position")
+    others = db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id, StockPaperOrder.symbol == symbol,
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+    )
+    if order_id is not None:
+        others = others.filter(StockPaperOrder.id != order_id)
+    if others.count():
+        raise StockPaperError("Cost probe needs a symbol with no open order")
+
+
 def _lane_state(db: Session) -> dict:
     """The exploration lane's latest state (``exploration_universe``); empty when unreadable."""
     try:
@@ -2976,7 +3007,8 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     bookkeeping only and changes no sell-quantity or committed-sell check.
     """
     side, symbol = side.lower(), symbol.strip().upper()
-    client_order_id = "sp-" + hashlib.sha256(idempotency_key.encode()).hexdigest()[:45]
+    prefix = PROBE_CLIENT_PREFIX if source == PROBE_SOURCE else "sp-"
+    client_order_id = prefix + hashlib.sha256(idempotency_key.encode()).hexdigest()[:45]
 
     def _existing_reservation() -> StockPaperOrder | None:
         existing = db.query(StockPaperOrder).filter_by(client_order_id=client_order_id).one_or_none()
@@ -2988,7 +3020,7 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     if existing:
         return existing
     now = datetime.now(UTC)
-    if source in AUTONOMOUS_ORDER_SOURCES:
+    if source in AUTONOMOUS_ORDER_SOURCES or source == PROBE_SOURCE:
         # Scheduled execution is the autonomous path. It must satisfy the
         # same persisted qualification, recovery, notification, audit, feed,
         # and risk evidence used by the launch preflight before reserving an
@@ -3037,7 +3069,7 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         or account.unexplained_residual
     ):
         raise StockPaperError("Stock paper exposure is blocked until reconciled")
-    if source in AUTONOMOUS_ORDER_SOURCES:
+    if source in AUTONOMOUS_ORDER_SOURCES or source == PROBE_SOURCE:
         recovery = db.query(StockPaperRecoveryState).order_by(StockPaperRecoveryState.id).first()
         if recovery is not None and recovery.status not in TRADABLE_RECOVERY_STATUSES:
             raise StockPaperError(
@@ -3112,7 +3144,9 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         ):
             raise StockPaperError("Broker-side exit prices must bracket the entry price")
     signal = evidence = None
-    if side == "buy" and source == EXPLORATION_SOURCE:
+    if side == "buy" and source == PROBE_SOURCE:
+        _validate_probe_buy(db, account, symbol, quantity, reference_price)
+    elif side == "buy" and source == EXPLORATION_SOURCE:
         signal = _validate_exploration_buy(db, account, symbol, signal_id, quantity, reference_price, DEFAULT_RISK_RULES | rules, now)
     elif side == "buy":
         signal, evidence = _validate_signal_buy(db, account, symbol, signal_id, quantity, reference_price, DEFAULT_RISK_RULES | rules, now)
@@ -3180,7 +3214,10 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         strategy_id=signal.strategy_id if signal else (strategy_id if side == "sell" else None),
         signal_id=signal.id if signal else None,
         trial_id=trial_id,
-        evidence_id=evidence.evidence_id if evidence else None, order_type="limit",
+        evidence_id=evidence.evidence_id if evidence else None,
+        # A probe measures the cost of a marketable order; its decision price
+        # stays in limit_price, which the cost calibration benchmarks against.
+        order_type="market" if source == PROBE_SOURCE else "limit",
         time_in_force=EXIT_ENTRY_TIME_IN_FORCE if exit_plan else "day",
         limit_price=reference_price, reserved_cash=reserved_cash, status="reserved", source=source,
         order_class=exit_plan["order_class"] if exit_plan else "simple",
@@ -3308,7 +3345,9 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
         limit = Decimal(str((DEFAULT_RISK_RULES | (rule.value if rule else {}))["max_symbol_exposure"]))
         if (position.market_value if position else Decimal("0")) + symbol_reserved + notional > account.equity * limit:
             raise StockPaperError("Reserved buy exceeds current symbol exposure limit")
-        if order.source == EXPLORATION_SOURCE:
+        if order.source == PROBE_SOURCE:
+            _validate_probe_buy(db, account, order.symbol, order.quantity, order.limit_price, order_id=order.id)
+        elif order.source == EXPLORATION_SOURCE:
             # Exploration entries were admitted by the exploration validator
             # (no approved-evidence requirement); re-check that same contract,
             # excluding this reservation from its own lot count.
@@ -3376,6 +3415,8 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     payload = {"symbol": order.symbol, "qty": str(order.quantity), "side": order.side,
                "type": order.order_type, "time_in_force": order.time_in_force, "limit_price": str(order.limit_price),
                "client_order_id": order.client_order_id}
+    if order.order_type == "market":
+        payload.pop("limit_price")  # a market order carries no limit; the decision price stays on the row
     if (order.order_class or "simple") != "simple":
         if order.order_class not in ENTRY_EXIT_ORDER_CLASSES or order.side != "buy":
             raise StockPaperError("Reserved order has an unsupported order class")

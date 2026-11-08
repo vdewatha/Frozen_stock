@@ -54,6 +54,7 @@ READ_PATHS = {
     "/stock-paper/exploration-budget",
     "/stock-paper/signal-autopsy",
     "/stock-paper/cost-calibration",
+    "/stock-paper/yardstick",
     "/stock-paper/engine-audit",
     "/stock-paper/self-healing",
     "/stock-paper/venue-qualification",

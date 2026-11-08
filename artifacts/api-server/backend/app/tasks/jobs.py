@@ -1909,6 +1909,58 @@ def engine_audit_job() -> dict:
 
 
 @celery_app.task
+def yardstick_job() -> dict:
+    """Weekly (Saturday, after the cost calibration): realised-cost table, measured round trips, trials per family (paper only)."""
+    def work(db):
+        from app.services.yardstick import record_yardstick
+
+        result = record_yardstick(db)
+        db.commit()
+        return {"job": "yardstick_job", **result, "live_authorized": False}
+
+    return _run_job("yardstick_job", work)
+
+
+@celery_app.task
+def cost_probe_job() -> dict:
+    """In session: one tick of the cost probes (record a finished round trip, close a due probe or open the week's next)."""
+    def work(db):
+        from app.services.cost_probes import run_probe_cycle
+
+        result = run_probe_cycle(db)
+        db.commit()
+        return {"job": "cost_probe_job", **result}
+
+    return _run_job("cost_probe_job", work)
+
+
+@celery_app.task
+def dividend_check_job() -> dict:
+    """Weekly: are DIV entries booked in the Alpaca paper activities feed? (read-only; fails safe without data)."""
+    def work(db):
+        from app.services.dividend_check import record_dividend_check
+
+        result = record_dividend_check(db)
+        db.commit()
+        return {"job": "dividend_check_job", **result, "live_authorized": False}
+
+    return _run_job("dividend_check_job", work)
+
+
+@celery_app.task
+def sleeve_guardrail_job() -> dict:
+    """Weekdays after the close: the monthly sleeves' harm guardrail on daily active P&L (paper only)."""
+    def work(db):
+        from app.services.sleeve_guardrail import review_monthly_sleeves
+
+        result = review_monthly_sleeves(db)
+        db.commit()
+        return {"job": "sleeve_guardrail_job", **result, "live_authorized": False}
+
+    return _run_job("sleeve_guardrail_job", work)
+
+
+@celery_app.task
 def parameter_application_job() -> dict:
     """Advance governed paper parameter sets through their learning cycles."""
     def work(db):

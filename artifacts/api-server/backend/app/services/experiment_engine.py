@@ -65,6 +65,21 @@ applied the result.  This module lets the bot run that loop itself.
    clear t >= 3 or a deflated Sharpe > 0.95 counting every candidate ever
    tried for the strategy (``experiment_multiplicity_hurdle``); ``RULE``'s
    checks are unchanged and the hurdle is reported in the decision payload.
+   The hurdle's trial count also charges the strategy family's trials made
+   outside the engine (discovery library and research; ``yardstick``).
+6. **The yardstick** (``yardstick.py``, step 1 of the feasibility report).
+   Every experiment records each label's cost bracket (5 / 10 / 25 bps a
+   round trip, the published model, a calibrated cell with 20+ fills),
+   turnover, excess over a volatility-matched SPY/T-bill arm and SPY
+   residual, and which label ``RULE`` would adopt at each cost; ``RULE`` keeps
+   acting on the replay's own cost.  Its last sentence is the short-hold veto
+   (``yardstick.short_hold_veto``), applied in ``decide``.  Every forward
+   verdict carries the same bracket on the trades before and after
+   (``forward_bracket``).  A change on a monthly sleeve
+   (``is_monthly_sleeve``: ``parameters["sleeve_cadence"] == "monthly"``)
+   skips ``fixed_20``: the sleeve's harm guardrail on daily active P&L
+   against the passive arm acts instead (``sleeve_guardrail.py``), and the
+   e-process stays in shadow either way.
 
 Paper only.  Nothing here places, sizes or blocks an order directly; it only
 changes the entry-gate parameters the autotrader already honours.
@@ -81,11 +96,13 @@ from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Mapping, Optional
 
 import numpy as np
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import AuditLog, Strategy
 from app.services.audit import write_audit_log
+from app.services.sleeve_guardrail import is_monthly_sleeve  # noqa: F401  (re-exported: monthly sleeves skip fixed_20)
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -108,7 +125,10 @@ METHOD_FIXED_20 = "fixed_20"   # verdict_stats.METHOD_FIXED (the verdict before 
 BASELINE = "baseline"
 RULE = ("Adopt a candidate only if, in every window (all, 2015+, 2020+), it keeps >= 30 trades, net expectancy per "
         "trade is not lower, total net profit is not lower and portfolio max drawdown is <= 1.10x the current "
-        "setup's; among eligible candidates take the largest minimum expectancy gain; none eligible = no change.")
+        "setup's; among eligible candidates take the largest minimum expectancy gain; none eligible = no change. "
+        "Short-hold veto: a candidate whose median hold is under 20 sessions is vetoed unless its gross expectancy "
+        "per trade over the last two years is at least max(30 bps, 3 x round-trip cost), at 10 bps a round trip "
+        "until a measured round-trip cost replaces it.")
 
 
 # ----------------------------------------------------------------- templates
@@ -347,7 +367,7 @@ def current_setup(parameters: Optional[Mapping], strategy_type: Optional[str] = 
 
 def decide(rows: Mapping[str, Mapping[str, dict]], baseline: str = BASELINE, *,
            min_trades: int = MIN_TRADES_PER_WINDOW, drawdown_tolerance: float = DRAWDOWN_TOLERANCE,
-           calibration: float = 1.0) -> dict:
+           calibration: float = 1.0, vetoes: Optional[Mapping[str, Mapping]] = None) -> dict:
     """The pre-registered rule: ``rows[label][window]`` -> adopted label (or None) and why.
 
     ``calibration`` is the engine audit's factor (``engine_audit.py``; 1.0
@@ -356,6 +376,11 @@ def decide(rows: Mapping[str, Mapping[str, dict]], baseline: str = BASELINE, *,
     deflated gain must cover the optimism's share of the revert margin:
     ``factor x gain >= (1 - factor) x REVERT_EXPECTANCY_BPS``.  At 1.0 that
     is exactly ``expectancy not lower``; the rule is otherwise unchanged.
+
+    ``vetoes`` are the yardstick's short-hold vetoes per label
+    (``yardstick.short_hold_veto``; the sentence at the end of ``RULE``): a
+    candidate that passes every window but is vetoed is not eligible.  Applied
+    only while ``yardstick_short_hold_veto`` is on; reported either way.
     """
     calibration = min(1.0, max(0.0, float(calibration if calibration is not None else 1.0)))
     required = (1.0 - calibration) * REVERT_EXPECTANCY_BPS
@@ -395,8 +420,17 @@ def decide(rows: Mapping[str, Mapping[str, dict]], baseline: str = BASELINE, *,
             eligible[label] = round(min(gains), 2)
         else:
             failed[label] = reason
+    vetoed = {label: (veto or {}).get("reason") for label, veto in (vetoes or {}).items()
+              if label != baseline and (veto or {}).get("vetoed")}
+    enforced = bool(settings.yardstick_short_hold_veto)
+    if enforced:
+        for label in list(eligible):
+            if label in vetoed:
+                eligible.pop(label)
+                failed[label] = f"short-hold veto: {vetoed[label]}"
     adopted = max(eligible, key=eligible.get) if eligible else None
     return {"adopted": adopted, "eligible": eligible, "failed": failed, "rule": RULE,
+            "short_hold_veto": {"enforced": enforced, "vetoed": vetoed},
             "calibration": {"factor": calibration, "required_gain_bps": round(required / calibration, 2) if calibration
                             else None, "margin_bps": REVERT_EXPECTANCY_BPS}}
 
@@ -532,9 +566,51 @@ def _clean(value: Any) -> Any:
     return value
 
 
+def yardstick_readings(trades_by_label: Mapping[str, Any], rows: Mapping, frames: Mapping, spy, *,
+                       context: Optional[Mapping] = None, calibration: float = 1.0) -> dict:
+    """The yardstick per label (``yardstick.score_candidate``) and the rule's pick at each bracket column.
+
+    Windows are the rule's (all, 2015+, 2020+); the short-hold veto's
+    out-of-sample window is the last ``yardstick.OOS_YEARS`` years of the
+    replayed history (the engine has no pristine holdout: this is the most
+    recent evidence, which the rule's windows also contain).
+    """
+    from app.services import yardstick
+
+    context = dict(context or {})
+    symbols = sorted({s for trades in trades_by_label.values() if yardstick._has(trades, "symbol")
+                      for s in trades["symbol"].unique()})
+    first, last = yardstick.span(frames, symbols or None)
+    oos_start = (last - pd.DateOffset(years=yardstick.OOS_YEARS)) if last is not None else None
+    windows = {name: (start, None) for name, start in {"all": None, "2015+": "2015-01-01", "2020+": "2020-01-01"}.items()}
+    veto_cost = yardstick.veto_cost_bps(context.get("measured"), yardstick.classes_of(symbols) if symbols else None)
+    scores = {}
+    for label, trades in trades_by_label.items():
+        scores[label] = yardstick.score_candidate(
+            trades, frames, spy=spy, windows=windows,
+            passive_windows={"all": (None, None), "2015+": ("2015-01-01", None)},
+            turnover_span=(first, last), oos_start=oos_start, veto_cost=veto_cost, cells=context.get("cells"),
+            irx=context.get("irx"), cache=context.get("cache"))
+    brackets = {label: score.get("bracket") or {} for label, score in scores.items()}
+    decisions = yardstick.bracket_decisions(rows, brackets, lambda priced: decide(priced, calibration=calibration))
+    return {"scores": scores, "vetoes": {label: score.get("short_hold_veto") for label, score in scores.items()},
+            "bracket_decisions": decisions, "veto_cost": veto_cost,
+            "oos_start": str(oos_start.date()) if oos_start is not None else None,
+            "summary": {label: yardstick.compact(score, "2015+") for label, score in scores.items()}}
+
+
+def _yardstick_safe(*args, **kwargs) -> dict:
+    try:
+        return yardstick_readings(*args, **kwargs)
+    except Exception as exc:  # the readings never stop an experiment
+        logger.warning("experiment engine: yardstick readings unavailable: %s", exc)
+        return {"status": "unavailable", "error": f"{exc.__class__.__name__}: {exc}"[:200], "vetoes": {}}
+
+
 def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, vix, replays, simulate,
                    universe: Optional[Callable] = None, breadth=None, calibration: float = 1.0,
-                   prior_trials: int = 0, prior_sharpes: Optional[Iterable[float]] = None) -> dict:
+                   prior_trials: int = 0, prior_sharpes: Optional[Iterable[float]] = None,
+                   yardstick_context: Optional[Mapping] = None, family_trials: int = 0) -> dict:
     """Replay the strategy under its current setup and each candidate; apply the rule.
 
     ``universe`` is the optional point-in-time membership mask (``symbol,
@@ -545,7 +621,11 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
     each candidate's expected gain.  ``prior_trials`` / ``prior_sharpes`` are
     the candidates tried for this strategy in earlier experiments and their
     paired Sharpes, for the multiplicity hurdle (``apply_multiplicity_hurdle``)
-    on each candidate's paired backtest difference (``paired_moments``).
+    on each candidate's paired backtest difference (``paired_moments``);
+    ``family_trials`` are the strategy family's trials made outside the engine
+    (discovery library and research, ``yardstick.trial_families``), charged on
+    top.  ``yardstick_context`` (calibration cells, measured costs, T-bills)
+    feeds the yardstick readings and the short-hold veto.
     """
     from app.services.gate_replay import window_rows
 
@@ -568,15 +648,17 @@ def run_experiment(strategy: Any, template: Template, *, frames: Mapping, spy, v
         trades = simulate(strategy.strategy_type, frames, spy, setup, replays, vix=vix, **extra)
         rows[label] = window_rows(trades, frames)
         trades_by_label[label] = trades
-    decision = decide(rows, calibration=calibration)
+    readings = _yardstick_safe(trades_by_label, rows, frames, spy, context=yardstick_context, calibration=calibration)
+    decision = decide(rows, calibration=calibration, vetoes=readings.get("vetoes"))
     paired = _paired_moments(trades_by_label, spy, template)
-    adopted = apply_multiplicity_hurdle(decision, paired, prior_trials=prior_trials, prior_sharpes=prior_sharpes,
-                                        tried_now=len(setups) - 1)
+    adopted = apply_multiplicity_hurdle(decision, paired, prior_trials=int(prior_trials or 0) + int(family_trials or 0),
+                                        prior_sharpes=prior_sharpes, tried_now=len(setups) - 1)
     return {"strategy_type": strategy.strategy_type, "strategy_id": strategy.id, "template": template.name,
             "key": template.key, "baseline_setup": baseline, "setups": setups, "rows": rows, "decision": decision,
             "candidate_keys": sorted(candidates[0]) if candidates else [template.key],
             "calibration": decision["calibration"], "paired_moments": paired,
-            "multiplicity_hurdle": decision.get("multiplicity_hurdle"),
+            "multiplicity_hurdle": decision.get("multiplicity_hurdle"), "yardstick": readings,
+            "family_trials": int(family_trials or 0),
             "adopted": adopted, "adopted_setup": setups.get(adopted),
             "adopted_description": template.describe(setups[adopted]) if adopted else None}
 
@@ -644,7 +726,7 @@ def book_baseline(rules: Optional[Mapping]) -> dict:
 def run_book_experiment(strategies: Mapping[str, Any], template: Template, *, frames: Mapping, spy, vix, replays,
                         simulate, rules: Optional[Mapping] = None, universe: Optional[Callable] = None,
                         breadth=None, book_candidates: Optional[Callable] = None, calibration: float = 1.0,
-                        prior_trials: int = 0) -> dict:
+                        prior_trials: int = 0, yardstick_context: Optional[Mapping] = None) -> dict:
     """Replay the whole book under the current book policy and each candidate; apply the same rule.
 
     Every active replayable strategy's trades (each under its own live setup)
@@ -672,15 +754,20 @@ def run_book_experiment(strategies: Mapping[str, Any], template: Template, *, fr
         extra["breadth"] = breadth
     rows_in = (book_candidates or book_replay.candidates)(frames, spy, replays, live_setups, simulate=simulate, **extra)
     rows = {}
+    accepted_by_label = {}
     for label, setup in setups.items():
         policy = book_replay.book_policy(rules, max_new_per_day=int(setup[ENTRY_CAP_KEY] or 0))
         accepted = book_replay.allocate(rows_in, frames, policy)
         rows[label] = book_replay.book_rows(accepted, frames, weight=1.0 / policy["caps"]["total"])
-    decision = decide(rows, calibration=calibration)
+        accepted_by_label[label] = accepted
+    readings = _yardstick_safe(accepted_by_label, rows, frames, spy, context=yardstick_context,
+                               calibration=calibration)
+    decision = decide(rows, calibration=calibration, vetoes=readings.get("vetoes"))
     adopted = apply_multiplicity_hurdle(decision, {}, prior_trials=prior_trials, tried_now=len(setups) - 1)
     return {"strategy_type": BOOK, "strategy_id": None, "template": template.name, "key": template.key,
             "baseline_setup": baseline, "setups": setups, "rows": rows, "decision": decision,
             "calibration": decision["calibration"], "multiplicity_hurdle": decision.get("multiplicity_hurdle"),
+            "yardstick": readings,
             "adopted": adopted, "adopted_setup": setups.get(adopted),
             "adopted_description": template.describe(setups[adopted]) if adopted else None,
             "book": {"strategies": sorted(live_setups), "candidate_trades": int(len(rows_in)),
@@ -834,6 +921,27 @@ def _shadow_lessons(db: Session) -> list[dict]:
         return []
 
 
+def _yardstick_context(db: Session, *, download: bool = True) -> dict:
+    """Calibrated cells, measured round trips and T-bills for the yardstick readings; empty parts when unreadable."""
+    from app.services import yardstick
+
+    return {"cells": yardstick.current_cells(db), "measured": yardstick.measured_costs(db),
+            "irx": yardstick.load_irx(download=download), "cache": {}}
+
+
+def _family_extra(db: Session) -> dict:
+    """Per family, trials made outside the engine (discovery library and research); empty when unreadable."""
+    from app.services import yardstick
+
+    return yardstick.external_family_trials(db, exclude="engine")
+
+
+def _strategy_family(strategy: Any) -> str:
+    from app.services.yardstick import family_of_strategy
+
+    return family_of_strategy(getattr(strategy, "strategy_type", None), getattr(strategy, "parameters", None))
+
+
 def _calibration_factor(db: Session) -> float:
     """The engine audit's calibration factor (``engine_audit.py``); 1.0 without an audit or when unreadable."""
     from app.services.engine_audit import current_calibration_factor
@@ -902,6 +1010,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
     experiments, adopted, errors = [], [], []
     calibration = _calibration_factor(db)
     prior = prior_trials_by_strategy(experiment_history(db))
+    injected = loader is not None   # a caller-supplied loader means no network for the T-bill history either
     if plan["planned"]:
         from app.services import gate_replay
         from app.services import meta_label_primary as primary
@@ -939,6 +1048,8 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                 logger.warning("experiment engine: breadth history unavailable: %s", exc)
                 breadth = None
         rules = _active_rules(db) if any(TEMPLATE_BY_NAME[i["template"]].kind == "book" for i in plan["planned"]) else {}
+        yardstick_context = _yardstick_context(db, download=not injected)
+        family_extra = _family_extra(db)
         for item in plan["planned"]:
             template = TEMPLATE_BY_NAME[item["template"]]
             book = template.kind == "book"
@@ -951,13 +1062,18 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                                                      replays=replays, simulate=simulate, rules=rules,
                                                      universe=universe, breadth=breadth,
                                                      book_candidates=book_candidates, calibration=calibration,
-                                                     prior_trials=prior.get(BOOK, {}).get("trials", 0))
+                                                     prior_trials=prior.get(BOOK, {}).get("trials", 0),
+                                                     yardstick_context=yardstick_context)
                 else:
                     tried = prior.get(item["strategy_type"], {})
+                    family = _strategy_family(strategy)
                     experiment = run_experiment(strategy, template, frames=frames, spy=spy, vix=vix, replays=replays,
                                                 simulate=simulate, universe=universe, breadth=breadth,
                                                 calibration=calibration, prior_trials=tried.get("trials", 0),
-                                                prior_sharpes=tried.get("sharpes", []))
+                                                prior_sharpes=tried.get("sharpes", []),
+                                                yardstick_context=yardstick_context,
+                                                family_trials=int(family_extra.get(family, 0)))
+                    experiment["family"] = family
             except Exception as exc:  # one experiment must not stop the run
                 db.rollback()
                 errors.append({**item, "error": f"{exc.__class__.__name__}: {exc}"})
@@ -981,7 +1097,12 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                          + (f"adopt {experiment['adopted']}: {experiment['adopted_description']}" if experiment["adopted"]
                             else (f"{experiment['decision']['blocked_by_hurdle']} passed the rule but not the "
                                   "multiplicity hurdle" if experiment["decision"].get("blocked_by_hurdle")
-                                  else "no candidate beat the current setup"))),
+                                  else ("vetoed by the short-hold veto: "
+                                        + ", ".join(sorted(experiment["decision"]["short_hold_veto"]["vetoed"]))
+                                        if experiment["decision"].get("short_hold_veto", {}).get("enforced")
+                                        and any(str(r).startswith("short-hold veto")
+                                                for r in experiment["decision"].get("failed", {}).values())
+                                        else "no candidate beat the current setup")))),
                 payload=_clean(experiment),
             )
             experiments.append(experiment)
@@ -1225,6 +1346,106 @@ def _fixed_verdict(change: Mapping, after: Mapping, beaten_by: Optional[Mapping]
                        f"{change['trigger']} losses no rarer")}
 
 
+SLEEVE_GUARDRAIL = "sleeve_guardrail"
+
+
+def _sleeve_row(db: Session, change: Mapping) -> Optional[Strategy]:
+    """The change's strategy row when it is a monthly sleeve (``sleeve_guardrail.is_monthly_sleeve``), else None."""
+    from app.services.sleeve_guardrail import is_monthly_sleeve
+
+    if not change.get("strategy_id") or change.get("strategy_type") == BOOK:
+        return None
+    try:
+        row = db.get(Strategy, change["strategy_id"])
+    except Exception:
+        db.rollback()
+        return None
+    return row if is_monthly_sleeve(row) else None
+
+
+def _sleeve_verdict(db: Session, row: Strategy) -> dict:
+    """A monthly sleeve skips fixed_20; its harm guardrail on daily active P&L acts instead (no data = watching)."""
+    from app.services import sleeve_guardrail
+
+    guard = sleeve_guardrail.harm_guardrail(sleeve_guardrail.sleeve_daily_returns(db, row))
+    if guard["harm"]:
+        return {"verdict": "not_helping", "shadow": False, "guardrail": guard,
+                "reason": f"monthly-sleeve harm guardrail: {guard['reason']}"}
+    return {"verdict": "watching", "shadow": False, "needed": None, "guardrail": guard,
+            "reason": f"monthly-sleeve harm guardrail: {guard['status']} ({guard['reason']})"}
+
+
+def _model_round_trip_bps(db: Session, row: Any, frames: dict) -> Optional[float]:
+    """The published model's round trip for one live trade (entry and exit sessions, bars before each)."""
+    from app.services.gate_cost import daily_frame
+    from app.services.paper_cost_calibration import model_cost, session_date
+
+    symbol = str(getattr(row, "symbol", "") or "").upper()
+    if not symbol or row.opened_at is None or row.closed_at is None:
+        return None
+    if symbol not in frames:
+        frames[symbol] = daily_frame(db, symbol)
+    frame = frames[symbol]
+    if frame is None:
+        return None
+    entry = model_cost(frame, session_date(row.opened_at), 0.0)["total_bps"]
+    exit_ = model_cost(frame, session_date(row.closed_at), 0.0)["total_bps"]
+    return float(entry) + float(exit_)
+
+
+def forward_bracket(db: Session, change: Mapping, after_rows: list, *, max_trades: int) -> dict:
+    """The forward verdict's cost bracket: before / after expectancy and ``judge`` at 5, 10, 25 bps and the model.
+
+    Each trade's gross return minus the column's round trip; ``realized`` is
+    the paper net as measured.  The acting verdict is unchanged.
+    """
+    from app.services import yardstick
+    from app.services.trade_attribution import current_attributions
+
+    adopted_at = _parse(change["adopted_at"])
+    scope = None if change["strategy_type"] == BOOK else [change["strategy_type"]]
+    before_rows = sorted((row for row in current_attributions(db, sources=SOURCES, strategy_types=scope)
+                          if _parse(_iso(row.closed_at)) < adopted_at),
+                         key=lambda row: _parse(_iso(row.closed_at)))[-RECENT_TRADES:]
+    frames: dict = {}
+    trigger = change["trigger"]
+
+    def gross(row) -> Optional[float]:
+        value = row.gross_return if row.gross_return is not None else row.net_return
+        return float(value) if value is not None else None
+
+    def priced(rows: list, cost) -> dict:
+        perf = _recent_performance(rows, trigger)
+        values = []
+        for row in rows:
+            g, c = gross(row), cost(row)
+            if g is not None and c is not None:
+                values.append(g - c / 10_000)
+        perf["expectancy_bps"] = round(sum(values) / len(values) * 10_000, 1) if values else None
+        perf["trades"] = len(values)
+        return perf
+
+    columns = {name: (lambda row, c=c: c) for name, c in zip(yardstick.FLAT_COLUMNS, yardstick.BRACKET_BPS)}
+    columns[yardstick.MODEL] = lambda row: _model_round_trip_bps(db, row, frames)
+    out = {"columns": {}, "realized": {"before": _recent_performance(before_rows, trigger).get("expectancy_bps"),
+                                       "after": _recent_performance(after_rows, trigger).get("expectancy_bps")}}
+    for name, cost in columns.items():
+        before, after = priced(before_rows, cost), priced(after_rows, cost)
+        verdict = judge(before, after, max_trades=max_trades) if after["trades"] else "watching"
+        out["columns"][name] = {"before_bps": before["expectancy_bps"], "after_bps": after["expectancy_bps"],
+                                "after_trades": after["trades"], "judge": verdict}
+    return out
+
+
+def _forward_bracket_safe(db: Session, change: Mapping, after_rows: list, *, max_trades: int) -> dict:
+    try:
+        return forward_bracket(db, change, after_rows, max_trades=max_trades)
+    except Exception as exc:  # a reading only; the acting verdict never waits for it
+        db.rollback()
+        logger.warning("experiment engine: forward cost bracket unavailable for %s: %s", change.get("change_id"), exc)
+        return {"status": "unavailable", "error": f"{exc.__class__.__name__}: {exc}"[:200]}
+
+
 def _compact_e(e_verdict: Mapping) -> dict:
     keys = ("method", "verdict", "status", "reason", "trades", "observations", "effective_trades", "source",
             "adjusted_for_spy", "mean_difference_bps", "e_harm", "e_improvement", "harm_threshold",
@@ -1278,11 +1499,21 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
         shadow_summary = ({"decisions": shadow.get("decisions"), "beating": shadow.get("beating"),
                            "candidates": shadow.get("candidates")} if shadow else None)
         beaten_by = shadow_beats_adopted(shadow)
-        fixed = _fixed_verdict(change, after, beaten_by, min_trades=min_trades, max_trades=max_trades)
+        # A monthly sleeve is exempt from the 20-trade revert: its harm guardrail acts (sleeve_guardrail.py).
+        sleeve = _sleeve_row(db, change)
+        if sleeve is not None:
+            beaten_by = None
+            fixed = _sleeve_verdict(db, sleeve)
+        else:
+            fixed = _fixed_verdict(change, after, beaten_by, min_trades=min_trades, max_trades=max_trades)
+        fixed_label = "skipped_monthly_sleeve" if sleeve is not None else fixed["verdict"]
         e_verdict = _e_process_safe(db, change, after_rows=rows, now=now, state=state, inputs=inputs, spy=spy)
         e_compact = _compact_e(e_verdict)
+        bracket = _forward_bracket_safe(db, change, rows, max_trades=max_trades)
         acting = method
-        if method == vs.METHOD_E_PROCESS and e_verdict.get("status") == "unavailable":
+        if sleeve is not None:
+            acting = SLEEVE_GUARDRAIL
+        elif method == vs.METHOD_E_PROCESS and e_verdict.get("status") == "unavailable":
             acting = vs.METHOD_FIXED
         if acting == vs.METHOD_E_PROCESS:
             verdict = e_verdict.get("verdict") or "watching"
@@ -1292,11 +1523,18 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
         else:
             verdict, reason, shadow_acted = fixed["verdict"], fixed.get("reason"), fixed["shadow"]
         if verdict == "watching":
-            needed = (fixed.get("needed") if acting == vs.METHOD_FIXED else
-                      max(int(e_verdict.get("cap_trades") or vs.CAP_TRADES) - int(e_verdict.get("trades") or 0), 0))
+            if acting == SLEEVE_GUARDRAIL:
+                needed = None
+            elif acting == vs.METHOD_FIXED:
+                needed = fixed.get("needed")
+            else:
+                needed = max(int(e_verdict.get("cap_trades") or vs.CAP_TRADES) - int(e_verdict.get("trades") or 0), 0)
             entry = {"change_id": change["change_id"], "strategy_type": change["strategy_type"],
                      "trades": after["trades"], "needed": needed, "shadow": shadow_summary,
-                     "verdict_method": acting, "verdict_fixed_20": fixed["verdict"], "verdict_e_process": e_compact}
+                     "verdict_method": acting, "verdict_fixed_20": fixed_label, "verdict_e_process": e_compact,
+                     "cost_bracket": bracket}
+            if sleeve is not None:
+                entry["sleeve_guardrail"] = fixed.get("guardrail")
             if fixed.get("so_far") and acting == vs.METHOD_FIXED:
                 entry["so_far"] = fixed["so_far"]
             pending.append(entry)
@@ -1318,9 +1556,11 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
                                                                  "expectancy_bps", "delta_expectancy_bps",
                                                                  "delta_total_bps")} if acted_beaten else None),
                    "verdict_method": acting, "verdict_method_setting": method, "reason": reason,
-                   "verdict_fixed_20": fixed["verdict"], "verdict_e_process": e_compact,
+                   "verdict_fixed_20": fixed_label, "verdict_e_process": e_compact,
+                   "cost_bracket": bracket,
+                   **({"sleeve_guardrail": fixed.get("guardrail")} if sleeve is not None else {}),
                    "paper_only": True}
-        if acting == vs.METHOD_E_PROCESS:
+        if acting in (vs.METHOD_E_PROCESS, SLEEVE_GUARDRAIL):
             message = f"{change['strategy_type']}: {change['description']} -> {verdict} ({reason})"
         else:
             message = (f"{change['strategy_type']}: {change['description']} -> {verdict} "
@@ -1362,9 +1602,23 @@ def scoreboard_changes(db: Session) -> list[dict]:
     return out
 
 
+def _ledger_yardstick(db: Session) -> dict:
+    """The yardstick's rules and the trials per family, for the ledger (read-only; never fails the ledger)."""
+    from app.services import sleeve_guardrail, yardstick
+
+    try:
+        families = yardstick.trial_families(db)
+    except Exception as exc:
+        db.rollback()
+        families = {"status": "unavailable", "error": f"{exc.__class__.__name__}: {exc}"[:200]}
+    return {"bracket_bps": list(yardstick.BRACKET_BPS), "short_hold_veto": yardstick.VETO_RULE,
+            "short_hold_veto_enabled": bool(settings.yardstick_short_hold_veto), "passive": yardstick.PASSIVE_RULE,
+            "monthly_sleeves": sleeve_guardrail.RULE, "trial_families": families}
+
+
 def experiment_ledger(db: Session, *, limit: int = 30) -> dict:
     runs = _history_rows(db, ACTION_RUN, 1)
-    return {"rule": RULE, "verdict_methods": verdict_methods_view(db), "templates": [{"name": t.name, "kind": t.kind, "triggers": sorted(t.triggers), "key": t.key,
+    return {"rule": RULE, "yardstick": _ledger_yardstick(db), "verdict_methods": verdict_methods_view(db), "templates": [{"name": t.name, "kind": t.kind, "triggers": sorted(t.triggers), "key": t.key,
                                          "candidates": [t.label(c) for c in t.candidates], "dynamic": t.dynamic is not None,
                                          "reversion_candidates": ([t.label(c) for c in t.reversion_candidates]
                                                                   if t.reversion_candidates else None)}
@@ -1391,4 +1645,12 @@ def verdict_methods_view(db: Session) -> dict:
                        "as_of": state.get("as_of")},
             "fixed_20": {"min_trades": settings.experiment_verdict_min_trades,
                          "max_trades": settings.experiment_verdict_max_trades,
-                         "revert_margin_bps": REVERT_EXPECTANCY_BPS}}
+                         "revert_margin_bps": REVERT_EXPECTANCY_BPS,
+                         "skips": "strategy rows with parameters.sleeve_cadence == 'monthly'"},
+            "sleeve_guardrail": {"acts_on": "monthly sleeves", "rule": _sleeve_rule()}}
+
+
+def _sleeve_rule() -> str:
+    from app.services.sleeve_guardrail import RULE as SLEEVE_RULE
+
+    return SLEEVE_RULE
