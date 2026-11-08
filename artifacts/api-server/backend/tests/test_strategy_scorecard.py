@@ -125,8 +125,10 @@ def test_new_strategies_are_registered_and_seeded_as_scoped_candidates():
     with Session(engine) as db:
         seed_defaults(db)
         rows = {row.strategy_type: row for row in db.query(Strategy).all()}
+        # Seeded as candidates, then shadowed once by the step 4 re-verdict
+        # (reports/short-horizon-reverdict-20261107.md): both fail at every cost.
         for slug in ("rsi2_pullback", "ibs_mean_reversion"):
-            assert rows[slug].current_status == "paper_trading_candidate"
+            assert rows[slug].current_status == "shadow"
         ibs = rows["ibs_mean_reversion"]
         assert ibs.parameters["symbol_scope"] == ["SPY", "QQQ", "IWM", "DIA"]
         assert get_strategy("ibs_mean_reversion", ibs.parameters).symbol_scope() == {"SPY", "QQQ", "IWM", "DIA"}

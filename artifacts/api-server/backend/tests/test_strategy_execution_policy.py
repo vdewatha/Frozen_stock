@@ -543,11 +543,13 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                        # Slow book (reports/slow-book-20261107.md): the crossover is already
                        # retired, so it stays retired; RSI(2)'s stock leg goes to shadow.
                        "slow_book_shadowed": [], "rsi2_stock_leg_shadowed": True,
+                       # Step 4 (reports/short-horizon-reverdict-20261107.md): both fail at every cost.
+                       "short_horizon_reverdict": ["rsi2_pullback", "ibs_mean_reversion"],
                        "passive_arm_admission": "target_weight_active", "target_weight_exemption_granted": True}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
-    assert rows["rsi2_pullback"].current_status == "paper_trading_candidate"
+    assert rows["rsi2_pullback"].current_status == "shadow"
     assert rows["ibs_mean_reversion"].parameters["entry_threshold"] == 0.1
     audit = db.query(AuditLog).filter_by(action=SCORECARD_DEMOTION_ACTION).one()
     assert audit.event_type == "strategy_governance"
@@ -567,7 +569,7 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                                           "sizing_modes_applied": [], "hedge_admission": None,
                                           "sector_reversal_admission": None, "sector_ranking_applied": [],
                                           "slow_book_shadowed": [], "rsi2_stock_leg_shadowed": False,
-                                          "passive_arm_admission": None,
+                                          "short_horizon_reverdict": [], "passive_arm_admission": None,
                                           "target_weight_exemption_granted": False}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
