@@ -532,6 +532,13 @@ class Settings(BaseSettings):
     # cost)) blocks engine adoptions and new discovery admissions when on.
     yardstick_slot_fraction: float = Field(default=0.05, gt=0, le=1)
     yardstick_short_hold_veto: bool = True
+    # Event logs (event_logs.py, reports/event-logs-20261107.md): zero-cost
+    # forward logs of the market-adjusted earnings window (close two sessions
+    # before the report to one after) and the pre-ex-dividend week for
+    # point-in-time S&P 500 members.  The calendar refresh fetches at most N
+    # yfinance calendars a run.  Off stops both logs; nothing trades on them.
+    event_logs_enabled: bool = True
+    event_logs_calendar_fetches_per_run: int = Field(default=120, ge=0, le=600)
     # Cost probes (cost_probes.py): one-share paper round trips spread over the
     # week on the liquid ETFs and a few large caps, so the cost cells keep
     # filling when the strategies stop trading. 0 per week disables them.

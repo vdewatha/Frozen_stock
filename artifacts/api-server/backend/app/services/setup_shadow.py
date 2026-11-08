@@ -14,7 +14,9 @@ live setup makes, so a forward record exists for all of them at once.
    off/10/20/50, VIX below 20/25/30/off, earnings blackout 0/10/20) is
    decided from the states the cycle already loaded: the SPY frame behind the
    entry protections, the process-cached VIX reading, the earnings calendar
-   cache.  No broker call, no extra lookup per symbol.  One compact
+   cache (or, for a symbol the cycle did not fetch, the event log's stored
+   calendar snapshot, so 0/10/20 are all decided).  No broker call, no extra
+   lookup per symbol.  One compact
    ``setup_shadow`` audit row per cycle whose picture changed (symbol,
    strategy, template, candidate, allowed, live allowed, decision price).
 2. **Score the hypothetical trades** (``record_scores``; daily after the
@@ -143,6 +145,8 @@ class CycleContext:
         self._states: dict[int, dict] = dict(getattr(protections, "market_states", None) or {})
         self._vix = dict(vix) if vix is not None else None
         self._earnings = earnings
+        self._stored_calendar: Optional[dict] = None
+        self._earnings_sources = {"cache": 0, "snapshot": 0, "unknown": 0}
 
     # SPY: the frame the entry protections loaded for the live market gate;
     # loaded once from the trusted daily bars only when no strategy is gated.
@@ -203,19 +207,52 @@ class CycleContext:
         return bool(breadth_state(gauges, float(minimum))["allowed"])
 
     def earnings_block(self, symbol: str, sessions: int) -> Optional[bool]:
-        """True when a report falls inside ``sessions``; None when the calendar is not cached for the symbol."""
+        """True when a report falls inside ``sessions``; None when no calendar is known for the symbol.
+
+        The process cache holds only the symbols whose live gate fetched them
+        this cycle, so a BUY stopped by an earlier gate, or a strategy whose
+        live blackout is off, left the 10 and 20 candidates unknown.  Those
+        fall back to the event log's stored calendar snapshot (one read per
+        cycle, ``event_logs.stored_calendar``); index ETFs have no earnings.
+        """
         from app.services.earnings_calendar import earnings_blackout, earnings_known
 
         if self._earnings is not None:
             return self._earnings(symbol, sessions)
-        if not earnings_known(symbol):
+        if earnings_known(symbol):
+            self._earnings_sources["cache"] += 1
+            return earnings_blackout(symbol, self.now, sessions=sessions) is not None
+        return self._snapshot_block(symbol.upper(), sessions)
+
+    def _snapshot_block(self, symbol: str, sessions: int) -> Optional[bool]:
+        from app.services.earnings_calendar import dates_in_window
+        from app.services.trading_universe import ETF_SYMBOLS
+
+        if symbol in ETF_SYMBOLS:
+            self._earnings_sources["snapshot"] += 1
+            return False
+        if self._stored_calendar is None:
+            self._stored_calendar = {}
+            if self.db is not None:
+                try:
+                    from app.services.event_logs import stored_calendar
+
+                    self._stored_calendar = stored_calendar(self.db, now=self.now)
+                except Exception as exc:  # evidence only: unknown, as before
+                    self.db.rollback()
+                    logger.info("setup shadow: stored earnings calendar unavailable: %s", exc.__class__.__name__)
+        dates = self._stored_calendar.get(symbol)
+        if dates is None:
+            self._earnings_sources["unknown"] += 1
             return None
-        return earnings_blackout(symbol, self.now, sessions=sessions) is not None
+        self._earnings_sources["snapshot"] += 1
+        return bool(dates_in_window(dates, self.now, sessions))
 
     def summary(self) -> dict:
         states = {str(window): {"allowed": state.get("allowed"), "reason": state.get("reason")}
                   for window, state in sorted(self._states.items())}
-        return {"session": self.session.isoformat(), "vix": self._vix, "market_states": states}
+        return {"session": self.session.isoformat(), "vix": self._vix, "market_states": states,
+                "earnings_sources": dict(self._earnings_sources)}
 
 
 def vix_allows(reading: Mapping, candidate: Mapping) -> bool:

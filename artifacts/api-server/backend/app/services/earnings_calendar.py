@@ -89,6 +89,15 @@ def strategy_blackout_sessions(parameters: dict | None) -> int | None:
         return None
 
 
+def dates_in_window(dates, now: datetime, sessions: int) -> list[date]:
+    """The report dates from today (included) through ``sessions`` sessions ahead."""
+    if sessions <= 0:
+        return []
+    today = now.astimezone(ET).date()
+    horizon = _session_horizon(today, sessions)
+    return sorted(day for day in dates if today <= day <= horizon)
+
+
 def earnings_blackout(symbol: str, now: datetime, sessions: int | None = None, fetch=None) -> dict | None:
     """Skip result for a BUY when earnings fall within ``sessions`` sessions, else ``None``.
 
@@ -101,9 +110,7 @@ def earnings_blackout(symbol: str, now: datetime, sessions: int | None = None, f
     dates = upcoming_earnings(symbol, now, fetch=fetch)
     if dates is None:
         return None
-    today = now.astimezone(ET).date()
-    horizon = _session_horizon(today, sessions)
-    upcoming = [day for day in dates if today <= day <= horizon]
+    upcoming = dates_in_window(dates, now, sessions)
     if not upcoming:
         return None
     return {

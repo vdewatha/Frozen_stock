@@ -1935,6 +1935,32 @@ def cost_probe_job() -> dict:
 
 
 @celery_app.task
+def event_log_daily_job() -> dict:
+    """Weekdays before the open: refresh the S&P 500 earnings calendar snapshot and log matured reports (paper only)."""
+    def work(db):
+        from app.services.event_logs import run_daily
+
+        result = run_daily(db)
+        db.commit()
+        return {"job": "event_log_daily_job", **result, "live_authorized": False}
+
+    return _run_job("event_log_daily_job", work)
+
+
+@celery_app.task
+def event_log_weekly_job() -> dict:
+    """Weekly (Saturday): log the new pre-ex-dividend windows of S&P 500 members (paper only)."""
+    def work(db):
+        from app.services.event_logs import run_weekly
+
+        result = run_weekly(db)
+        db.commit()
+        return {"job": "event_log_weekly_job", **result, "live_authorized": False}
+
+    return _run_job("event_log_weekly_job", work)
+
+
+@celery_app.task
 def dividend_check_job() -> dict:
     """Weekly: are DIV entries booked in the Alpaca paper activities feed? (read-only; fails safe without data)."""
     def work(db):
