@@ -145,6 +145,8 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.yardstick_job": {"queue": "learning"},
     "app.tasks.jobs.cost_probe_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.dividend_check_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.event_log_daily_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.event_log_weekly_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.sleeve_guardrail_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.self_healing_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
@@ -459,6 +461,20 @@ celery_app.conf.beat_schedule = {
     "dividend-check": {
         "task": "app.tasks.jobs.dividend_check_job",
         "schedule": crontab(minute=40, hour=13, day_of_week="sat"),
+        "options": {"expires": 12 * 60 * 60},
+    },
+    # Event logs (event_logs.py): weekdays before the open, refresh up to 120
+    # S&P 500 earnings calendars (the shadow's fallback for symbols the cycle
+    # did not fetch) and log the reports whose t-2..t+1 window closed; Saturday,
+    # log the week's pre-ex-dividend windows from one batched download.
+    "event-log-daily": {
+        "task": "app.tasks.jobs.event_log_daily_job",
+        "schedule": crontab(minute=10, hour=6, day_of_week="mon-fri"),
+        "options": {"expires": 3 * 60 * 60},
+    },
+    "event-log-weekly": {
+        "task": "app.tasks.jobs.event_log_weekly_job",
+        "schedule": crontab(minute=10, hour=12, day_of_week="sat"),
         "options": {"expires": 12 * 60 * 60},
     },
     # Monthly sleeves: their harm guardrail on daily active P&L against the

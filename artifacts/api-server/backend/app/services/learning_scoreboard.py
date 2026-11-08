@@ -534,11 +534,12 @@ def build_learning_scoreboard(db: Session, *, now: Optional[datetime] = None) ->
 
 def _yardstick(db: Session) -> dict:
     """Dividends booked in the paper feed, the probes' measured costs and the family trial counts (never fails the board)."""
-    from app.services import cost_probes, dividend_check, yardstick
+    from app.services import cost_probes, dividend_check, event_logs, yardstick
 
     out: dict = {}
     for name, read in (("dividends", dividend_check.dividend_status), ("probes", cost_probes.probe_status),
-                       ("measured_round_trip_bps", yardstick.measured_costs)):
+                       ("measured_round_trip_bps", yardstick.measured_costs),
+                       ("event_logs", event_logs.event_log_status)):
         try:
             out[name] = read(db)
         except Exception as exc:

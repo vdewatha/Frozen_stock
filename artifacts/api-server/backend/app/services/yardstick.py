@@ -117,6 +117,8 @@ RESEARCH_TRIALS = (
      "what": "SH hedge sizes"},
     {"family": "liquid_universe", "trials": 3, "source": "reports/liquid-universe-20261107.md",
      "what": "three point-in-time liquidity terciles"},
+    {"family": "cross_sectional_ranker", "trials": 4, "source": "reports/pooled-ranker-20261107.md",
+     "what": "one pre-registered run: pooled gradient-boosting ranker plus ridge, 12-1 momentum and composite baselines"},
 )
 
 
@@ -868,6 +870,12 @@ def current_cells(db) -> list[dict]:
         return []
 
 
+def _event_logs(db) -> dict:
+    from app.services.event_logs import event_log_status
+
+    return event_log_status(db)
+
+
 def yardstick_view(db) -> dict:
     """``GET /stock-paper/yardstick``: the rules, the bracket, measured costs, family counts, dividends, probes."""
     from app.services import cost_probes, dividend_check, sleeve_guardrail
@@ -898,5 +906,6 @@ def yardstick_view(db) -> dict:
         "dividends": safe(dividend_check.dividend_status, db),
         "probes": safe(cost_probes.probe_status, db),
         "monthly_sleeves": safe(sleeve_guardrail.guardrail_view, db),
+        "event_logs": safe(_event_logs, db),
         "paper_only": True,
     }
