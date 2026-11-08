@@ -34,7 +34,11 @@ each sleeve's daily P&L; this module reads it defensively from any of:
 
 * registered readers (``register_reader(fn)``, ``fn(db, strategy) -> rows``),
 * ``parameters["sleeve_daily_pnl"]`` on the row,
-* audit rows with ``event_type`` in ``PNL_EVENTS`` and ``action`` in
+* the target-weight book's ``target_weight_book`` / ``sleeve_daily_pnl`` rows
+  (``target_weight_book.daily_pnl``: ``sleeves[<strategy id>]["return"]``
+  against ``passive_arm["return"]``, one row per session; the passive arm is
+  never judged against itself),
+* other audit rows with ``event_type`` in ``PNL_EVENTS`` and ``action`` in
   ``PNL_ACTIONS`` whose ``entity_id`` is the row (or payload ``strategy_id`` /
   ``strategy_type`` names it), one per session or carrying a ``rows`` list.
 
@@ -64,7 +68,7 @@ MONTHLY = "monthly"
 MIN_SESSIONS = 60
 T_HARM = -2.0
 DRAWDOWN_LIMIT = 0.15
-PNL_EVENTS = ("sleeve_engine", "target_weight_sleeve", "sleeve_pnl", "target_weight_engine")
+PNL_EVENTS = ("target_weight_book", "sleeve_engine", "target_weight_sleeve", "sleeve_pnl", "target_weight_engine")
 PNL_ACTIONS = ("daily_pnl", "sleeve_daily_pnl", "sleeve_pnl")
 PNL_PARAMETER = "sleeve_daily_pnl"
 PAUSED_STATUSES = frozenset({"paused", "retired"})
@@ -136,6 +140,15 @@ def _audit_rows(db, strategy) -> list[dict]:
     out = []
     for row in rows:
         payload = row.payload or {}
+        if isinstance(payload.get("sleeves"), Mapping):
+            # The target-weight book's ``sleeve_daily_pnl`` row (target_weight_book.daily_pnl): one per
+            # session, every sleeve's return under ``sleeves[<id>]`` and the passive arm's beside it.
+            entry = payload["sleeves"].get(str(strategy.id)) or payload["sleeves"].get(strategy.id)
+            arm = payload.get("passive_arm") or {}
+            if isinstance(entry, Mapping) and arm.get("strategy_id") != strategy.id:
+                out.append({"session": payload.get("session"), "sleeve_return": entry.get("return"),
+                            "passive_return": arm.get("return")})
+            continue
         named = (row.entity_id == strategy.id or payload.get("strategy_id") == strategy.id
                  or (payload.get("strategy_type") and payload.get("strategy_type") == strategy.strategy_type))
         if not named:

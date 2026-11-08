@@ -356,8 +356,26 @@ def _stock_risk_metrics(db: Session, now: datetime) -> list[dict]:
     positions = db.query(StockPaperPosition).filter_by(account_id=account.id).all()
     values = {row.symbol: float(row.market_value or 0) for row in positions if float(row.quantity or 0) > 0 and row.market_value is not None}
     gross = sum(abs(value) for value in values.values()) / equity if equity > 0 else None
-    concentration = max((value / equity for value in values.values()), default=None) if equity > 0 else None
+    # The slow book (target_weight_book.py) holds its passive arm at target
+    # weights by design: its symbols are held to their targets by the engine's
+    # own post-tranche check and turnover budget, so the concentration and
+    # turnover checks watch the slot strategies, and the gross-exposure warning
+    # band watches the slot strategies' share while the breach stays at the
+    # whole book's gross-exposure cap.
+    try:
+        from app.services.target_weight_book import SOURCE as BOOK_SOURCE, book_symbols
+
+        target_book = book_symbols(db)
+    except Exception:  # monitoring never fails on the book
+        BOOK_SOURCE, target_book = "target_weight_book", frozenset()
+    slot_values = {symbol: value for symbol, value in values.items() if symbol not in target_book}
+    slot_gross = sum(abs(value) for value in slot_values.values()) / equity if equity > 0 else None
+    concentration = max((value / equity for value in slot_values.values()), default=0.0 if values else None) \
+        if equity > 0 else None
     fills = db.query(StockPaperFill).filter(StockPaperFill.account_id == account.id, StockPaperFill.filled_at >= now - timedelta(days=1)).all()
+    book_order_ids = {row[0] for row in db.query(StockPaperOrder.id).filter(
+        StockPaperOrder.account_id == account.id, StockPaperOrder.source == BOOK_SOURCE).all()} if fills else set()
+    fills = [fill for fill in fills if fill.order_id not in book_order_ids]
     turnover = sum(float(fill.quantity * fill.price) for fill in fills) / equity if equity > 0 else None
     start_local = now.astimezone(NY).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
     snapshots = db.query(StockPaperEquitySnapshot).filter(
@@ -395,6 +413,9 @@ def _stock_risk_metrics(db: Session, now: datetime) -> list[dict]:
             status = "unknown"
         elif isinstance(threshold, dict):
             status = "breach" if value >= threshold["breach"] else "warning" if value >= threshold["warning"] else "clear"
+        elif key == "risk.exposure" and target_book:
+            warn_value = slot_gross if slot_gross is not None else value
+            status = "breach" if value >= threshold else "warning" if warn_value >= threshold * 0.85 else "clear"
         else:
             status = "breach" if value >= threshold else "warning" if value >= threshold * 0.85 else "clear"
         results.append(_check(key, "risk", metric, status, message if status != "clear" else f"{metric.replace('_', ' ').title()} is within its configured range.", value={metric: round(value, 8) if value is not None else None}, threshold=threshold if isinstance(threshold, dict) else {"breach": threshold, "warning": threshold * 0.85}, details={"equity": equity, "position_count": len(values), "fill_count_24h": len(fills), "equity_snapshot_count_today": len(snapshots)}, action_scope=scope))

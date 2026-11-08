@@ -373,6 +373,22 @@ def test_sleeve_review_pauses_a_harmful_sleeve_and_reads_registered_readers(db, 
     assert db.query(AuditLog).filter_by(event_type="strategy_governance", action="sleeve_guardrail_pause").count() == 1
 
 
+def test_guardrail_reads_the_target_weight_books_daily_pnl_rows(db):  # noqa: F811
+    sleeve = _strategy(db, "tw_trend", {"sleeve_cadence": "monthly"}, status="target_weight_active")
+    arm = _strategy(db, "tw_passive", {"sleeve_cadence": "monthly"}, status="target_weight_active")
+    for k, day in enumerate(pd.bdate_range("2027-01-04", periods=5)):
+        write_audit_log(db, event_type="target_weight_book", entity_type="target_weight_book",
+                        action="sleeve_daily_pnl", status="recorded", message="x",
+                        payload={"session": day.strftime("%Y-%m-%d"),
+                                 "sleeves": {str(sleeve.id): {"return": 0.001 * k}, str(arm.id): {"return": 0.0005}},
+                                 "passive_arm": {"strategy_id": arm.id, "return": 0.0005}})
+    db.commit()
+    rows = sleeve_guardrail.sleeve_daily_returns(db, sleeve)
+    assert len(rows) == 5 and rows[2]["active_return"] == pytest.approx(0.0015)
+    assert sleeve_guardrail.sleeve_daily_returns(db, arm) == []   # the arm is never judged against itself
+    assert sleeve_guardrail.harm_guardrail(rows)["status"] == "watching"
+
+
 # ------------------------------------------------------------------ probes
 
 def test_probe_plan_spreads_the_week_and_measures_the_round_trip():

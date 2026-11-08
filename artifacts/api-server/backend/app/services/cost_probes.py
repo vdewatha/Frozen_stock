@@ -202,7 +202,13 @@ def _book_room(db: Session, account) -> tuple[bool, str]:
     pending = {row.symbol for row in db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account.id, StockPaperOrder.side == "buy", StockPaperOrder.leg_role.is_(None),
         StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES)).all()}
-    used = len(held | pending)
+    try:  # the slow book's holdings sit outside the slot caps (target_weight_book)
+        from app.services.stock_paper_ledger import _book_symbols_or_empty
+
+        outside = _book_symbols_or_empty(db)
+    except ImportError:
+        outside = set()
+    used = len((held | pending) - outside)
     if used > cap - FREE_SLOTS:
         return False, f"{used} of {cap} open-position slots in use; a probe needs {FREE_SLOTS} free"
     return True, ""

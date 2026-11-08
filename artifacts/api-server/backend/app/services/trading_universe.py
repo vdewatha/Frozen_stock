@@ -109,10 +109,19 @@ def exploration_lane_symbols() -> frozenset[str]:
     return lane_symbols()
 
 
+def target_weight_symbols() -> frozenset[str]:
+    """The slow book's symbols (``target_weight_book``): ingested for its orders, never traded by the slot cycle."""
+    if not settings.target_weight_book_enabled:
+        return frozenset()
+    from app.services.target_weight_book import book_symbols
+
+    return book_symbols()
+
+
 def intraday_symbols() -> frozenset[str]:
     """Symbols the intraday feed may ingest and evaluate."""
     return (RESEARCH_CORE_SYMBOLS | frozenset(execution_symbols()) | discovered_symbols()
-            | exploration_lane_symbols())
+            | exploration_lane_symbols() | target_weight_symbols())
 
 
 def sector_group(symbol: str) -> str:
