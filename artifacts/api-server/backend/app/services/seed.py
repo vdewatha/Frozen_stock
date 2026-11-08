@@ -805,6 +805,187 @@ def apply_sector_ranking(db: Session) -> list[str]:
     )
 
 
+SLOW_BOOK_REPORT = "reports/slow-book-20261107.md"
+SLOW_BOOK_SHADOW_ACTION = "slow_book_shadow"
+RSI2_SHADOW_SCOPE_ACTION = "rsi2_stock_leg_shadow"
+PASSIVE_ARM_ADMISSION_ACTION = "passive_arm_admission"
+# reports/Retail bot edge feasibility.md, Decision: the seven broad technical
+# strategies lose capital and move to shadow (signals recorded, no orders).
+# Six of the seven have negative point-in-time expectancy since 2015 and none
+# has an interval above zero (reports/survivorship-20261106.md).
+SLOW_BOOK_SHADOWED = ("moving_average_crossover", "macd_momentum", "ensemble", "rsi_mean_reversion",
+                      "bollinger_mean_reversion", "channel_breakout", "trend_pullback")
+SHADOW_FROM_STATUSES = frozenset({"paper_trading_active", "paper_trading_candidate", "research"})
+INDEX_ETF_SCOPE = ("SPY", "QQQ", "IWM", "DIA")
+
+
+def shadow_broad_technicals(db: Session) -> list[str]:
+    """One-time move of the seven broad technical strategies to ``shadow``.
+
+    ``shadow`` keeps the row in the signal cycle (every signal is recorded)
+    but it places no entries, scheduled or exploration; its open lots keep
+    their broker exit legs, time stops and protective stop and are never
+    force-sold.  Acts only on a row still trading or exploring with no earlier
+    ``slow_book_shadow`` event, so a paused or retired row, or an operator's
+    later re-status, is never overridden.
+    """
+    from app.services.audit import write_audit_log
+
+    moved: list[str] = []
+    rows = db.query(Strategy).filter(Strategy.strategy_type.in_(SLOW_BOOK_SHADOWED)).order_by(Strategy.id).all()
+    for row in rows:
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance", AuditLog.action == SLOW_BOOK_SHADOW_ACTION,
+            AuditLog.entity_type == "strategy", AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        if row.current_status not in SHADOW_FROM_STATUSES:
+            # Paused or retired already: recorded once, so a later governed
+            # re-activation of this row is never shadowed by a later seed pass.
+            write_audit_log(
+                db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+                action=SLOW_BOOK_SHADOW_ACTION, status="skipped",
+                message=(f"{SLOW_BOOK_REPORT}: left {row.current_status}; it already has no capital, and any later "
+                         "status change stands."),
+                payload={"old_status": row.current_status, "new_status": row.current_status,
+                         "source": SLOW_BOOK_REPORT, "paper_only": True},
+            )
+            continue
+        old_status, row.current_status = row.current_status, "shadow"
+        write_audit_log(
+            db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+            action=SLOW_BOOK_SHADOW_ACTION, status="complete",
+            message=(f"{SLOW_BOOK_REPORT}: the broad technical strategies lose capital and move to shadow (signals "
+                     "recorded, no orders); their idle capital sits in the passive arm. Open lots exit by their "
+                     "normal rules and are not force-sold."),
+            payload={"old_status": old_status, "new_status": "shadow", "source": SLOW_BOOK_REPORT,
+                     "evidence": "reports/survivorship-20261106.md", "paper_only": True},
+        )
+        moved.append(row.strategy_type)
+    if moved:
+        db.flush()
+    return moved
+
+
+def shadow_rsi2_stock_leg(db: Session) -> bool:
+    """One-time ``shadow_symbols`` for RSI(2)'s single-stock leg; it keeps trading the four index ETFs.
+
+    The row's ``symbol_scope`` is unchanged, so its stock signals are still
+    generated and recorded; a BUY on a ``shadow_symbols`` name places no order.
+    Acts only on a row without ``shadow_symbols`` and no earlier event, so an
+    operator's own choice stands.
+    """
+    from app.services.audit import write_audit_log
+
+    changed = False
+    for row in db.query(Strategy).filter(Strategy.strategy_type == "rsi2_pullback").order_by(Strategy.id).all():
+        params = dict(row.parameters or {})
+        if "shadow_symbols" in params:
+            continue
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance", AuditLog.action == RSI2_SHADOW_SCOPE_ACTION,
+            AuditLog.entity_type == "strategy", AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        scope = params.get("symbol_scope") or []
+        stocks = sorted({str(symbol).upper() for symbol in scope} - set(INDEX_ETF_SCOPE))
+        row.parameters = params | {"shadow_symbols": stocks}
+        write_audit_log(
+            db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+            action=RSI2_SHADOW_SCOPE_ACTION, status="complete",
+            message=(f"{SLOW_BOOK_REPORT}: RSI(2)'s single-stock leg moves to shadow (its positive record is on "
+                     "today's list); it keeps trading SPY, QQQ, IWM and DIA. Stock signals are still recorded."),
+            payload={"shadow_symbols": stocks, "trading_symbols": [s for s in INDEX_ETF_SCOPE if s in
+                                                                    {str(x).upper() for x in scope}],
+                     "source": SLOW_BOOK_REPORT, "paper_only": True},
+        )
+        changed = True
+    if changed:
+        db.flush()
+    return changed
+
+
+def admit_passive_arm(db: Session) -> Optional[str]:
+    """One-time creation of the passive-arm sleeve row (``target_weight_book``).
+
+    Created ``target_weight_active`` (capital) when the engine is enabled;
+    acts once: an existing row of this type or name, or an earlier
+    ``passive_arm_admission`` event, means the operator's choice stands.
+    """
+    from app.core.config import settings
+    from app.services.audit import write_audit_log
+    from app.services.target_weight_book import (
+        PASSIVE_ARM_NAME, PASSIVE_ARM_TYPE, SLEEVE_ACTIVE, SLEEVE_CADENCE, passive_weights,
+    )
+
+    exists = db.query(Strategy.id).filter(
+        (Strategy.strategy_type == PASSIVE_ARM_TYPE) | (Strategy.name == PASSIVE_ARM_NAME)).first()
+    already = db.query(AuditLog.id).filter(
+        AuditLog.event_type == "strategy_governance", AuditLog.action == PASSIVE_ARM_ADMISSION_ACTION).first()
+    if exists or already:
+        return None
+    status = SLEEVE_ACTIVE if settings.target_weight_book_enabled else "paused"
+    weights = {symbol: float(weight) for symbol, weight in passive_weights().items()}
+    row = Strategy(
+        name=PASSIVE_ARM_NAME, strategy_type=PASSIVE_ARM_TYPE,
+        description=(f"Passive core of the slow book: every dollar the other strategies do not use, in "
+                     f"{settings.passive_arm_equity_symbol} (S&P 500) at passive_arm_equity_weight of the arm and "
+                     f"{settings.passive_arm_tbill_symbol} (T-bills) for the rest; four monthly tranches. The bar "
+                     "every other idea must clear."),
+        parameters={"sleeve_cadence": SLEEVE_CADENCE, "sleeve_role": "passive_arm", "target_weights": weights,
+                    "weights_from_settings": ["passive_arm_equity_weight", "passive_arm_equity_symbol",
+                                              "passive_arm_tbill_symbol"]},
+        is_active=True, current_status=status,
+    )
+    db.add(row)
+    db.flush()
+    write_audit_log(
+        db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+        action=PASSIVE_ARM_ADMISSION_ACTION, status="complete",
+        message=(f"{SLOW_BOOK_REPORT}: passive arm admitted as the slow book's capital sleeve "
+                 f"({settings.passive_arm_equity_weight:.0%} {settings.passive_arm_equity_symbol}, rest "
+                 f"{settings.passive_arm_tbill_symbol}) until the owner sets the equity weight."),
+        payload={"new_status": status, "target_weights": weights, "source": SLOW_BOOK_REPORT, "paper_only": True},
+    )
+    db.flush()
+    return status
+
+
+def grant_target_weight_exemption(db: Session) -> bool:
+    """One-time governed exemption of target-weight orders from the 1% and 10% caps.
+
+    Never re-granted after a revocation: any earlier grant or revoke row means
+    the current state is a decision that stands.
+    """
+    from app.services.target_weight_book import EXEMPTION_ACTION, EXEMPTION_REVOKE_ACTION, set_exemption
+
+    already = db.query(AuditLog.id).filter(
+        AuditLog.event_type == "strategy_governance",
+        AuditLog.action.in_((EXEMPTION_ACTION, EXEMPTION_REVOKE_ACTION))).first()
+    if already:
+        return False
+    set_exemption(db, active=True, reason="slow book step 2 (seed)", actor="seed")
+    return True
+
+
+def ensure_target_weight_assets(db: Session) -> list[str]:
+    """Asset rows for the book's symbols, so the daily and intraday imports cover them."""
+    from app.services.target_weight_book import book_symbols
+
+    created = []
+    for symbol in sorted(book_symbols()):
+        if db.query(Asset.id).filter(Asset.symbol == symbol).first():
+            continue
+        db.add(Asset(symbol=symbol, name=symbol, asset_type="stock", sector="Broad Market", industry="ETF",
+                     is_active=True))
+        created.append(symbol)
+    if created:
+        db.flush()
+    return created
+
+
 def ensure_strategy_lineup(db: Session) -> dict:
     """Idempotent strategy lineup reconciliation run by every seed pass."""
     return {
@@ -821,6 +1002,10 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "hedge_admission": admit_market_hedge(db),
         "sector_reversal_admission": admit_sector_reversal(db),
         "sector_ranking_applied": apply_sector_ranking(db),
+        "slow_book_shadowed": shadow_broad_technicals(db),
+        "rsi2_stock_leg_shadowed": shadow_rsi2_stock_leg(db),
+        "passive_arm_admission": admit_passive_arm(db),
+        "target_weight_exemption_granted": grant_target_weight_exemption(db),
     }
 
 
@@ -900,6 +1085,7 @@ def seed_defaults(db: Session) -> None:
     db.flush()
     ensure_strategy_lineup(db)
     ensure_paper_execution_assets(db)
+    ensure_target_weight_assets(db)
     if not db.query(RiskRule).first():
         db.add(RiskRule(name="default_paper_risk", value=DEFAULT_RISK_RULES, is_active=True))
     db.flush()

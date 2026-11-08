@@ -47,7 +47,11 @@ def test_settings_accept_the_expanded_list_and_bound_its_size():
 
 def test_intraday_universe_is_execution_symbols_plus_frozen_research_core():
     with patch.object(settings, "paper_execution_symbols", ["NVDA", "XLE"]):
-        assert intraday_symbols() == {"AAPL", "MSFT", "QQQ", "SPY", "NVDA", "XLE"}
+        # The slow book's passive-arm ETFs are ingested for its own orders.
+        assert intraday_symbols() == {"AAPL", "MSFT", "QQQ", "SPY", "NVDA", "XLE",
+                                      settings.passive_arm_equity_symbol, settings.passive_arm_tbill_symbol}
+        with patch.object(settings, "target_weight_book_enabled", False):
+            assert intraday_symbols() == {"AAPL", "MSFT", "QQQ", "SPY", "NVDA", "XLE"}
         assert intraday_data._symbol("nvda") == "NVDA"
         with pytest.raises(ValueError):
             intraday_data._symbol("XLK")

@@ -58,11 +58,15 @@ UNCERTAIN_ORDER_HALT_REASONS = frozenset({
 NONTERMINAL_ORDER_STATUSES = frozenset({"new", "accepted", "pending_new", "partially_filled", "pending_cancel", "pending_replace", "open", "held", "stopped", "calculated", "reserved", "submitting", "unknown"})
 ALLOWED_ORDER_SOURCES = frozenset({
     "manual_control_room", "manual_close", "manual_reduce", "recovery_flatten",
-    "broker_import", "scheduled_paper_signal", "paper_exploration",
+    "broker_import", "scheduled_paper_signal", "paper_exploration", "target_weight_book",
 })
 # Autonomous sources that must pass the scheduled launch admission gates.
-AUTONOMOUS_ORDER_SOURCES = frozenset({"scheduled_paper_signal", "paper_exploration"})
+AUTONOMOUS_ORDER_SOURCES = frozenset({"scheduled_paper_signal", "paper_exploration", "target_weight_book"})
 EXPLORATION_SOURCE = "paper_exploration"
+# Netted rebalance orders of the slow book (``target_weight_book``): bound to a
+# sleeve row instead of a signal, for the book's own symbols only, and the only
+# orders the governed target-weight risk exemption applies to.
+TARGET_WEIGHT_SOURCE = "target_weight_book"
 EXPLORATION_STRATEGY_STATUSES = frozenset({"paper_trading_candidate", "research"})
 MAX_REFERENCE_PRICE_DEVIATION = Decimal("0.02")
 # Broker-side exits.  Alpaca rejects bracket/OTO/OCO orders on fractional
@@ -403,6 +407,16 @@ class AlpacaPaperClient:
         if not isinstance(result, dict) or not result.get("id"):
             raise StockPaperUnavailable("Alpaca paper order response is invalid")
         return result
+
+    def asset(self, symbol: str) -> dict | None:
+        """Read-only asset record (``tradable``, ``fractionable``); None when the broker does not list it."""
+        try:
+            result = self._request("GET", f"/v2/assets/{symbol.strip().upper()}")
+        except StockPaperUnavailable as exc:
+            if exc.status_code == 404:
+                return None
+            raise
+        return result if isinstance(result, dict) else None
 
 
 class TradierPaperClient:
@@ -2639,6 +2653,7 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     # A dispatch recheck sees this same reservation as pending; risk evaluates
     # pre-trade state, so exclude the signal-bound order itself.
     pending = [row for row in pending if row.signal_id != signal_id]
+    target_book = _book_symbols_or_empty(db)
     exposure = {row.symbol: float((row.market_value or Decimal("0")) / account.equity) for row in positions if account.equity > 0}
     for row in pending:
         # App-side sells carry their lot's strategy for attribution; they
@@ -2648,7 +2663,11 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     daily_drawdown = float(max(Decimal("0"), (account.last_equity or account.equity) - account.equity) / (account.last_equity or account.equity))
     approved, reason = approve_trade(
         {"symbol": symbol, "strategy": str(strategy.id), "action": signal.action, "confidence": float(signal.confidence or 0)},
-        PortfolioState(daily_drawdown=daily_drawdown, open_positions_count=len(positions) + len(pending),
+        # The slow book's positions and orders are outside the slot system
+        # (they still count toward the gross-exposure cap through ``exposure``).
+        PortfolioState(daily_drawdown=daily_drawdown,
+                       open_positions_count=sum(1 for row in positions if row.symbol not in target_book)
+                       + sum(1 for row in pending if row.source != TARGET_WEIGHT_SOURCE),
                        open_positions_by_symbol=exposure, open_positions_by_strategy=strategy_counts,
                        total_equity=float(account.equity), kill_switch_enabled=bool(rules.get("kill_switch_enabled"))),
         StrategyState(status=strategy.current_status, drawdown=float(evidence.verified_drawdown),
@@ -2660,6 +2679,66 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     if account.equity <= 0 or (quantity * reference_price / account.equity) > Decimal(str(rules["max_risk_per_trade"])):
         raise StockPaperError("Risk-per-trade limit exceeded")
     return signal, evidence
+
+
+def _validate_target_weight_buy(db: Session, account: StockPaperAccount, symbol: str, strategy_id: int | None,
+                                quantity: Decimal, reference_price: Decimal, rules: dict, *,
+                                exclude_order_id: int | None = None) -> Strategy:
+    """Admit a target-weight rebalance BUY (``TARGET_WEIGHT_SOURCE`` only).
+
+    The order must name an active sleeve row and one of the book's own
+    symbols.  ``risk.approve_target_weight_order`` then applies the governed
+    exemption from the 1%-per-BUY and 10%-per-symbol caps (only while the
+    ``target_weight_risk_exemption`` governance action is in force) and keeps
+    the kill switch, daily drawdown and the 100% gross-exposure cap, counting
+    every pending buy reservation.
+    """
+    from app.services.risk import TARGET_WEIGHT_TAG, approve_target_weight_order
+    from app.services.target_weight_book import SLEEVE_ACTIVE, book_symbols, exemption_active, is_sleeve
+
+    if strategy_id is None:
+        raise StockPaperError("A target-weight order must name its sleeve")
+    strategy = db.get(Strategy, strategy_id)
+    if strategy is None or not strategy.is_active or not is_sleeve(strategy) \
+            or strategy.current_status != SLEEVE_ACTIVE:
+        raise StockPaperError("Target-weight order sleeve is not an active target-weight sleeve")
+    if symbol not in book_symbols(db):
+        raise StockPaperError("Target-weight orders trade only the book's own symbols")
+    if account.equity <= 0:
+        raise StockPaperError("Account equity is not positive")
+    positions = db.query(StockPaperPosition).filter_by(account_id=account.id).all()
+    exposure = {row.symbol: (row.market_value or Decimal("0")) for row in positions}
+    for row in db.query(StockPaperOrder).filter(
+        StockPaperOrder.account_id == account.id, StockPaperOrder.side == "buy",
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
+    ).all():
+        if exclude_order_id is not None and row.id == exclude_order_id:
+            continue
+        exposure[row.symbol] = exposure.get(row.symbol, Decimal("0")) + (row.reserved_cash or Decimal("0"))
+    daily_drawdown = float(max(Decimal("0"), (account.last_equity or account.equity) - account.equity)
+                           / (account.last_equity or account.equity))
+    approved, reason = approve_target_weight_order(
+        {"symbol": symbol, "action": "BUY", "order_tag": TARGET_WEIGHT_TAG,
+         "proposed_exposure": float(quantity * reference_price / account.equity)},
+        PortfolioState(daily_drawdown=daily_drawdown,
+                       open_positions_by_symbol={key: float(value / account.equity) for key, value in exposure.items()},
+                       total_equity=float(account.equity), kill_switch_enabled=bool(rules.get("kill_switch_enabled"))),
+        rules, exemption_active=exemption_active(db),
+    )
+    if not approved:
+        raise StockPaperError(f"Target-weight risk policy blocked buy: {reason}")
+    return strategy
+
+
+def _book_symbols_or_empty(db: Session) -> set[str]:
+    """The slow book's symbols; they sit outside the slot caps (empty when unreadable)."""
+    try:
+        from app.services.target_weight_book import book_symbols
+
+        return set(book_symbols(db))
+    except Exception as exc:  # never let a book read break the slot path
+        logger.info("target-weight book symbols unavailable: %s", exc.__class__.__name__)
+        return set()
 
 
 def _lane_state(db: Session) -> dict:
@@ -3046,8 +3125,11 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             )
     if side not in {"buy", "sell"} or quantity <= 0 or reference_price <= 0:
         raise StockPaperError("Only positive long buy/sell paper orders are permitted")
+    target_weight = source == TARGET_WEIGHT_SOURCE
+    if target_weight and (strategy_id is None or trial_id or signal_id is not None or exit_plan is not None):
+        raise StockPaperError("A target-weight order names its sleeve and carries no signal, trial or exit legs")
     if strategy_id is not None:
-        if side != "sell":
+        if side != "sell" and not target_weight:
             raise StockPaperError("A buy takes its strategy from its signal; explicit attribution is for sells")
         if db.get(Strategy, strategy_id) is None:
             raise StockPaperError("Sell attribution names an unknown strategy")
@@ -3112,7 +3194,10 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
         ):
             raise StockPaperError("Broker-side exit prices must bracket the entry price")
     signal = evidence = None
-    if side == "buy" and source == EXPLORATION_SOURCE:
+    if side == "buy" and target_weight:
+        _validate_target_weight_buy(db, account, symbol, strategy_id, quantity, reference_price,
+                                    DEFAULT_RISK_RULES | rules)
+    elif side == "buy" and source == EXPLORATION_SOURCE:
         signal = _validate_exploration_buy(db, account, symbol, signal_id, quantity, reference_price, DEFAULT_RISK_RULES | rules, now)
     elif side == "buy":
         signal, evidence = _validate_signal_buy(db, account, symbol, signal_id, quantity, reference_price, DEFAULT_RISK_RULES | rules, now)
@@ -3143,7 +3228,9 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             if approved_context and "max_symbol_notional" in approval.exposure_limits
             else None
         )
-        if (
+        # A target-weight buy was checked against its symbol cap (or exempted
+        # from it by governance) in ``_validate_target_weight_buy``.
+        if not target_weight and (
             existing_notional + Decimal(str(pending_symbol_notional)) + reserved_cash
             > (trial_symbol_cap if trial_symbol_cap is not None else account.equity * max_symbol_exposure)
         ):
@@ -3162,13 +3249,18 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
             ))
             if Decimal(str(aggregate_pending)) + reserved_cash > aggregate_cap:
                 raise StockPaperError("Order exceeds the approved aggregate exposure cap")
+        # The slow book's holdings sit outside the slot system: they never
+        # count toward, or are blocked by, the open-position cap.
+        target_book = _book_symbols_or_empty(db)
         held = [row.symbol for row in db.query(StockPaperPosition.symbol).filter(
             StockPaperPosition.account_id == account.id, StockPaperPosition.quantity > 0
-        ).all()]
+        ).all() if row.symbol not in target_book]
         # Exploration-lane positions (exploration_universe.py) have their own
         # slots and never count toward, or are blocked by, the core cap.
         book = _lane_book(db)
-        if symbol in book:
+        if target_weight:
+            pass
+        elif symbol in book:
             if source != EXPLORATION_SOURCE:
                 raise StockPaperError("Exploration-lane names take learning-sized exploration entries only")
             if current is None and sum(1 for held_symbol in held if held_symbol in book) >= settings.exploration_max_open:
@@ -3177,7 +3269,7 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
                 rules.get("max_open_positions", 1)):
             raise StockPaperError("Order exceeds the configured open-position risk limit")
     order = StockPaperOrder(account_id=account.id, client_order_id=client_order_id, symbol=symbol, side=side, quantity=quantity,
-        strategy_id=signal.strategy_id if signal else (strategy_id if side == "sell" else None),
+        strategy_id=signal.strategy_id if signal else (strategy_id if side == "sell" or target_weight else None),
         signal_id=signal.id if signal else None,
         trial_id=trial_id,
         evidence_id=evidence.evidence_id if evidence else None, order_type="limit",
@@ -3306,9 +3398,15 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
             raise StockPaperError("Reserved buy exceeds current cash; leverage is forbidden")
         symbol_reserved = sum((row.reserved_cash for row in pending if row.side == "buy" and row.symbol == order.symbol), Decimal("0"))
         limit = Decimal(str((DEFAULT_RISK_RULES | (rule.value if rule else {}))["max_symbol_exposure"]))
-        if (position.market_value if position else Decimal("0")) + symbol_reserved + notional > account.equity * limit:
+        if order.source == TARGET_WEIGHT_SOURCE:
+            # Re-checked under the target-weight contract (governed exemption
+            # from the symbol and per-BUY caps; the gross cap still applies).
+            _validate_target_weight_buy(db, account, order.symbol, order.strategy_id, order.quantity,
+                                        order.limit_price, DEFAULT_RISK_RULES | (rule.value if rule else {}),
+                                        exclude_order_id=order.id)
+        elif (position.market_value if position else Decimal("0")) + symbol_reserved + notional > account.equity * limit:
             raise StockPaperError("Reserved buy exceeds current symbol exposure limit")
-        if order.source == EXPLORATION_SOURCE:
+        elif order.source == EXPLORATION_SOURCE:
             # Exploration entries were admitted by the exploration validator
             # (no approved-evidence requirement); re-check that same contract,
             # excluding this reservation from its own lot count.

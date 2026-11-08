@@ -1919,3 +1919,27 @@ def parameter_application_job() -> dict:
         return {"job": "parameter_application_job", **result, "paper_only": True, "live_authorized": False}
 
     return _run_job("parameter_application_job", work)
+
+
+@celery_app.task
+def target_weight_rebalance_job() -> dict:
+    """Slow book (target_weight_book.py): weekdays mid-session, clear of the auctions. Plans the tranche
+    whose week it is (once a month each) and sends the netted orders still missing (paper only)."""
+    def work(db):
+        from app.services.target_weight_book import run_rebalance
+
+        return run_rebalance(db)
+
+    return _run_job("target_weight_rebalance_job", work)
+
+
+@celery_app.task
+def target_weight_daily_job() -> dict:
+    """Slow book after the close: fill benchmarks against delayed SIP, modeled distributions, sleeve
+    daily P&L, post-tranche checks and the monthly pass-rule verdicts (paper only)."""
+    def work(db):
+        from app.services.target_weight_book import run_daily
+
+        return run_daily(db)
+
+    return _run_job("target_weight_daily_job", work)

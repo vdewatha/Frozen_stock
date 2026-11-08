@@ -659,8 +659,10 @@ def _entry_limit_state(db: Session, account, rules: dict, lane_book: set[str] | 
 
     lane_book = set(lane_book or ())
     try:
+        target_book = _target_book_symbols(db)  # outside the slot caps, as in the ledger
         held = {row.symbol for row in db.query(StockPaperPosition).filter(
-            StockPaperPosition.account_id == account.id, StockPaperPosition.quantity > 0).all()}
+            StockPaperPosition.account_id == account.id, StockPaperPosition.quantity > 0).all()
+            if row.symbol not in target_book}
         lots = _open_exploration_lots(db, account, exclude_symbols=lane_book) \
             if settings.paper_exploration_enabled else None
         lane_lots = _open_exploration_lots(db, account, only_symbols=lane_book) \
@@ -856,6 +858,47 @@ def _record_buy_outcomes(db: Session, results: list[dict], now: datetime) -> Non
     db.commit()
 
 
+# ``shadow`` (reports/slow-book-20261107.md): the strategy stays in the cycle so
+# every signal is recorded, but it places no entries, scheduled or exploration.
+# Its open lots keep their exits.  A row's ``shadow_symbols`` parameter does the
+# same for part of its scope (RSI(2)'s single-stock leg).
+SHADOW_STATUS = "shadow"
+CYCLE_STATUSES = frozenset({"paper_trading_active", "paper_trading_candidate", "research", SHADOW_STATUS})
+
+
+def _is_sleeve(row) -> bool:
+    from app.services.target_weight_book import is_sleeve
+
+    return is_sleeve(row)
+
+
+def _target_book_symbols(db: Session) -> frozenset[str]:
+    try:
+        from app.services.target_weight_book import book_symbols
+
+        return book_symbols(db)
+    except Exception as exc:  # never let the book stop the slot cycle
+        logger.info("target-weight book symbols unavailable: %s", exc.__class__.__name__)
+        return frozenset()
+
+
+def shadow_symbols_for(row) -> frozenset[str]:
+    raw = (getattr(row, "parameters", None) or {}).get("shadow_symbols") or ()
+    try:
+        return frozenset(str(symbol).strip().upper() for symbol in raw)
+    except TypeError:
+        return frozenset()
+
+
+def _shadow_entry(row, symbol: str) -> str | None:
+    """Why ``row`` records but never enters ``symbol`` (None when it may trade it)."""
+    if getattr(row, "current_status", None) == SHADOW_STATUS:
+        return "shadow strategy: signal recorded, no capital"
+    if symbol in shadow_symbols_for(row):
+        return "shadow scope: signal recorded for this symbol, no capital"
+    return None
+
+
 def run_stock_paper_signal_cycle(db: Session) -> dict:
     """Run one cycle, reusing launch-admission gates across its orders."""
     from app.services.stock_paper_ledger import LAUNCH_GATES_CACHE, LAUNCH_GATES_CACHE_ENABLED
@@ -934,6 +977,13 @@ def _run_signal_cycle(db: Session) -> dict:
         symbols = [*symbols, *sorted((set(lane_admitted) | lane_exits_only) - set(symbols))]
         base["symbols"] = list(symbols)
         base["exploration_universe"] = {"candidates": sorted(lane_admitted), "exits_only": sorted(lane_exits_only)}
+    # The slow book's symbols (target_weight_book.py) are never traded by the
+    # slot strategies, so every broker position belongs to exactly one side.
+    target_book = _target_book_symbols(db)
+    if target_book and any(symbol in target_book for symbol in symbols):
+        symbols = [symbol for symbol in symbols if symbol not in target_book]
+        base["symbols"] = list(symbols)
+        base["target_weight_book_symbols"] = sorted(target_book)
     market_events, gauges = _market_backdrop(db, now)
     market_context = entry_context(gauges, market_events, now)
     base["market_context"] = market_context
@@ -943,7 +993,7 @@ def _run_signal_cycle(db: Session) -> dict:
         db.query(Strategy)
         .filter(
             Strategy.is_active.is_(True),
-            Strategy.current_status.in_({"paper_trading_active", "paper_trading_candidate", "research"}),
+            Strategy.current_status.in_(CYCLE_STATUSES),
         )
         .order_by(Strategy.id)
         .all()
@@ -951,6 +1001,8 @@ def _run_signal_cycle(db: Session) -> dict:
     strategies = []
     seen_strategy_types: set[str] = set()
     for strategy in all_strategies:
+        if _is_sleeve(strategy):
+            continue  # target-weight sleeves trade through their own engine
         if strategy.strategy_type not in seen_strategy_types:
             seen_strategy_types.add(strategy.strategy_type)
             strategies.append(strategy)
@@ -1031,7 +1083,13 @@ def _run_signal_cycle(db: Session) -> dict:
     # learning BUYs whose evidence is scarcest (exploration_budget.py), in
     # priority order until the budget is spent.  Scheduled entries, exits
     # and every cap are untouched; the plan never raises into the cycle.
-    exploration_plan = plan_exploration(db, account, signal_outcomes, strategies, news_admitted, now=now,
+    # Shadow BUYs never trade, so they never take a share of the learning budget.
+    plan_outcomes = {
+        key: value for key, value in signal_outcomes.items()
+        if not (isinstance(value, dict) and value.get("signal_action") == "BUY" and key[1] in cycle_rows
+                and _shadow_entry(cycle_rows[key[1]], key[0]) is not None)
+    }
+    exploration_plan = plan_exploration(db, account, plan_outcomes, strategies, news_admitted, now=now,
                                         lane_admitted=lane_admitted)
     base["exploration_budget"] = exploration_plan.summary()
     # Time spent reserving (account row lock, gates, risk checks) and
@@ -1075,6 +1133,20 @@ def _run_signal_cycle(db: Session) -> dict:
                     # time stop are the tested exits.
                     result.update({"status": "observed",
                                    "reason": "tested exit plan has no SELL-signal exit (stop, target, time stop only)"})
+                    results.append(result)
+                    continue
+                shadow_reason = _shadow_entry(strategy, symbol)
+                if shadow_reason is not None:
+                    if signal["signal_action"] == "SELL":
+                        # A shadow strategy's own attributed lot still exits on
+                        # its SELL (normal rules; nothing is force-sold).
+                        held, attributed_lot = _strategy_holdings(db, account.id, symbol, type_by_id)
+                        if attributed_lot and held.get(strategy.strategy_type, Decimal("0")) > 0:
+                            actionable.append((strategy, signal, result))
+                            continue
+                    result.update({"status": "observed", "reason": shadow_reason, "shadow": True})
+                    if signal.get("gated_action") == "BUY":
+                        result["gated_action"] = "BUY"
                     results.append(result)
                     continue
                 exploring = (

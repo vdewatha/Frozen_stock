@@ -539,7 +539,11 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                        "market_gates_enabled": ["rsi2_pullback"],
                        "vix_gates_enabled": [], "paused_paper_losers": [], "sizing_modes_applied": [],
                        "hedge_admission": "paused", "sector_reversal_admission": "paused",
-                       "sector_ranking_applied": []}
+                       "sector_ranking_applied": [],
+                       # Slow book (reports/slow-book-20261107.md): the crossover is already
+                       # retired, so it stays retired; RSI(2)'s stock leg goes to shadow.
+                       "slow_book_shadowed": [], "rsi2_stock_leg_shadowed": True,
+                       "passive_arm_admission": "target_weight_active", "target_weight_exemption_granted": True}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
@@ -561,7 +565,10 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                                           "market_gates_enabled": [],
                                           "vix_gates_enabled": [], "paused_paper_losers": [],
                                           "sizing_modes_applied": [], "hedge_admission": None,
-                                          "sector_reversal_admission": None, "sector_ranking_applied": []}
+                                          "sector_reversal_admission": None, "sector_ranking_applied": [],
+                                          "slow_book_shadowed": [], "rsi2_stock_leg_shadowed": False,
+                                          "passive_arm_admission": None,
+                                          "target_weight_exemption_granted": False}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"
@@ -628,7 +635,9 @@ def test_lineup_retires_losing_families_from_exploration_once(db):
     db.commit()
     assert ensure_strategy_lineup(db)["retired_scorecard_losers"] == ["macd_momentum"]
     db.commit()
-    assert macd.current_status == "retired" and bollinger.current_status == "research"
+    # Bollinger is not a scorecard loser; the slow book's seed step moves it to shadow
+    # (reports/slow-book-20261107.md), never back to exploration.
+    assert macd.current_status == "retired" and bollinger.current_status == "shadow"
     audit = db.query(AuditLog).filter_by(action=SCORECARD_RETIREMENT_ACTION).one()
     assert audit.entity_id == macd.id and audit.payload["expectancy_bps"]["all"] == -15.6
     # One-shot: a later governed choice is never overridden.
