@@ -545,7 +545,8 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                        "slow_book_shadowed": [], "rsi2_stock_leg_shadowed": True,
                        # Step 4 (reports/short-horizon-reverdict-20261107.md): both fail at every cost.
                        "short_horizon_reverdict": ["rsi2_pullback", "ibs_mean_reversion"],
-                       "passive_arm_admission": "target_weight_active", "target_weight_exemption_granted": True}
+                       "passive_arm_admission": "target_weight_active", "target_weight_exemption_granted": True,
+                       "defensive_shadow_admission": "target_weight_shadow"}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
@@ -570,7 +571,8 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                                           "sector_reversal_admission": None, "sector_ranking_applied": [],
                                           "slow_book_shadowed": [], "rsi2_stock_leg_shadowed": False,
                                           "short_horizon_reverdict": [], "passive_arm_admission": None,
-                                          "target_weight_exemption_granted": False}
+                                          "target_weight_exemption_granted": False,
+                                          "defensive_shadow_admission": None}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"
