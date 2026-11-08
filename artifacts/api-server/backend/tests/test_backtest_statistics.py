@@ -8,6 +8,7 @@ from app.services.backtest_statistics import (
     block_bootstrap_ci,
     deflated_sharpe_ratio,
     expected_maximum_sharpe,
+    newey_west_t,
     probabilistic_sharpe_ratio,
     return_moments,
 )
@@ -60,3 +61,26 @@ def test_block_bootstrap_excludes_zero_for_strong_consistent_edge():
     data = np.random.default_rng(4).normal(0.004, 0.005, 250)
     low, _high = block_bootstrap_ci(data)["mean_return_ci"]
     assert low > 0
+
+
+def test_newey_west_t_matches_iid_at_zero_lags_and_widens_with_overlap():
+    rng = np.random.default_rng(3)
+    noise = rng.normal(0.0, 1.0, 600)
+    plain = newey_west_t(noise + 0.1, lags=0)
+    n = 600
+    expected_t = (noise + 0.1).mean() / math.sqrt(np.var(noise, ddof=0) / n)
+    assert plain["t_stat"] == pytest.approx(expected_t)
+    # A 4-period moving sum overlaps like weekly ICs on a 20-session label:
+    # positive autocorrelation, so the Newey-West t is well below the naive one.
+    overlapped = np.convolve(noise, np.ones(4), mode="valid") + 0.4
+    naive = newey_west_t(overlapped, lags=0)["t_stat"]
+    adjusted = newey_west_t(overlapped, lags=4)
+    assert adjusted["t_stat"] < 0.75 * naive
+    assert adjusted["lags"] == 4 and adjusted["observations"] == overlapped.size
+    # Bartlett weights by hand for lags=1.
+    x = np.array([1.0, 2.0, 0.0, 3.0, 1.0])
+    c = x - x.mean()
+    var = (c @ c + 2 * 0.5 * (c[1:] @ c[:-1])) / 5
+    assert newey_west_t(x, lags=1)["t_stat"] == pytest.approx(x.mean() / math.sqrt(var / 5))
+    assert newey_west_t([1.0], lags=2)["t_stat"] is None
+    assert newey_west_t([np.nan, 1.0, 1.0], lags=1)["t_stat"] is None  # zero variance

@@ -218,6 +218,13 @@ def test_trials_per_family_combine_discovery_engine_and_research(db):  # noqa: F
     assert ledger["yardstick"]["trial_families"]["families"]["sector_reversal"]["total"] == 11
 
 
+def test_pooled_ranker_run_is_charged_as_one_four_trial_family():
+    counts = yardstick.research_family_counts()
+    assert counts["cross_sectional_ranker"] == 4
+    source = [item for item in yardstick.RESEARCH_TRIALS if item["family"] == "cross_sectional_ranker"]
+    assert [item["source"] for item in source] == ["reports/pooled-ranker-20261107.md"]
+
+
 def test_family_trials_only_make_the_deflated_sharpe_stricter():
     summary = {"sharpe_per_period": 0.08, "observations": 2000, "skewness": 0.0, "kurtosis": 3.0,
                "discovery": {"net": {"trades": 300, "expectancy_ci_bps": [1, 9]},
