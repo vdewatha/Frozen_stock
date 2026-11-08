@@ -64,7 +64,7 @@ IBS's per-trade figures match the yardstick report (883 trades, +46.4 gross, +22
 | Variant | 25 bps | −1.44% / −0.709 / 21.9% | 0.603→0.519, 26.4%→26.5% | 0.684→0.585, 17.6%→17.7% |
 | Variant | model | −1.00% / −0.614 / 18.9% | 0.603→0.525, 26.4%→26.9% | 0.684→0.595, 17.6%→17.9% |
 
-The passive arms reproduce the feasibility report's static blends. Since 2015 the 20/80 arm returned 4.30% a year at a 7.1% maximum drawdown, against the report's 4.4% and 7.1%. The 50/50 arm returned 7.74% at 17.6%, against 7.9% and 17.6%.
+The passive arms reproduce the feasibility report's static blends. Since 2015 the 20/80 arm returned 4.30% a year at a 7.1% maximum drawdown, against the report's 4.4% and 7.1%. The 50/50 arm returned 7.74% at 17.6%, against 7.9% and 17.6%. The 20/80 arm's Sharpe and drawdown (0.600 and 11.1% from 2008-07, 0.683 and 7.1% from 2015) are the same as the step-3 report's ([defensive sleeve, PR #49](defensive-sleeve-20261107.md)), so check (iii) here is the same rule on the same arm.
 
 ## What was run
 
