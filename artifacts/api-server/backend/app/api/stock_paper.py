@@ -218,6 +218,45 @@ def self_healing(db: Session = Depends(get_db)) -> dict:
     return self_healing_summary(db)
 
 
+@router.get("/target-weight-book")
+def target_weight_book(db: Session = Depends(get_db)) -> dict:
+    """The slow book: targets, holdings, tranche schedule, turnover and pass-rule cycles (read-only)."""
+    from app.services.target_weight_book import book_view
+
+    return book_view(db)
+
+
+class TargetWeightExemptionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    active: bool
+    reason: str = Field(min_length=10, max_length=500)
+
+
+@router.post("/target-weight-book/resume")
+def resume_target_weight_book(payload: StockPaperRevalidationRequest, request: Request,
+                              db: Session = Depends(get_db)) -> dict:
+    """Resume the paused slow book after a fix; the three-cycle pass clock restarts."""
+    from app.services.target_weight_book import engine_state, resume_engine
+
+    if not engine_state(db)["paused"]:
+        raise HTTPException(status_code=409, detail="The target-weight engine is not paused")
+    result = resume_engine(db, reason=payload.reason, actor=getattr(request.state, "actor", "unknown"))
+    db.commit()
+    return result
+
+
+@router.post("/target-weight-book/exemption")
+def set_target_weight_exemption(payload: TargetWeightExemptionRequest, request: Request,
+                                db: Session = Depends(get_db)) -> dict:
+    """Grant or revoke the governed exemption of target-weight orders from the 1% and 10% caps."""
+    from app.services.target_weight_book import set_exemption
+
+    result = set_exemption(db, active=payload.active, reason=payload.reason,
+                           actor=getattr(request.state, "actor", "unknown"))
+    db.commit()
+    return result
+
+
 @router.get("/venue-qualification")
 def venue_qualification_status(db: Session = Depends(get_db)) -> dict:
     return paper_venue_qualification_status(db, active_paper_broker_name())

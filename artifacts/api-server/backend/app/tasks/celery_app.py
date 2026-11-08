@@ -144,6 +144,11 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.engine_audit_job": {"queue": "learning"},
     "app.tasks.jobs.self_healing_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
+    # Slow book (target_weight_book.py): the rebalance places paper orders, so
+    # it takes the risk lane that every worker layout serves; the after-close
+    # ledger job is short HTTP work for the fast lane.
+    "app.tasks.jobs.target_weight_rebalance_job": {"queue": "risk"},
+    "app.tasks.jobs.target_weight_daily_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
     "app.tasks.jobs.alert_daily_digest_job": {"queue": "risk"},
     "app.tasks.jobs.paper_mandate_expiry_warning_job": {"queue": "learning"},
@@ -388,6 +393,30 @@ celery_app.conf.beat_schedule = {
     "feed-hygiene": {
         "task": "app.tasks.jobs.feed_hygiene_job",
         "schedule": crontab(minute=40, hour=16, day_of_week="mon-fri"),
+        "options": {"expires": 3 * 60 * 60},
+    },
+    # Slow book: the tranche whose week it is rebalances mid-morning, clear of
+    # the opening and closing auctions (10:30 ET); the 11:30 and 13:00 runs that
+    # day send what is still missing once sale proceeds have reconciled.  Every
+    # weekday runs so a holiday on the tranche weekday moves to the next session.
+    "target-weight-rebalance": {
+        "task": "app.tasks.jobs.target_weight_rebalance_job",
+        "schedule": crontab(minute="30", hour="10,11", day_of_week="mon-fri"),
+        "options": {"expires": 25 * 60},
+    },
+    "target-weight-rebalance-topup": {
+        "task": "app.tasks.jobs.target_weight_rebalance_job",
+        "schedule": crontab(minute="0", hour="13", day_of_week="mon-fri"),
+        "options": {"expires": 25 * 60},
+    },
+    # After the close and each daily bar import (08:15 / 17:15; the importer
+    # withholds a bar until the next UTC day, so a session's P&L is booked by
+    # the next morning's run): fill benchmarks against delayed SIP, modeled
+    # distributions, sleeve daily P&L (the harm guardrail's input), post-tranche
+    # checks and the monthly pass-rule verdicts.  Every step is idempotent.
+    "target-weight-daily": {
+        "task": "app.tasks.jobs.target_weight_daily_job",
+        "schedule": crontab(minute=45, hour="8,17", day_of_week="mon-fri"),
         "options": {"expires": 3 * 60 * 60},
     },
     # Weekly paper performance report, Saturday morning after the week closes.

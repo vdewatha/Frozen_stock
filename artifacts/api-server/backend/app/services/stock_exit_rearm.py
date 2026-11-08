@@ -377,11 +377,19 @@ def rearm_broker_exits(db: Session, gateway=None, *, now: datetime | None = None
     positions = db.query(StockPaperPosition).filter(
         StockPaperPosition.account_id == account.id, StockPaperPosition.quantity > 0,
     ).order_by(StockPaperPosition.symbol).all()
+    from app.services.target_weight_book import book_symbols
+
+    target_book = book_symbols(db)
     for position in positions:
         if halted_now:
             break
         symbol = position.symbol
         entry = {"symbol": symbol, "position_quantity": _fmt(position.quantity)}
+        if symbol in target_book:
+            # Slow-book holdings (target_weight_book.py) are rebalanced to target
+            # weights; they carry no stop or take-profit by design.
+            results.append(entry | {"status": "skipped", "reason": "target-weight book holding; no broker exits"})
+            continue
         raw = broker.get(symbol)
         broker_qty = _dec(raw.get("qty")) if raw else None
         available = _dec(raw.get("qty_available")) if raw else None

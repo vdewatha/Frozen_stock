@@ -271,6 +271,42 @@ class Settings(BaseSettings):
     # One open (or pending) position per symbol across strategies: several
     # strategies holding the same name turned one bad move into 2-3 losses.
     paper_one_position_per_symbol: bool = True
+    # Slow book (app/services/target_weight_book.py, reports/slow-book-20261107.md):
+    # netted target-weight sleeves outside the slot and bracket system, four
+    # monthly tranches on four weeks.  The passive arm holds the capital the
+    # other strategies do not use in ``passive_arm_equity_symbol`` (an S&P 500
+    # fund that no slot strategy trades: never SPY, QQQ, IWM or DIA) and
+    # ``passive_arm_tbill_symbol``; ``passive_arm_equity_weight`` is the arm's
+    # equity share, a risk budget the owner sets.  Paper only.
+    target_weight_book_enabled: bool = True
+    passive_arm_equity_weight: float = Field(default=0.20, ge=0, le=1)
+    passive_arm_equity_symbol: str = "VOO"
+    passive_arm_tbill_symbol: str = "SGOV"
+    # A tranche skips a symbol whose change is under this fraction of the
+    # tranche's capital; above the soft turnover budget the band is
+    # multiplied by ``target_weight_band_widen_factor``.
+    target_weight_rebalance_band: float = Field(default=0.02, ge=0, le=0.5)
+    target_weight_band_widen_factor: float = Field(default=2.0, ge=1, le=10)
+    # One-sided turnover (half of buys plus sells) of the book's own fills
+    # over the trailing 12 months, in multiples of average equity.  Above the
+    # soft budget the bands widen; at the hard cap only risk-reducing sells go out.
+    target_weight_turnover_soft: float = Field(default=8.0, gt=0, le=50)
+    target_weight_turnover_hard: float = Field(default=10.0, gt=0, le=50)
+    # Equity left free for the slot strategies (IBS / RSI(2) entries and
+    # exploration lots) when the passive arm is sized, and a cash buffer for
+    # the marketable limit collar and price moves before the fill.
+    target_weight_slot_reserve: float = Field(default=0.10, ge=0, le=1)
+    target_weight_cash_buffer: float = Field(default=0.005, ge=0, le=0.1)
+    # Weekday (0 = Monday) of the four tranche dates: tranche k rebalances on
+    # the k-th such weekday of each month (or the next session of that week).
+    target_weight_rebalance_weekday: int = Field(default=1, ge=0, le=4)
+    # Marketable limit: buys at the decision price plus the collar, sells minus it.
+    target_weight_limit_collar_bps: float = Field(default=20.0, ge=0, le=150)
+    target_weight_min_order_notional: float = Field(default=5.0, ge=1)
+    # Step 2 pass rule (first three complete monthly cycles).
+    target_weight_weight_tolerance: float = Field(default=0.01, gt=0, le=0.1)
+    target_weight_tracking_tolerance_bps: float = Field(default=15.0, gt=0, le=500)
+    target_weight_pass_cycles: int = Field(default=3, ge=1, le=24)
     # Same-day re-entries (app/services/stock_paper_autotrader.py _buy_key):
     # each new entry after an ended one gets a fresh order key; these cap how
     # often one strategy re-enters one symbol per session, and how soon it
@@ -558,6 +594,26 @@ class Settings(BaseSettings):
         ):
             raise ValueError(f"Paper hedge universe allows at most {MAX_PAPER_HEDGE_SYMBOLS} valid stock symbols")
         return symbols
+
+    @field_validator("passive_arm_equity_symbol", "passive_arm_tbill_symbol")
+    @classmethod
+    def validate_passive_arm_symbol(cls, value: str) -> str:
+        symbol = str(value).strip().upper()
+        if not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,15}", symbol):
+            raise ValueError("Passive arm symbols must be valid stock symbols")
+        # The slot strategies (IBS, RSI(2)) trade the four index ETFs; one
+        # position per symbol would block them if the arm held one.
+        if symbol in {"SPY", "QQQ", "IWM", "DIA"}:
+            raise ValueError("The passive arm never holds SPY, QQQ, IWM or DIA")
+        return symbol
+
+    @model_validator(mode="after")
+    def validate_target_weight_book(self) -> "Settings":
+        if self.passive_arm_equity_symbol == self.passive_arm_tbill_symbol:
+            raise ValueError("The passive arm's equity and T-bill symbols must differ")
+        if self.target_weight_turnover_soft > self.target_weight_turnover_hard:
+            raise ValueError("The soft turnover budget must not exceed the hard cap")
+        return self
 
     @field_validator("database_url", mode="before")
     @classmethod

@@ -134,6 +134,61 @@ def approve_trade(signal: dict, portfolio: PortfolioState, strategy_state: Strat
     return True, "Approved for paper trading."
 
 
+# Governed risk-rule change for the slow book (reports/slow-book-20261107.md):
+# an order tagged target-weight (``order_tag``), sent by the target-weight
+# engine for one of its own book symbols, is exempt from these two caps while
+# the ``target_weight_risk_exemption`` governance action is in force.  Every
+# other check, the 100% gross-exposure cap included, still applies; any order
+# without the tag goes through ``approve_trade`` exactly as before.
+TARGET_WEIGHT_TAG = "target_weight"
+TARGET_WEIGHT_EXEMPT_CAPS = ("max_risk_per_trade", "max_symbol_exposure")
+
+
+def approve_target_weight_order(signal: dict, portfolio: PortfolioState, risk_rules: Optional[dict] = None, *,
+                                exemption_active: bool) -> tuple[bool, str]:
+    """Pre-trade gate for a target-weight rebalance order.  Fails closed.
+
+    Without the tag the order is refused here (scheduled orders use
+    ``approve_trade``).  With the exemption revoked a target-weight BUY must
+    also fit the 1%-per-BUY and 10%-per-symbol caps, like a scheduled BUY.
+    Open-position counts belong to the slot system and do not apply.
+    """
+    rules = DEFAULT_RISK_RULES | (risk_rules or {})
+    if signal.get("order_tag") != TARGET_WEIGHT_TAG:
+        return False, "Order is not tagged target-weight."
+    if portfolio.kill_switch_enabled:
+        return False, "Global kill switch is enabled."
+    if not rules.get("paper_only", True):
+        return False, "Live trading is disabled in Version 1."
+    if signal.get("action") not in {"BUY", "SELL"}:
+        return False, "Order is not actionable."
+    if signal.get("action") == "SELL":
+        return True, "Approved target-weight rebalance sell."
+    daily_drawdown = _finite(portfolio.daily_drawdown)
+    if daily_drawdown is None:
+        return False, "Daily drawdown is unknown."
+    if daily_drawdown >= float(rules["max_daily_drawdown"]):
+        return False, "Daily drawdown limit exceeded."
+    exposures = portfolio.open_positions_by_symbol or {}
+    exposure_values = [_finite(value) for value in exposures.values()]
+    if any(value is None for value in exposure_values):
+        return False, "Open exposure is not finite."
+    proposed = _finite(signal.get("proposed_exposure"))
+    if proposed is None or proposed < 0:
+        return False, "Proposed exposure is not a finite non-negative fraction."
+    if not exemption_active:
+        if proposed > float(rules["max_risk_per_trade"]) + 1e-9:
+            return False, "Risk-per-trade limit exceeded (target-weight exemption is not in force)."
+        symbol_exposure = float(exposures.get(signal.get("symbol", ""), 0) or 0)
+        if symbol_exposure + proposed > float(rules["max_symbol_exposure"]) + 1e-9:
+            return False, "Proposed order would exceed the symbol exposure limit (target-weight exemption is not in force)."
+    gross_limit = float(rules.get("max_total_exposure", 1.0))
+    gross_exposure = sum(abs(value) for value in exposure_values if value is not None)
+    if gross_exposure + proposed > gross_limit + 1e-9:
+        return False, "Proposed order would exceed the gross exposure limit."
+    return True, "Approved target-weight rebalance buy."
+
+
 ATR_STOP_MULTIPLE = 2.0
 
 
