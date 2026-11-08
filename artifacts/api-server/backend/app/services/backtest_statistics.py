@@ -99,6 +99,30 @@ def deflated_sharpe_ratio(sharpe: float, observations: int, *, trials: int,
     }
 
 
+def newey_west_t(values: Iterable[float], lags: int) -> dict:
+    """Mean of a time series and its Newey-West (Bartlett kernel) t-statistic.
+
+    For overlapping observations such as weekly information coefficients on a
+    20-session label, where neighbouring values share most of their return
+    window.  ``lags`` is the number of autocovariances kept (weights
+    ``1 - j / (lags + 1)``); ``lags=0`` is the plain i.i.d. t.  Non-finite
+    values are dropped first.
+    """
+    data = _clean(values)
+    n = int(data.size)
+    lags = max(int(lags), 0)
+    if n < 2:
+        return {"observations": n, "mean": float(data.mean()) if n else None, "se": None,
+                "t_stat": None, "lags": lags}
+    mean = float(data.mean())
+    centered = data - mean
+    variance = float(centered @ centered) / n
+    for j in range(1, min(lags, n - 1) + 1):
+        variance += 2.0 * (1.0 - j / (lags + 1.0)) * float(centered[j:] @ centered[:-j]) / n
+    se = math.sqrt(variance / n) if variance > 0 else 0.0
+    return {"observations": n, "mean": mean, "se": se, "t_stat": mean / se if se > 0 else None, "lags": lags}
+
+
 def block_bootstrap_ci(returns: Iterable[float], *, samples: int = 1000, confidence: float = 0.95,
                        block_length: int | None = None, seed: int = 7,
                        periods_per_year: int = 252) -> dict:

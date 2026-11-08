@@ -117,6 +117,8 @@ RESEARCH_TRIALS = (
      "what": "SH hedge sizes"},
     {"family": "liquid_universe", "trials": 3, "source": "reports/liquid-universe-20261107.md",
      "what": "three point-in-time liquidity terciles"},
+    {"family": "cross_sectional_ranker", "trials": 4, "source": "reports/pooled-ranker-20261107.md",
+     "what": "one pre-registered run: pooled gradient-boosting ranker plus ridge, 12-1 momentum and composite baselines"},
 )
 
 
