@@ -834,13 +834,23 @@ def shadow_broad_technicals(db: Session) -> list[str]:
     moved: list[str] = []
     rows = db.query(Strategy).filter(Strategy.strategy_type.in_(SLOW_BOOK_SHADOWED)).order_by(Strategy.id).all()
     for row in rows:
-        if row.current_status not in SHADOW_FROM_STATUSES:
-            continue
         already = db.query(AuditLog.id).filter(
             AuditLog.event_type == "strategy_governance", AuditLog.action == SLOW_BOOK_SHADOW_ACTION,
             AuditLog.entity_type == "strategy", AuditLog.entity_id == row.id,
         ).first()
         if already:
+            continue
+        if row.current_status not in SHADOW_FROM_STATUSES:
+            # Paused or retired already: recorded once, so a later governed
+            # re-activation of this row is never shadowed by a later seed pass.
+            write_audit_log(
+                db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+                action=SLOW_BOOK_SHADOW_ACTION, status="skipped",
+                message=(f"{SLOW_BOOK_REPORT}: left {row.current_status}; it already has no capital, and any later "
+                         "status change stands."),
+                payload={"old_status": row.current_status, "new_status": row.current_status,
+                         "source": SLOW_BOOK_REPORT, "paper_only": True},
+            )
             continue
         old_status, row.current_status = row.current_status, "shadow"
         write_audit_log(
