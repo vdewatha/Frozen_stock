@@ -1995,3 +1995,15 @@ def target_weight_daily_job() -> dict:
         return run_daily(db)
 
     return _run_job("target_weight_daily_job", work)
+
+
+@celery_app.task
+def defensive_sleeve_daily_job() -> dict:
+    """Defensive sleeve (defensive_sleeve.py): the zero-capital Design A shadow's hypothetical tranche fills and
+    daily shadow P&L against the passive arm, and the one re-decision trigger. Places no orders (paper only)."""
+    def work(db):
+        from app.services.defensive_sleeve import run_shadow
+
+        return run_shadow(db)
+
+    return _run_job("defensive_sleeve_daily_job", work)

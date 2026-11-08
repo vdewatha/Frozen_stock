@@ -153,6 +153,7 @@ celery_app.conf.task_routes = {
     # ledger job is short HTTP work for the fast lane.
     "app.tasks.jobs.target_weight_rebalance_job": {"queue": "risk"},
     "app.tasks.jobs.target_weight_daily_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.defensive_sleeve_daily_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.alert_delivery_job": {"queue": "risk"},
     "app.tasks.jobs.alert_daily_digest_job": {"queue": "risk"},
     "app.tasks.jobs.paper_mandate_expiry_warning_job": {"queue": "learning"},
@@ -421,6 +422,13 @@ celery_app.conf.beat_schedule = {
     "target-weight-daily": {
         "task": "app.tasks.jobs.target_weight_daily_job",
         "schedule": crontab(minute=45, hour="8,17", day_of_week="mon-fri"),
+        "options": {"expires": 3 * 60 * 60},
+    },
+    # Defensive shadow (no orders): after the 08:45 book run, so the session's
+    # passive-arm return is read from the book's sleeve_daily_pnl row.
+    "defensive-sleeve-daily": {
+        "task": "app.tasks.jobs.defensive_sleeve_daily_job",
+        "schedule": crontab(minute=5, hour=9, day_of_week="mon-fri"),
         "options": {"expires": 3 * 60 * 60},
     },
     # Weekly paper performance report, Saturday morning after the week closes.

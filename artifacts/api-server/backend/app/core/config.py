@@ -545,6 +545,10 @@ class Settings(BaseSettings):
     # the passive arm; action_enabled lets a harmful sleeve be paused.
     sleeve_guardrail_enabled: bool = True
     sleeve_guardrail_action_enabled: bool = True
+    # Defensive sleeve (defensive_sleeve.py, reports/defensive-sleeve-20261107.md):
+    # Design A failed the step 3 rule, so it runs as a zero-capital shadow (no
+    # orders) with daily shadow P&L against the passive arm and one re-decision.
+    defensive_shadow_enabled: bool = True
     # Performance-weighted paper risk fractions (bounded, shrink-first).
     paper_allocation_weighting_enabled: bool = True
     paper_allocation_floor: float = Field(default=0.5, gt=0, le=1)
