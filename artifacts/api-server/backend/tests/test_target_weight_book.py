@@ -417,7 +417,8 @@ def test_seed_shadows_broad_technicals_and_rsi2_stock_leg_once(db):
     # Already retired or paused rows are a decision that stands.
     assert rows["macd_momentum"].current_status == "retired"
     assert rows["moving_average_crossover"].current_status in {"retired", "shadow"}
-    assert rows["ibs_mean_reversion"].current_status == "paper_trading_candidate"      # IBS unchanged
+    # IBS is unchanged by the slow book; step 4 (reports/short-horizon-reverdict-20261107.md) shadows it.
+    assert rows["ibs_mean_reversion"].current_status == "shadow"
     rsi2 = rows["rsi2_pullback"].parameters
     assert "SPY" in rsi2["symbol_scope"] and "AAPL" in rsi2["shadow_symbols"]
     assert not set(rsi2["shadow_symbols"]) & {"SPY", "QQQ", "IWM", "DIA"}

@@ -907,6 +907,102 @@ def shadow_rsi2_stock_leg(db: Session) -> bool:
     return changed
 
 
+SHORT_HORIZON_REPORT = "reports/short-horizon-reverdict-20261107.md"
+SHORT_HORIZON_ACTION = "short_horizon_reverdict"
+# Step 4 of reports/Retail bot edge feasibility.md, pre-registered in
+# scripts/run_short_horizon_reverdict.py (in-sample, 2015-01 to 2026-11-06, four
+# index ETFs).  ``decision`` is the rule's outcome per strategy row:
+# ``shadow`` (failed at 10 bps, 25 bps and the published model) moves the row
+# to shadow once; ``keep_paper_size_pending_cost`` (passed at 10 bps only)
+# leaves the row as it is and records the pending condition (measured round
+# trip <= 10 bps) once.  Evidence per cost: gross bps a trade (required),
+# sleeve net Sharpe over T-bills after the 50% haircut, and the step-3
+# marginal rule on the 20/80 arm in both windows.
+SHORT_HORIZON_VERDICTS: dict[str, dict] = {
+    "ibs_mean_reversion": {
+        "decision": "shadow", "scope": "SPY, QQQ, IWM, DIA", "trades_2015": 883, "gross_bps": 46.4,
+        "checks": {"10bps": {"gross": [46.4, 30.0, True], "haircut_sharpe": [0.334, False], "marginal": True},
+                   "25bps": {"gross": [46.4, 75.0, False], "haircut_sharpe": [0.187, False], "marginal": False},
+                   "model": {"gross": [46.4, 72.9, False], "haircut_sharpe": [0.194, False], "marginal": False}},
+        "why": "gross +46.4 bps a trade clears 30 bps only at 10 bps a round trip, where the sleeve's net Sharpe "
+               "is 0.67 (0.33 after the haircut, 0.5 needed)",
+    },
+    "rsi2_pullback": {
+        "decision": "shadow", "scope": "SPY, QQQ, IWM, DIA (the stock leg is already shadow_symbols)",
+        "trades_2015": 252, "gross_bps": 29.9,
+        "checks": {"10bps": {"gross": [29.9, 30.0, False], "haircut_sharpe": [0.118, False], "marginal": False},
+                   "25bps": {"gross": [29.9, 75.0, False], "haircut_sharpe": [0.016, False], "marginal": False},
+                   "model": {"gross": [29.9, 62.4, False], "haircut_sharpe": [0.044, False], "marginal": False}},
+        "why": "gross +29.9 bps a trade misses even the 30 bps floor, and the sleeve's net Sharpe is 0.24 at "
+               "10 bps (0.12 after the haircut)",
+    },
+}
+SHORT_HORIZON_DECISIONS = frozenset({"shadow", "keep_paper_size_pending_cost"})
+
+
+def apply_short_horizon_reverdict(db: Session, verdicts: Optional[dict] = None) -> list[str]:
+    """One-time outcome of the step 4 re-verdict on the IBS and RSI(2) rows.
+
+    ``shadow``: a row still trading or exploring moves to ``shadow`` (signals
+    recorded, no entries; open lots exit by their normal rules).  A paused,
+    retired or already-shadowed row is left alone and the skip is recorded.
+    ``keep_paper_size_pending_cost``: the row is unchanged and the pending
+    condition is recorded.  Either way one ``short_horizon_reverdict`` row
+    per strategy row, so a later operator or engine decision is never
+    overridden by a later seed pass.  Returns the strategy types changed.
+    """
+    from app.services.audit import write_audit_log
+
+    verdicts = SHORT_HORIZON_VERDICTS if verdicts is None else verdicts
+    changed: list[str] = []
+    rows = db.query(Strategy).filter(Strategy.strategy_type.in_(list(verdicts))).order_by(Strategy.id).all()
+    for row in rows:
+        verdict = verdicts[row.strategy_type]
+        decision = verdict.get("decision")
+        if decision not in SHORT_HORIZON_DECISIONS:
+            raise ValueError(f"unsupported short-horizon decision {decision!r}")
+        already = db.query(AuditLog.id).filter(
+            AuditLog.event_type == "strategy_governance", AuditLog.action == SHORT_HORIZON_ACTION,
+            AuditLog.entity_type == "strategy", AuditLog.entity_id == row.id,
+        ).first()
+        if already:
+            continue
+        payload = {"decision": decision, "old_status": row.current_status, "evidence": verdict,
+                   "source": SHORT_HORIZON_REPORT, "in_sample": True, "paper_only": True}
+        if decision == "keep_paper_size_pending_cost":
+            write_audit_log(
+                db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+                action=SHORT_HORIZON_ACTION, status="pending",
+                message=(f"{SHORT_HORIZON_REPORT}: passes the sleeve rule only at 10 bps a round trip; keeps its "
+                         "current paper size until the bot's measured round trip is at or below 10 bps."),
+                payload=payload | {"new_status": row.current_status,
+                                   "pending": "measured round trip <= 10 bps (step 1 cost table)"},
+            )
+            continue
+        if row.current_status not in SHADOW_FROM_STATUSES:
+            write_audit_log(
+                db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+                action=SHORT_HORIZON_ACTION, status="skipped",
+                message=(f"{SHORT_HORIZON_REPORT}: left {row.current_status}; it already places no scheduled "
+                         "entries, and any later status change stands."),
+                payload=payload | {"new_status": row.current_status},
+            )
+            continue
+        old_status, row.current_status = row.current_status, "shadow"
+        write_audit_log(
+            db, event_type="strategy_governance", entity_type="strategy", entity_id=row.id,
+            action=SHORT_HORIZON_ACTION, status="complete",
+            message=(f"{SHORT_HORIZON_REPORT}: fails the pre-registered sleeve rule at 10 bps, 25 bps and the "
+                     f"published model ({verdict.get('why', 'see the report')}); moves to shadow (signals recorded, "
+                     "no orders). Open lots exit by their normal rules and are not force-sold."),
+            payload=payload | {"old_status": old_status, "new_status": "shadow"},
+        )
+        changed.append(row.strategy_type)
+    if changed:
+        db.flush()
+    return changed
+
+
 def admit_passive_arm(db: Session) -> Optional[str]:
     """One-time creation of the passive-arm sleeve row (``target_weight_book``).
 
@@ -1011,6 +1107,7 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "sector_ranking_applied": apply_sector_ranking(db),
         "slow_book_shadowed": shadow_broad_technicals(db),
         "rsi2_stock_leg_shadowed": shadow_rsi2_stock_leg(db),
+        "short_horizon_reverdict": apply_short_horizon_reverdict(db),
         "passive_arm_admission": admit_passive_arm(db),
         "target_weight_exemption_granted": grant_target_weight_exemption(db),
         "defensive_shadow_admission": admit_defensive_shadow(db),
