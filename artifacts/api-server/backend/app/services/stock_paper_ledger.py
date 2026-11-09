@@ -2182,6 +2182,98 @@ def _never_reached_broker(order: StockPaperOrder, observed: datetime) -> bool:
     )
 
 
+# Alpaca can move cash and positions for a fill before it posts the FILL to
+# the account activity feed: on 2026-11-09 a QQQ take-profit filled at 10:15:36
+# ET and its activity appeared about 25 minutes later. In between every
+# reconcile saw cash +$674.69 and one QQQ share gone with no activity to
+# explain it, halted the account and pushed recovery to an operator. A gap is
+# held, not halted, only while it is exactly the broker-reported fills of
+# recent orders whose activities have not been posted yet.
+LATE_ACTIVITY_GRACE = timedelta(minutes=90)
+LATE_ACTIVITY_MAX_ORDERS = 10
+
+
+def _late_activity_explanation(
+    baseline: dict | None,
+    raw_fills: list[dict],
+    raw_orders: list[dict],
+    cash: Decimal,
+    positions: dict[str, Decimal],
+    previously_seen_ids: set[str],
+    observed: datetime,
+) -> dict | None:
+    """The pending fills that make the frozen-baseline replay match exactly, or ``None``.
+
+    Uses only broker evidence: each order's own ``filled_qty``,
+    ``filled_avg_price`` and ``filled_at`` against the FILL activities already
+    posted for it. Returns ``None`` (so the caller halts as before) unless every
+    pending fill is recent and the replay with them matches cash and inventory
+    to the cent and share.
+    """
+    if not isinstance(baseline, dict):
+        return None
+    posted: dict[str, tuple[Decimal, Decimal]] = {}
+    for row in raw_fills:
+        if str(row.get("activity_type") or "FILL").upper() != "FILL" or not row.get("order_id"):
+            continue
+        try:
+            qty, price = Decimal(str(row["qty"])), Decimal(str(row["price"]))
+        except (KeyError, InvalidOperation, ValueError, TypeError):
+            return None
+        held_qty, held_value = posted.get(str(row["order_id"]), (Decimal("0"), Decimal("0")))
+        posted[str(row["order_id"])] = (held_qty + qty, held_value + qty * price)
+    pending: list[dict] = []
+    for order in raw_orders:
+        if not isinstance(order, dict) or not order.get("filled_at"):
+            continue
+        try:
+            filled_qty = Decimal(str(order.get("filled_qty") or "0"))
+            filled_at = datetime.fromisoformat(str(order["filled_at"]).replace("Z", "+00:00"))
+        except (InvalidOperation, ValueError, TypeError):
+            continue
+        if filled_qty <= 0 or filled_at.tzinfo is None:
+            continue
+        order_id = str(order.get("id") or "")
+        posted_qty, posted_value = posted.get(order_id, (Decimal("0"), Decimal("0")))
+        missing = filled_qty - posted_qty
+        if not order_id or missing <= 0:
+            continue
+        age = observed - filled_at.astimezone(UTC)
+        if age > LATE_ACTIVITY_GRACE or age < -timedelta(minutes=5):
+            return None
+        try:
+            average = Decimal(str(order["filled_avg_price"]))
+        except (KeyError, InvalidOperation, ValueError, TypeError):
+            return None
+        side, symbol = str(order.get("side") or "").lower(), str(order.get("symbol") or "").upper()
+        if side not in {"buy", "sell"} or not symbol:
+            return None
+        price = average if posted_qty == 0 else (average * filled_qty - posted_value) / missing
+        pending.append({
+            "id": f"pending-activity:{order_id}", "activity_type": "FILL",
+            "transaction_time": filled_at.astimezone(UTC).isoformat(), "symbol": symbol,
+            "side": side, "qty": str(missing), "price": str(price), "order_id": order_id,
+        })
+    if not pending or len(pending) > LATE_ACTIVITY_MAX_ORDERS:
+        return None
+    try:
+        report = alpaca_activity_v2.reconcile_baseline(
+            baseline, list(raw_fills) + pending, cash, positions, previously_seen_ids=previously_seen_ids,
+        )
+        exact = Decimal(str(report.get("cash_residual"))) == 0
+    except (ValueError, InvalidOperation, TypeError):
+        return None
+    if report.get("status") != "matched" or not exact:
+        return None
+    return {
+        "pending_fills": [
+            {key: row[key] for key in ("order_id", "symbol", "side", "qty", "price", "transaction_time")}
+            for row in pending
+        ],
+        "grace_minutes": int(LATE_ACTIVITY_GRACE.total_seconds() // 60),
+    }
+
+
 def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None) -> dict:
     """Reconcile the broker account and preserve the automatic-recovery contract.
 
@@ -2288,6 +2380,7 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
         is_v2 = account.activity_contract == alpaca_activity_v2.VERSION
         adapter_repair_resolved = False
         v2_replay_matched = False
+        late_activity = None
         residual_resolved = _enriched_fill_resolves_residual(
             db,
             account,
@@ -2360,7 +2453,18 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                 raise StockPaperError(str(exc)) from exc
             _event(db, account, "activity_reconciliation", report["status"],
                    "Observed-baseline reconciliation is not cost or trading qualification", report)
-            equation_error = None if report["status"] == "matched" else "Broker cash or inventory does not reconcile to the frozen activity baseline"
+            if report["status"] != "matched":
+                late_activity = _late_activity_explanation(
+                    account.activity_baseline, raw_fills, raw_orders, account.cash,
+                    {row["symbol"]: row["quantity"] for row in position_values},
+                    prior_activity_ids, observed,
+                )
+                if late_activity is not None:
+                    report["late_activity"] = late_activity
+                    _event(db, account, "activity_pending", "deferred",
+                           "Broker-reported fills explain the gap exactly; waiting for their activities to post",
+                           late_activity)
+            equation_error = None if report["status"] == "matched" or late_activity is not None else "Broker cash or inventory does not reconcile to the frozen activity baseline"
         # A quantity delta backed by imported fills is explained, not drift.
         drift = _sync_positions(db, account, raw_positions, observed, detect_drift=False)
         outstanding = db.query(StockPaperOrder).filter(
@@ -2395,7 +2499,8 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
             for fill in db.query(StockPaperFill).filter_by(account_id=account.id).all()
         )
         accounting_evidence_complete = bool(
-            not is_v2
+            late_activity is None
+            and not is_v2
             and prior_accounting_verified
             and fills_complete
             and equation_error is None
@@ -2494,13 +2599,30 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                 account.reconciliation_required = False
                 account.status = "reconciled"
                 account.halt_reason = None
+                # The review flag was raised by this same residual. Broker
+                # evidence has now replayed it exactly, so it no longer needs a
+                # human; without this, an otherwise-explained pause (for
+                # example the monitor's broker/reconciliation breach) stayed
+                # operator-only until someone pressed Resume.
+                review_cleared = False
+                recovery_state = db.get(StockPaperRecoveryState, 1)
+                if recovery_state is not None and recovery_state.accounting_review_required:
+                    recovery_state.accounting_review_required = False
+                    recovery_state.accounting_reviewed_at = datetime.now(UTC)
+                    recovery_state.accounting_reviewed_by = "stock_reconciler"
+                    recovery_state.accounting_review_reason = (
+                        "Residual resolved by an exact v2 activity replay from the frozen baseline "
+                        "(late broker activity); all-in costs remain unverified."
+                    )
+                    recovery_state.updated_by = "stock_reconciler"
+                    review_cleared = True
                 _event(
                     db,
                     account,
                     "accounting_residual_reclassified",
                     "resolved",
                     "Stale residual resolved by an exact v2 activity replay from the frozen baseline",
-                    {"activity_count": len(raw_fills)},
+                    {"activity_count": len(raw_fills), "accounting_review_cleared": review_cleared},
                 )
             elif legacy_cash_halt_resolved:
                 # Older deployments halted on supported cash activity because
