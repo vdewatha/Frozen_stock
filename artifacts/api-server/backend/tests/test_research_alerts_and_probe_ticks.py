@@ -79,6 +79,27 @@ def test_scope_job_on_inactive_symbol_skips_and_closes_its_alerts(db):
     assert [row.source for row in still_open] == ["strategy_learning_scope_job:ABNB:ensemble"]
 
 
+def test_scope_job_on_target_weight_row_closes_its_unknown_strategy_alerts(db):
+    from app.tasks import jobs
+
+    db.add(Asset(symbol="IRON", name="Iron", is_active=True))
+    source = "strategy_learning_scope_job:IRON:defensive_tsmom_iv"
+    alert(db, source)
+    alert(db, source)
+    alert(db, "strategy_learning_scope_job:IRON:ensemble")
+    db.commit()
+    dispatch = MagicMock()
+    with patch.object(jobs, "_run_job", side_effect=lambda name, work: work(db)), \
+            patch.object(jobs, "_claim_learning_dispatch", return_value=(dispatch, "claimed")), \
+            patch.object(jobs, "run_strategy_experiments") as experiments:
+        result = jobs.strategy_learning_scope_job.run(symbol="IRON", strategy_slug="defensive_tsmom_iv", dispatch_id=1)
+    experiments.assert_not_called()
+    assert result["status"] == "skipped" and result["resolved_alerts"] == 2
+    assert dispatch.status == "succeeded"
+    still_open = db.query(Notification).filter(Notification.status == "open").all()
+    assert [row.source for row in still_open] == ["strategy_learning_scope_job:IRON:ensemble"]
+
+
 def test_scope_job_on_unknown_symbol_also_skips(db):
     from app.tasks import jobs
 

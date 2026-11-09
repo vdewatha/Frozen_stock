@@ -762,20 +762,26 @@ def strategy_learning_scope_job(
         if not is_known_strategy(strategy_slug):
             # A target-weight row (passive arm, defensive sleeve shadow) has no
             # indicator class to backtest. Close the dispatch as done so the
-            # batch recovery does not republish it, and raise no alert.
+            # batch recovery does not republish it, and raise no alert. Close
+            # the alerts its earlier "Unknown strategy" failures left open, or
+            # the retry job keeps requeuing them every few minutes.
             if dispatch:
                 dispatch.status = "succeeded"
                 dispatch.lease_expires_at = None
                 dispatch.completed_at = datetime.utcnow()
                 dispatch.error_type = "skipped"
                 dispatch.error_message = f"{strategy_slug} is not a backtestable indicator strategy"
-                db.commit()
+            from app.services.notifications import resolve_successful_job_notifications
+
+            closed = resolve_successful_job_notifications(db, f"strategy_learning_scope_job:{symbol}:{strategy_slug}")
+            db.commit()
             return {
                 "status": "skipped",
                 "job": "strategy_learning_scope_job",
                 "symbol": symbol,
                 "strategy": strategy_slug,
                 "reason": "not a backtestable indicator strategy",
+                "resolved_alerts": closed,
                 "paper_only": True,
             }
         asset = db.query(Asset).filter(Asset.symbol == symbol.strip().upper()).one_or_none()
