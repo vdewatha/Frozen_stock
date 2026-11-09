@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "local-app",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["scripts/run_local_app.sh"],
+      "port": 18936
+    }
+  ]
+}

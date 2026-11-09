@@ -148,6 +148,16 @@ python3.11 -m uvicorn app.main:app \
   --port "${PORT:?PORT environment variable is required}" &
 pids+=("$!")
 
-wait -n "${pids[@]}"
+if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 3) )); then
+  wait -n "${pids[@]}"
+else
+  # bash < 4.3 (macOS /bin/bash 3.2) has no `wait -n`: poll until any process exits.
+  while :; do
+    for pid in "${pids[@]}"; do
+      kill -0 "$pid" 2>/dev/null || break 2
+    done
+    sleep 2
+  done
+fi
 echo "A local stack process exited; stopping the remaining processes." >&2
 exit 1

@@ -5,6 +5,7 @@ _Replace the heading above with the project's name, and this line with one sente
 ## Run & Operate
 
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `bash scripts/run_local_app.sh` — run the whole app on your own machine for testing: API on :8080, dashboard on http://127.0.0.1:18936 (`/api` proxied), its own SQLite database, paper only, Celery workers off unless `LOCAL_WORKERS=true`; role keys are generated into `.local-app.env` (gitignored), where `DEV_PAPER_ALPACA_*` keys can be added to bind a paper account
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
