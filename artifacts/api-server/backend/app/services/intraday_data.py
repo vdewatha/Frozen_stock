@@ -1344,9 +1344,16 @@ def preflight_intraday(
             ],
         })
 
+    # The slow book's ETFs (passive arm VOO/SGOV) are not execution symbols,
+    # but the book sizes its orders from their newest minute bar. Ingest them
+    # in the same batch on the scheduled run; they never enter the readiness
+    # check below, so a gap in them cannot block the rest of trading.
+    # (2026-11-09: tranche 1 was blocked "no fresh reference price for SGOV,
+    # VOO" because only execution symbols were ingested during the session.)
+    book_only = _book_only_symbols(selected) if symbols is None else []
     ingest_started = time.monotonic()
     ingestion = ingest_intraday(
-        db, selected, now=observed_at,
+        db, selected + book_only, now=observed_at,
         backfill_time_budget_seconds=settings.intraday_backfill_session_time_budget_seconds,
     )
     status_started = time.monotonic()
@@ -1471,7 +1478,24 @@ def preflight_intraday(
         ),
         "results": results,
         "execution_eligible": execution_eligible,
+        **({"book_symbols": [
+            {"symbol": symbol,
+             "status": ingestion_by_symbol.get(symbol, {}).get("status", "missing"),
+             "rows_imported": ingestion_by_symbol.get(symbol, {}).get("rows_imported", 0)}
+            for symbol in book_only
+        ]} if book_only else {}),
     })
+
+
+def _book_only_symbols(selected: list[str]) -> list[str]:
+    """Slow-book symbols not already in ``selected``; never raises (an empty list on any error)."""
+    try:
+        from app.services.trading_universe import target_weight_symbols
+
+        chosen = set(selected)
+        return sorted(_symbol(value) for value in target_weight_symbols() if _symbol(value) not in chosen)
+    except Exception:
+        return []
 
 
 def publication_lag_allowance() -> timedelta:
