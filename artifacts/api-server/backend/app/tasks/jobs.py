@@ -762,20 +762,25 @@ def strategy_learning_scope_job(
         if not is_known_strategy(strategy_slug):
             # A target-weight row (passive arm, defensive sleeve shadow) has no
             # indicator class to backtest. Close the dispatch as done so the
-            # batch recovery does not republish it, and raise no alert.
+            # batch recovery does not republish it, raise no alert, and close
+            # the alerts its earlier failures opened.
             if dispatch:
                 dispatch.status = "succeeded"
                 dispatch.lease_expires_at = None
                 dispatch.completed_at = datetime.utcnow()
                 dispatch.error_type = "skipped"
                 dispatch.error_message = f"{strategy_slug} is not a backtestable indicator strategy"
-                db.commit()
+            from app.services.notifications import resolve_successful_job_notifications
+
+            closed = resolve_successful_job_notifications(db, f"strategy_learning_scope_job:{symbol}:{strategy_slug}")
+            db.commit()
             return {
                 "status": "skipped",
                 "job": "strategy_learning_scope_job",
                 "symbol": symbol,
                 "strategy": strategy_slug,
                 "reason": "not a backtestable indicator strategy",
+                "resolved_alerts": closed,
                 "paper_only": True,
             }
         asset = db.query(Asset).filter(Asset.symbol == symbol.strip().upper()).one_or_none()
@@ -1083,9 +1088,13 @@ def trade_candidate_scan_job() -> dict:
 @celery_app.task
 def paper_trading_signal_job() -> dict:
     def work(db):
+        from app.services.held_back_alarm import record_held_back, signal_cycle_held_back
         from app.services.stock_paper_autotrader import run_stock_paper_signal_cycle
 
-        return run_stock_paper_signal_cycle(db)
+        result = run_stock_paper_signal_cycle(db)
+        count, reason = signal_cycle_held_back(result)
+        record_held_back("signals", reason, count=count)
+        return result
 
     return _run_job("paper_trading_signal_job", work)
 
@@ -1404,13 +1413,20 @@ def reap_stale_jobs_job() -> dict:
     def work(db):
         from app.services.scanner_refresh_jobs import expire_stale_scanner_refresh_jobs
 
+        from app.services.notifications import resolve_obsolete_learning_scope_alerts
+
         scalp = expire_stale_scalp_research_runs(db)
         scanner = expire_stale_scanner_refresh_jobs(db)
+        # Learning-scope alerts that no rerun can clear (unknown strategy,
+        # deactivated symbol); they held "Scheduler health" blocked.
+        alerts = resolve_obsolete_learning_scope_alerts(db)
+        db.commit()
         return {
             "status": "complete",
             "job": "reap_stale_jobs_job",
             "expired_scalp_run_ids": scalp["expired_run_ids"],
             "expired_scanner_job_ids": scanner["expired_job_ids"],
+            "resolved_learning_alerts": alerts,
             "paper_only": True,
         }
 
@@ -2016,11 +2032,14 @@ def yardstick_job() -> dict:
 def cost_probe_job() -> dict:
     """In session: one tick of the cost probes (record a finished round trip, close a due probe or open the week's next)."""
     def work(db):
-        from app.services.cost_probes import record_tick, run_probe_cycle
+        from app.services.cost_probes import held_back, record_tick, run_probe_cycle
+        from app.services.held_back_alarm import record_held_back
 
         result = run_probe_cycle(db)
         db.commit()
         record_tick(result)
+        if held_back(result):
+            record_held_back("cost_probe", result.get("reason"))
         return {"job": "cost_probe_job", **result}
 
     return _run_job("cost_probe_job", work)
@@ -2096,11 +2115,29 @@ def target_weight_rebalance_job() -> dict:
     """Slow book (target_weight_book.py): weekdays mid-session, clear of the auctions. Plans the tranche
     whose week it is (once a month each) and sends the netted orders still missing (paper only)."""
     def work(db):
+        from app.services.held_back_alarm import record_held_back, target_weight_held_back
         from app.services.target_weight_book import run_rebalance
 
-        return run_rebalance(db)
+        result = run_rebalance(db)
+        reason = target_weight_held_back(result)
+        if reason:
+            record_held_back("target_weight", reason)
+        return result
 
     return _run_job("target_weight_rebalance_job", work)
+
+
+@celery_app.task
+def held_back_session_alarm_job() -> dict:
+    """In session: warn once a day when something wanted to trade, was held back, and no order was sent."""
+    def work(db):
+        from app.services.held_back_alarm import check_held_back_session
+
+        result = check_held_back_session(db)
+        db.commit()
+        return result
+
+    return _run_job("held_back_session_alarm_job", work)
 
 
 @celery_app.task

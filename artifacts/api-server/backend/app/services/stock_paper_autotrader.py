@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 import logging
+import re
 import math
 import time
 from zoneinfo import ZoneInfo
@@ -899,6 +900,31 @@ def _shadow_entry(row, symbol: str) -> str | None:
     return None
 
 
+_REASON_DIGITS = re.compile(r"\d+(?:\.\d+)?")
+_REASON_SPACES = re.compile(r"\s+")
+
+
+def block_reasons(results: list[dict]) -> list[dict]:
+    """Blocked/failed results grouped by reason, commonest first.
+
+    On 2026-11-09 every cycle logged only ``blocked=277``-``302``; why (strategy
+    rules, risk caps, or a launch-admission gate refusing everything) was not
+    in the logs. Numbers are folded to ``#`` so per-symbol amounts group.
+    """
+    counts: dict[str, int] = {}
+    for item in results:
+        if item.get("status") not in {"blocked", "failed"}:
+            continue
+        reason = _REASON_SPACES.sub(" ", _REASON_DIGITS.sub("#", str(item.get("reason") or "no reason"))).strip()[:160]
+        counts[reason] = counts.get(reason, 0) + 1
+    return [{"reason": reason, "count": count}
+            for reason, count in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))]
+
+
+def format_block_reasons(reasons: list[dict]) -> str:
+    return " | ".join(f"{row['count']}x {row['reason']}" for row in reasons) or "-"
+
+
 def run_stock_paper_signal_cycle(db: Session) -> dict:
     """Run one cycle, reusing launch-admission gates across its orders."""
     from app.services.stock_paper_ledger import LAUNCH_GATES_CACHE, LAUNCH_GATES_CACHE_ENABLED
@@ -1616,11 +1642,12 @@ def _run_signal_cycle(db: Session) -> dict:
         "reserve_ms": round(order_ms["reserve"], 1),
         "dispatch_ms": round(order_ms["dispatch"], 1),
     }
+    reasons = block_reasons(results)
     logger.info(
         "stock paper cycle: symbols=%s strategies=%s signals_ms=%s orders_ms=%s total_ms=%s "
-        "reserve_ms=%s dispatch_ms=%s submitted=%s blocked=%s",
+        "reserve_ms=%s dispatch_ms=%s submitted=%s blocked=%s top_reasons=%s",
         len(symbols), len(strategies), timing["signals_ms"], timing["orders_ms"], timing["total_ms"],
-        timing["reserve_ms"], timing["dispatch_ms"], submitted, blocked,
+        timing["reserve_ms"], timing["dispatch_ms"], submitted, blocked, format_block_reasons(reasons[:3]),
     )
     # This session's exploration entries per strategy and sector after the cycle.
     base["exploration_date_caps"] = date_caps.summary()
@@ -1630,6 +1657,7 @@ def _run_signal_cycle(db: Session) -> dict:
         "signal_count": len(results),
         "submitted_count": submitted,
         "blocked_count": blocked,
+        "block_reasons": reasons[:10],
         "timing": timing,
         "signal_batch": {key: value for key, value in signal_stats.items()},
         "meta_label": meta_label.summary(),
