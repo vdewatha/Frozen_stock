@@ -13,6 +13,12 @@ import {
   type LivePilot,
 } from "@/lib/api";
 
+// Notionals arrive as Decimal strings ("10000.00000000").
+function usd(value: string | number | null | undefined): string {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }) : String(value);
+}
+
 function time(value: string | null | undefined): string {
   return value ? new Date(value).toLocaleString() : "Not set";
 }
@@ -69,7 +75,7 @@ export function LivePilotPanel() {
         <div className="rounded-md border border-line p-3">
           <div className="font-semibold">Exposure boundary</div>
           <div className="mt-1 text-slate-600">Symbols: {pilot?.symbols.join(", ") || "none"}</div>
-          <div className="text-slate-600">Budget: {pilot?.max_notional ?? "0"} · Order cap: {pilot?.max_order_notional ?? "0"}</div>
+          <div className="text-slate-600">Budget: {usd(pilot?.max_notional)} · Order cap: {usd(pilot?.max_order_notional)}</div>
           <div className="text-slate-600">Regular sessions · limit/day only</div>
           <div className="text-slate-600">Window: {time(pilot?.starts_at)} → {time(pilot?.expires_at)}</div>
         </div>

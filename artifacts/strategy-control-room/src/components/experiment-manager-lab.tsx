@@ -99,6 +99,10 @@ export function ExperimentManagerLab() {
           </button></RoleGate>
           <button className="focus-ring inline-flex h-10 items-center justify-center gap-2 self-end rounded-md border border-line px-3 text-sm font-medium" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Refreshing experiments");
+            // runAction reloads the list after this; report the result so the
+            // status no longer stays on "Refreshing experiments".
+            const rows = await getStrategyExperiments(symbol, strategy);
+            setStatus(`Loaded ${rows.length} experiments`);
           })}>
             <RefreshCw size={16} />
             Refresh

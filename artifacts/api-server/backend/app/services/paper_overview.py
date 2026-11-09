@@ -26,7 +26,10 @@ from app.services.strategy_execution_policy import daily_bar_entry_window, sessi
 ET = ZoneInfo("America/New_York")
 UTC = timezone.utc
 ZERO = Decimal("0")
-STALE_SECONDS = 180
+# Broker reconciliation runs every 5 minutes, so a 3-minute limit flagged the
+# account stale for most of every cycle and lit four warning banners. Seven
+# minutes is one cycle plus margin; a missed cycle still shows as stale.
+STALE_SECONDS = 420
 # Orders reconciliation imported from the broker because no app order claimed them.
 EXTERNAL_ORDER_SOURCE = "broker_import"
 # Nothing in this module assigns an owner. Each diagnostic names the evidence

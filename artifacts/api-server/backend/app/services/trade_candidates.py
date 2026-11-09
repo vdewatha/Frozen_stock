@@ -216,7 +216,14 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
         db.commit()
 
         for strategy_row in strategies:
-            signal = get_strategy(strategy_row["strategy_type"], strategy_row["parameters"]).generate_signal(symbol, prices)
+            try:
+                indicator = get_strategy(strategy_row["strategy_type"], strategy_row["parameters"])
+            except ValueError:
+                # Target-weight rows (passive arm, defensive sleeve shadow)
+                # have no indicator class; one of them used to abort the
+                # whole scan with "Unknown strategy".
+                continue
+            signal = indicator.generate_signal(symbol, prices)
             # Keep the full trusted window so the 30-trade quality gate is
             # measured against all available evidence, not an arbitrary tail.
             backtest = run_backtest(symbol, strategy_row["strategy_type"], prices, BacktestConfig(), strategy_row["parameters"])

@@ -306,5 +306,41 @@ def test_scanner_marks_research_only_symbols_as_not_execution_eligible():
     assert result["research_positive_count"] == 1
 
 
+def test_scanner_skips_rows_without_an_indicator_class_instead_of_aborting():
+    # 2026-11-09: the slow-book rows passive_arm / defensive_tsmom_iv made
+    # every scan fail with "Unknown strategy" before any candidate was built.
+    from app.services import trade_candidates
+
+    db = MagicMock()
+    asset_query = MagicMock()
+    asset_query.filter.return_value.order_by.return_value.all.return_value = [("SPY",)]
+    strategy_query = MagicMock()
+    strategy_query.order_by.return_value.all.return_value = [
+        SimpleNamespace(id=1, name="Passive arm", strategy_type="passive_arm", parameters={}, current_status="target_weight_active"),
+        SimpleNamespace(id=2, name="Test strategy", strategy_type="test", parameters={}, current_status="active"),
+    ]
+    db.query.side_effect = [asset_query, strategy_query]
+    signal = MagicMock(action="BUY", confidence=0.8, probability_up=0.6, reason="test")
+    indicator = MagicMock()
+    indicator.generate_signal.return_value = signal
+
+    def lookup(slug, parameters=None):
+        if slug == "passive_arm":
+            raise ValueError("Unknown strategy: passive_arm")
+        return indicator
+
+    with patch.object(trade_candidates.settings, "paper_execution_symbols", ["SPY"]), \
+         patch.object(trade_candidates, "trusted_history", return_value=(history(), "database:yfinance")), \
+         patch.object(trade_candidates, "summarize_macro_context", return_value={"summary": ""}), \
+         patch.object(trade_candidates, "latest_market_regime", return_value=None), \
+         patch.object(trade_candidates, "predict_probabilities", return_value={"predictions": [{"probability_up": 0.6, "expected_return": 0.01, "horizon_days": 1}]}), \
+         patch.object(trade_candidates, "summarize_news_context", return_value={"summary": ""}), \
+         patch.object(trade_candidates, "get_strategy", side_effect=lookup), \
+         patch.object(trade_candidates, "run_backtest", return_value={"score": 0.2, "rejected": False, "rejection_reasons": []}):
+        result = trade_candidates.scan_trade_candidates(db)
+
+    assert [candidate["strategy"] for candidate in result["candidates"]] == ["test"]
+
+
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(unittest.FunctionTestCase(value) for name, value in globals().items() if name.startswith("test_"))

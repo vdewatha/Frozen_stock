@@ -446,9 +446,19 @@ app.use(
       "x-internal-auth-role",
       "x-internal-auth-timestamp",
       "x-internal-auth-signature",
+      "x-internal-client-ip",
     ]) {
       delete req.headers[name];
     }
+    // The API sees every request from this gateway's loopback address, so it
+    // cannot tell anonymous viewers apart for rate limiting. Pass the client
+    // address the same way the Clerk proxy does (first X-Forwarded-For hop).
+    const xff = req.headers["x-forwarded-for"];
+    const clientIp =
+      (Array.isArray(xff) ? xff[0] : xff)?.split(",")[0]?.trim() ||
+      req.socket?.remoteAddress ||
+      "";
+    if (clientIp) req.headers["x-internal-client-ip"] = clientIp.slice(0, 64);
 
     const auth = clerkConfigured ? getAuth(req) : { userId: null };
     if (auth.userId) {

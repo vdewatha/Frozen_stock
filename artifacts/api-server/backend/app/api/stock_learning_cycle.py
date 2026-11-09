@@ -160,7 +160,14 @@ def get_cycles(
 @router.get("/schedule-control")
 def get_schedule_control(db: Session = Depends(get_db)) -> dict:
     """Scheduled-learning control plus the drift-triggered retraining state (additive)."""
-    return scheduled_learning_control_projection(db) | {"drift_retraining": drift_retraining_projection(db)}
+    from app.core.response_cache import cached_read
+
+    # Hung for minutes on the hosted deployment (live-safety evaluation);
+    # one computation at a time, and the update below invalidates it.
+    return cached_read(
+        "stock/learning-cycles/schedule-control", 30,
+        lambda: scheduled_learning_control_projection(db) | {"drift_retraining": drift_retraining_projection(db)},
+    )
 
 
 @router.get("/launch-prerequisites")
@@ -288,6 +295,9 @@ def update_schedule_control(
     request: Request,
     db: Session = Depends(get_db),
 ) -> dict:
+    from app.core.response_cache import invalidate
+
+    invalidate("stock/learning-cycles/schedule-control")
     try:
         control = set_scheduled_learning_control(
             db,
@@ -311,6 +321,9 @@ def update_schedule_control(
             },
         )
         db.commit()
+        # Again after the commit: a read between the first invalidation and
+        # the commit could have cached the old state.
+        invalidate("stock/learning-cycles/schedule-control")
         return scheduled_learning_control_projection(db)
     except StockTrainingError as exc:
         db.rollback()

@@ -46,7 +46,15 @@ export function PredictionScanner() {
     }
   }
 
-  async function pollRefreshJob(jobId: number) {
+  // Capped like the opportunity radar: a job orphaned in "running" (no
+  // worker picked it up) used to keep this polling every 3s forever with the
+  // controls locked. 100 polls is 5 minutes.
+  async function pollRefreshJob(jobId: number, attempt = 0) {
+    if (attempt >= 100) {
+      setStatus("Scanner refresh is still not finished after 5 minutes; check the worker and try again later.");
+      setIsBusy(false);
+      return;
+    }
     const job = await getLatestTradeCandidateRefreshJob();
     if (!job || job.id !== jobId) {
       return;
@@ -65,7 +73,7 @@ export function PredictionScanner() {
       return;
     }
     window.setTimeout(() => {
-      pollRefreshJob(jobId).catch((error) => {
+      pollRefreshJob(jobId, attempt + 1).catch((error) => {
         setStatus(error instanceof Error ? error.message : "Scanner refresh status failed");
         setIsBusy(false);
       });

@@ -24,7 +24,9 @@ export function StockMonitoringPanel() {
     try {
       const data = run ? await runStockMonitoring() : await getStockMonitoring();
       setSnapshot(data);
-      setStatus(`Updated ${new Date(data.generated_at).toLocaleTimeString()}`);
+      // No snapshot yet: the API returns generated_at null plus a message;
+      // new Date(null) printed the epoch ("Updated 7:00:00 PM").
+      setStatus(data.generated_at ? `Updated ${new Date(data.generated_at).toLocaleTimeString()}` : data.message ?? "No monitoring snapshot recorded yet");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Monitoring unavailable");
     } finally {

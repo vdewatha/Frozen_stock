@@ -42,7 +42,7 @@ import { OperationalHardeningPanel } from "@/components/operational-hardening-pa
 import { LiveOperationsPanel } from "@/components/live-operations-panel";
 import { LivePilotPanel } from "@/components/live-pilot-panel";
 import { LiveMandatePanel } from "@/components/live-mandate-panel";
-import { getAuthConfig, getAuthSession, getDashboard, getErrorMessage, setAccessToken, setAuthMode, type AuthSession, type DashboardSnapshot } from "@/lib/api";
+import { ApiError, getAuthConfig, getAuthSession, getDashboard, getErrorMessage, setAccessToken, setAuthMode, type AuthSession, type DashboardSnapshot } from "@/lib/api";
 import { workspacePages, resolveWorkspacePage } from "@/lib/workspace-navigation";
 import { PaperOverviewPanel } from "@/components/paper-overview-panel";
 import "@/components/paper-overview.css";
@@ -158,7 +158,8 @@ function AccessSettings({ session }: { session: AuthSession }) {
   const changeAccess = async (token: string) => {
     setBusy(true); setError(""); setAccessToken(token);
     try { await getAuthSession(); setKey(""); await client.invalidateQueries(); }
-    catch (failure) { setAccessToken(""); setError(getErrorMessage(failure, "Access key rejected")); await client.invalidateQueries(); }
+    // A wrong local role key is a 401 too; "sign-in has expired" misled here.
+    catch (failure) { setAccessToken(""); setError(failure instanceof ApiError && failure.status === 401 ? "Access key rejected" : getErrorMessage(failure, "Access key rejected")); await client.invalidateQueries(); }
     finally { setBusy(false); }
   };
   return <section className="access-settings"><div className="section-heading"><h2>Workspace access</h2><ShieldCheck size={20}/></div><dl className="access-details"><div><dt>Current role</dt><dd>{session.role}</dd></div><div><dt>Environment</dt><dd>Paper only</dd></div><div><dt>Live order authority</dt><dd>Disabled</dd></div></dl>{localPaperAuth && <form onSubmit={event => { event.preventDefault(); void changeAccess(key.trim()); }}><h3>Additional permissions</h3><p>Research and operator actions require a local role key. Access lasts until this tab reloads.</p><label htmlFor="role-key">Role access key</label><div className="access-form-row"><input id="role-key" type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)}/><button className="primary-action" type="submit" disabled={busy || !key.trim()}>Apply key</button></div>{session.role !== "viewer" && <button className="text-link" type="button" disabled={busy} onClick={() => void changeAccess("")}>Return to read-only access</button>}{error && <p role="alert" className="text-red-700">{error}</p>}</form>}</section>;

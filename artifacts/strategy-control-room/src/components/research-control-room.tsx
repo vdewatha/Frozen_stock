@@ -43,8 +43,10 @@ export function ResearchControlRoom() {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
 
-  async function refresh() {
-    setBusy(true);
+  // Background polls refresh quietly; only an explicit Refresh shows the
+  // spinner, so the header no longer reads "Refreshing…" most of the time.
+  async function refresh(quiet = false) {
+    if (!quiet) setBusy(true);
     try {
       const page = await getAgentResearchRuns();
       setRuns(page.items);
@@ -59,7 +61,9 @@ export function ResearchControlRoom() {
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 5_000);
+    // Each poll returns ~70 KB of source snapshots; 30s is enough for runs
+    // that take minutes and keeps load off the deployment.
+    const timer = window.setInterval(() => void refresh(true), 30_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -105,7 +109,7 @@ export function ResearchControlRoom() {
           <div className="mt-5 grid gap-3 sm:grid-cols-3"><div className="border border-line p-3"><span className="text-[10px] uppercase text-slate-500">Recommendation</span><strong className="mt-2 block text-lg">{selectedRun?.result?.recommendation ?? "Unavailable"}</strong></div><div className="border border-line p-3"><span className="text-[10px] uppercase text-slate-500">Evaluation</span><strong className="mt-2 block text-lg">{selectedRun?.evaluation.status ?? "Waiting"}</strong></div><div className="border border-red-200 bg-red-50 p-3 text-red-900"><span className="text-[10px] uppercase">Eligibility</span><strong className="mt-2 flex items-center gap-1 text-lg"><Lock size={15} />Not eligible</strong></div></div>
           <div className="mt-5 border-l-2 border-mint pl-4"><p className="text-sm leading-6 text-slate-700">{runDetail(selectedRun)}</p>{selectedRun?.result?.limitations?.length ? <p className="mt-3 text-xs leading-5 text-slate-500"><strong>Known limitations:</strong> {selectedRun.result.limitations.join(" · ")}</p> : null}</div>
         </div>
-        <aside className="border border-line bg-slate-50 p-4"><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-600"><Circle size={10} className="fill-mint text-mint" />Evidence trace</div><dl className="mt-4 grid gap-3 text-xs"><div className="flex justify-between gap-4 border-b border-line pb-2"><dt className="text-slate-500">Source rows</dt><dd className="font-semibold text-ink">{selectedRun?.source_snapshot.length ?? 0}</dd></div><div className="flex justify-between gap-4 border-b border-line pb-2"><dt className="text-slate-500">Latest context</dt><dd className="text-right font-semibold text-ink">{latestObserved ? new Date(latestObserved).toLocaleString() : "Unavailable"}</dd></div><div className="flex justify-between gap-4 border-b border-line pb-2"><dt className="text-slate-500">Model</dt><dd className="text-right font-semibold text-ink">{selectedRun?.model_name ?? "Not run"}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Broker authority</dt><dd className="flex items-center gap-1 font-semibold text-red-700"><Lock size={12} />None</dd></div></dl></aside>
+        <aside className="border border-line bg-slate-50 p-4"><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-600"><Circle size={10} className="fill-mint text-mint" />Evidence trace</div><dl className="mt-4 grid gap-3 text-xs"><div className="flex justify-between gap-4 border-b border-line pb-2"><dt className="text-slate-500">Run started</dt><dd className="text-right font-semibold text-ink">{selectedRun ? new Date(selectedRun.created_at).toLocaleString() : "Not run"}</dd></div><div className="flex justify-between gap-4 border-b border-line pb-2"><dt className="text-slate-500">Source rows</dt><dd className="font-semibold text-ink">{selectedRun?.source_snapshot.length ?? 0}</dd></div><div className="flex justify-between gap-4 border-b border-line pb-2"><dt className="text-slate-500">Latest context</dt><dd className="text-right font-semibold text-ink">{latestObserved ? new Date(latestObserved).toLocaleString() : "Unavailable"}</dd></div><div className="flex justify-between gap-4 border-b border-line pb-2"><dt className="text-slate-500">Model</dt><dd className="text-right font-semibold text-ink">{selectedRun?.model_name ?? "Not run"}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Broker authority</dt><dd className="flex items-center gap-1 font-semibold text-red-700"><Lock size={12} />None</dd></div></dl></aside>
       </div>
     </section>
   </div>;

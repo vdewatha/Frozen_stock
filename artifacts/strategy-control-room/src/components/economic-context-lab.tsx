@@ -65,7 +65,7 @@ export function EconomicContextLab() {
           <RoleGate requires="researcher"><button className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-md bg-mint px-3 text-sm font-semibold text-white" disabled={isBusy} onClick={() => runAction(async () => {
             setStatus("Importing fallback macro series");
             const response = await importEconomicData();
-            setStatus(`Stored ${response.indicator_ids.length} ${response.source} observations`);
+            setStatus(`Stored ${response.indicator_ids.length || response.rows_imported} ${response.source} observations${response.rows_updated ? `, updated ${response.rows_updated}` : ""}`);
           })}>
             <UploadCloud size={16} />
             Import
