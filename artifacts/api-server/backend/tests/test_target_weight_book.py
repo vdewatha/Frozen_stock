@@ -659,3 +659,12 @@ def test_viewer_endpoint_is_viewer_readable():
     assert required_role("GET", "/stock-paper/target-weight-book") == "viewer"
     assert required_role("POST", "/stock-paper/target-weight-book/resume") == "admin"
     assert required_role("POST", "/stock-paper/target-weight-book/exemption") == "admin"
+
+
+def test_slot_reserve_default_leaves_probe_headroom_only():
+    """IBS and RSI(2) are in shadow, so the reserve keeps only probe headroom (reports/short-horizon-reverdict-20261107.md)."""
+    from app.core.config import Settings, settings as live
+    default = Settings.model_fields["target_weight_slot_reserve"].default
+    assert default == 0.02
+    # One probe at its notional cap fits in reserve plus buffer on a $100k paper account.
+    assert (default + Settings.model_fields["target_weight_cash_buffer"].default) * 100_000 >= live.cost_probe_max_notional
