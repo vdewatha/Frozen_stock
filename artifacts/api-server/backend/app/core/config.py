@@ -292,10 +292,14 @@ class Settings(BaseSettings):
     # soft budget the bands widen; at the hard cap only risk-reducing sells go out.
     target_weight_turnover_soft: float = Field(default=8.0, gt=0, le=50)
     target_weight_turnover_hard: float = Field(default=10.0, gt=0, le=50)
-    # Equity left free for the slot strategies (IBS / RSI(2) entries and
-    # exploration lots) when the passive arm is sized, and a cash buffer for
-    # the marketable limit collar and price moves before the fill.
-    target_weight_slot_reserve: float = Field(default=0.10, ge=0, le=1)
+    # Equity left free outside the passive arm when it is sized, and a cash
+    # buffer for the marketable limit collar and price moves before the fill.
+    # The reserve was 10% for IBS / RSI(2) entries; both moved to shadow in the
+    # short-horizon re-verdict (reports/short-horizon-reverdict-20261107.md), so
+    # it is 2%: enough headroom under the gross-exposure cap for a cost probe
+    # (up to cost_probe_max_notional) and exploration lots, the rest goes to
+    # the passive arm.
+    target_weight_slot_reserve: float = Field(default=0.02, ge=0, le=1)
     target_weight_cash_buffer: float = Field(default=0.005, ge=0, le=0.1)
     # Weekday (0 = Monday) of the four tranche dates: tranche k rebalances on
     # the k-th such weekday of each month (or the next session of that week).
