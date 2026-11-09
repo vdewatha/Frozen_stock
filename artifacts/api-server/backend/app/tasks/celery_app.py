@@ -36,6 +36,12 @@ def configured_schedule(schedule: dict, *, observation_only: bool) -> dict:
     return {name: entry for name, entry in schedule.items() if entry["task"] in OBSERVATION_TASKS}
 
 celery_app = Celery("trading_app", broker=settings.redis_url, backend=settings.redis_url)
+# The worker logs "Task ... succeeded in Xs: <result>" for every task, with the
+# result repr up to Celery's default 1,024 characters. Minutely jobs return large
+# dicts, so this was most of the deployment's log volume. Trim it to one short
+# line; the full result is still stored in the result backend.
+TASK_RESULT_LOG_CHARS = 240
+celery_app.Task.resultrepr_maxsize = TASK_RESULT_LOG_CHARS
 celery_app.conf.timezone = "America/New_York"
 celery_app.conf.task_track_started = True
 celery_app.conf.worker_send_task_events = True

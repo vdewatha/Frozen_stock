@@ -14,6 +14,14 @@ import {
   clerkProxyMiddleware,
   getClerkProxyHost,
 } from "./middlewares/clerkProxyMiddleware";
+import { installNonBlockingStdio, logRelayStats } from "./log-relay";
+import { startStallWatchdog, trackChildPid, untrackChildPid } from "./stall-watchdog";
+
+// Before anything logs: a stalled log pipe must never block this process
+// (see log-relay.ts), and a stuck event loop must end in a restart, not a
+// silent hang (see stall-watchdog.ts).
+installNonBlockingStdio();
+startStallWatchdog();
 
 const publicPort = Number(process.env.PORT);
 if (!Number.isInteger(publicPort) || publicPort <= 0) {
@@ -66,8 +74,20 @@ const redisProcess = useEmbeddedRedis
       "--save", "",
       "--appendonly", "no",
       "--protected-mode", "yes",
-    ], { stdio: "inherit" })
+    ], { stdio: ["ignore", "pipe", "pipe"] })
   : undefined;
+if (redisProcess) relayChild(redisProcess);
+
+// Every child writes to a pipe this gateway reads and relays through the
+// guarded, non-blocking stdout, never straight into the deployment's log pipe.
+// The gateway always drains these pipes, so a stalled log collector cannot
+// block a child; it only drops relayed lines.
+function relayChild(child: ChildProcess): void {
+  trackChildPid(child.pid);
+  child.on("exit", () => untrackChildPid(child.pid));
+  child.stdout?.on("data", (chunk) => process.stdout.write(chunk));
+  child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
+}
 
 function boundedConcurrency(name: string, fallback: number, maximum: number): number {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
@@ -86,6 +106,7 @@ let startupError: string | undefined;
 let migrationProcess: ChildProcess | undefined;
 let lastBackendProbeError: string | undefined;
 let backendDiagnostic = "";
+const livenessStats = { restarts: 0, lastRestartAt: undefined as string | undefined };
 // Hosted instances can spend several minutes importing the paper API's large
 // SQLAlchemy/Pydantic route graph. Keep the gateway alive long enough for the
 // child to finish its bounded background import instead of recycling it every
@@ -102,6 +123,8 @@ function appendBackendDiagnostic(chunk: Buffer | string): void {
 }
 
 function observeChildOutput(child: ChildProcess, label: string): void {
+  trackChildPid(child.pid);
+  child.on("exit", () => untrackChildPid(child.pid));
   child.stdout?.on("data", (chunk) => {
     appendBackendDiagnostic(`[${label}] ${chunk}`);
     process.stdout.write(chunk);
@@ -118,6 +141,9 @@ const runtimeEnv = {
   AUTH_MODE: "clerk_gateway",
   INTERNAL_AUTH_SECRET: internalSecret,
   ALLOW_LIVE_TRADING: "false",
+  // Children write to pipes now, not the inherited log fd; keep their output
+  // line-timely instead of block-buffered.
+  PYTHONUNBUFFERED: "1",
   // Seed the trusted research cache once after a production restart. The beat
   // wrapper deduplicates this through Redis and this task never authorizes
   // orders; operators can explicitly disable it when needed.
@@ -187,6 +213,10 @@ app.get("/api/startup", (_req, res) => {
     paper_only: true,
     live_trading: false,
     auth_configured: clerkConfigured,
+    // Self-healing counters: log writes dropped because the deployment's log
+    // pipe was backed up, and API children killed by the liveness probe.
+    log_relay: logRelayStats,
+    api_liveness: livenessStats,
     ...(startupError ? { error: startupError } : {}),
     // Keep hosted startup failures diagnosable without exposing credentials.
     // appendBackendDiagnostic redacts secret-shaped assignments before this
@@ -220,11 +250,13 @@ app.use("/api", (req, res, next) => {
 let python: ChildProcess | undefined;
 
 function spawnPaperWorker(args: string[]): ChildProcess {
-  return spawn("python3.11", args, {
+  const child = spawn("python3.11", args, {
         cwd: new URL("../backend", import.meta.url),
         env: runtimeEnv,
-        stdio: "inherit",
+        stdio: ["ignore", "pipe", "pipe"],
   });
+  relayChild(child);
+  return child;
 }
 
 const workerProcesses: ChildProcess[] = [];
@@ -285,8 +317,15 @@ function startBackendAfterMigration(): void {
   waitForBackendHealth();
 }
 
+let paperWorkersStarted = false;
+
 function startPaperWorkers(): void {
   if (!paperWorkersEnabled) return;
+  // Once per gateway process. The API child can be restarted (exit or the
+  // liveness probe below) and passes its health check again; the workers are
+  // supervised separately and must not be started a second time.
+  if (paperWorkersStarted) return;
+  paperWorkersStarted = true;
   // Fixed at the first worker start of this gateway process; heartbeats can
   // only resume from here, so the grace window is measured from this moment.
   if (!workersStartedAt) {
@@ -453,9 +492,10 @@ function runMigration(attempt = 1): void {
     {
       cwd: new URL("../backend", import.meta.url),
       env: runtimeEnv,
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
     },
   );
+  relayChild(migrationProcess);
   migrationProcess.on("error", (error) => {
     console.error(`Database migration process failed: ${error.message}`);
   });
@@ -504,6 +544,7 @@ function waitForBackendHealth(attempt = 1): void {
         startupState = "ready";
         startupError = undefined;
         startPaperWorkers();
+        startBackendLivenessMonitor();
         return;
       }
         lastBackendProbeError =
@@ -544,6 +585,60 @@ function retryBackendHealth(attempt: number): void {
     return;
   }
   setTimeout(() => waitForBackendHealth(attempt + 1), 500);
+}
+
+// After the API is ready, keep probing it. An API child that is still alive
+// but stops answering is killed so observePythonExit starts a fresh one,
+// instead of every /api request hanging until someone notices.
+const livenessIntervalMs = Math.max(5_000, Number(process.env.GATEWAY_LIVENESS_INTERVAL_MS ?? 30_000));
+const livenessTimeoutMs = Math.max(1_000, Number(process.env.GATEWAY_LIVENESS_TIMEOUT_MS ?? 10_000));
+const livenessMaxFailures = Math.max(2, Number(process.env.GATEWAY_LIVENESS_MAX_FAILURES ?? 10));
+let livenessTimer: NodeJS.Timeout | undefined;
+let livenessFailures = 0;
+let livenessInFlight = false;
+
+function startBackendLivenessMonitor(): void {
+  livenessFailures = 0;
+  if (livenessTimer) return;
+  livenessTimer = setInterval(probeBackendLiveness, livenessIntervalMs);
+  livenessTimer.unref();
+}
+
+function recordLivenessFailure(reason: string): void {
+  livenessFailures += 1;
+  console.error(`FastAPI liveness probe failed (${livenessFailures}/${livenessMaxFailures}): ${reason}`);
+  if (livenessFailures < livenessMaxFailures) return;
+  const stuck = python;
+  if (!stuck || stuck.killed) return;
+  livenessFailures = 0;
+  livenessStats.restarts += 1;
+  livenessStats.lastRestartAt = new Date().toISOString();
+  console.error(`FastAPI stopped answering; killing pid ${stuck.pid} so it restarts`);
+  // observePythonExit marks the gateway not-ready and starts a fresh child,
+  // whose health check restarts this monitor; workers are not duplicated.
+  stuck.kill("SIGKILL");
+}
+
+function probeBackendLiveness(): void {
+  if (stopping || !backendReady || !python || livenessInFlight) return;
+  livenessInFlight = true;
+  // agent: false gives every probe a fresh connection. Node 24 keeps sockets
+  // alive by default and uvicorn closes idle ones after 5s, so a reused socket
+  // races that close and reports a false "connection reset".
+  const probe = httpRequest(`${internalTarget}/api/health`, { method: "GET", timeout: livenessTimeoutMs, agent: false }, (response) => {
+    response.resume();
+    response.on("end", () => {
+      livenessInFlight = false;
+      if (response.statusCode === 200) livenessFailures = 0;
+      else recordLivenessFailure(`status=${response.statusCode}`);
+    });
+  });
+  probe.on("timeout", () => probe.destroy(new Error(`no answer in ${livenessTimeoutMs}ms`)));
+  probe.on("error", (error) => {
+    livenessInFlight = false;
+    recordLivenessFailure(error.message);
+  });
+  probe.end();
 }
 
 runMigration();
