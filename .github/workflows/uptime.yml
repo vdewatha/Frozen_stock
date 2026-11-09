@@ -1,0 +1,33 @@
+name: Uptime
+
+# Outside freeze alert for the deployed paper bot. Opens an issue labelled
+# "uptime: down" (or "uptime: halted") and closes it on recovery; see
+# .github/scripts/uptime_check.py. Scheduled runs can start a few minutes late.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Probe startup and heartbeat
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_URL: ${{ vars.UPTIME_URL || 'https://frozenstock.replit.app' }}
+          ALERT_MENTION: "@${{ github.repository_owner }}"
+        run: python3 .github/scripts/uptime_check.py

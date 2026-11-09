@@ -98,6 +98,7 @@ from app.schemas.trading import (
     WatchlistImportRequest,
     WatchlistImportResponse,
 )
+from app.services.heartbeat import cached_heartbeat_snapshot
 from app.services.broker import block_live_order, broker_status, submit_paper_order
 from app.services.live_safety import LiveSafetyError, live_order_decision, evaluate_live_safety, transition_live_safety
 from app.services.decision_journal import decision_journal_scorecard, list_candidate_decisions, record_candidate_decision, refresh_decision_journal_outcomes, update_journal_realized_outcomes, update_strategy_memory_from_journal
@@ -183,6 +184,19 @@ def ready(db: Session = Depends(get_db)) -> dict:
         "live_trading": False,
         "generated_at": snapshot["generated_at"],
     }
+
+
+@router.get("/heartbeat")
+def heartbeat(db: Session = Depends(get_db)):
+    """Public, cheap liveness evidence for the outside uptime check.
+
+    503 when the worker, beat or the five-minute monitoring jobs have stopped;
+    trading halts are reported but do not fail the probe.
+    """
+    from fastapi.responses import JSONResponse
+
+    snapshot = cached_heartbeat_snapshot(db)
+    return JSONResponse(jsonable_encoder(snapshot), status_code=200 if snapshot["ok"] else 503)
 
 
 @router.get("/auth/session")
