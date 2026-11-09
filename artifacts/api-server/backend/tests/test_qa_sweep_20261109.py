@@ -143,3 +143,52 @@ def test_stock_monitoring_snapshot_is_viewer_readable():
 
     assert required_role("GET", "/system/stock-monitoring") == "viewer"
     assert required_role("POST", "/system/stock-monitoring/run") == "operator"
+
+
+def test_news_summary_ignores_synthetic_placeholders_and_never_seeds_them():
+    from datetime import datetime
+    from decimal import Decimal
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    import app.models  # noqa: F401
+    from app.db.base import Base
+    from app.models import NewsArticle
+    from app.services.news_sentiment import summarize_news_context
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        # No articles: nothing is invented.
+        empty = summarize_news_context(db, "QQQ")
+        assert empty["article_count"] == 0
+        assert db.query(NewsArticle).count() == 0
+        # Placeholders alone are not news; with a real article only it counts.
+        db.add(NewsArticle(symbol="QQQ", published_at=datetime(2026, 11, 9, 12), source="mock_news",
+                           title="Synthetic", summary="", sentiment_score=Decimal("0.9"), relevance_score=Decimal("1")))
+        db.commit()
+        assert summarize_news_context(db, "QQQ")["article_count"] == 0
+        db.add(NewsArticle(symbol="QQQ", published_at=datetime(2026, 11, 9, 11), source="Reuters",
+                           title="Real", summary="", sentiment_score=Decimal("-0.5"), relevance_score=Decimal("1")))
+        db.commit()
+        real = summarize_news_context(db, "QQQ")
+        assert real["article_count"] == 1
+        assert real["average_sentiment"] == -0.5
+        assert real["synthetic_only"] is False
+    engine.dispose()
+
+
+def test_daily_news_import_never_stores_mock_headlines():
+    from app.tasks import jobs
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [MagicMock(symbol="SPY")]
+    with patch.object(jobs, "_run_job", side_effect=lambda name, work: work(db)), \
+            patch("app.services.news_sentiment.import_company_news",
+                  return_value={"symbol": "SPY", "status": "unavailable", "rows_imported": 0}) as company, \
+            patch("app.services.news_sentiment.import_mock_news") as mock_news:
+        result = jobs.daily_news_import.run()
+    assert company.call_args.kwargs["mock_fallback"] is False
+    mock_news.assert_not_called()
+    assert result["unavailable"] == ["SPY"]

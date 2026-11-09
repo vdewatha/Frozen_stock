@@ -84,7 +84,11 @@ def test_exact_fill_attribution_and_broker_values(book):
     assert Decimal(row["quantity"]) == 10
     assert Decimal(row["unrealized_pl"]) == 100
     assert row["unrealized_pl_pct"] == 10
-    assert row["horizon_sessions"] is None  # No matching durable lot.
+    # No matching durable lot: the owner strategy's time stop, labelled as such.
+    assert row["horizon_source"] == "strategy_time_stop"
+    assert row["horizon_sessions"] == 10
+    # The single buy fill explains the holding, so its time is the entry.
+    assert row["entry_at"] == NOW.isoformat()
     assert result["strategies"][0]["open_positions"] == 1
     assert Decimal(result["account"]["exposure"]) == 1100
     evidence = row["attribution_evidence"]
@@ -407,3 +411,62 @@ def test_equity_curve_is_chronological_and_survives_halt(book):
     curve = paper_overview(db, now=NOW)["equity_curve"]
     assert [Decimal(p["equity"]) for p in curve] == [100, 101, 99]
     assert curve[0]["observed_at"] < curve[-1]["observed_at"]
+
+
+def test_multi_buy_holding_reports_entry_after_last_flat_and_the_working_stop(book):
+    """2026-11-09: holdings built from several buys showed entry, horizon and stop as Unknown."""
+    db, account, strategy = book
+    position, first = add_holding(db, account, strategy, shares=6, with_fill=False)
+
+    def fill(order, side, shares, at, activity):
+        db.add(StockPaperFill(
+            account_id=account.id, order_id=order.id, broker_activity_id=activity, symbol="SPY",
+            side=side, quantity=Decimal(shares), price=Decimal("100"), fee=Decimal("0"),
+            cost_known=True, filled_at=at, raw_payload={},
+        ))
+
+    # An earlier round trip, flat again, then two buys that make up today's 6 shares.
+    fill(first, "buy", 2, NOW - timedelta(days=9), "old-buy")
+    fill(first, "sell", 2, NOW - timedelta(days=8), "old-sell")
+    second = StockPaperOrder(account_id=account.id, strategy_id=strategy.id, client_order_id="second",
+                             symbol="SPY", side="buy", quantity=Decimal(4), status="filled", source="test")
+    stop_leg = StockPaperOrder(account_id=account.id, strategy_id=strategy.id, client_order_id="stop-leg",
+                               symbol="SPY", side="sell", quantity=Decimal(6), status="accepted",
+                               source="test", order_type="stop", leg_role="stop_loss", stop_price=Decimal("97"))
+    db.add_all([second, stop_leg])
+    db.flush()
+    fill(first, "buy", 2, NOW - timedelta(days=3), "new-buy-1")
+    fill(second, "buy", 4, NOW - timedelta(days=1), "new-buy-2")
+    db.commit()
+
+    row = paper_overview(db, now=NOW)["positions"][0]
+    assert row["attribution"] == "attributed"
+    assert row["entry_at"] == (NOW - timedelta(days=3)).isoformat()
+    assert row["sessions_held"] is not None
+    assert row["horizon_sessions"] is not None and row["horizon_source"] == "strategy_time_stop"
+    assert row["stop_price"] is not None and Decimal(row["stop_price"]) == Decimal("97")
+
+
+def test_equity_curve_spans_the_whole_history_not_the_newest_365_snapshots(book):
+    """2026-11-09: snapshots every minute made the 365-row chart cover about a day and a half."""
+    from app.models import StockPaperEquitySnapshot
+    from app.services.equity_curve import equity_curve_points
+
+    db, account, _ = book
+    start = NOW - timedelta(days=40)
+    minute = timedelta(minutes=3)
+    stamp, rows = start, []
+    while stamp <= NOW:
+        rows.append(StockPaperEquitySnapshot(account_id=account.id, cash=Decimal(0), equity=Decimal(100000),
+                                             buying_power=Decimal(0), observed_at=stamp, raw_payload={}))
+        stamp += minute if stamp > NOW - timedelta(days=2) else timedelta(hours=6)
+    db.add_all(rows)
+    db.commit()
+
+    points = equity_curve_points(db, account.id, now=NOW)
+    assert points[0][0].date() == start.date()  # the first day is kept
+    assert points[-1][0] == NOW  # the newest snapshot is always kept
+    assert [p[0] for p in points] == sorted(p[0] for p in points)
+    days = {p[0].date() for p in points if p[0] < NOW - timedelta(days=2)}
+    assert len(days) >= 38  # one end-of-day point per older day
+    assert len(points) < 300  # 15-minute buckets for the last two days, not every snapshot

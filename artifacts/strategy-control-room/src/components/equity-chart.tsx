@@ -23,8 +23,20 @@ export function equityChartPoints(data: EquityChartProps["data"]) {
   });
 }
 
+// The series is daily points for the account's history plus 15-minute points
+// for the last two days. On an evenly spaced category axis those two days
+// filled most of the width, so the axis is a real time scale.
+export function equityTimePoints(data: EquityChartProps["data"]) {
+  return equityChartPoints(data).flatMap(point => {
+    const daily = /^\d{4}-\d{2}-\d{2}$/.test(point.date);
+    const t = Date.parse(daily ? `${point.date}T21:00:00Z` : point.date);
+    return Number.isFinite(t) ? [{ ...point, t }] : [];
+  });
+}
+
 export function EquityChart({ data }: EquityChartProps) {
-  const chartData = equityChartPoints(data);
+  const chartData = equityTimePoints(data);
+  const label = (t: unknown) => chartData.find(point => point.t === Number(t))?.date ?? new Date(Number(t)).toISOString();
   if (chartData.length === 0) return <p className="p-8 text-sm text-slate-500">Equity history is unavailable until reconciled account snapshots have been recorded.</p>;
   return (
     <div className="h-72 w-full">
@@ -37,10 +49,10 @@ export function EquityChart({ data }: EquityChartProps) {
             </linearGradient>
           </defs>
           <CartesianGrid stroke="#d9dee7" strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="date" tickFormatter={value => equityDateLabel(String(value))} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={36} />
+          <XAxis dataKey="t" type="number" scale="time" domain={["dataMin", "dataMax"]} tickFormatter={value => equityDateLabel(new Date(Number(value)).toISOString())} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={36} />
           <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} domain={["dataMin - 500", "dataMax + 500"]} width={68} />
           <Tooltip position={{ x: 0, y: 0 }} wrapperStyle={{ maxWidth: "100%", whiteSpace: "normal" }}
-            labelFormatter={value => equityDateLabel(String(value), true)}
+            labelFormatter={value => equityDateLabel(label(value), true)}
             formatter={(value) => [`$${Number(value).toLocaleString()}`, "Equity"]} />
           <Area type="monotone" dataKey="value" stroke="#0f8b6f" strokeWidth={2} fill="url(#equityFill)" />
         </AreaChart>

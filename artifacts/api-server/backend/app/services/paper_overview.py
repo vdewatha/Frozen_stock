@@ -14,14 +14,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    RiskRule, Strategy, StrategySignal, StockPaperEquitySnapshot, StockPaperFill, StockPaperOrder,
+    RiskRule, Strategy, StrategySignal, StockPaperFill, StockPaperOrder,
     StockPaperPosition, StockPaperRecoveryState, StockPaperRunApproval,
     StockPaperTrial, StockPaperTrialLot,
 )
 from app.services.exchange_sessions import session_bounds
 from app.services.paper_mandate import current_mandate, mandate_state
 from app.services.stock_paper_ledger import active_paper_account
-from app.services.strategy_execution_policy import daily_bar_entry_window, sessions_held
+from app.services.strategy_execution_policy import daily_bar_entry_window, exit_policy_for, sessions_held
 
 ET = ZoneInfo("America/New_York")
 UTC = timezone.utc
@@ -145,6 +145,45 @@ def _attribution_evidence(row, fills, orders, strategies, net, known) -> dict:
     }
 
 
+def _holding_opened_at(row, fills):
+    """When the current holding was opened: the first buy after the symbol was last flat.
+
+    Only when the persisted fills net exactly to the broker quantity; a
+    holding the fill history does not explain keeps an unknown entry date.
+    """
+    if not fills or sum((_signed(f) for f in fills), ZERO) != row.quantity:
+        return None
+    running, opened = ZERO, None
+    for fill in fills:  # already ordered by filled_at, id
+        running += _signed(fill)
+        if running <= 0:
+            opened = None
+        elif opened is None and fill.side == "buy":
+            opened = fill.filled_at
+    return opened
+
+
+def _fallback_horizon(owner_lots, owners, strategies):
+    """A shared lot horizon, else the single owner strategy's time stop."""
+    horizons = {lot.planned_horizon_sessions for lot in owner_lots if lot.planned_horizon_sessions}
+    if len(horizons) == 1:
+        return horizons.pop(), "lots"
+    if len(owners) == 1 and owners[0] in strategies:
+        policy = exit_policy_for(strategies[owners[0]])
+        if policy is not None and policy.max_holding_sessions:
+            return int(policy.max_holding_sessions), "strategy_time_stop"
+    return None, None
+
+
+def _working_stop(pending_exits):
+    """The stop price of the working protective stop leg(s); the highest if several."""
+    prices = [
+        o.stop_price for o in pending_exits
+        if o.stop_price is not None and (o.leg_role == "stop_loss" or o.order_type in {"stop", "stop_limit"})
+    ]
+    return max(prices) if prices else None
+
+
 def _position(row, fills, orders, strategies, lots, now, verified):
     # Same fail-closed attribution rule as execution's position-count gate:
     # any unowned fill or mismatched aggregate leaves the symbol unattributed.
@@ -202,6 +241,18 @@ def _position(row, fills, orders, strategies, lots, now, verified):
     elif lot:
         intent = f"Horizon exit · session {lot.planned_horizon_sessions}"
     stop = entry_order.stop_price if entry_order else None
+    horizon = lot.planned_horizon_sessions if lot else None
+    horizon_source = "lot" if lot else None
+    if lot is None and known:
+        # Most holdings are built from several buys (or have no trial lot),
+        # which left entry date, horizon and stop all "Unknown". For an
+        # attributed holding, fall back to evidence that does exist, never to
+        # an unrelated lot; an unattributed one stays unknown (fail closed).
+        entry_at = _holding_opened_at(row, fills)
+        if entry_at is not None:
+            held = sessions_held(_utc(entry_at).astimezone(ET).date(), now.astimezone(ET).date())
+        horizon, horizon_source = _fallback_horizon(owner_lots, owners, strategies)
+        stop = _working_stop(pending_exits)
     pnl = row.unrealized_pl if verified else None
     cost = row.cost_basis
     return {
@@ -216,7 +267,7 @@ def _position(row, fills, orders, strategies, lots, now, verified):
         "strategy_ids": sorted(owners) if known else [],
         "attribution_evidence": evidence,
         "entry_at": _iso(entry_at), "sessions_held": held,
-        "horizon_sessions": lot.planned_horizon_sessions if lot else None,
+        "horizon_sessions": horizon, "horizon_source": horizon_source,
         "exit_intent": intent, "stop_price": _money(stop),
     }
 
@@ -353,12 +404,13 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
             "detail": "BUY withheld · entry window",
         })
     activity.sort(key=lambda a: a["at"] or "", reverse=True)
-    snapshots = db.scalars(select(StockPaperEquitySnapshot).where(
-        StockPaperEquitySnapshot.account_id == account.id,
-    ).order_by(StockPaperEquitySnapshot.observed_at.desc(), StockPaperEquitySnapshot.id.desc()).limit(365)).all() if account else []
+    # Full account history (daily) plus recent intraday points, not the
+    # newest 365 raw snapshots (about a day and a half).
+    from app.services.equity_curve import equity_curve_points
+
     equity_curve = [
-        {"observed_at": _iso(s.observed_at), "equity": _money(s.equity)}
-        for s in reversed(snapshots) if s.equity is not None
+        {"observed_at": _iso(observed_at), "equity": _money(equity)}
+        for observed_at, equity in (equity_curve_points(db, account.id, now=now) if account else [])
     ]
     exposure = sum((r.market_value for r in rows), ZERO) if account and all(r.market_value is not None for r in rows) else None
     equity = account.equity if account else None
