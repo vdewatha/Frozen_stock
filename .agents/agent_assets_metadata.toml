@@ -28,3 +28,17 @@ mtime_ms = 1790604204844
 storage_uri = "gcs://replit-rams-assets-spock/rams/assets/repl:42f84b92-955d-4943-892d-c0e5f14f9aa6/691012c6-723b-4939-aaeb-a85eaa278fa8/7f239658-94fb-41c3-9261-4ae7ee7220a0"
 storage_version_token = "1790604218896726"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "KpsSV1VlleomBJ9sdjY_L"
+uri = "file://generated-artifacts/frozenstock-production-logs-retained-100.txt"
+type = "text"
+title = "Frozenstock published logs — retained newest 100"
+description = "Newest 100 retained production log entries from the requested window, sorted chronologically. The complete 29,537-entry pagination was previously read but was not retained in notebook state."
+logical_id = "98d931e9-2310-4f92-a2e6-a142d6d86461"
+content_hash = "sha256:7daf3c98fa64bda7d48381fb2ac2f88cf86e5124c70348f079f66744a81909c9"
+size = 26640
+mtime_ms = 1794235544802
+storage_uri = "gcs://replit-rams-assets-spock/rams/assets/repl:42f84b92-955d-4943-892d-c0e5f14f9aa6/98d931e9-2310-4f92-a2e6-a142d6d86461/aad4ae58-9d73-4ee1-a656-f05d3062fb74"
+storage_version_token = "1794235545757084"
+content_type = "text/plain"
