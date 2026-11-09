@@ -75,3 +75,6 @@ __pycache__/
 research_runs/
 stock_training_artifacts/
 ._*
+
+# Local app launcher (scripts/run_local_app.sh): generated role keys
+/.local-app.env

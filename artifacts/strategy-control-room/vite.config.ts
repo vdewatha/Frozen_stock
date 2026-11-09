@@ -67,6 +67,11 @@ export default defineConfig({
     strictPort: true,
     host: '0.0.0.0',
     allowedHosts: true,
+    // Local runs (scripts/run_local_app.sh) have no Replit path router, so
+    // /api is proxied to the FastAPI backend when API_PROXY_TARGET is set.
+    ...(process.env.API_PROXY_TARGET
+      ? { proxy: { '/api': { target: process.env.API_PROXY_TARGET, changeOrigin: true } } }
+      : {}),
     fs: {
       strict: true,
     },
