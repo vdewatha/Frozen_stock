@@ -25,6 +25,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any, Callable, Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,11 @@ MAX_MISSED_AGE = timedelta(days=8)
 # If the next scheduled run is this close, let it run on schedule instead.
 NEXT_RUN_GRACE = timedelta(hours=3)
 STAGGER_SECONDS = 120
+# The beat schedule's wall clock (celery_app.conf.timezone). Firings are
+# computed here from the crontab fields rather than through the crontab's own
+# time zone, which follows whichever Celery app is current (UTC in a bare
+# test process), so the result never depends on import order.
+SCHEDULE_TZ = ZoneInfo("America/New_York")
 # "skipped" is a run too: usually another worker held the job's lease.
 FAILED_STATUSES = {"failed", "error"}
 
@@ -95,16 +101,22 @@ def _last_success(client, task_name: str) -> Optional[datetime]:
         return None
 
 
-def next_firing(schedule, after: datetime) -> datetime:
-    """The crontab's first firing strictly after ``after`` (UTC).
-
-    ``remaining_delta`` applies the crontab's hour and minute in the time zone
-    of the datetime it is given, so it must be handed the schedule's own zone
-    (America/New_York), not UTC.
-    """
-    local_after = _utc(after).astimezone(schedule.tz)
-    start, delta, _ = schedule.remaining_delta(local_after)
-    return _utc(start + delta)
+def next_firing(schedule, after: datetime, tz: ZoneInfo = SCHEDULE_TZ) -> datetime:
+    """The crontab's first firing strictly after ``after`` (UTC), in ``tz`` wall-clock time."""
+    local_after = _utc(after).astimezone(tz)
+    hours, minutes = sorted(schedule.hour), sorted(schedule.minute)
+    day = local_after.date()
+    for _ in range(400):
+        # Celery numbers weekdays from Sunday = 0; Python from Monday = 0.
+        if ((day.weekday() + 1) % 7 in schedule.day_of_week
+                and day.day in schedule.day_of_month and day.month in schedule.month_of_year):
+            for hour in hours:
+                for minute in minutes:
+                    fire = datetime(day.year, day.month, day.day, hour, minute, tzinfo=tz)
+                    if fire > local_after:
+                        return _utc(fire)
+        day += timedelta(days=1)
+    raise ValueError("crontab has no firing within 400 days")
 
 
 def missed_firing(schedule, last_success: Optional[datetime], now: datetime) -> Optional[datetime]:
@@ -136,7 +148,7 @@ def queue_missed_jobs(
         if not entry:
             continue  # excluded on this host (PAPER_BEAT_EXCLUDE) or renamed
         schedule = entry["schedule"]
-        if not hasattr(schedule, "remaining_estimate"):
+        if not all(hasattr(schedule, field) for field in ("hour", "minute", "day_of_week", "day_of_month", "month_of_year")):
             continue
         task = entry["task"]
         missed = missed_firing(schedule, _last_success(client, task), now)
