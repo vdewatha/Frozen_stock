@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi.encoders import jsonable_encoder
@@ -55,6 +55,39 @@ def create_scanner_refresh_job(db: Session, trigger: str = "manual", limit: int 
     db.commit()
     db.refresh(job)
     return jsonable_encoder(_serialize_job(job))
+
+
+# The refresh runs as a FastAPI background task inside the API process; an API
+# restart mid-run leaves the row "running" for good (one was stuck from
+# 2026-10-08), and the scanner panel then polled it indefinitely.
+STALE_QUEUED_AFTER = timedelta(minutes=30)
+STALE_RUNNING_AFTER = timedelta(hours=2)
+
+
+def expire_stale_scanner_refresh_jobs(db: Session, *, now: Optional[datetime] = None) -> dict:
+    """Mark orphaned queued/running refresh jobs failed, with the reason."""
+    now = now or datetime.utcnow()
+    rows = db.query(ScannerRefreshJob).filter(ScannerRefreshJob.status.in_(["queued", "running"])).all()
+    expired = []
+    for job in rows:
+        started = job.started_at or job.created_at
+        if started is None:
+            continue
+        limit = STALE_RUNNING_AFTER if job.status == "running" else STALE_QUEUED_AFTER
+        if now - started.replace(tzinfo=None) < limit:
+            continue
+        was_running = job.status == "running"
+        job.status = "failed"
+        job.completed_at = now
+        job.message = (
+            "Scanner refresh never finished: the process running it stopped (for example an API restart)."
+            if was_running else
+            "Scanner refresh was queued but never started."
+        )
+        job.payload = {**(job.payload or {}), "error": job.message, "expired_by": "stale_job_reaper"}
+        expired.append(job.id)
+    db.commit()
+    return {"status": "complete", "expired_job_ids": expired}
 
 
 def run_scanner_refresh_job(job_id: int) -> None:

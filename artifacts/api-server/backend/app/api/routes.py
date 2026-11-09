@@ -1087,11 +1087,19 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardSnapshot:
         and ledger_account.get("equity") is not None
     )
     accounting_verified = bool(ledger_ready and ledger_account.get("accounting_verified") and stock_ledger.get("costs_known"))
-    snapshots = list(reversed(stock_ledger.get("equity_snapshots") or [])) if ledger_ready else []
-    equity_curve = [
-        {"date": snapshot["observed_at"], "equity": float(snapshot["equity"])}
-        for snapshot in snapshots
-    ]
+    # Full account history (daily) plus recent intraday points; the ledger's
+    # newest 365 raw snapshots covered only about a day and a half.
+    equity_curve = []
+    if ledger_ready:
+        from app.services.equity_curve import equity_curve_points
+        from app.services.stock_paper_ledger import active_paper_account
+
+        account = active_paper_account(db)
+        if account is not None:
+            equity_curve = [
+                {"date": observed_at.isoformat(), "equity": float(equity)}
+                for observed_at, equity in equity_curve_points(db, account.id)
+            ]
     paper_account_value = float(ledger_account["equity"]) if ledger_ready else None
     # Observation-to-observation changes are not necessarily calendar-day P/L or
     # a funding-adjusted total return. Keep both absent until full flows/costs are

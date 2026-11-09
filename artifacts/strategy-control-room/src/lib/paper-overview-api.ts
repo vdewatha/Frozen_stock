@@ -35,6 +35,8 @@ export type OverviewPosition = {
   entry_at: string | null;
   sessions_held: number | null;
   horizon_sessions: number | null;
+  /** "lot" (this holding's lot), "lots" (shared by its lots) or "strategy_time_stop" (owner strategy policy). */
+  horizon_source?: "lot" | "lots" | "strategy_time_stop" | null;
   exit_intent: string | null;
   stop_price: string | null;
 };

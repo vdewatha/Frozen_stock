@@ -150,6 +150,25 @@ def _queue_startup_learning_recovery(client: redis.Redis) -> None:
         print("Skipped startup learning recovery: queue unavailable.", flush=True)
 
 
+def _queue_missed_job_catchup(client: redis.Redis) -> None:
+    """Queue daily/weekly report jobs whose scheduled run was missed while down."""
+    if os.environ.get("PAPER_BEAT_CATCHUP", "true").strip().lower() == "false":
+        print("Skipped missed-job catch-up (PAPER_BEAT_CATCHUP=false).", flush=True)
+        return
+    try:
+        from app.tasks.catchup import queue_missed_jobs
+
+        queued = queue_missed_jobs(client, celery_app.conf.beat_schedule, celery_app.send_task)
+    except Exception as exc:
+        print(f"Skipped missed-job catch-up: {exc.__class__.__name__}.", flush=True)
+        return
+    if queued:
+        names = ", ".join(item["entry"] for item in queued)
+        print(f"Queued {len(queued)} missed scheduled jobs: {names}.", flush=True)
+    else:
+        print("No missed scheduled jobs to catch up.", flush=True)
+
+
 def _acquire_lease(client: redis.Redis, owner: str) -> None:
     """Wait through deployment overlap instead of abandoning the scheduler."""
     while True:
@@ -192,6 +211,7 @@ def main() -> int:
     else:
         print("Skipped startup market-data refresh; scheduled jobs remain enabled.", flush=True)
     _queue_startup_learning_recovery(client)
+    _queue_missed_job_catchup(client)
 
     schedule_file = os.environ.get(
         "CELERY_BEAT_SCHEDULE_FILE",

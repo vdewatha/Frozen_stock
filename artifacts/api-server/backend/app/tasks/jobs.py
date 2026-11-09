@@ -28,7 +28,6 @@ from app.services.intraday_data import ingest_corporate_actions, collect_schedul
 from app.services.market_regime import detect_and_store_market_regime
 from app.services.memory_replay import run_memory_replay_gate_monitor
 from app.services.model_tracking import run_and_persist_model_predictions, score_realized_predictions
-from app.services.news_sentiment import import_mock_news
 from app.services.notifications import create_notification, resolve_successful_job_notifications
 from app.services.paper_trading import reconcile_open_paper_trades, run_paper_signal, update_all_strategy_memory
 from app.services.risk_actions import evaluate_portfolio_risk_actions
@@ -461,12 +460,27 @@ def intraday_market_data_import() -> dict:
     return _run_job("intraday_market_data_import", work)
 
 
-@celery_app.task
+# Network calls per symbol now; bound the whole run so a stuck provider
+# cannot hold a worker indefinitely.
+@celery_app.task(time_limit=30 * 60)
 def daily_news_import() -> dict:
     def work(db):
+        # Real headlines from the free providers (yfinance, then Nasdaq RSS).
+        # This job used to store templated mock headlines for every active
+        # symbol every morning, which the scanner then read as news.
+        from app.services.news_sentiment import import_company_news
+
         assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
-        results = [import_mock_news(db, asset.symbol) for asset in assets]
-        return {"status": "complete", "job": "daily_news_import", "results": results}
+        results = []
+        for asset in assets:
+            try:
+                results.append(import_company_news(db, asset.symbol, "auto", mock_fallback=False))
+            except Exception as exc:  # one symbol's provider error must not stop the rest
+                db.rollback()
+                results.append({"symbol": asset.symbol, "status": "unavailable", "error": exc.__class__.__name__})
+        imported = sum(int(item.get("rows_imported") or 0) for item in results)
+        return {"status": "complete", "job": "daily_news_import", "rows_imported": imported,
+                "unavailable": [item["symbol"] for item in results if item.get("status") == "unavailable"]}
 
     return _run_job("daily_news_import", work)
 
@@ -1352,6 +1366,31 @@ def expire_stale_scalp_research_runs_job() -> dict:
         }
 
     return _run_job("expire_stale_scalp_research_runs_job", work)
+
+
+@celery_app.task
+def reap_stale_jobs_job() -> dict:
+    """Close job rows orphaned in queued/running by a restart; never re-runs them.
+
+    The scalp expiry above is excluded on the hosted beat together with the
+    scalp batch (PAPER_BEAT_EXCLUDE), so scalp runs stuck "running" since
+    2026-10-27 were never closed, and scanner refresh jobs had no reaper.
+    This runs only the expiry halves, not the scalp re-publish.
+    """
+    def work(db):
+        from app.services.scanner_refresh_jobs import expire_stale_scanner_refresh_jobs
+
+        scalp = expire_stale_scalp_research_runs(db)
+        scanner = expire_stale_scanner_refresh_jobs(db)
+        return {
+            "status": "complete",
+            "job": "reap_stale_jobs_job",
+            "expired_scalp_run_ids": scalp["expired_run_ids"],
+            "expired_scanner_job_ids": scanner["expired_job_ids"],
+            "paper_only": True,
+        }
+
+    return _run_job("reap_stale_jobs_job", work)
 
 @celery_app.task
 def recover_stock_training_jobs_job() -> dict:
