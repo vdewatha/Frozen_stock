@@ -162,7 +162,7 @@ function PositionsPanel({ overview }: { overview: PaperOverview }) {
               <td className="numeric ov-number">{quantity(position.quantity)}</td>
               <td className="numeric ov-number">{money(position.current_price)}</td>
               <td className="numeric"><strong className={pnl === null ? "ov-unknown" : pnl >= 0 ? "ov-positive" : "ov-negative"}>{pnl === null ? "Unverified" : `${pnl >= 0 ? "+" : ""}${money(position.unrealized_pl)}`}</strong><small className={`ov-sub ${pnl === null ? "ov-unknown" : pnl >= 0 ? "ov-positive" : "ov-negative"}`}>{percentage(position.unrealized_pl_pct)}</small></td>
-              <td><strong className="ov-horizon">{held === null ? "Unknown" : horizon === null ? `${held} held · horizon Unknown` : `${held} / ${horizon} sessions`}</strong>{progress !== null && <div className="ov-progress"><i style={{ width: `${progress}%` }} /></div>}</td>
+              <td><strong className="ov-horizon">{held === null ? "Unknown" : horizon === null ? `${held} held · horizon Unknown` : `${held} / ${horizon} sessions${position.horizon_source === "strategy_time_stop" ? " · time stop" : ""}`}</strong>{progress !== null && <div className="ov-progress"><i style={{ width: `${progress}%` }} /></div>}</td>
               <td><span className={`ov-intent ${position.exit_intent ? "" : "unknown"}`}>{position.exit_intent || "Unknown"}</span></td>
               <td><button className="ov-row-toggle" aria-label={`${isExpanded ? "Hide" : "Show"} ${position.symbol} details`} aria-expanded={isExpanded} onClick={() => setExpanded(isExpanded ? null : position.symbol)}><ChevronRight size={16} /></button></td>
             </tr>
@@ -182,7 +182,7 @@ function PositionsPanel({ overview }: { overview: PaperOverview }) {
             <div className="ov-mobile-grid">
               <div><small>ENTRY</small><strong>{money(position.entry_price)}</strong><em>{position.entry_at ? dateOnly(position.entry_at) : "Unknown"}</em></div>
               <div><small>MARK</small><strong>{money(position.current_price)}</strong><em>Current paper price</em></div>
-              <div><small>HORIZON</small><strong>{held === null ? "Unknown" : horizon === null ? `${held} held · Unknown horizon` : `${held} / ${horizon} sessions`}</strong>{progress !== null && <div className="ov-progress"><i style={{ width: `${progress}%` }} /></div>}</div>
+              <div><small>HORIZON</small><strong>{held === null ? "Unknown" : horizon === null ? `${held} held · Unknown horizon` : `${held} / ${horizon} sessions${position.horizon_source === "strategy_time_stop" ? " · time stop" : ""}`}</strong>{progress !== null && <div className="ov-progress"><i style={{ width: `${progress}%` }} /></div>}</div>
               <div><small>EXIT INTENT</small><strong className="ov-card-intent">{position.exit_intent || "Unknown"}</strong></div>
             </div>
             {isExpanded && <div className="ov-detail"><span>Latest strategy signal <b>{overview.strategies.filter(strategy => position.strategy_ids.includes(strategy.id) && strategy.last_signal).map(strategy => `${strategy.last_signal?.action} ${strategy.last_signal?.symbol}`).join(", ") || "Unknown"}</b></span><span>Risk / stop <b>{money(position.stop_price)}</b></span><span>Observed <b>{dateTime(position.observed_at)}</b></span><AttributionEvidenceBlock position={position} overview={overview} /></div>}

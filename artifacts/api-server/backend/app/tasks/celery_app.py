@@ -6,7 +6,7 @@ import socket
 
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import heartbeat_sent, worker_ready
+from celery.signals import heartbeat_sent, task_success, worker_ready
 from kombu import Exchange, Queue
 import redis
 
@@ -71,6 +71,28 @@ def _record_worker_heartbeat(*, sender=None, **kwargs) -> None:
 
 heartbeat_sent.connect(_record_worker_heartbeat, weak=False)
 worker_ready.connect(_record_worker_heartbeat, weak=False)
+
+
+def _record_task_success(*, sender=None, result=None, **kwargs) -> None:
+    """Last successful run per task, so beat can catch up missed runs (see catchup.py)."""
+    task_name = getattr(sender, "name", None)
+    if not task_name:
+        return
+    client = None
+    try:
+        from app.tasks.catchup import record_task_success
+
+        client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=0.5, socket_timeout=0.5)
+        record_task_success(client, task_name, result)
+    except Exception:
+        # Advisory evidence; never fail a task over it.
+        return
+    finally:
+        if client is not None:
+            client.close()
+
+
+task_success.connect(_record_task_success, weak=False)
 celery_app.conf.task_queues = (
     Queue("default", Exchange("default"), routing_key="default"),
     Queue("market_data", Exchange("market_data"), routing_key="market_data"),
@@ -155,6 +177,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.event_log_weekly_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.sleeve_guardrail_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.self_healing_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.reap_stale_jobs_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.parameter_application_job": {"queue": "learning"},
     # Slow book (target_weight_book.py): the rebalance places paper orders, so
     # it takes the risk lane that every worker layout serves; the after-close
@@ -504,6 +527,13 @@ celery_app.conf.beat_schedule = {
     # the fixes for the stalls it causes (missing meta-label model, stale
     # intraday symbols, expired learning leases). Paper only; never touches
     # orders, exits, the kill switch or the resume logic.
+    # Closes scanner refresh jobs and scalp runs orphaned by a restart. Kept
+    # separate from scalp-research-queue-recovery, which hosts exclude.
+    "stale-job-reaper": {
+        "task": "app.tasks.jobs.reap_stale_jobs_job",
+        "schedule": crontab(minute="*/15"),
+        "options": {"expires": 10 * 60},
+    },
     "self-healing": {
         "task": "app.tasks.jobs.self_healing_job",
         "schedule": crontab(minute="*/15", hour="7-20", day_of_week="mon-fri"),

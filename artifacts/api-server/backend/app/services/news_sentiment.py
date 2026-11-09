@@ -252,7 +252,7 @@ def import_nasdaq_rss_news(db: Session, symbol: str, limit: int = 8, fallback: b
     return _upsert_news_payloads(db, symbol, payloads, "nasdaq_rss", "import_nasdaq_rss_news")
 
 
-def import_company_news(db: Session, symbol: str, provider: str = "auto") -> dict:
+def import_company_news(db: Session, symbol: str, provider: str = "auto", *, mock_fallback: bool = True) -> dict:
     provider = provider.strip().lower()
     if provider == "mock":
         return import_mock_news(db, symbol)
@@ -270,6 +270,9 @@ def import_company_news(db: Session, symbol: str, provider: str = "auto") -> dic
             return import_nasdaq_rss_news(db, symbol, fallback=False)
         except RuntimeError as exc:
             errors.append(str(exc))
+        if not mock_fallback:
+            return {"symbol": symbol, "source": "unavailable", "status": "unavailable",
+                    "rows_imported": 0, "errors": errors}
         return _fallback_news(db, symbol, " | ".join(errors))
     raise ValueError(f"Unsupported news provider: {provider}")
 
@@ -281,12 +284,23 @@ def list_news_articles(db: Session, symbol: Optional[str] = None, limit: int = 2
     return query.order_by(NewsArticle.published_at.desc(), NewsArticle.id.desc()).limit(min(limit, 200)).all()
 
 
-def summarize_news_context(db: Session, symbol: str, limit: int = 10, auto_seed: bool = True) -> dict:
+def summarize_news_context(db: Session, symbol: str, limit: int = 10, auto_seed: bool = False) -> dict:
+    """Tone of the stored real articles for ``symbol``.
+
+    Synthetic placeholder rows (``mock_news``) never count: the scanner,
+    opportunity radar and signal endpoint used to seed them for any symbol
+    without news and then score their templated tone. ``auto_seed`` is kept
+    for explicit demos only and is off by default.
+    """
     symbol = symbol.strip().upper()
-    rows = list_news_articles(db, symbol, limit)
-    if not rows and auto_seed:
+    if auto_seed and not list_news_articles(db, symbol, 1):
         import_mock_news(db, symbol)
-        rows = list_news_articles(db, symbol, limit)
+    rows = [
+        row for row in db.query(NewsArticle)
+        .filter(NewsArticle.symbol == symbol, NewsArticle.source.notin_(SYNTHETIC_NEWS_SOURCES))
+        .order_by(NewsArticle.published_at.desc(), NewsArticle.id.desc())
+        .limit(min(limit, 200))
+    ] or ([] if not auto_seed else list_news_articles(db, symbol, limit))
     if not rows:
         return {
             "symbol": symbol,
