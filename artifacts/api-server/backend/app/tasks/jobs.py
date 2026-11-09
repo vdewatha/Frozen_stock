@@ -778,6 +778,30 @@ def strategy_learning_scope_job(
                 "reason": "not a backtestable indicator strategy",
                 "paper_only": True,
             }
+        asset = db.query(Asset).filter(Asset.symbol == symbol.strip().upper()).one_or_none()
+        if asset is None or not asset.is_active:
+            # The symbol was deactivated after its scope was planned. Every
+            # recovery pass republished the failed dispatch and each failure
+            # opened another critical alert. Close the dispatch and the alerts.
+            if dispatch:
+                dispatch.status = "succeeded"
+                dispatch.lease_expires_at = None
+                dispatch.completed_at = datetime.utcnow()
+                dispatch.error_type = "skipped"
+                dispatch.error_message = f"{symbol} is not an active instrument"
+            from app.services.notifications import resolve_successful_job_notifications
+
+            closed = resolve_successful_job_notifications(db, f"strategy_learning_scope_job:{symbol}:{strategy_slug}")
+            db.commit()
+            return {
+                "status": "skipped",
+                "job": "strategy_learning_scope_job",
+                "symbol": symbol,
+                "strategy": strategy_slug,
+                "reason": "instrument is not active",
+                "resolved_alerts": closed,
+                "paper_only": True,
+            }
         # Keep each scheduled scope bounded, while honoring the caller's
         # candidate budget so recurring fan-out explores more than the first
         # proposal when worker capacity allows it.
@@ -1992,10 +2016,11 @@ def yardstick_job() -> dict:
 def cost_probe_job() -> dict:
     """In session: one tick of the cost probes (record a finished round trip, close a due probe or open the week's next)."""
     def work(db):
-        from app.services.cost_probes import run_probe_cycle
+        from app.services.cost_probes import record_tick, run_probe_cycle
 
         result = run_probe_cycle(db)
         db.commit()
+        record_tick(result)
         return {"job": "cost_probe_job", **result}
 
     return _run_job("cost_probe_job", work)

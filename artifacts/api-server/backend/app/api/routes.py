@@ -173,11 +173,28 @@ def health() -> dict:
 
 
 @router.get("/ready")
-def ready(db: Session = Depends(get_db)) -> dict:
-    """Report whether the API stack is safe to serve paper operations."""
-    snapshot = readiness_snapshot(db)
+def ready() -> dict:
+    """Report whether the API stack is safe to serve paper operations.
+
+    This route is public, so it reads the same background-refreshed snapshot
+    as /system/readiness instead of building one per request: the full
+    snapshot took over 40 s on the hosted VM, and concurrent anonymous calls
+    each built their own. The failure body lists check names and statuses
+    only; the details stay behind authentication.
+    """
+    snapshot = system_readiness()
     if snapshot["overall_status"] != "ready":
-        raise HTTPException(status_code=503, detail=jsonable_encoder(snapshot))
+        raise HTTPException(status_code=503, detail={
+            "status": snapshot["overall_status"],
+            "generated_at": jsonable_encoder(snapshot.get("generated_at")),
+            "checks": [
+                {"name": check.get("name"), "status": check.get("status")}
+                for check in snapshot.get("checks") or []
+                if check.get("status") != "ready"
+            ],
+            "paper_only": True,
+            "live_trading": False,
+        })
     return {
         "status": "ready",
         "paper_only": True,

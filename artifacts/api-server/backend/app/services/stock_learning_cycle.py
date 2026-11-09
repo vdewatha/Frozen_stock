@@ -929,11 +929,9 @@ def evaluate_launch_admission_prerequisites(
         )
 
     try:
-        unresolved_critical = db.query(Notification).filter(
-            Notification.status != "resolved",
-            Notification.severity == "critical",
-            Notification.category != "deployment_monitor",
-        ).count()
+        from app.services.notifications import trading_blocking_critical_filter
+
+        unresolved_critical = db.query(Notification).filter(trading_blocking_critical_filter()).count()
         gates["notifications"] = _gate(
             "pass" if not unresolved_critical else "fail",
             reason=None if not unresolved_critical else (

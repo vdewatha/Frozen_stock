@@ -3,12 +3,32 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import Notification
 
 SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
+# Research-only jobs: a failure stays a critical alert (it is retried and shown)
+# but cannot block paper trading. strategy_learning_scope_job backtests
+# parameters with apply_promotions=False and never places or sizes an order.
+# On 2026-11-09 its failures on deactivated symbols (ALGN, ABNB) kept 200+
+# critical alerts open and blocked every autonomous order, cost probes and the
+# slow book's rebalance included.
+RESEARCH_ONLY_JOB_SOURCE_PREFIXES = ("strategy_learning_scope_job:",)
+
+
+def trading_blocking_critical_filter():
+    """SQL condition for open critical notifications that should block paper trading."""
+    research_only = or_(*(Notification.source.like(f"{prefix}%") for prefix in RESEARCH_ONLY_JOB_SOURCE_PREFIXES))
+    return and_(
+        Notification.status != "resolved",
+        Notification.severity == "critical",
+        Notification.category != "deployment_monitor",
+        # NULL-safe: a row without a source is never treated as research-only.
+        or_(Notification.category != "scheduled_job", Notification.source.is_(None), ~research_only),
+    )
 
 
 def create_notification(

@@ -56,6 +56,19 @@ START_WINDOW = (time(10, 30), time(14, 0))
 SELL_BY = time(15, 30)
 FREE_SLOTS = 2
 LOOKBACK_DAYS = 14
+# The last tick and the last tick that wanted to probe but could not, kept in
+# Redis so the yardstick shows why no probe ran (on 2026-11-09 every tick was
+# refused by launch admission and nothing recorded why).
+LAST_TICK_KEY = "cost-probe:last-tick"
+LAST_HELD_BACK_KEY = "cost-probe:last-held-back"
+TICK_TTL_SECONDS = 14 * 24 * 60 * 60
+ROUTINE_SKIP_PREFIXES = (
+    "outside the regular session",
+    "outside the probe start window",
+    "next probe is planned",
+    "today's probe already ran",
+    "probes run on the Alpaca paper account only",
+)
 
 
 def probe_symbols() -> list[str]:
@@ -367,6 +380,64 @@ def run_probe_cycle(db: Session, *, now: Optional[datetime] = None) -> dict:
     return base | _open_probe(db, account, now, history) | {"recorded": len(recorded)}
 
 
+def _redis():
+    import redis
+
+    return redis.Redis.from_url(settings.redis_url, socket_connect_timeout=0.5, socket_timeout=0.5)
+
+
+def held_back(result: dict) -> bool:
+    """A tick that wanted to probe and could not (blocked, or skipped for a non-calendar reason)."""
+    status = result.get("status")
+    if status == "blocked":
+        return True
+    if status != "skipped":
+        return False
+    reason = str(result.get("reason") or "")
+    if " probes this week (target " in reason:
+        return False
+    return not reason.startswith(ROUTINE_SKIP_PREFIXES)
+
+
+def record_tick(result: dict, *, now: Optional[datetime] = None) -> None:
+    """Keep the tick's outcome for probe_status; advisory, never raises."""
+    import json
+
+    stamp = _utc(now or datetime.now(UTC)).isoformat()
+    payload = json.dumps({"at": stamp, **{k: v for k, v in result.items() if k not in {"paper_only", "live_authorized"}}},
+                         default=str)[:4000]
+    client = None
+    try:
+        client = _redis()
+        client.set(LAST_TICK_KEY, payload, ex=TICK_TTL_SECONDS)
+        if held_back(result):
+            client.set(LAST_HELD_BACK_KEY, payload, ex=TICK_TTL_SECONDS)
+    except Exception as exc:  # pragma: no cover - visibility only
+        logger.warning("cost probes: tick not recorded: %s", exc.__class__.__name__)
+    finally:
+        if client is not None:
+            client.close()
+
+
+def recent_ticks() -> dict:
+    import json
+
+    out = {"last_tick": None, "last_held_back": None}
+    client = None
+    try:
+        client = _redis()
+        for name, key in (("last_tick", LAST_TICK_KEY), ("last_held_back", LAST_HELD_BACK_KEY)):
+            raw = client.get(key)
+            if raw:
+                out[name] = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except Exception as exc:
+        out["error"] = exc.__class__.__name__
+    finally:
+        if client is not None:
+            client.close()
+    return out
+
+
 def probe_round_trips(db: Session, *, limit: Optional[int] = None) -> list[dict]:
     rows = [dict(row.payload or {}) for row in _rows(db, ACTION_ROUND_TRIP)]
     return rows[-limit:] if limit else rows
@@ -382,4 +453,4 @@ def probe_status(db: Session) -> dict:
             "hold_minutes": int(settings.cost_probe_hold_minutes), "symbols": probe_symbols(),
             "this_week": len(week), "round_trips": len(trips),
             "mean_round_trip_bps": round(sum(values) / len(values), 3) if values else None,
-            "latest": trips[-5:], "paper_only": True}
+            "latest": trips[-5:], **recent_ticks(), "paper_only": True}
