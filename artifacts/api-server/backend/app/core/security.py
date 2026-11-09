@@ -39,7 +39,7 @@ READ_PATHS = {
     "/assets", "/strategies", "/market-regimes", "/news", "/paper-trades",
     "/audit-logs", "/notifications", "/notifications/delivery-status", "/risk-rules",
     "/broker/status", "/models/performance", "/experiments", "/dashboard",
-    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/live-pilot/mandate", "/system/deployment-monitor", "/system/operational-hardening", "/research/runs", "/research/agent-runs", "/research/scalp/runs",
+    "/economic/indicators", "/system/readiness", "/system/live-safety", "/system/live-operations", "/system/live-operations/evidence", "/system/live-pilot", "/system/live-pilot/mandate", "/system/deployment-monitor", "/system/operational-hardening", "/system/stock-monitoring", "/research/runs", "/research/agent-runs", "/research/scalp/runs",
     "/stock/training/jobs", "/stock/training/binding", "/stock/learning-cycles",
     "/research/agent-comparison-reports",
     "/stock/learning-cycles/launch-prerequisites",
@@ -484,7 +484,17 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 actor = "anonymous_viewer"
                 auth_role = "viewer"
                 auth_evidence = {"method": "anonymous_viewer", "role": "viewer"}
-            identity = actor if actor != "anonymous" else (request.client.host if request.client else "unknown")
+            identity = actor
+            if actor in {"anonymous", "anonymous_viewer"}:
+                # One bucket per client, not one shared by every anonymous
+                # visitor. Behind the production gateway every request comes
+                # from loopback; the gateway strips any inbound copy of this
+                # header and sets it from the client address.
+                client_host = request.client.host if request.client else "unknown"
+                forwarded = request.headers.get("x-internal-client-ip", "").strip()
+                if forwarded and client_host in {"127.0.0.1", "::1", "localhost"}:
+                    client_host = forwarded[:64]
+                identity = f"{actor}:{client_host}"
             if self._limited(identity):
                 status = 429
                 return JSONResponse({"detail": "Request rate exceeded"}, status_code=status, headers={"Retry-After": "60"})

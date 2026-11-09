@@ -941,7 +941,8 @@ export type StockMonitoringCheck = {
 
 export type StockMonitoringSnapshot = {
   status: string;
-  generated_at: string;
+  generated_at: string | null;
+  message?: string;
   snapshot_id?: number;
   checks: StockMonitoringCheck[];
   breaches: { key: string; status: string; consecutive_count: number; severity: string; last_observed_at: string }[];
@@ -1607,6 +1608,8 @@ export type EconomicImportResponse = {
   source: string;
   rows_imported: number;
   indicator_ids: number[];
+  status?: string | null;
+  rows_updated?: number | null;
 };
 
 export type MacroContextSummary = {
@@ -1844,9 +1847,31 @@ async function responseDetail(response: Response): Promise<string | null> {
   return null;
 }
 
+// The API writes most timestamps with datetime.utcnow(), which serializes
+// without an offset ("2026-11-09T16:06:00.777"). `new Date()` reads such a
+// string as local time, so every panel showed those times 5 hours ahead in
+// New York. Treat an offset-less ISO date-time as UTC; date-only strings and
+// values that already carry Z or an offset are left alone.
+const NAIVE_ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+export function normalizeUtcTimestamps<T>(value: T): T {
+  if (typeof value === "string") return (NAIVE_ISO_DATETIME.test(value) ? `${value}Z` : value) as T;
+  if (Array.isArray(value)) return value.map(item => normalizeUtcTimestamps(item)) as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) out[key] = normalizeUtcTimestamps(item);
+    return out as T;
+  }
+  return value;
+}
+
+export async function readJson<T>(response: Response): Promise<T> {
+  return normalizeUtcTimestamps(await response.json()) as T;
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) throw new ApiError(response.status, await responseDetail(response));
-  return response.json() as Promise<T>;
+  return readJson<T>(response);
 }
 
 export async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {

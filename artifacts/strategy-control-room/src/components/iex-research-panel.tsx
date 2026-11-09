@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, RefreshCw } from "lucide-react";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { API_BASE_URL, authenticatedFetch } from "@/lib/api";
+import { API_BASE_URL, authenticatedFetch, readJson } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
 import { ForwardComparison, ShadowReturns, ReturnChallenger, type ReturnChallengerReport, type ForwardComparisonReport, type ShadowReturnsReport } from "./forward-comparison";
 
@@ -16,13 +16,15 @@ type IexStatus = {
 
 async function request<T>(path: string, method = "GET"): Promise<T> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+  // The hosted status call takes ~20s; a 10s abort plus three retries meant
+  // the panel never loaded and the server kept computing abandoned requests.
+  const timeout = window.setTimeout(() => controller.abort(), 45_000);
   try {
     const response = await authenticatedFetch(`${API_BASE_URL}/market-data/iex/${path}`, {
       method, cache: "no-store", signal: controller.signal,
     });
     if (!response.ok) throw new Error(`IEX request failed (${response.status})`);
-    return response.json();
+    return readJson(response);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("IEX status request timed out; the feed is unavailable");
@@ -36,7 +38,7 @@ async function request<T>(path: string, method = "GET"): Promise<T> {
 export function IexResearchPanel() {
   const [symbol, setSymbol] = useState("SPY");
   const queryClient = useQueryClient();
-  const status = useQuery({ queryKey: ["iex-research"], queryFn: () => request<IexStatus>("status"), refetchInterval: 30000 });
+  const status = useQuery({ queryKey: ["iex-research"], queryFn: () => request<IexStatus>("status"), refetchInterval: 60000, retry: false });
   const collect = useMutation({ mutationFn: () => request("collect", "POST"), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["iex-research"] }) });
   const selected = status.data?.symbols.find(item => item.symbol === symbol);
   const learning = status.data?.learning?.symbols.find(item => item.symbol === symbol);

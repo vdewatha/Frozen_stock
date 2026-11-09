@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Activity, ArrowRight, ShieldCheck } from "lucide-react";
 import { Link } from "wouter";
-import { API_BASE_URL, authenticatedFetch, getErrorMessage } from "@/lib/api";
+import { API_BASE_URL, authenticatedFetch, getErrorMessage, readJson } from "@/lib/api";
 import { ShortProfitChart, type ShortPerformance } from "@/components/short-profit-chart";
 
 export type ShortPilotStatus = {
@@ -21,11 +21,11 @@ export type ShortPilotStatus = {
 async function loadStatus(): Promise<ShortPilotStatus> {
   const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/short-pilot`, { cache: "no-store" });
   if (!response.ok) throw new Error(`Short pilot status unavailable (${response.status})`);
-  return response.json();
+  return readJson(response);
 }
 
 function useShortPilot() {
-  return useQuery({ queryKey: ["short-pilot-status"], queryFn: loadStatus, refetchInterval: 5000, retry: 1 });
+  return useQuery({ queryKey: ["short-pilot-status"], queryFn: loadStatus, refetchInterval: 15000, retry: 1 });
 }
 
 function useMonitorClock() {

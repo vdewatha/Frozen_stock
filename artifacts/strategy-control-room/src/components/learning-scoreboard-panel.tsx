@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { GraduationCap } from "lucide-react";
-import { API_BASE_URL, authenticatedFetch, getErrorMessage } from "@/lib/api";
+import { API_BASE_URL, authenticatedFetch, getErrorMessage, readJson } from "@/lib/api";
 import { formatPct, formatUsd } from "@/components/paper-scorecard-panel";
 import { StatusPill } from "@/components/status-pill";
 
@@ -31,7 +31,7 @@ export type LearningScoreboard = {
 async function loadScoreboard(): Promise<LearningScoreboard> {
   const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/learning-scoreboard`, { cache: "no-store" });
   if (!response.ok) throw new Error(`Learning scoreboard unavailable (${response.status})`);
-  return response.json();
+  return readJson(response);
 }
 
 function label(value: string) { return value.replaceAll("_", " "); }
@@ -56,7 +56,9 @@ export function LearningScoreboardView({ board }: { board: LearningScoreboard })
   const failing = health.checks.filter(check => check.status === "failing").length;
   const losses = Object.entries(causes.by_cause).filter(([cause]) => !["edge", "market_tailwind"].includes(cause));
   const wins = Object.entries(causes.by_cause).filter(([cause]) => ["edge", "market_tailwind"].includes(cause));
-  return <div className="space-y-8">
+  // short-monitor gives the <small> sub-labels their own line; without it
+  // "14 losses" and "53.8% of losses" ran together as "1453.8% of losses".
+  return <div className="short-monitor space-y-8">
     <section>
       <div className="section-heading"><h2><GraduationCap size={17} className="mr-2 inline" />Is it working?</h2>
         <span className="section-meta">{health.session ? `Session ${health.session.date}${health.session.in_progress ? " (in progress)" : ""}` : "No session yet"} · updated {et(board.generated_at)} ET</span></div>
@@ -118,7 +120,7 @@ export function LearningScoreboardView({ board }: { board: LearningScoreboard })
     <section>
       <div className="section-heading"><h2>What changed</h2><span className="section-meta">Trades opened before and after each change</span></div>
       <div className="short-monitor-table"><table><thead><tr><th>Change</th><th>Live from</th><th>Before</th><th>After</th></tr></thead>
-        <tbody>{board.changes.map(change => <tr key={change.key}><th scope="row">{change.title}<small>{change.watch}</small></th><td>{change.effective}</td><td>{summary(change.before)}</td><td>{summary(change.after)}</td></tr>)}</tbody></table></div>
+        <tbody>{board.changes.map(change => <tr key={change.key}><th scope="row">{change.title}<small className="block font-normal">{change.watch}</small></th><td>{change.effective}</td><td>{summary(change.before)}</td><td>{summary(change.after)}</td></tr>)}</tbody></table></div>
     </section>
   </div>;
 }

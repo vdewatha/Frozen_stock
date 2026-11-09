@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { CalendarCheck } from "lucide-react";
-import { API_BASE_URL, authenticatedFetch, getErrorMessage } from "@/lib/api";
+import { API_BASE_URL, authenticatedFetch, getErrorMessage, readJson } from "@/lib/api";
 import { formatPct, formatUsd } from "@/components/paper-scorecard-panel";
 
 type Totals = { trades: number; win_rate: number | null; total_pnl: number | null; avg_pnl: number | null; paper_bps?: number | null };
@@ -25,7 +25,7 @@ export type WeeklyReport = {
 async function loadReport(): Promise<{ latest: WeeklyReport | null; preview: WeeklyReport }> {
   const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/weekly-report`, { cache: "no-store" });
   if (!response.ok) throw new Error(`Weekly report unavailable (${response.status})`);
-  return response.json();
+  return readJson(response);
 }
 
 function bps(value: number | null) { return value === null ? "n/a" : `${value > 0 ? "+" : ""}${value.toFixed(1)} bps`; }

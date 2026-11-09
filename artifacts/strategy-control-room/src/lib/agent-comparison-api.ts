@@ -1,4 +1,4 @@
-import { API_BASE_URL, authenticatedFetch } from "./api";
+import { API_BASE_URL, authenticatedFetch, readJson } from "./api";
 
 export type ComparisonObservation = {
   run_id: string;
@@ -57,7 +57,7 @@ export type AgentComparisonReport = {
 
 async function readResponse<T>(response: Response): Promise<T> {
   if (!response.ok) throw new Error(`Comparison reports unavailable (HTTP ${response.status})`);
-  return response.json() as Promise<T>;
+  return readJson<T>(response);
 }
 
 export async function getAgentComparisonReports(offset = 0) {

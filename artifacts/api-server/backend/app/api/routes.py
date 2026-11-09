@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import threading
+import time
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -146,6 +147,12 @@ _readiness_cache_lock = threading.Lock()
 _readiness_cache: dict | None = None
 _readiness_refresh_active = False
 _readiness_refresh_error: str | None = None
+# A refresh thread blocked on a probe (e.g. a Celery inspect that never
+# returns) used to keep readiness "still being refreshed" for the life of the
+# process. After this long a new refresh may start and the stall is reported.
+_READINESS_REFRESH_DEADLINE_SECONDS = 300
+_readiness_refresh_started_at: float | None = None
+_readiness_refresh_generation = 0
 LEGACY_STOCK_EVIDENCE_QUARANTINE = (
     "Legacy simulator paper_trades/StrategyMemory are quarantined and cannot be "
     "used for stock risk, scoring, allocation, or governance."
@@ -218,7 +225,7 @@ def system_readiness() -> dict:
     background refresh and reports an explicit blocked state until evidence is
     available.
     """
-    global _readiness_refresh_active
+    global _readiness_refresh_active, _readiness_refresh_started_at, _readiness_refresh_error, _readiness_refresh_generation
     now = datetime.utcnow()
     with _readiness_cache_lock:
         snapshot = _readiness_cache
@@ -228,10 +235,20 @@ def system_readiness() -> dict:
             else None
         )
         needs_refresh = snapshot is None or age_seconds is None or age_seconds > _READINESS_CACHE_TTL_SECONDS
-        if needs_refresh and not _readiness_refresh_active:
+        stalled = (
+            _readiness_refresh_active
+            and _readiness_refresh_started_at is not None
+            and time.monotonic() - _readiness_refresh_started_at > _READINESS_REFRESH_DEADLINE_SECONDS
+        )
+        if stalled:
+            _readiness_refresh_error = "RefreshTimeout"
+        if needs_refresh and (not _readiness_refresh_active or stalled):
             _readiness_refresh_active = True
+            _readiness_refresh_started_at = time.monotonic()
+            _readiness_refresh_generation += 1
             threading.Thread(
                 target=_refresh_readiness_snapshot,
+                args=(_readiness_refresh_generation,),
                 name="readiness-refresh",
                 daemon=True,
             ).start()
@@ -256,23 +273,31 @@ def _readiness_pending_snapshot(error: str | None = None) -> dict:
     }
 
 
-def _refresh_readiness_snapshot() -> None:
+def _refresh_readiness_snapshot(generation: int | None = None) -> None:
     global _readiness_cache, _readiness_refresh_active, _readiness_refresh_error
     from app.db.session import SessionLocal
+
+    def current() -> bool:
+        # A thread superseded after the deadline must not overwrite the state
+        # of the refresh that replaced it.
+        return generation is None or generation == _readiness_refresh_generation
 
     db = SessionLocal()
     try:
         snapshot = readiness_snapshot(db)
         with _readiness_cache_lock:
-            _readiness_cache = snapshot
-            _readiness_refresh_error = None
+            if current():
+                _readiness_cache = snapshot
+                _readiness_refresh_error = None
     except Exception as exc:  # readiness remains explicitly blocked
         with _readiness_cache_lock:
-            _readiness_refresh_error = exc.__class__.__name__
+            if current():
+                _readiness_refresh_error = exc.__class__.__name__
     finally:
         db.close()
         with _readiness_cache_lock:
-            _readiness_refresh_active = False
+            if current():
+                _readiness_refresh_active = False
 
 
 @router.get("/system/live-safety", response_model=LiveSafetyResponse)
@@ -282,7 +307,9 @@ def system_live_safety(db: Session = Depends(get_db)) -> dict:
 
 @router.get("/system/live-operations", response_model=dict)
 def system_live_operations(db: Session = Depends(get_db)) -> dict:
-    return live_operations_snapshot(db)
+    from app.core.response_cache import cached_read
+
+    return cached_read("system/live-operations", 30, lambda: live_operations_snapshot(db))
 
 
 @router.get("/system/live-operations/evidence", response_model=dict)
@@ -333,7 +360,11 @@ def transition_system_live_safety(
 
 @router.get("/system/deployment-monitor", response_model=DeploymentMonitorResponse)
 def system_deployment_monitor(db: Session = Depends(get_db)) -> dict:
-    return deployment_monitor_snapshot(db)
+    from app.core.response_cache import cached_read
+
+    # Runs readiness and Celery inspection on the request path; hung for 60s+
+    # on the hosted deployment, so never let concurrent polls stack up.
+    return cached_read("system/deployment-monitor", 60, lambda: deployment_monitor_snapshot(db))
 
 
 @router.post("/system/deployment-monitor/run", response_model=dict)
@@ -574,7 +605,11 @@ def intraday_history(symbol: str, limit: int = 390, db: Session = Depends(get_db
 
 @router.get("/market-data/intraday/{symbol}/status", response_model=FeedStatusResponse)
 def intraday_feed_status(symbol: str, db: Session = Depends(get_db)):
-    return feed_status(db, symbol)
+    try:
+        return feed_status(db, symbol)
+    except ValueError as exc:
+        # A symbol outside the trading universe is a bad request, not a crash.
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 @router.post("/market-data/intraday/ingest")
 def ingest_intraday_route(payload: IntradayImportRequest, db: Session = Depends(get_db)):
@@ -658,7 +693,7 @@ def import_economic_data(db: Session = Depends(get_db)) -> dict:
 
 @router.get("/economic/indicators", response_model=list[EconomicIndicatorRead])
 def economic_indicators(indicator_name: Optional[str] = None, limit: int = 100, db: Session = Depends(get_db)) -> list:
-    return list_economic_indicators(db, indicator_name, limit)
+    return list_economic_indicators(db, indicator_name, limit, prefer_real=True)
 
 
 @router.get("/economic/context", response_model=MacroContextSummary)
@@ -677,7 +712,11 @@ def market_regimes(limit: int = 30, db: Session = Depends(get_db)) -> list[dict]
 def latest_regime(db: Session = Depends(get_db)) -> dict:
     from app.services.market_regime import latest_market_regime
 
-    regime = latest_market_regime(db)
+    try:
+        regime = latest_market_regime(db)
+    except ValueError as exc:
+        # Too little trusted history to detect a regime yet.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not regime:
         raise HTTPException(status_code=404, detail="No market regime available.")
     return regime
@@ -700,7 +739,9 @@ def import_news(payload: NewsImportRequest, db: Session = Depends(get_db)) -> di
 
 @router.get("/news/{symbol}/summary", response_model=NewsSentimentSummary)
 def news_summary(symbol: str, limit: int = 10, db: Session = Depends(get_db)) -> dict:
-    return summarize_news_context(db, symbol, limit=min(limit, 50))
+    # A read must not write: auto_seed stores mock articles for any symbol,
+    # so an anonymous viewer could fill the table with made-up tickers.
+    return summarize_news_context(db, symbol, limit=min(limit, 50), auto_seed=False)
 
 
 @router.get("/news", response_model=list[NewsArticleRead])

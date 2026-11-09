@@ -1,4 +1,4 @@
-import { API_BASE_URL, authenticatedFetch, ApiError } from "./api";
+import { API_BASE_URL, authenticatedFetch, ApiError, readJson } from "./api";
 
 export type AttributionIssueCode =
   | "external_orders" | "missing_order_link" | "unowned_fills" | "quantity_mismatch" | "no_fill_history";
@@ -61,5 +61,5 @@ export type PaperOverview = {
 export async function getPaperOverview(): Promise<PaperOverview> {
   const response = await authenticatedFetch(`${API_BASE_URL}/stock-paper/overview`, { cache: "no-store" });
   if (!response.ok) throw new ApiError(response.status, "Paper overview unavailable");
-  return response.json() as Promise<PaperOverview>;
+  return readJson<PaperOverview>(response);
 }

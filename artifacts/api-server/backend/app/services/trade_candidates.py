@@ -20,7 +20,7 @@ from app.services.probabilistic_model import predict_probabilities
 from app.services.risk import DEFAULT_RISK_RULES, volatility_capped_exposure
 from app.services.trusted_data import trusted_history, UntrustedMarketData
 from app.services.strategy_research import strategy_research_for
-from app.services.strategies.registry import get_strategy
+from app.services.strategies.registry import get_strategy, is_known_strategy
 
 
 MIN_MODEL_PROBABILITY_UP = 0.54
@@ -184,6 +184,9 @@ def scan_trade_candidates(db: Session, limit: int = 12) -> dict:
             "current_status": strategy.current_status,
         }
         for strategy in db.query(Strategy).order_by(Strategy.name).all()
+        # Target-weight rows (passive arm, defensive sleeve shadow) have no
+        # indicator class; one of them used to abort the whole scan.
+        if is_known_strategy(strategy.strategy_type)
     ]
     macro_context = summarize_macro_context(db)
     regime = latest_market_regime(db, auto_detect=False) or {}

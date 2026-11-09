@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, RefreshCw } from "lucide-react";
-import { API_BASE_URL, authenticatedFetch } from "@/lib/api";
+import { API_BASE_URL, authenticatedFetch, readJson } from "@/lib/api";
 import { RoleGate } from "@/components/access-control";
 
 export type DelayedSipStatus = {
@@ -16,7 +16,7 @@ export type DelayedSipStatus = {
 async function request<T>(path: string, method = "GET"): Promise<T> {
   const response = await authenticatedFetch(`${API_BASE_URL}/market-data/delayed-sip/${path}`, { method, cache: "no-store" });
   if (!response.ok) throw new Error(`Delayed SIP request failed (${response.status})`);
-  return response.json();
+  return readJson(response);
 }
 
 export function DelayedSipSummary({ data }: { data: DelayedSipStatus }) {

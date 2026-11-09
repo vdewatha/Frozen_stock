@@ -104,11 +104,17 @@ def hosted_iex_status():
     from app.db.session import SessionLocal
     from app.services.alpaca_research_data import iex_research_status
 
-    db = SessionLocal()
-    try:
-        return iex_research_status(db)
-    finally:
-        db.close()
+    from app.core.response_cache import cached_read
+
+    def compute():
+        db = SessionLocal()
+        try:
+            return iex_research_status(db)
+        finally:
+            db.close()
+
+    # ~20s on the hosted database (per-symbol counts); every viewer polls it.
+    return cached_read("market-data/iex/status", 30, compute)
 
 
 @app.get("/api/research/scalp/status")
@@ -190,6 +196,9 @@ def load_optional_application_routes() -> None:
         _import_stage("research")
         from app.api.agent_research import router as agent_research_router
         _import_stage("agent_research")
+        # Write/detail scalp routes (POST /runs, GET /runs/{run_id}); the
+        # read-only list is served by hosted_scalp_runs during module import.
+        from app.api.scalp_research import router as scalp_research_router
         _import_stage("scalp_research")
         from app.api.crypto_research import router as crypto_router
         _import_stage("crypto_research")
@@ -211,6 +220,7 @@ def load_optional_application_routes() -> None:
         for application_router in (
             research_router,
             agent_research_router,
+            scalp_research_router,
             crypto_router,
             shadow_evidence_router,
             stock_paper_router,

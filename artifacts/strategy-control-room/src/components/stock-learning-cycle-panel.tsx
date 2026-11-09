@@ -75,12 +75,14 @@ export function StockLearningCyclePanel() {
     setRefreshing(true);
     setPrerequisiteError(undefined);
     try {
-      const [nextCycles, nextControl] = await Promise.all([
-        getStockLearningCycles(12),
-        getStockLearningScheduleControl(),
-      ]);
+      // Show cycles as soon as they arrive: schedule-control can be slow, and
+      // waiting on both left "No durable cycle run exists yet" on screen
+      // while 12 cycles had already loaded.
+      const controlRequest = getStockLearningScheduleControl()
+        .then((nextControl) => setScheduleControl(nextControl))
+        .catch((error) => setStatus(`Schedule control unavailable: ${getErrorMessage(error)}`));
+      const nextCycles = await getStockLearningCycles(12);
       setCycles(nextCycles);
-      setScheduleControl(nextControl);
       setApprovalDrafts((current) => {
         const next = { ...current };
         for (const cycle of nextCycles) {
@@ -103,7 +105,8 @@ export function StockLearningCyclePanel() {
         nextCycles.length ? nextCycles.map((cycle) => getLaunchPrerequisites(cycle.cycle_id)) : [getLaunchPrerequisites()],
       );
       setPrerequisites(Object.fromEntries(results.map((result) => [result.cycle_id ?? "none", result])));
-      setStatus("Cycle evidence refreshed");
+      await controlRequest;
+      setStatus((current) => current.startsWith("Schedule control unavailable") ? current : "Cycle evidence refreshed");
     } catch (error) {
       setPrerequisiteError(getErrorMessage(error));
       setStatus(getErrorMessage(error));

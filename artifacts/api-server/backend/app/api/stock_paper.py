@@ -132,10 +132,13 @@ def overview(db: Session = Depends(get_db)) -> dict:
 @router.get("/scorecard")
 def scorecard(days: int = Query(30, ge=1, le=3650), db: Session = Depends(get_db)) -> dict:
     """Read-only scorecard of closed bot round trips (no snapshot is written)."""
-    return build_scorecard(db, days=days) | {
+    from app.core.response_cache import cached_read
+
+    # 15-30s per call on the hosted database (bootstrap intervals, benchmark).
+    return cached_read(f"stock-paper/scorecard:{days}", 120, lambda: build_scorecard(db, days=days) | {
         "history": scorecard_history(db, limit=30),
         "operations_today": operations_summary(db),
-    }
+    })
 
 
 @router.get("/weekly-report")
@@ -143,7 +146,10 @@ def weekly_report(db: Session = Depends(get_db)) -> dict:
     """Latest stored weekly report, plus a live preview of the current week."""
     from app.services.weekly_report import build_weekly_report, latest_weekly_report
 
-    return {"latest": latest_weekly_report(db), "preview": build_weekly_report(db)}
+    from app.core.response_cache import cached_read
+
+    # The live preview took ~30s on the hosted database.
+    return cached_read("stock-paper/weekly-report", 300, lambda: {"latest": latest_weekly_report(db), "preview": build_weekly_report(db)})
 
 
 @router.get("/learning-scoreboard")

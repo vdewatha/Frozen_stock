@@ -345,7 +345,12 @@ class EconomicIndicatorRead(BaseModel):
 class EconomicImportResponse(BaseModel):
     source: str
     rows_imported: int
-    indicator_ids: list[int]
+    # Only the placeholder path lists row ids; a successful FRED import
+    # reports counts instead, and requiring this field turned it into a 500.
+    indicator_ids: list[int] = Field(default_factory=list)
+    status: Optional[str] = None
+    rows_updated: Optional[int] = None
+    errors: Optional[dict] = None
 
 
 class MacroContextSummary(BaseModel):

@@ -6,6 +6,7 @@ import logging
 from typing import Callable, Optional
 
 import httpx
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -250,10 +251,17 @@ def import_fallback_economic_indicators(db: Session) -> dict:
     return {"source": "mock_macro", "rows_imported": imported, "indicator_ids": touched_ids}
 
 
-def list_economic_indicators(db: Session, indicator_name: Optional[str] = None, limit: int = 100) -> list[EconomicIndicator]:
+def list_economic_indicators(
+    db: Session, indicator_name: Optional[str] = None, limit: int = 100, *, prefer_real: bool = False,
+) -> list[EconomicIndicator]:
     query = db.query(EconomicIndicator)
     if indicator_name:
         query = query.filter(EconomicIndicator.indicator_name == indicator_name)
+    if prefer_real:
+        # Same rule as latest_indicator_map: once an indicator has a real
+        # observation, its newer-dated placeholder rows are not shown.
+        real_names = select(EconomicIndicator.indicator_name).where(EconomicIndicator.source != MOCK_SOURCE)
+        query = query.filter(~and_(EconomicIndicator.source == MOCK_SOURCE, EconomicIndicator.indicator_name.in_(real_names)))
     return query.order_by(EconomicIndicator.observation_date.desc(), EconomicIndicator.indicator_name).limit(min(limit, 500)).all()
 
 

@@ -743,6 +743,27 @@ def strategy_learning_scope_job(
                 "paper_only": True,
                 "deduplicated": True,
             }
+        from app.services.strategies.registry import is_known_strategy
+
+        if not is_known_strategy(strategy_slug):
+            # A target-weight row (passive arm, defensive sleeve shadow) has no
+            # indicator class to backtest. Close the dispatch as done so the
+            # batch recovery does not republish it, and raise no alert.
+            if dispatch:
+                dispatch.status = "succeeded"
+                dispatch.lease_expires_at = None
+                dispatch.completed_at = datetime.utcnow()
+                dispatch.error_type = "skipped"
+                dispatch.error_message = f"{strategy_slug} is not a backtestable indicator strategy"
+                db.commit()
+            return {
+                "status": "skipped",
+                "job": "strategy_learning_scope_job",
+                "symbol": symbol,
+                "strategy": strategy_slug,
+                "reason": "not a backtestable indicator strategy",
+                "paper_only": True,
+            }
         # Keep each scheduled scope bounded, while honoring the caller's
         # candidate budget so recurring fan-out explores more than the first
         # proposal when worker capacity allows it.
@@ -804,7 +825,14 @@ def strategy_learning_batch_job(limit_symbols: int = 25, limit_strategies: int =
         from app.services.parameter_application import agenda_strategy_order
 
         # Strategies implicated by recent attributed paper losses go first.
-        all_strategies = db.query(Strategy).order_by(Strategy.name).all()
+        # Only indicator strategies can be backtested; target-weight rows
+        # (passive_arm, defensive_tsmom_iv) failed every scope with
+        # "Unknown strategy" and raised a critical alert per symbol.
+        from app.services.strategies.registry import is_known_strategy
+
+        all_strategies = [
+            row for row in db.query(Strategy).order_by(Strategy.name).all() if is_known_strategy(row.strategy_type)
+        ]
         by_type = {row.strategy_type: row for row in all_strategies}
         ordered_types = agenda_strategy_order(db, [row.strategy_type for row in all_strategies])
         strategies = [by_type[key] for key in ordered_types][: max(1, min(limit_strategies, 25))]
