@@ -12,11 +12,63 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # The two Celery/IEX crash-recovery integration tests start their own
+  # redis-server and take 2-3 minutes each; they run in their own jobs below
+  # so the sharded suite never waits on them.
+  CRASH_RECOVERY_IGNORES: >-
+    --ignore=tests/test_celery_worker_crash.py
+    --ignore=tests/test_iex_lease_crash.py
+    --ignore=tests/test_job_lease_previous_boot.py
+
 jobs:
-  backend-tests:
-    name: Backend tests
+  # The suite is split across shards by recorded test durations
+  # (tests/.test_durations, pytest-split). Tests missing from that file are
+  # assumed to take the average duration, so the file only needs refreshing
+  # when shards drift apart; see "Refreshing shard balance" in
+  # artifacts/api-server/backend/DEVELOPMENT.md.
+  backend-shard:
+    name: Backend tests shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        working-directory: artifacts/api-server/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: artifacts/api-server/backend/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest==9.1.1 pytest-timeout==2.4.0 pytest-split==0.11.0
+      # SQLite fixtures only: no database, broker or market-data access.
+      - name: Run tests
+        # A hung test fails with its stack instead of stalling the job.
+        run: >-
+          PYTHONPATH=. python -m pytest -v -p no:warnings --timeout=300 --durations=20
+          --splits 4 --group ${{ matrix.shard }} --durations-path tests/.test_durations
+          ${{ env.CRASH_RECOVERY_IGNORES }} tests
+
+  backend-crash-recovery:
+    name: Backend tests crash recovery (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: iex-lease
+            files: tests/test_iex_lease_crash.py
+          - name: celery-worker
+            files: tests/test_celery_worker_crash.py tests/test_job_lease_previous_boot.py
     defaults:
       run:
         working-directory: artifacts/api-server/backend
@@ -31,20 +83,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest==9.1.1 pytest-timeout==2.4.0
-      # The Celery crash-recovery integration tests start their own redis-server
-      # and refuse to skip without it. apt also starts a system service on 6379;
-      # stop it so the other tests see no broker (as on a dev machine) instead of
-      # waiting on Celery workers that never answer.
+      # These tests start a disposable redis-server on a free port and refuse
+      # to skip without the binary. apt also starts a system service on 6379;
+      # stop it so the tests see no broker other than their own (as on a dev
+      # machine).
       - name: Install redis-server
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q redis-server
           sudo systemctl stop redis-server
           sudo systemctl disable redis-server
-      # Otherwise SQLite fixtures only: no database, broker or market-data access.
       - name: Run tests
-        # A hung test fails with its stack instead of stalling the job.
-        run: PYTHONPATH=. python -m pytest -v -p no:warnings --timeout=300 --durations=20 tests
+        run: PYTHONPATH=. python -m pytest -v -p no:warnings --timeout=300 --durations=20 ${{ matrix.files }}
+
+  # Branch protection requires a check named "Backend tests"; this job carries
+  # that name and fails unless every shard and crash-recovery job passed.
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [backend-shard, backend-crash-recovery]
+    if: always()
+    steps:
+      - name: Check every backend job passed
+        env:
+          SHARDS: ${{ needs.backend-shard.result }}
+          CRASH: ${{ needs.backend-crash-recovery.result }}
+        run: |
+          echo "shards: $SHARDS, crash recovery: $CRASH"
+          test "$SHARDS" = success && test "$CRASH" = success
 
   typecheck:
     name: TypeScript typecheck
