@@ -172,6 +172,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.weekly_performance_report_job": {"queue": "learning"},
     "app.tasks.jobs.engine_audit_job": {"queue": "learning"},
     "app.tasks.jobs.yardstick_job": {"queue": "learning"},
+    "app.tasks.jobs.forward_experiments_review_job": {"queue": "learning"},
     "app.tasks.jobs.cost_probe_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.held_back_session_alarm_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.dividend_check_job": {"queue": LEARNING_FAST_QUEUE},
@@ -493,6 +494,15 @@ celery_app.conf.beat_schedule = {
     "yardstick": {
         "task": "app.tasks.jobs.yardstick_job",
         "schedule": crontab(minute=50, hour=13, day_of_week="sat"),
+        "options": {"expires": 12 * 60 * 60},
+    },
+    # The frozen forward experiments (forward_experiments.py): Saturday after
+    # the yardstick, append a review record when the schedule calls for one
+    # (quarterly from the first paper trade, never before 2027-02-10, and at
+    # each candidate's checkpoint and verdict sample).
+    "forward-experiments-review": {
+        "task": "app.tasks.jobs.forward_experiments_review_job",
+        "schedule": crontab(minute=10, hour=14, day_of_week="sat"),
         "options": {"expires": 12 * 60 * 60},
     },
     # Cost probes (cost_probes.py): every 5 minutes in session; each tick

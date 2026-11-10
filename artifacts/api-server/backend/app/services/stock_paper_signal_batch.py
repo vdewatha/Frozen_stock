@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import settings
 from app.services import sector_ranking
 from app.services import stock_paper_ledger as ledger
+from app.services.forward_gate_readings import FEATURE_KEY as GATE_READINGS_KEY, GateReadingContext
 from app.services.strategy_execution_policy import daily_bar_execution, gate_daily_bar_entry, symbol_scope_for
 
 logger = logging.getLogger(__name__)
@@ -250,6 +251,10 @@ def generate_cycle_signals(
     outcomes: dict[tuple[str, str], dict | BaseException] = {}
     meta_records: dict[tuple[str, str], dict] = {}
     load_spy = _spy_loader(db)
+    # The frozen forward experiments' gate readings (VIX >= 20 on the decision
+    # bar, SPY above its 50-day mean), recorded on every signal; SPY once a
+    # cycle, the VIX once per decision bar (forward_gate_readings.py).
+    gate_context = GateReadingContext(load_spy)
 
     # 1. Resolve each strategy's bound row once per cycle.
     bound: list[tuple[str, bool, Any | BaseException]] = []
@@ -328,6 +333,9 @@ def generate_cycle_signals(
             except Exception as exc:  # one strategy must not stop the fan-out
                 outcomes[(symbol, strategy_type)] = exc
                 continue
+            # ``generated`` is a private copy (see _generate); the readings
+            # never change the action.
+            generated.features = {**(generated.features or {}), GATE_READINGS_KEY: gate_context.for_prices(prices)}
             pending.append((symbol, strategy_type, research_only, row, generated, source, observation))
         if meta_label is not None and getattr(meta_label, "active", False):
             buys = [(item[1], item[4]) for item in pending[symbol_start:] if getattr(item[4], "action", None) == "BUY"]

@@ -168,6 +168,25 @@ def learning_experiments(db: Session = Depends(get_db)) -> dict:
     return experiment_ledger(db)
 
 
+@router.get("/forward-experiments")
+def forward_experiments(db: Session = Depends(get_db)) -> dict:
+    """The six frozen forward experiments: registrations, the live review per candidate, the recorded reviews (read-only)."""
+    from app.services.forward_experiments import forward_experiments_view
+
+    return forward_experiments_view(db)
+
+
+@router.post("/forward-experiments/review")
+def record_forward_experiments_review(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Append a review record now (the scheduled job records one when the schedule calls for it)."""
+    from app.services.forward_experiments import record_review
+
+    _attribute(db, request)
+    result = record_review(db, reason=f"operator:{getattr(request.state, 'actor', 'unknown')}", force=True)
+    db.commit()
+    return {**result, "paper_only": True, "live_authorized": False}
+
+
 @router.get("/gate-costs")
 def gate_costs(db: Session = Depends(get_db)) -> dict:
     """What each entry gate cost: the trades it stopped, scored under the tested exits (read-only)."""

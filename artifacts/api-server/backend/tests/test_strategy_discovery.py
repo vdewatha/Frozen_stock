@@ -190,7 +190,8 @@ def test_admission_respects_tiers_caps_and_retirement(db):  # noqa: F811
 def test_scheduled_run_admits_and_audits(db):  # noqa: F811
     frames = {s: _walk(rows=1800, seed=30 + i, start="2014-01-02") for i, s in enumerate(["SPY", "QQQ", "XLK"])}
     with patch.object(settings, "paper_execution_symbols", ["SPY", "QQQ", "XLK"]), \
-            patch.object(settings, "strategy_discovery_history_start", "2014-01-01"):
+            patch.object(settings, "strategy_discovery_history_start", "2014-01-01"), \
+            patch.object(settings, "strategy_discovery_mutation_enabled", True):  # paused by default since 2026-11-10
         result = sd.run_strategy_discovery(db, now=datetime(2026, 11, 8, 15, tzinfo=UTC),
                                            loader=lambda symbol: frames[symbol].copy())
         assert result["status"] == "complete" and result["library"] == len(sd.candidate_library(frames))

@@ -546,7 +546,18 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                        # Step 4 (reports/short-horizon-reverdict-20261107.md): both fail at every cost.
                        "short_horizon_reverdict": ["rsi2_pullback", "ibs_mean_reversion"],
                        "passive_arm_admission": "target_weight_active", "target_weight_exemption_granted": True,
-                       "defensive_shadow_admission": "target_weight_shadow"}
+                       "defensive_shadow_admission": "target_weight_shadow",
+                       # The six frozen forward experiments (forward_experiments.py): five
+                       # rule rows created, candidate 6 tags the IBS row just seeded.
+                       "forward_experiments": {
+                           "registered": ["c8e129d06c:none", "1cd460d679:none", "213239cdf2:spy_sma50",
+                                          "4ec6c68526:vix_above_20", "7df4090f31:vix_above_20",
+                                          "ibs_mean_reversion:vix_above_20"],
+                           "rows_created": ["rule_c8e129d06c", "rule_1cd460d679", "rule_213239cdf2",
+                                            "rule_4ec6c68526", "rule_7df4090f31"],
+                           "rows_reused": ["ibs_mean_reversion"], "already_registered": [], "mismatched": [],
+                           "spec_sha256": "0a87603dfa1ba05343d47a000484c2b3ee310d1203c9f0cde814038e1a84b439",
+                           "paper_only": True}}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
@@ -572,7 +583,16 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                                           "slow_book_shadowed": [], "rsi2_stock_leg_shadowed": False,
                                           "short_horizon_reverdict": [], "passive_arm_admission": None,
                                           "target_weight_exemption_granted": False,
-                                          "defensive_shadow_admission": None}
+                                          "defensive_shadow_admission": None,
+                                          "forward_experiments": {
+                                              "registered": [], "rows_created": [], "rows_reused": [],
+                                              "already_registered": ["c8e129d06c:none", "1cd460d679:none",
+                                                                     "213239cdf2:spy_sma50", "4ec6c68526:vix_above_20",
+                                                                     "7df4090f31:vix_above_20",
+                                                                     "ibs_mean_reversion:vix_above_20"],
+                                              "mismatched": [],
+                                              "spec_sha256": "0a87603dfa1ba05343d47a000484c2b3ee310d1203c9f0cde814038e1a84b439",
+                                              "paper_only": True}}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"

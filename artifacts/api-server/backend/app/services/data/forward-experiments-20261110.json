@@ -1,0 +1,533 @@
+{
+ "benchmark": "same-symbol drift over the same hold (causal mean daily return x holding days) and the volatility-matched SPY/T-bill arm of yardstick.passive_scores",
+ "candidates": [
+  {
+   "candidate": 1,
+   "description": "BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0",
+   "exits": {
+    "indicator_exit": true,
+    "max_holding_sessions": 10,
+    "stop_loss_pct": 0.1,
+    "take_profit_pct": 0.0
+   },
+   "expected_trades_per_year": 17,
+   "family": "weekly_reversal",
+   "gate": "none",
+   "hand_written": null,
+   "note": "weekly reversal, sector ETFs, uptrend filter (discovery explore candidate since 2026-11-02)",
+   "rule": {
+    "entry": [
+     {
+      "f": "dist_sma_200",
+      "op": ">",
+      "v": 0
+     },
+     {
+      "f": "ret_5",
+      "op": "<",
+      "v": -0.05
+     }
+    ],
+    "exit": [
+     {
+      "f": "dist_sma_5",
+      "op": ">",
+      "v": 0
+     }
+    ]
+   },
+   "sweep_id": "c8e129d06c:none",
+   "sweep_record_2015_2026": {
+    "11bps": {
+     "clustered_t": 2.93,
+     "excess_bps": 78.7,
+     "excess_t": 2.52,
+     "max_dd": 0.046,
+     "mean_hold_sessions": 3.1,
+     "net_bps": 91.1,
+     "oos_trades": 201,
+     "positive_window_fraction": 0.74,
+     "pre2015_bps": 57.8,
+     "pre2015_trades": 153,
+     "usd_per_trade_1_share": 1.45
+    },
+    "25bps": {
+     "clustered_t": 1.92,
+     "excess_bps": 48.2,
+     "excess_t": 1.52,
+     "max_dd": 0.059,
+     "mean_hold_sessions": 3.1,
+     "net_bps": 60.4,
+     "oos_trades": 201,
+     "positive_window_fraction": 0.65,
+     "pre2015_bps": 29.8,
+     "pre2015_trades": 153,
+     "usd_per_trade_1_share": 1.15
+    }
+   },
+   "symbols": [
+    "XLK",
+    "XLF",
+    "XLE",
+    "XLV",
+    "XLY",
+    "XLP",
+    "XLI",
+    "XLU",
+    "XLB",
+    "XLRE",
+    "XLC",
+    "SMH"
+   ],
+   "universe": "sector_etfs"
+  },
+  {
+   "candidate": 2,
+   "description": "BUY when dist_sma_200 > 0 and ret_5 < -0.08; exit when ret_1 > 0",
+   "exits": {
+    "indicator_exit": true,
+    "max_holding_sessions": 10,
+    "stop_loss_pct": 0.1,
+    "take_profit_pct": 0.0
+   },
+   "expected_trades_per_year": 45,
+   "family": "weekly_reversal",
+   "gate": "none",
+   "hand_written": null,
+   "note": "weekly reversal, single stocks, 8% drop in uptrend, exit first up close",
+   "rule": {
+    "entry": [
+     {
+      "f": "dist_sma_200",
+      "op": ">",
+      "v": 0
+     },
+     {
+      "f": "ret_5",
+      "op": "<",
+      "v": -0.08
+     }
+    ],
+    "exit": [
+     {
+      "f": "ret_1",
+      "op": ">",
+      "v": 0
+     }
+    ]
+   },
+   "sweep_id": "1cd460d679:none",
+   "sweep_record_2015_2026": {
+    "11bps": {
+     "clustered_t": 3.48,
+     "excess_bps": 60.5,
+     "excess_t": 2.61,
+     "max_dd": 0.035,
+     "mean_hold_sessions": 1.6,
+     "net_bps": 80.3,
+     "oos_trades": 537,
+     "positive_window_fraction": 0.79,
+     "pre2015_bps": 77.2,
+     "pre2015_trades": 520,
+     "usd_per_trade_1_share": 1.31
+    },
+    "25bps": {
+     "clustered_t": 1.97,
+     "excess_bps": 28.5,
+     "excess_t": 1.16,
+     "max_dd": 0.039,
+     "mean_hold_sessions": 1.6,
+     "net_bps": 48.2,
+     "oos_trades": 537,
+     "positive_window_fraction": 0.62,
+     "pre2015_bps": 48.9,
+     "pre2015_trades": 521,
+     "usd_per_trade_1_share": 0.87
+    }
+   },
+   "symbols": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "TSLA",
+    "AVGO",
+    "JPM",
+    "V",
+    "MA",
+    "UNH",
+    "XOM",
+    "LLY",
+    "COST",
+    "HD",
+    "PG",
+    "JNJ",
+    "ABBV",
+    "MRK",
+    "PEP",
+    "KO",
+    "BAC",
+    "WMT",
+    "NFLX",
+    "AMD",
+    "CRM",
+    "ORCL",
+    "ADBE"
+   ],
+   "universe": "single_stocks"
+  },
+  {
+   "candidate": 3,
+   "description": "BUY when ret_5 < -0.05; exit when dist_sma_5 > 0",
+   "exits": {
+    "indicator_exit": true,
+    "max_holding_sessions": 10,
+    "stop_loss_pct": 0.1,
+    "take_profit_pct": 0.0
+   },
+   "expected_trades_per_year": 12,
+   "family": "weekly_reversal",
+   "gate": "spy_sma50",
+   "hand_written": null,
+   "note": "weekly reversal, sector ETFs, no trend filter, SPY > SMA50 gate",
+   "rule": {
+    "entry": [
+     {
+      "f": "ret_5",
+      "op": "<",
+      "v": -0.05
+     }
+    ],
+    "exit": [
+     {
+      "f": "dist_sma_5",
+      "op": ">",
+      "v": 0
+     }
+    ]
+   },
+   "sweep_id": "213239cdf2:spy_sma50",
+   "sweep_record_2015_2026": {
+    "11bps": {
+     "clustered_t": 4.63,
+     "excess_bps": 97.7,
+     "excess_t": 4.02,
+     "max_dd": 0.023,
+     "mean_hold_sessions": 3.0,
+     "net_bps": 109.5,
+     "oos_trades": 142,
+     "positive_window_fraction": 0.71,
+     "pre2015_bps": 45.8,
+     "pre2015_trades": 154,
+     "usd_per_trade_1_share": 1.21
+    },
+    "25bps": {
+     "clustered_t": 3.01,
+     "excess_bps": 65.5,
+     "excess_t": 2.5,
+     "max_dd": 0.032,
+     "mean_hold_sessions": 3.0,
+     "net_bps": 77.2,
+     "oos_trades": 142,
+     "positive_window_fraction": 0.71,
+     "pre2015_bps": 18.4,
+     "pre2015_trades": 154,
+     "usd_per_trade_1_share": 0.92
+    }
+   },
+   "symbols": [
+    "XLK",
+    "XLF",
+    "XLE",
+    "XLV",
+    "XLY",
+    "XLP",
+    "XLI",
+    "XLU",
+    "XLB",
+    "XLRE",
+    "XLC",
+    "SMH"
+   ],
+   "universe": "sector_etfs"
+  },
+  {
+   "candidate": 4,
+   "description": "BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 > 0",
+   "exits": {
+    "indicator_exit": true,
+    "max_holding_sessions": 10,
+    "stop_loss_pct": 0.1,
+    "take_profit_pct": 0.0
+   },
+   "expected_trades_per_year": 9,
+   "family": "calm_market_dip",
+   "gate": "vix_above_20",
+   "hand_written": null,
+   "note": "calm-market RSI(2) dip, index ETFs, VIX >= 20 gate (discovery explore candidate, gated)",
+   "rule": {
+    "entry": [
+     {
+      "f": "dist_sma_200",
+      "op": ">",
+      "v": 0
+     },
+     {
+      "f": "vol_ratio_20_100",
+      "op": "<",
+      "v": 1.0
+     },
+     {
+      "f": "rsi_2",
+      "op": "<",
+      "v": 10
+     }
+    ],
+    "exit": [
+     {
+      "f": "dist_sma_5",
+      "op": ">",
+      "v": 0
+     }
+    ]
+   },
+   "sweep_id": "4ec6c68526:vix_above_20",
+   "sweep_record_2015_2026": {
+    "11bps": {
+     "clustered_t": 4.81,
+     "excess_bps": 70.5,
+     "excess_t": 4.08,
+     "max_dd": 0.022,
+     "mean_hold_sessions": 2.9,
+     "net_bps": 81.0,
+     "oos_trades": 105,
+     "positive_window_fraction": 0.78,
+     "pre2015_bps": 59.0,
+     "pre2015_trades": 98,
+     "usd_per_trade_1_share": 2.87
+    },
+    "25bps": {
+     "clustered_t": 3.14,
+     "excess_bps": 42.3,
+     "excess_t": 2.46,
+     "max_dd": 0.032,
+     "mean_hold_sessions": 2.9,
+     "net_bps": 52.8,
+     "oos_trades": 105,
+     "positive_window_fraction": 0.78,
+     "pre2015_bps": 31.0,
+     "pre2015_trades": 98,
+     "usd_per_trade_1_share": 1.91
+    }
+   },
+   "symbols": [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "DIA"
+   ],
+   "universe": "index_etfs"
+  },
+  {
+   "candidate": 5,
+   "description": "BUY when down_streak >= 4; exit when dist_sma_5 > 0",
+   "exits": {
+    "indicator_exit": true,
+    "max_holding_sessions": 10,
+    "stop_loss_pct": 0.1,
+    "take_profit_pct": 0.0
+   },
+   "expected_trades_per_year": 79,
+   "family": "down_streak",
+   "gate": "vix_above_20",
+   "hand_written": null,
+   "note": "four consecutive down closes, single stocks, VIX >= 20 gate",
+   "rule": {
+    "entry": [
+     {
+      "f": "down_streak",
+      "op": ">=",
+      "v": 4
+     }
+    ],
+    "exit": [
+     {
+      "f": "dist_sma_5",
+      "op": ">",
+      "v": 0
+     }
+    ]
+   },
+   "sweep_id": "7df4090f31:vix_above_20",
+   "sweep_record_2015_2026": {
+    "11bps": {
+     "clustered_t": 4.71,
+     "excess_bps": 71.0,
+     "excess_t": 3.33,
+     "max_dd": 0.037,
+     "mean_hold_sessions": 3.1,
+     "net_bps": 97.6,
+     "oos_trades": 940,
+     "positive_window_fraction": 0.9,
+     "pre2015_bps": 48.4,
+     "pre2015_trades": 1252,
+     "usd_per_trade_1_share": 1.22
+    },
+    "25bps": {
+     "clustered_t": 3.36,
+     "excess_bps": 42.5,
+     "excess_t": 2.01,
+     "max_dd": 0.042,
+     "mean_hold_sessions": 3.1,
+     "net_bps": 69.1,
+     "oos_trades": 941,
+     "positive_window_fraction": 0.9,
+     "pre2015_bps": 18.2,
+     "pre2015_trades": 1254,
+     "usd_per_trade_1_share": 0.78
+    }
+   },
+   "symbols": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "TSLA",
+    "AVGO",
+    "JPM",
+    "V",
+    "MA",
+    "UNH",
+    "XOM",
+    "LLY",
+    "COST",
+    "HD",
+    "PG",
+    "JNJ",
+    "ABBV",
+    "MRK",
+    "PEP",
+    "KO",
+    "BAC",
+    "WMT",
+    "NFLX",
+    "AMD",
+    "CRM",
+    "ORCL",
+    "ADBE"
+   ],
+   "universe": "single_stocks"
+  },
+  {
+   "candidate": 6,
+   "description": "hand-written ibs_mean_reversion (seeded parameters)",
+   "exits": {
+    "indicator_exit": true,
+    "max_holding_sessions": 10,
+    "stop_loss_pct": 0.1,
+    "take_profit_pct": 0.0
+   },
+   "expected_trades_per_year": 370,
+   "family": "hand:ibs_mean_reversion",
+   "gate": "vix_above_20",
+   "hand_written": "ibs_mean_reversion",
+   "note": "the bot's IBS rule (IBS < 0.1, exit IBS > 0.8) tagged by VIX >= 20 on the decision bar",
+   "rule": null,
+   "sweep_id": "ibs_mean_reversion:vix_above_20",
+   "sweep_record_2015_2026": {
+    "11bps": {
+     "clustered_t": 4.67,
+     "excess_bps": 50.0,
+     "excess_t": 3.21,
+     "max_dd": 0.1,
+     "mean_hold_sessions": 3.2,
+     "net_bps": 71.7,
+     "oos_trades": 4368,
+     "positive_window_fraction": 0.9,
+     "pre2015_bps": 20.6,
+     "pre2015_trades": 6150,
+     "usd_per_trade_1_share": 0.89
+    },
+    "25bps": {
+     "clustered_t": 2.8,
+     "excess_bps": 21.2,
+     "excess_t": 1.36,
+     "max_dd": 0.114,
+     "mean_hold_sessions": 3.2,
+     "net_bps": 42.9,
+     "oos_trades": 4368,
+     "positive_window_fraction": 0.86,
+     "pre2015_bps": -7.5,
+     "pre2015_trades": 6153,
+     "usd_per_trade_1_share": 0.48
+    }
+   },
+   "symbols": [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "DIA",
+    "XLK",
+    "XLF",
+    "XLE",
+    "XLV",
+    "XLY",
+    "XLP",
+    "XLI",
+    "XLU",
+    "XLB",
+    "XLRE",
+    "XLC",
+    "SMH",
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "TSLA",
+    "AVGO",
+    "JPM",
+    "V",
+    "MA",
+    "UNH",
+    "XOM",
+    "LLY",
+    "COST",
+    "HD",
+    "PG",
+    "JNJ",
+    "ABBV",
+    "MRK",
+    "PEP",
+    "KO",
+    "BAC",
+    "WMT",
+    "NFLX",
+    "AMD",
+    "CRM",
+    "ORCL",
+    "ADBE"
+   ],
+   "universe": "paper_45"
+  }
+ ],
+ "cost_brackets_bps_round_trip": [
+  10,
+  22,
+  25,
+  50
+ ],
+ "execution": "decision on the close of bar t, fill at the next open; stop first inside a bar; gaps fill at the open; indicator exit at the next open; one position per symbol; long only",
+ "frozen_at": "2026-11-10",
+ "gate_definitions": {
+  "spy_sma50": "SPY's last completed close > mean of its last 50 completed closes (market_gate.above_sma)",
+  "vix_above_20": "CBOE VIX close on the decision bar's date >= 20 (strategies/vix_gate.py 'above', level 20); fails open when no VIX close within 5 days"
+ },
+ "source_report": "reports/local-sweep-20261110.md",
+ "sweep_commit": "b504429"
+}
