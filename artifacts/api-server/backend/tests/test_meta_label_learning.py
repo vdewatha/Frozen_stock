@@ -225,4 +225,4 @@ def test_retrain_job_is_scheduled_off_hours_on_the_learning_queue():
     with patch("app.services.intraday_data.session_bounds", return_value=session), \
             patch.object(jobs, "datetime") as clock:
         clock.now.return_value = datetime(2026, 11, 2, 16, 0, tzinfo=UTC)
-        assert jobs.meta_label_retrain_job()["status"] == "skipped"
+        assert jobs.meta_label_retrain_job()["status"] == "deferred"

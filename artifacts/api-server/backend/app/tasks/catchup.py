@@ -10,10 +10,18 @@ Two pieces:
 
 * ``record_task_success`` (connected to Celery's ``task_success`` signal)
   stores each task's last successful completion in a Redis hash.
-* ``queue_missed_jobs`` runs once when the beat launcher starts. For each
-  entry in ``CATCHUP_ENTRIES`` whose crontab had a firing since the recorded
-  last success, it queues the task once, staggered, so a restart never fires
-  a burst of heavy jobs at the same moment.
+* ``queue_missed_jobs`` runs when the beat launcher starts and again each
+  weekday after the close (``missed_job_catchup_job``). For each entry in
+  ``CATCHUP_ENTRIES`` whose crontab had a firing since the recorded last
+  success, it queues the task once, staggered, so a restart never fires a
+  burst of heavy jobs at the same moment.
+
+Strategy discovery and the experiment engine refuse to run during the
+session. On 2026-11-10 a 09:01 ET restart queued both in-session; they
+returned "skipped" and that counted as a successful run, so neither would
+have run until the next Sunday (the engine had never completed a run). Those
+runs now report "deferred", which is not a success, they are not queued
+during the session, and the after-close pass picks them up.
 
 Only report, research and bookkeeping jobs are listed. Trading jobs (the
 target-weight rebalance, the paper cycle) must never run outside their
@@ -43,15 +51,17 @@ STAGGER_SECONDS = 120
 # test process), so the result never depends on import order.
 SCHEDULE_TZ = ZoneInfo("America/New_York")
 # "skipped" is a run too: usually another worker held the job's lease.
-# "deferred" is not: a weekly research job that landed inside the session
-# re-queues itself for after the close (jobs._defer_past_session).
-FAILED_STATUSES = {"failed", "error", "deferred"}
+FAILED_STATUSES = {"failed", "error"}
+# A job that declined to run at this hour has not run.
+NOT_A_RUN_STATUSES = FAILED_STATUSES | {"deferred"}
+# Entries whose task defers itself from 30 minutes before the open to the close.
+SESSION_DEFERRED_ENTRIES = frozenset({"strategy-discovery", "experiment-engine"})
 
 # One-off catch-ups, each queued at most once and only inside its window.
-# 2026-11-10: the 08:58 ET boot's catch-up of the experiment engine (its
-# Sunday 11-08 12:00 run was lost to the freeze; discovery at 10:00 ran
-# before it) landed in the session, skipped, and was recorded as a run
-# before "deferred" existed, so the engine would not run before Sunday 11-15.
+# The 11-10 09:01 ET restart's in-session "skipped" experiment engine run was
+# recorded as a success before "deferred" existed, so the stamp hides the lost
+# Sunday 11-08 run (the engine has never completed one) until 11-15. Strategy
+# discovery is not listed: it ran Sunday 10:00, before the 10:17 freeze.
 ONE_OFF_CATCHUPS: tuple[tuple[str, str, datetime, datetime], ...] = (
     ("experiment-engine", "20261110-deferral-recorded-as-run",
      datetime(2026, 11, 10, 14, 0, tzinfo=timezone.utc), datetime(2026, 11, 15, 17, 0, tzinfo=timezone.utc)),
@@ -99,7 +109,7 @@ def _utc(value: datetime) -> datetime:
 
 def record_task_success(client, task_name: str, result: Any, now: Optional[datetime] = None) -> None:
     """Store the task's completion time unless its result reports a failure or skip."""
-    if isinstance(result, dict) and str(result.get("status", "")).lower() in FAILED_STATUSES:
+    if isinstance(result, dict) and str(result.get("status", "")).lower() in NOT_A_RUN_STATUSES:
         return
     stamp = _utc(now or datetime.now(timezone.utc)).isoformat()
     client.hset(LAST_SUCCESS_KEY, task_name, stamp)
@@ -147,6 +157,15 @@ def missed_firing(schedule, last_success: Optional[datetime], now: datetime) -> 
     return latest
 
 
+def in_session_deferral_window(now: datetime) -> bool:
+    """From 30 minutes before the regular open to the close (the jobs' own rule)."""
+    from app.services.intraday_data import session_bounds
+
+    now = _utc(now)
+    bounds = session_bounds(now.astimezone(SCHEDULE_TZ).date())
+    return bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]
+
+
 def queue_missed_jobs(
     client,
     beat_schedule: dict,
@@ -170,6 +189,8 @@ def queue_missed_jobs(
             continue
         if next_firing(schedule, now) - now <= NEXT_RUN_GRACE:
             continue
+        if name in SESSION_DEFERRED_ENTRIES and in_session_deferral_window(now):
+            continue  # it would only defer itself; the after-close pass queues it
         # One catch-up per entry per window, even if beat restarts repeatedly.
         if not client.set(f"{CATCHUP_MARKER_PREFIX}{name}", missed.isoformat(), nx=True, ex=CATCHUP_MARKER_TTL_SECONDS):
             continue
@@ -191,6 +212,8 @@ def queue_missed_jobs(
             continue
         if next_firing(entry["schedule"], now) - now <= NEXT_RUN_GRACE:
             continue
+        if name in SESSION_DEFERRED_ENTRIES and in_session_deferral_window(now):
+            continue  # keep the one-off for the after-close pass
         if not client.set(f"{ONE_OFF_MARKER_PREFIX}{name}:{tag}", now.isoformat(), nx=True,
                           ex=ONE_OFF_MARKER_TTL_SECONDS):
             continue

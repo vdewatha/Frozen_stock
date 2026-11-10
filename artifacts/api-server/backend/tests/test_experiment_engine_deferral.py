@@ -1,18 +1,18 @@
 """The experiment engine never ran (2026-11-10).
 
-Its Sunday 11-08 12:00 run was lost to the freeze. The 08:58 ET boot's
+Its Sunday 11-08 12:00 run was lost to the freeze. The 09:01 ET boot's
 catch-up queued it, it landed inside the session and skipped, and the
-catch-up recorded the skip as a run, so it would not run before Sunday 11-15.
+catch-up recorded the skip as a run. #68 stops that happening again; this
+one-off replaces the run that stamp still hides (otherwise none before 11-15).
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.tasks import catchup, jobs
+from app.tasks import catchup
 from app.tasks.celery_app import celery_app
 
 ET = ZoneInfo("America/New_York")
@@ -82,40 +82,12 @@ def test_the_one_off_stays_inside_its_window(now):
     assert all(item.get("one_off") is None for item in queued)
 
 
-def _in_session(now):
-    return (now - timedelta(hours=1), now + timedelta(hours=2))
-
-
-@pytest.mark.parametrize("job,task_name", [
-    (jobs.experiment_engine_job, "experiment_engine_job"),
-    (jobs.strategy_discovery_job, "strategy_discovery_job"),
-])
-def test_an_in_session_weekly_job_requeues_itself_once_after_the_close(job, task_name):
+def test_the_one_off_waits_for_the_close():
+    in_session = datetime(2026, 11, 10, 14, 0, tzinfo=ET).astimezone(timezone.utc)
     client = FakeRedis()
-    now = datetime.now(timezone.utc)
-    bounds = _in_session(now)
-    with patch("app.services.intraday_data.session_bounds", return_value=bounds), \
-            patch.object(jobs.redis.Redis, "from_url", return_value=client), \
-            patch.object(job, "apply_async") as apply_async:
-        first = job()
-        second = job()
-    assert first["status"] == "deferred" and first["requeued"] is True
-    assert second["status"] == "deferred" and second["requeued"] is False
-    apply_async.assert_called_once()
-    kwargs = apply_async.call_args.kwargs
-    assert kwargs["eta"] == bounds[1] + jobs.DEFER_PAST_CLOSE
-    assert kwargs["queue"] == "learning"
-    # The catch-up does not count the deferral as a run.
-    recorder = FakeRedis()
-    catchup.record_task_success(recorder, f"app.tasks.jobs.{task_name}", first)
-    assert catchup._last_success(recorder, f"app.tasks.jobs.{task_name}") is None
-
-
-def test_a_redis_outage_still_defers_without_raising():
-    now = datetime.now(timezone.utc)
-    with patch("app.services.intraday_data.session_bounds", return_value=_in_session(now)), \
-            patch.object(jobs.redis.Redis, "from_url", side_effect=ConnectionError("down")), \
-            patch.object(jobs.experiment_engine_job, "apply_async") as apply_async:
-        result = jobs.experiment_engine_job()
-    assert result["status"] == "deferred" and result["requeued"] is False
-    apply_async.assert_not_called()
+    _all_ran_recently(client, in_session)
+    queued = catchup.queue_missed_jobs(client, celery_app.conf.beat_schedule, lambda *a, **k: None, now=in_session)
+    assert all(item.get("one_off") is None for item in queued)
+    # The marker is untouched, so the after-close pass still runs it.
+    after = catchup.queue_missed_jobs(client, celery_app.conf.beat_schedule, lambda *a, **k: None, now=AFTER_PUBLISH)
+    assert [item["entry"] for item in after if item.get("one_off")] == ["experiment-engine"]

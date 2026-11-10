@@ -163,6 +163,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.strategy_discovery_job": {"queue": "learning"},
     "app.tasks.jobs.experiment_engine_job": {"queue": "learning"},
     "app.tasks.jobs.experiment_verdict_job": {"queue": "learning"},
+    "app.tasks.jobs.missed_job_catchup_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.gate_cost_job": {"queue": "learning"},
     "app.tasks.jobs.setup_shadow_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.signal_autopsy_job": {"queue": "learning"},
@@ -381,6 +382,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.jobs.experiment_engine_job",
         "schedule": crontab(minute=0, hour=12, day_of_week="sun"),
         "options": {"expires": 12 * 60 * 60},
+    },
+    # Weekdays after the close: queue weekly research runs (discovery, the
+    # experiment engine) that deferred themselves or were missed in-session.
+    "missed-job-catchup": {
+        "task": "app.tasks.jobs.missed_job_catchup_job",
+        "schedule": crontab(minute=20, hour=16, day_of_week="mon-fri"),
+        "options": {"expires": 60 * 60},
     },
     # Each weekday after the close: verdicts on adopted experiments from their
     # forward paper trades (revert what is not helping).
