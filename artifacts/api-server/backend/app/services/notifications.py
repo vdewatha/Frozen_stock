@@ -133,3 +133,52 @@ def resolve_successful_job_notifications(db: Session, source: str) -> int:
         notification.resolved_at = now
         notification.updated_at = now
     return len(notifications)
+
+
+LEARNING_SCOPE_SOURCE_PREFIX = "strategy_learning_scope_job:"
+
+
+def resolve_obsolete_learning_scope_alerts(db: Session) -> dict:
+    """Close scope-job alerts that can never clear by a successful rerun.
+
+    A scope alert closes when the same scope succeeds again. Two kinds never
+    will: target-weight rows with no indicator class (``passive_arm``,
+    ``defensive_tsmom_iv``; about 216 alerts on 2026-11-09 before PR #54 skipped
+    them) and symbols deactivated after the scope was planned (ALGN, ABNB, BDX).
+    Their scopes are now skipped without a rerun, so the old alerts stayed open
+    and held the readiness "Scheduler health" check blocked for a day. The
+    caller commits.
+    """
+    from app.models import Asset
+    from app.services.strategies.registry import is_known_strategy
+
+    rows = (
+        db.query(Notification)
+        .filter(
+            Notification.category == "scheduled_job",
+            Notification.status != "resolved",
+            Notification.source.like(f"{LEARNING_SCOPE_SOURCE_PREFIX}%"),
+        )
+        .all()
+    )
+    if not rows:
+        return {"resolved": 0, "unknown_strategy": 0, "inactive_symbol": 0}
+    active = {symbol for (symbol,) in db.query(Asset.symbol).filter(Asset.is_active.is_(True)).all()}
+    now = datetime.utcnow()
+    counts = {"unknown_strategy": 0, "inactive_symbol": 0}
+    for row in rows:
+        parts = str(row.source)[len(LEARNING_SCOPE_SOURCE_PREFIX):].split(":", 1)
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            continue
+        symbol, slug = parts[0].strip().upper(), parts[1].strip()
+        if not is_known_strategy(slug):
+            counts["unknown_strategy"] += 1
+        elif symbol not in active:
+            counts["inactive_symbol"] += 1
+        else:
+            continue
+        row.status = "resolved"
+        row.acknowledged_at = row.acknowledged_at or now
+        row.resolved_at = now
+        row.updated_at = now
+    return {"resolved": counts["unknown_strategy"] + counts["inactive_symbol"], **counts}

@@ -172,6 +172,7 @@ celery_app.conf.task_routes = {
     "app.tasks.jobs.engine_audit_job": {"queue": "learning"},
     "app.tasks.jobs.yardstick_job": {"queue": "learning"},
     "app.tasks.jobs.cost_probe_job": {"queue": LEARNING_FAST_QUEUE},
+    "app.tasks.jobs.held_back_session_alarm_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.dividend_check_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.event_log_daily_job": {"queue": LEARNING_FAST_QUEUE},
     "app.tasks.jobs.event_log_weekly_job": {"queue": LEARNING_FAST_QUEUE},
@@ -529,6 +530,13 @@ celery_app.conf.beat_schedule = {
     # orders, exits, the kill switch or the resume logic.
     # Closes scanner refresh jobs and scalp runs orphaned by a restart. Kept
     # separate from scalp-research-queue-recovery, which hosts exclude.
+    # A session in which something wanted to trade, was held back by a system
+    # gate, and sent no order (2026-11-09 went unnoticed all day).
+    "held-back-session-alarm": {
+        "task": "app.tasks.jobs.held_back_session_alarm_job",
+        "schedule": crontab(minute="0,30", hour="10-15", day_of_week="mon-fri"),
+        "options": {"expires": 20 * 60},
+    },
     "stale-job-reaper": {
         "task": "app.tasks.jobs.reap_stale_jobs_job",
         "schedule": crontab(minute="*/15"),

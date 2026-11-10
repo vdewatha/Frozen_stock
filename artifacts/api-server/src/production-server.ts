@@ -15,6 +15,7 @@ import {
   getClerkProxyHost,
 } from "./middlewares/clerkProxyMiddleware";
 import { installNonBlockingStdio, logRelayStats } from "./log-relay";
+import { createStderrRouter } from "./log-lines";
 import { startStallWatchdog, trackChildPid, untrackChildPid } from "./stall-watchdog";
 
 // Before anything logs: a stalled log pipe must never block this process
@@ -86,7 +87,18 @@ function relayChild(child: ChildProcess): void {
   trackChildPid(child.pid);
   child.on("exit", () => untrackChildPid(child.pid));
   child.stdout?.on("data", (chunk) => process.stdout.write(chunk));
-  child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
+  relayStderr(child);
+}
+
+// Child stderr goes out by each line's own level: INFO/DEBUG records to
+// stdout, everything else to stderr (Replit labels all stderr as ERROR).
+function relayStderr(child: ChildProcess): void {
+  const router = createStderrRouter(
+    (text) => process.stdout.write(text),
+    (text) => process.stderr.write(text),
+  );
+  child.stderr?.on("data", (chunk) => router.write(chunk));
+  child.stderr?.on("end", () => router.flush());
 }
 
 function boundedConcurrency(name: string, fallback: number, maximum: number): number {
@@ -129,10 +141,15 @@ function observeChildOutput(child: ChildProcess, label: string): void {
     appendBackendDiagnostic(`[${label}] ${chunk}`);
     process.stdout.write(chunk);
   });
+  const router = createStderrRouter(
+    (text) => process.stdout.write(text),
+    (text) => process.stderr.write(text),
+  );
   child.stderr?.on("data", (chunk) => {
     appendBackendDiagnostic(`[${label} stderr] ${chunk}`);
-    process.stderr.write(chunk);
+    router.write(chunk);
   });
+  child.stderr?.on("end", () => router.flush());
 }
 
 const runtimeEnv = {
