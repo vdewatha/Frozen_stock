@@ -1,0 +1,375 @@
+{
+ "SPY": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "QQQ": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "IWM": {
+  "first": "2000-05-26",
+  "last": "2026-11-09",
+  "bars": 6653,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "DIA": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLK": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLF": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLE": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLV": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLY": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLP": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLI": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLU": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLB": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "XLRE": {
+  "first": "2015-10-08",
+  "last": "2026-11-09",
+  "bars": 2788,
+  "largest_gap_days": 4,
+  "gap_over_7d": 0
+ },
+ "XLC": {
+  "first": "2018-06-19",
+  "last": "2026-11-09",
+  "bars": 2110,
+  "largest_gap_days": 4,
+  "gap_over_7d": 0
+ },
+ "SMH": {
+  "first": "2000-06-05",
+  "last": "2026-11-09",
+  "bars": 6648,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0
+ },
+ "AAPL": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 97,
+  "earnings_first": "2002-10-16"
+ },
+ "MSFT": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 98,
+  "earnings_first": "2002-04-18"
+ },
+ "NVDA": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 92,
+  "earnings_first": "2002-05-22"
+ },
+ "AMZN": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 93,
+  "earnings_first": "2002-10-24"
+ },
+ "GOOGL": {
+  "first": "2004-08-19",
+  "last": "2026-11-09",
+  "bars": 5592,
+  "largest_gap_days": 5,
+  "gap_over_7d": 0,
+  "earnings_reports": 89,
+  "earnings_first": "2004-10-21"
+ },
+ "META": {
+  "first": "2012-05-18",
+  "last": "2026-11-09",
+  "bars": 3640,
+  "largest_gap_days": 5,
+  "gap_over_7d": 0,
+  "earnings_reports": 58,
+  "earnings_first": "2012-07-26"
+ },
+ "TSLA": {
+  "first": "2010-06-29",
+  "last": "2026-11-09",
+  "bars": 4117,
+  "largest_gap_days": 5,
+  "gap_over_7d": 0,
+  "earnings_reports": 58,
+  "earnings_first": "2010-11-09"
+ },
+ "AVGO": {
+  "first": "2009-08-06",
+  "last": "2026-11-09",
+  "bars": 4342,
+  "largest_gap_days": 5,
+  "gap_over_7d": 0,
+  "earnings_reports": 68,
+  "earnings_first": "2009-12-03"
+ },
+ "JPM": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 98,
+  "earnings_first": "2002-04-17"
+ },
+ "V": {
+  "first": "2008-03-19",
+  "last": "2026-11-09",
+  "bars": 4691,
+  "largest_gap_days": 5,
+  "gap_over_7d": 0,
+  "earnings_reports": 75,
+  "earnings_first": "2008-04-28"
+ },
+ "MA": {
+  "first": "2006-05-25",
+  "last": "2026-11-09",
+  "bars": 5147,
+  "largest_gap_days": 5,
+  "gap_over_7d": 0,
+  "earnings_reports": 82,
+  "earnings_first": "2006-08-02"
+ },
+ "UNH": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 99,
+  "earnings_first": "2002-04-18"
+ },
+ "XOM": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 98,
+  "earnings_first": "2002-04-23"
+ },
+ "LLY": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 99,
+  "earnings_first": "2002-04-15"
+ },
+ "COST": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 98,
+  "earnings_first": "2002-05-30"
+ },
+ "HD": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 98,
+  "earnings_first": "2002-02-26"
+ },
+ "PG": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 99,
+  "earnings_first": "2002-04-30"
+ },
+ "JNJ": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 99,
+  "earnings_first": "2002-04-16"
+ },
+ "ABBV": {
+  "first": "2013-01-02",
+  "last": "2026-11-09",
+  "bars": 3485,
+  "largest_gap_days": 4,
+  "gap_over_7d": 0,
+  "earnings_reports": 56,
+  "earnings_first": "2013-03-15"
+ },
+ "MRK": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 99,
+  "earnings_first": "2002-04-18"
+ },
+ "PEP": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 98,
+  "earnings_first": "2002-04-23"
+ },
+ "KO": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 99,
+  "earnings_first": "2002-04-16"
+ },
+ "BAC": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 98,
+  "earnings_first": "2002-04-15"
+ },
+ "WMT": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 97,
+  "earnings_first": "2002-05-14"
+ },
+ "NFLX": {
+  "first": "2002-05-23",
+  "last": "2026-11-09",
+  "bars": 6156,
+  "largest_gap_days": 5,
+  "gap_over_7d": 0,
+  "earnings_reports": 95,
+  "earnings_first": "2002-10-17"
+ },
+ "AMD": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 97,
+  "earnings_first": "2002-04-17"
+ },
+ "CRM": {
+  "first": "2004-06-23",
+  "last": "2026-11-09",
+  "bars": 5632,
+  "largest_gap_days": 5,
+  "gap_over_7d": 0,
+  "earnings_reports": 88,
+  "earnings_first": "2004-08-19"
+ },
+ "ORCL": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 97,
+  "earnings_first": "2002-06-18"
+ },
+ "ADBE": {
+  "first": "2000-01-03",
+  "last": "2026-11-09",
+  "bars": 6754,
+  "largest_gap_days": 7,
+  "gap_over_7d": 0,
+  "earnings_reports": 99,
+  "earnings_first": "2002-03-14"
+ }
+}
