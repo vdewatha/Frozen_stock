@@ -151,6 +151,25 @@ def probes(db: Session, *, since: Optional[datetime] = None) -> list[dict]:
     return out
 
 
+def open_probe_symbols(db: Session) -> set[str]:
+    """Symbols whose probe share is bought and not yet sold or recorded.
+
+    A probe only opens on a symbol the account does not hold, so the whole
+    position is the probe's: the protective-exit re-arm must leave it alone, or
+    its resting take-profit commits the share and the probe's own sell is
+    refused as a short (2026-11-10, QQQ).
+    """
+    out = set()
+    for probe in probes(db):
+        if probe["recorded"] or probe["closed_elsewhere"] or probe["buy"] is None:
+            continue
+        if probe["sell"] is not None and str(probe["sell"].status) == "filled":
+            continue
+        if _fills(db, probe["buy"].id)["quantity"] > 0:
+            out.add(str(probe["symbol"]).upper())
+    return out
+
+
 def _week_start(now: datetime) -> datetime:
     local = now.astimezone(ET)
     monday = local.date() - timedelta(days=local.weekday())
