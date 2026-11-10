@@ -1,5 +1,7 @@
 # Yardstick: 2026-11-07
 
+> **Note added 2026-11-10.** The point-in-time S&P 500 replays in this report (the cost bracket, turnover and passive-score readings on the 707-symbol universe) included 18 past members whose tickers yfinance now serves under unrelated companies, ETFs or post-bankruptcy shells (BBT, CCU, EP, CPWR, GENZ, SII, PARA, CSR, KG, WEN, NC, FNMA, FMCC and others), so some of their trades are on another instrument's bars. `point_in_time_universe.coverage()` now rejects those histories before a replay; this report's numbers were not rerun. See `reports/point-in-time-coverage-20261110.md`, section 4.
+
 Step 1 of `reports/Retail bot edge feasibility.md` ("Fix the yardstick", no new trials). Branch `feat/yardstick`.
 Pure measurement: the experiment engine's `RULE`, the discovery gate and `fixed_20` keep acting on the cost they
 always used; the bracket and the new scores are reported beside them. The only new decision rules are the

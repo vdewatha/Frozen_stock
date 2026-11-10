@@ -15,8 +15,9 @@ Pre-registered decision rule (fixed before the first run)
 if, both hold:
 
 1. **Coverage.**  The mean yearly coverage since 2010 (members of the year
-   with at least 60 bars of history overlapping their membership, over all
-   members of the year) is at least 70%.
+   whose own history passed ``point_in_time_universe.identity_check``, over
+   all members of the year) is at least 70%.  The report prints current and
+   past members apart as well: the blended figure is a survivors' average.
 2. **Budget.**  The point-in-time replay completes inside the experiment
    engine's budget: the worst-case engine run (``experiment_engine_max_
    experiments`` = 4 experiments, each replaying one strategy under up to 5
@@ -212,8 +213,10 @@ def run(args) -> dict:
         "ran_at": now.isoformat(), "paper_only": True, "data_dir": str(args.data_dir), "start": args.start,
         "end": args.end, "vix": vix is not None, "earnings_cache": earnings_cached,
         "source": dict(membership.source),
-        "coverage": {k: coverage[k] for k in ("checked_at", "start", "by_year", "coverage_since_2010")},
+        "coverage": {k: coverage.get(k) for k in ("checked_at", "start", "by_year", "coverage_since_2010",
+                                                   "coverage_since_2010_current", "coverage_since_2010_past", "groups")},
         "available_members": len(coverage["available"]), "missing_members": coverage["missing"],
+        "rejected_members": dict(coverage.get("rejections") or {}),
         "symbols_today": len(today_frames), "symbols_point_in_time": len(frames), "missing_history": missing,
         "timings": {"load_seconds": round(load_seconds, 1), "signals_seconds": round(signals_seconds, 1),
                     "per_strategy_point_in_time_seconds": round(per_strategy, 2), "by_strategy": timings,
@@ -263,18 +266,29 @@ def render(result: dict) -> str:
              f"* Replay data: bars from {result['start']} (end {result['end'] or 'yesterday'}), VIX "
              f"{'present' if result['vix'] else 'absent'}, earnings cache {'present' if result['earnings_cache'] else 'absent'} "
              f"(today's single stocks only). Today's list: {result['symbols_today']} symbols with history; point in time: "
-             f"{result['symbols_point_in_time']} ({result['available_members']} past members with history, "
-             f"{len(result['missing_members'])} without).", "",
-             "## 2. Coverage per year (members with history / members)", "",
-             "| Year | Members | With data | Coverage |", "|---|---|---|---|"]
+             f"{result['symbols_point_in_time']} ({result['available_members']} members with their own history, "
+             f"{len(result['missing_members'])} without, {len(result.get('rejected_members') or {})} rejected by the "
+             "identity check).", "",
+             "## 2. Coverage per year (members with their own history / members; current and past members apart)", "",
+             "| Year | Members | With data | Coverage | Current members | Current coverage | Past members | Past coverage |",
+             "|---|---|---|---|---|---|---|---|"]
     for year, row in cov["by_year"].items():
-        lines.append(f"| {year} | {row['members']} | {row['with_data']} | {_pct(row['coverage'])} |")
-    lines += ["", f"Mean since 2010: {_pct(cov['coverage_since_2010'])}. Before 2010 the point-in-time universe is "
-              "itself only half covered: the names Yahoo dropped are the acquired and bankrupt ones, so even arm (b) "
+        lines.append(f"| {year} | {row['members']} | {row['with_data']} | {_pct(row['coverage'])} | "
+                     f"{row.get('current_members', 'n/a')} | {_pct(row.get('current_coverage'))} | "
+                     f"{row.get('past_members', 'n/a')} | {_pct(row.get('past_coverage'))} |")
+    rejected = result.get("rejected_members") or {}
+    lines += ["", f"Mean since 2010: {_pct(cov['coverage_since_2010'])} blended, {_pct(cov.get('coverage_since_2010_current'))} "
+              f"for current members and {_pct(cov.get('coverage_since_2010_past'))} for past members. The blended figure "
+              "is a survivors' average: the names Yahoo dropped are the acquired and bankrupt ones, so even arm (b) "
               "keeps some survivorship, and the gap below is a lower bound.", "",
               f"Missing tickers ({len(result['missing_members'])}, no yfinance history): "
               + ", ".join(result["missing_members"][:60]) + (" ..." if len(result["missing_members"]) > 60 else "")
               + " (full list in the JSON).", "",
+              f"Rejected tickers ({len(rejected)}, a history yfinance serves under the ticker that is not the member's own; "
+              "`reports/point-in-time-coverage-20261110.md` section 4): "
+              + ("; ".join(f"{t} ({', '.join(r.split(':')[0] for r in reasons)})" for t, reasons in list(rejected.items())[:40])
+                 + (" ..." if len(rejected) > 40 else "") if rejected else "none")
+              + ".", "",
               "## 3. Live strategies: today's list (a) vs point in time (b)", "",
               "Trades, win rate, net expectancy per trade (bps, month-clustered bootstrap CI) and equal-weight "
               "portfolio max drawdown per window; gap = (b) - (a).", ""]

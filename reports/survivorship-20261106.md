@@ -1,5 +1,7 @@
 # Survivorship check: 2026-11-06
 
+> **Note added 2026-11-10.** The point-in-time replay behind this report used every ticker with 60 or more yfinance rows overlapping its membership, which let 18 past members whose tickers now belong to unrelated companies, ETFs or post-bankruptcy shells (BBT on Brookline Bancorp's bars, CCU on a Chilean brewer's ADR, EP, CPWR, GENZ, SII, PARA, CSR, KG, WEN, NC, FNMA, FMCC and others) trade as if they were the former index member. The 80.9% coverage figure is also a survivors' average: by constituent-day, current members are 95-100% covered and past members 14-55%. `point_in_time_universe.coverage()` now rejects a history that fails the identity check and reports current and past members apart; this report's numbers were not rerun. See `reports/point-in-time-coverage-20261110.md` (section 4 for the reused tickers).
+
 **Question:** how much does replaying today's 45-symbol list flatter the live strategies, and should the experiment engine and strategy discovery replay the S&P 500 as it stood on each date instead?
 
 **Decision (pre-registered in `scripts/run_survivorship_check.py`):** `replay_point_in_time_universe = True`. Coverage since 2010 80.9% (passes the 70% bar); worst-case engine run 2.0 min (inside the 30-minute budget). Paper only.
