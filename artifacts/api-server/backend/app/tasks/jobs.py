@@ -1869,6 +1869,36 @@ def meta_label_retrain_job() -> dict:
     return _run_job("meta_label_retrain_job", work)
 
 
+# Weekly research jobs never run inside the session. A catch-up after a restart
+# can still land there: on 2026-11-10 the 08:58 ET boot queued the experiment
+# engine (its Sunday run was lost to the 11-08 freeze), it skipped at ~09:00
+# and the catch-up recorded the skip as a run, so the engine lost its week.
+# A deferred job now re-queues itself once for just after the close and
+# reports "deferred", which the catch-up does not count as a run.
+DEFER_PAST_CLOSE = timedelta(minutes=20)
+DEFER_MARKER_PREFIX = "celery:deferred:"
+
+
+def _defer_past_session(task, job: str, reason: str, close: datetime, now: datetime) -> dict:
+    eta = close + DEFER_PAST_CLOSE
+    requeued = False
+    client = None
+    try:
+        client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+        # One re-queue per job per session, however many catch-ups land.
+        if client.set(f"{DEFER_MARKER_PREFIX}{job}:{eta.date().isoformat()}", now.isoformat(),
+                      nx=True, ex=24 * 60 * 60):
+            task.apply_async(queue="learning", eta=eta, expires=eta + timedelta(hours=6))
+            requeued = True
+    except Exception as exc:  # the next scheduled run still comes
+        logger.warning("could not re-queue deferred %s: %s", job, exc.__class__.__name__)
+    finally:
+        if client is not None:
+            client.close()
+    return {"status": "deferred", "job": job, "reason": reason,
+            "requeued_for": eta.isoformat(), "requeued": requeued}
+
+
 @celery_app.task
 def strategy_discovery_job() -> dict:
     """Weekly: test the rule-candidate library and admit/retire paper candidates (paper only)."""
@@ -1877,8 +1907,7 @@ def strategy_discovery_job() -> dict:
     now = datetime.now(timezone.utc)
     bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
     if bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]:
-        return {"status": "skipped", "job": "strategy_discovery_job",
-                "reason": "strategy discovery is deferred outside the regular session"}
+        return _defer_past_session(strategy_discovery_job, "strategy_discovery_job", "strategy discovery is deferred outside the regular session", bounds[1], now)
 
     def work(db):
         from app.services.strategy_discovery import run_strategy_discovery
@@ -1898,8 +1927,7 @@ def experiment_engine_job() -> dict:
     now = datetime.now(timezone.utc)
     bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
     if bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]:
-        return {"status": "skipped", "job": "experiment_engine_job",
-                "reason": "the experiment engine is deferred outside the regular session"}
+        return _defer_past_session(experiment_engine_job, "experiment_engine_job", "the experiment engine is deferred outside the regular session", bounds[1], now)
 
     def work(db):
         from app.services.experiment_engine import run_experiment_engine
