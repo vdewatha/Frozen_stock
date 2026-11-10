@@ -8,7 +8,7 @@
     "build": "python3.11 -m compileall -q backend/app && (cd backend && PYTHONPATH=. python3.11 -c 'import app.main') && esbuild src/production-server.ts --bundle --platform=node --packages=external --format=esm --outfile=dist/production-server.js",
     "start": "NODE_ENV=production node dist/production-server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "esbuild src/log-lines.test.ts --bundle --platform=node --format=esm --outfile=dist/tests/log-lines.test.mjs && node --test dist/tests/log-lines.test.mjs"
+    "test": "esbuild src/log-lines.test.ts src/resource-guard.test.ts --bundle --platform=node --format=esm --outdir=dist/tests --out-extension:.js=.mjs && node --test 'dist/tests/*.test.mjs'"
   },
   "dependencies": {
     "@clerk/express": "^2.1.69",

@@ -16,6 +16,7 @@ import {
 } from "./middlewares/clerkProxyMiddleware";
 import { installNonBlockingStdio, logRelayStats } from "./log-relay";
 import { createStderrRouter } from "./log-lines";
+import { startResourceGuard } from "./resource-guard";
 import { startStallWatchdog, trackChildPid, untrackChildPid } from "./stall-watchdog";
 
 // Before anything logs: a stalled log pipe must never block this process
@@ -68,6 +69,16 @@ const redisUrl = useEmbeddedRedis
   ? `redis://127.0.0.1:${embeddedRedisPort}/0`
   : configuredRedisUrl;
 
+// pid -> process label, for the resource recorder and memory guard.
+const childLabels = new Map<number, string>();
+function labelChild(child: ChildProcess, label: string): void {
+  if (!child.pid) return;
+  const pid = child.pid;
+  childLabels.set(pid, label);
+  child.on("exit", () => childLabels.delete(pid));
+}
+const resourceStats = startResourceGuard({ children: childLabels });
+
 const redisProcess = useEmbeddedRedis
   ? spawn("redis-server", [
       "--bind", "127.0.0.1",
@@ -77,7 +88,10 @@ const redisProcess = useEmbeddedRedis
       "--protected-mode", "yes",
     ], { stdio: ["ignore", "pipe", "pipe"] })
   : undefined;
-if (redisProcess) relayChild(redisProcess);
+if (redisProcess) {
+  relayChild(redisProcess);
+  labelChild(redisProcess, "redis");
+}
 
 // Every child writes to a pipe this gateway reads and relays through the
 // guarded, non-blocking stdout, never straight into the deployment's log pipe.
@@ -234,6 +248,8 @@ app.get("/api/startup", (_req, res) => {
     // pipe was backed up, and API children killed by the liveness probe.
     log_relay: logRelayStats,
     api_liveness: livenessStats,
+    // VM memory, pressure and per-process RSS, and any memory-guard stops.
+    resources: resourceStats,
     ...(startupError ? { error: startupError } : {}),
     // Keep hosted startup failures diagnosable without exposing credentials.
     // appendBackendDiagnostic redacts secret-shaped assignments before this
@@ -280,6 +296,7 @@ const workerProcesses: ChildProcess[] = [];
 
 function supervisePaperWorker(args: string[], label: string): ChildProcess {
   const child = spawnPaperWorker(args);
+  labelChild(child, label);
   workerProcesses.push(child);
   let restartScheduled = false;
   const scheduleRestart = (reason: string): void => {
@@ -322,6 +339,7 @@ function startBackendAfterMigration(): void {
     },
   );
   observeChildOutput(python, "fastapi");
+  labelChild(python, "fastapi");
   python.on("error", (error) => {
     backendReady = false;
     startupState = "failed";
