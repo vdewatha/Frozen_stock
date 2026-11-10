@@ -1,0 +1,594 @@
+ticker,first_member_since_2000,last_member_end,member_days,member_days_with_bar,coverage,outcome_class,exit_reason,wiki_removed_name,wiki_reason,yf_longName,yf_exchange,hist_first,hist_last,member_median_dollar_volume,final_price_available,history_usable_on_member_days,needs_assumed_delisting_return
+AVB,2007-01-10,2026-08-18,4931,1,0.0002,history_stub,acquired_or_merged,AvalonBay Communities,Equity Residential (now Vivmark Residential) acquired AvalonBay Communities.,AvalonBay Communities Inc,NYQ,2026-08-14,2026-08-14,,True,False,True
+EA,2002-07-22,2026-08-05,6048,1,0.0002,history_stub,acquired_or_merged,Electronic Arts,"An investor consortium comprising Saudi Arabia's Public Investment Fund (PIF), Silver Lake, and Affinity Partners acquired Electronic Arts.",Electronic Arts Inc,NMS,2026-08-04,2026-08-04,,True,False,True
+EQR,2001-12-03,2026-08-18,6215,1,0.0002,history_stub,unknown,,,Equity Residential,NYQ,2026-08-17,2026-08-17,,True,False,True
+LEG,2000-01-01,2021-12-20,5527,0,0.0,history_stub,index_rule_still_listed,Leggett & Platt,Market capitalization changes.,Leggett & Platt Inc,NYQ,2026-08-26,2026-08-26,,False,False,True
+QRVO,2015-06-12,2024-12-23,2399,0,0.0,history_stub,index_rule_still_listed,Qorvo,Market capitalization changes.,"Qorvo, Inc.",NMS,2026-10-02,2026-10-02,,False,False,True
+AAL,2015-03-23,2024-09-23,2392,2392,1.0,history_to_today,index_rule_still_listed,American Airlines Group,Market capitalization changes.,American Airlines Group Inc.,NMS,2005-09-27,2026-11-10,367993678.9144516,True,True,False
+AAP,2015-07-09,2023-08-25,2047,2047,1.0,history_to_today,spin_off_or_restructure,Advance Auto Parts,Johnson & Johnson offered to exchange the shares of Kenvue held for shares of Johnson & Johnson in a split-off exchange offer.,"Advance Auto Parts, Inc.",NYQ,2001-11-29,2026-11-10,144054871.0205078,True,True,False
+ALK,2016-05-13,2023-12-18,1912,1912,1.0,history_to_today,index_rule_still_listed,Alaska Air Group,Market capitalization changes.,"Alaska Air Group, Inc.",NYQ,1980-03-17,2026-11-10,88636101.73473358,True,True,False
+AMG,2014-07-01,2019-12-23,1380,1380,1.0,history_to_today,index_rule_still_listed,Affiliated Managers Group,Market capitalization changes.,"Affiliated Managers Group, Inc.",NYQ,1997-11-21,2026-11-10,65920341.21246339,True,True,False
+AMTM,2024-09-30,2024-12-23,59,59,1.0,history_to_today,index_rule_still_listed,Amentum,Market capitalization changes.,"Amentum Holdings, Inc.",NYQ,2024-09-24,2026-11-10,53580908.60481262,True,True,False
+AN,2003-02-24,2017-08-08,3640,3640,1.0,history_to_today,spin_off_or_restructure,AutoNation,MetLife completed the corporate spin-off of Brighthouse Financial.,"AutoNation, Inc.",NYQ,1990-05-11,2026-11-10,32537619.13127899,True,True,False
+ANF,2007-03-29,2013-12-23,1697,1697,1.0,history_to_today,index_rule_still_listed,Abercrombie & Fitch,Market capitalization changes.,Abercrombie & Fitch Co.,NYQ,1996-09-26,2026-11-10,119069432.40814207,True,True,False
+ASH,2000-01-01,2008-11-14,2231,2231,1.0,history_to_today,unknown,,,Ashland Inc.,NYQ,1980-03-17,2026-11-10,22861019.029617306,True,True,False
+AYI,2016-05-03,2018-06-18,535,535,1.0,history_to_today,index_rule_still_listed,Acuity Brands,Market capitalization changes.,Acuity Inc.,NYQ,2001-12-03,2026-11-10,98372028.8269043,True,True,False
+BBWI,2021-08-03,2024-10-01,795,795,1.0,history_to_today,index_rule_still_listed,"Bath & Body Works, Inc.",Market capitalization changes.,"Bath & Body Works, Inc.",NYQ,1982-04-01,2026-11-10,136327684.0209961,True,True,False
+BC,2000-01-01,2008-06-23,2129,2129,1.0,history_to_today,index_rule_still_listed,Brunswick,Market capitalization changes.,Brunswick Corporation,NYQ,1981-12-31,2026-11-10,17920799.775123596,True,True,False
+BHF,2017-08-07,2019-04-02,415,415,1.0,history_to_today,spin_off_or_restructure,Brighthouse Financial,DowDuPont completed the corporate spin-off of Dow Inc.,"Brighthouse Financial, Inc.",NMS,2017-07-17,2026-11-10,46443673.46420288,True,True,False
+BIO,2020-06-22,2024-09-23,1070,1070,1.0,history_to_today,index_rule_still_listed,Bio-Rad Laboratories,Market capitalization changes.,"Bio-Rad Laboratories, Inc.",NYQ,1980-02-27,2026-11-10,79945602.89611816,True,True,False
+BWA,2011-12-19,2025-03-24,3333,3333,1.0,history_to_today,index_rule_still_listed,BorgWarner,Market capitalization changes.,BorgWarner Inc.,NYQ,1993-08-13,2026-11-10,79019165.86101723,True,True,False
+CAG,2000-01-01,2026-06-30,6661,6661,1.0,history_to_today,index_rule_still_listed,Conagra Brands,Market capitalization changes.,"Conagra Brands, Inc.",NYQ,1980-03-17,2026-11-10,90810348.16493416,True,True,False
+CAR,2000-01-01,2006-08-01,1653,1653,1.0,history_to_today,unknown,,,"Avis Budget Group, Inc.",NMS,1983-09-14,2026-11-10,83031292.63627625,True,True,False
+CCEP,2016-01-04,2016-05-31,102,102,1.0,history_to_today,unknown,,,Coca-Cola Europacific Partners PLC,NMS,1986-11-24,2026-11-10,106749185.0725174,True,True,False
+CCK,2000-01-01,2000-12-11,238,238,1.0,history_to_today,index_rule_still_listed,Crown Holdings,Market capitalization changes.,"Crown Holdings, Inc.",NYQ,1980-03-17,2026-11-10,8042296.875,True,True,False
+CLF,2009-12-21,2014-04-02,1076,1076,1.0,history_to_today,index_rule_still_listed,Cliffs Natural Resources,Market capitalization changes.,Cleveland-Cliffs Inc.,NYQ,1973-02-21,2026-11-10,245495624.1285324,True,True,False
+COTY,2016-10-03,2020-09-21,998,998,1.0,history_to_today,index_rule_still_listed,Coty,Market capitalization changes.,Coty Inc.,NYQ,2013-06-13,2026-11-10,72864634.12685394,True,True,False
+CPB,2000-01-01,2026-06-22,6655,6655,1.0,history_to_today,index_rule_still_listed,Campbell's,Market capitalization changes.,The Campbell's Company,NMS,1973-02-21,2026-11-10,70933127.30140686,True,True,False
+CPRI,2016-01-04,2020-05-12,1096,1096,1.0,history_to_today,index_rule_still_listed,Capri Holdings,Market capitalization changes.,Capri Holdings Limited,NYQ,2011-12-15,2026-11-10,105402785.22834778,True,True,False
+CZR,2021-03-22,2025-09-22,1131,1131,1.0,history_to_today,index_rule_still_listed,Caesars Entertainment,Market capitalization changes.,"Caesars Entertainment, Inc.",NMS,2014-09-22,2026-11-10,159398590.98968506,True,True,False
+DDS,2000-01-01,2008-10-22,2214,2214,1.0,history_to_today,unknown,,,"Dillard's, Inc.",TEX,1980-03-17,2026-11-10,15548322.01309204,True,True,False
+DLX,2000-01-01,2004-12-20,1247,1247,1.0,history_to_today,unknown,,,Deluxe Corporation,NYQ,1980-03-17,2026-11-10,11205600.0,True,True,False
+DXC,2000-01-01,2023-10-02,5637,5637,1.0,history_to_today,index_rule_still_listed,DXC Technology,Market capitalization changes.,DXC Technology Company,NYQ,1981-12-31,2026-11-10,57756683.20703126,True,True,False
+EHC,2000-01-01,2003-03-21,806,806,1.0,history_to_today,unknown,,,Encompass Health Corporation,NYQ,1986-09-24,2026-11-10,22573654.36238289,True,True,False
+EMN,2000-01-01,2025-11-04,6499,6499,1.0,history_to_today,index_rule_still_listed,Eastman Chemical Co.,Market capitalization changes.,Eastman Chemical Company,NYQ,1993-12-14,2026-11-10,66923185.39123535,True,True,False
+ENPH,2021-01-07,2025-09-22,1181,1181,1.0,history_to_today,index_rule_still_listed,Enphase Energy,Market capitalization changes.,"Enphase Energy, Inc.",NGM,2012-03-30,2026-11-10,431844003.9916992,True,True,False
+EPAM,2021-12-14,2026-06-02,1119,1119,1.0,history_to_today,index_rule_still_listed,EPAM Systems,Market capitalization changes.,"EPAM Systems, Inc.",NYQ,2012-02-08,2026-11-10,134643317.21801758,True,True,False
+ETSY,2020-09-21,2024-09-23,1007,1007,1.0,history_to_today,index_rule_still_listed,Etsy,Market capitalization changes.,"Etsy, Inc.",NYQ,2015-04-16,2026-11-10,350692052.8472901,True,True,False
+FCPT,2015-11-10,2015-11-17,5,5,1.0,history_to_today,unknown,,,"Four Corners Property Trust, Inc.",NYQ,2015-11-10,2026-11-10,28097358.93974304,True,True,False
+FHN,2002-05-06,2013-06-24,2803,2803,1.0,history_to_today,spin_off_or_restructure,First Horizon,Pfizer completed the corporate spin-off of Zoetis.,First Horizon Corporation,NYQ,1980-03-17,2026-11-10,33265485.47713089,True,True,False
+FLR,2000-12-22,2019-06-03,4636,4636,1.0,history_to_today,spin_off_or_restructure,Fluor Corporation,DowDuPont completed the corporate spin-off of Corteva.,Fluor Corporation,NYQ,2000-12-01,2026-11-10,73054814.99328613,True,True,False
+FLS,2008-10-02,2021-03-22,3137,3137,1.0,history_to_today,index_rule_still_listed,Flowserve,Market capitalization changes.,Flowserve Corporation,NYQ,1980-03-17,2026-11-10,59129400.52032471,True,True,False
+FMC,2000-01-01,2025-03-24,4422,4422,1.0,history_to_today,index_rule_still_listed,FMC Corporation,Market capitalization changes.,FMC Corporation,NYQ,1980-03-17,2026-11-10,60452096.940086365,True,True,False
+FOSL,2012-04-04,2016-01-05,943,943,1.0,history_to_today,acquired_or_merged,Fossil Group,Willis Holdings merged with Towers Watson and was renamed Willis Towers Watson.,"Fossil Group, Inc.",NMS,1993-04-08,2026-11-10,71424207.5668335,True,True,False
+FTI,2009-06-05,2021-02-12,2943,2943,1.0,history_to_today,spin_off_or_restructure,TechnipFMC,Corporate spin-off of Technip Energies.,TechnipFMC plc,NYQ,2001-06-15,2026-11-10,87560160.61047362,True,True,False
+GHC,2007-12-31,2014-09-22,1693,1693,1.0,history_to_today,index_rule_still_listed,Graham Holdings,Market capitalization changes.,Graham Holdings Company,NYQ,1973-02-21,2026-11-10,14611464.478759766,True,True,False
+GME,2007-12-14,2016-04-25,2103,2103,1.0,history_to_today,acquired_or_merged,GameStop,Global Payments acquired Heartland Payment Systems.,GameStop Corp.,NYQ,2002-02-13,2026-11-10,87840545.35980225,True,True,False
+GNW,2005-12-02,2015-11-18,2507,2507,1.0,history_to_today,spin_off_or_restructure,Genworth Financial,GE completed the corporate spin-off of Synchrony Financial.,"Genworth Financial, Inc.",NYQ,2004-05-25,2026-11-10,73425000.0,True,True,False
+GT,2000-01-01,2019-02-27,4817,4817,1.0,history_to_today,acquired_or_merged,The Goodyear Tire & Rubber Company,Wabtec acquired GE transportation business,The Goodyear Tire & Rubber Company,NMS,1962-01-02,2026-11-10,56694060.276031494,True,True,False
+HOG,2000-01-31,2020-06-22,5130,5130,1.0,history_to_today,index_rule_still_listed,Harley-Davidson,Market capitalization changes.,"Harley-Davidson, Inc.",NYQ,1986-07-08,2026-11-10,86563934.37538147,True,True,False
+HP,2010-03-01,2020-05-22,2576,2576,1.0,history_to_today,index_rule_still_listed,Helmerich & Payne,Market capitalization changes.,"Helmerich & Payne, Inc.",NYQ,1980-10-15,2026-11-10,88116875.0,True,True,False
+HRB,2000-01-01,2020-09-21,5212,5212,1.0,history_to_today,index_rule_still_listed,H&R Block,Market capitalization changes.,"H&R Block, Inc.",NYQ,1973-02-21,2026-11-10,55917837.285232544,True,True,False
+ILMN,2015-11-19,2024-06-24,2160,2160,1.0,history_to_today,index_rule_still_listed,"Illumina, Inc.",Market capitalization changes.,"Illumina, Inc.",NMS,2000-07-28,2026-11-10,250030084.3203735,True,True,False
+IPGP,2018-03-07,2022-06-21,1080,1080,1.0,history_to_today,index_rule_still_listed,IPG Photonics,Market capitalization changes.,IPG Photonics Corporation,NMS,2006-12-13,2026-11-10,59186294.56253052,True,True,False
+ITT,2000-01-01,2011-11-01,2977,2977,1.0,history_to_today,unknown,,,ITT Inc.,NYQ,1995-12-15,2026-11-10,47502966.087999344,True,True,False
+JEF,2007-08-27,2019-09-26,3042,3042,1.0,history_to_today,spin_off_or_restructure,Jefferies Financial Group,SPB completed the corporate spin-off of Jefferies Financial Group.,Jefferies Financial Group Inc.,NYQ,1980-03-17,2026-11-10,32994333.64775276,True,True,False
+KBH,2000-01-01,2009-12-21,2507,2507,1.0,history_to_today,index_rule_still_listed,KB Home,Market capitalization changes.,KB Home,NYQ,1986-08-01,2026-11-10,70374076.98364258,True,True,False
+KMX,2010-06-28,2025-10-31,3861,3861,1.0,history_to_today,index_rule_still_listed,CarMax,Market capitalization changes.,"CarMax, Inc.",NYQ,1997-02-04,2026-11-10,104555657.14416504,True,True,False
+KSS,2000-01-01,2020-09-21,5212,5212,1.0,history_to_today,index_rule_still_listed,Kohl's,Market capitalization changes.,Kohl's Corporation,NYQ,1992-05-19,2026-11-10,170737158.80203247,True,True,False
+LKQ,2016-05-23,2025-12-22,2410,2410,1.0,history_to_today,index_rule_still_listed,LKQ Corporation,Market capitalization changes.,LKQ Corporation,NMS,2003-10-06,2026-11-10,69855503.15647125,True,True,False
+LNC,2000-01-01,2023-09-18,5964,5964,1.0,history_to_today,index_rule_still_listed,Lincoln National Corporation,Market capitalization changes.,Lincoln National Corporation,NYQ,1980-03-17,2026-11-10,79511171.9833374,True,True,False
+LPX,2000-01-01,2006-11-10,1725,1725,1.0,history_to_today,unknown,,,Louisiana-Pacific Corporation,NYQ,1980-03-17,2026-11-10,11800139.605140684,True,True,False
+LUMN,2020-09-18,2023-03-20,628,628,1.0,history_to_today,index_rule_still_listed,Lumen Technologies,Market capitalization changes.,"Lumen Technologies, Inc.",NMS,1980-03-17,2026-11-10,119421645.60339452,True,True,False
+LW,2018-12-03,2026-03-23,1833,1833,1.0,history_to_today,index_rule_still_listed,Lamb Weston,Market capitalization changes.,"Lamb Weston Holdings, Inc.",NYQ,2016-11-10,2026-11-10,99841178.27682497,True,True,False
+M,2000-01-01,2020-04-06,5096,5096,1.0,history_to_today,index_rule_still_listed,Macy's,Market capitalization changes.,"Macy's, Inc.",NYQ,1992-02-05,2026-11-10,169303942.52223969,True,True,False
+MAC,2013-05-09,2019-12-23,1668,1668,1.0,history_to_today,index_rule_still_listed,Macerich,Market capitalization changes.,The Macerich Company,NYQ,1994-03-10,2026-11-10,62273145.06645203,True,True,False
+MAT,2000-01-01,2019-06-07,4887,4887,1.0,history_to_today,acquired_or_merged,Mattel,Merger of Bemis and Amcor; Bemis was the surviving entity.,"Mattel, Inc.",NMS,1976-06-17,2026-11-10,66787812.48321533,True,True,False
+MBI,2000-01-01,2009-12-21,2507,2507,1.0,history_to_today,index_rule_still_listed,MBIA,Market capitalization changes.,MBIA Inc.,NYQ,1987-07-01,2026-11-10,38484096.20361328,True,True,False
+MHK,2013-12-23,2025-12-22,3017,3017,1.0,history_to_today,index_rule_still_listed,Mohawk Industries,Market capitalization changes.,"Mohawk Industries, Inc.",NYQ,1992-04-01,2026-11-10,92647131.74438477,True,True,False
+MKTX,2019-07-01,2025-09-22,1565,1565,1.0,history_to_today,index_rule_still_listed,MarketAxess,Market capitalization changes.,MarketAxess Holdings Inc.,NMS,2004-11-05,2026-11-10,97899042.07763672,True,True,False
+MOH,2022-03-02,2026-03-23,1017,1017,1.0,history_to_today,index_rule_still_listed,Molina Healthcare,Market capitalization changes.,"Molina Healthcare, Inc.",NYQ,2003-07-02,2026-11-10,156108548.05297852,True,True,False
+MTCH,2021-09-20,2026-03-23,1130,1130,1.0,history_to_today,index_rule_still_listed,Match Group,Market capitalization changes.,,NMS,1993-01-19,2026-11-10,161257755.66635132,True,True,False
+MTG,2000-01-01,2008-10-31,2221,2221,1.0,history_to_today,unknown,,,MGIC Investment Corporation,NYQ,1991-08-07,2026-11-10,41160200.0,True,True,False
+MTW,2007-11-16,2009-09-01,450,450,1.0,history_to_today,unknown,,,"The Manitowoc Company, Inc.",NYQ,1990-03-26,2026-11-10,44748092.16907501,True,True,False
+MUR,2005-08-15,2017-07-26,3007,3007,1.0,history_to_today,index_rule_still_listed,Murphy Oil,Market capitalization changes.,Murphy Oil Corporation,NYQ,1980-03-17,2026-11-10,91961690.29110718,True,True,False
+NAVI,2014-05-01,2018-06-05,1031,1031,1.0,history_to_today,acquired_or_merged,Navient,Westar Energy acquired Great Plains Energy and changed name to Evergy.,"Navient Holdings, Inc.",NMS,2014-04-17,2026-11-10,40662963.316726685,True,True,False
+NBR,2000-10-18,2015-03-23,3626,3626,1.0,history_to_today,index_rule_still_listed,Nabors Industries,Market capitalization changes.,Nabors Industries Ltd.,NYQ,1973-02-21,2026-11-10,102959449.5,True,True,False
+NKTR,2018-03-19,2019-10-03,389,389,1.0,history_to_today,index_rule_still_listed,Nektar Therapeutics,Market capitalization changes.,Nektar Therapeutics,NCM,1994-05-03,2026-11-10,80811913.84613036,True,True,False
+NOV,2005-03-14,2021-09-20,4159,4159,1.0,history_to_today,index_rule_still_listed,Nov,Market capitalization changes.,NOV Inc.,NYQ,1996-10-29,2026-11-10,185953078.98353577,True,True,False
+NWL,2000-01-01,2023-09-18,5964,5964,1.0,history_to_today,index_rule_still_listed,Newell Brands,Market capitalization changes.,Newell Brands Inc.,NMS,1980-03-17,2026-11-10,52102483.89663696,True,True,False
+NYT,2000-01-01,2010-12-20,2758,2758,1.0,history_to_today,index_rule_still_listed,The New York Times Company,Market capitalization changes.,The New York Times Company,NYQ,1973-05-03,2026-11-10,23548851.354599,True,True,False
+OGN,2021-06-04,2023-10-18,597,597,1.0,history_to_today,index_rule_still_listed,Organon & Co.,Market capitalization changes.,Organon & Co.,NYQ,2021-05-14,2026-11-10,51732241.0068512,True,True,False
+PAYC,2020-01-28,2026-03-23,1545,1545,1.0,history_to_today,index_rule_still_listed,Paycom,Market capitalization changes.,"Paycom Software, Inc.",NYQ,2014-04-15,2026-11-10,137378553.54309082,True,True,False
+PBI,2000-01-01,2017-03-01,4316,4316,1.0,history_to_today,acquired_or_merged,Pitney Bowes,CBOE acquired BATS.,Pitney Bowes Inc.,NYQ,1972-06-01,2026-11-10,35381828.99990082,True,True,False
+PENN,2021-03-22,2022-09-19,377,377,1.0,history_to_today,index_rule_still_listed,Penn Entertainment,Market capitalization changes.,"PENN Entertainment, Inc.",NMS,1994-05-26,2026-11-10,219535672.66845703,True,True,False
+POOL,2020-10-07,2026-06-22,1431,1431,1.0,history_to_today,index_rule_still_listed,Pool Corporation,Market capitalization changes.,Pool Corporation,NMS,1995-10-13,2026-11-10,130195714.12353516,True,True,False
+PRGO,2011-12-19,2021-09-20,2453,2453,1.0,history_to_today,index_rule_still_listed,Perrigo,Market capitalization changes.,Perrigo Company plc,NYQ,1991-12-17,2026-11-10,88045124.2137909,True,True,False
+PVH,2013-02-14,2022-09-19,2415,2415,1.0,history_to_today,index_rule_still_listed,PVH,Market capitalization changes.,PVH Corp.,NYQ,1980-03-17,2026-11-10,96766125.0,True,True,False
+R,2000-01-01,2017-06-19,4392,4392,1.0,history_to_today,index_rule_still_listed,Ryder System,Market capitalization changes.,"Ryder System, Inc.",NYQ,1980-01-02,2026-11-10,28177284.529304504,True,True,False
+RHI,2000-12-05,2024-06-24,5922,5922,1.0,history_to_today,index_rule_still_listed,Robert Half,Market capitalization changes.,Robert Half Inc.,NYQ,1980-03-17,2026-11-10,40495507.23991394,True,True,False
+RIG,2000-01-01,2017-07-26,3196,3196,1.0,history_to_today,index_rule_still_listed,Transocean,Market capitalization changes.,Transocean Ltd.,NYQ,1993-05-28,2026-11-10,165101042.0135498,True,True,False
+RRC,2007-12-21,2018-06-18,2639,2639,1.0,history_to_today,index_rule_still_listed,Range Resources,Market capitalization changes.,Range Resources Corporation,NYQ,1980-06-19,2026-11-10,129790884.67216492,True,True,False
+SANM,2000-06-21,2007-07-02,1765,1765,1.0,history_to_today,unknown,,,Sanmina Corporation,NMS,1993-04-14,2026-11-10,48983634.450531006,True,True,False
+SCI,2000-01-01,2000-03-16,51,51,1.0,history_to_today,unknown,,,Service Corporation International,NYQ,1980-03-17,2026-11-10,7227912.5,True,True,False
+SEDG,2021-12-20,2023-12-18,501,501,1.0,history_to_today,index_rule_still_listed,SolarEdge,Market capitalization changes.,"SolarEdge Technologies, Inc.",NMS,2015-03-26,2026-11-10,252591163.5284424,True,True,False
+SIG,2015-07-29,2018-03-19,664,664,1.0,history_to_today,index_rule_still_listed,Signet Jewelers,Market capitalization changes.,Signet Jewelers Limited,NYQ,1988-07-14,2026-11-10,106020636.53564452,True,True,False
+SLG,2015-03-23,2021-03-22,1510,1510,1.0,history_to_today,index_rule_still_listed,SL Green Realty,Market capitalization changes.,SL Green Realty Corp.,NYQ,1997-08-15,2026-11-10,71142986.28639221,True,True,False
+SLM,2000-01-01,2014-05-01,3603,3603,1.0,history_to_today,spin_off_or_restructure,SLM Corporation,SLM completed the corporate spin-off of Navient.,SLM Corporation,NMS,1983-09-23,2026-11-10,67697605.41688156,True,True,False
+SOLS,2025-10-30,2025-12-22,36,36,1.0,history_to_today,index_rule_still_listed,Solstice Advanced Materials,Market capitalization changes.,"Solstice Advanced Materials, Inc.",NMS,2025-10-20,2026-11-10,145850999.48883057,True,True,False
+SSP,2005-12-20,2008-07-01,635,635,1.0,history_to_today,unknown,,,The E.W. Scripps Company,NMS,1988-06-30,2026-11-10,30075602.210083008,True,True,False
+TDC,2007-10-01,2017-06-19,2446,2446,1.0,history_to_today,index_rule_still_listed,Teradata,Market capitalization changes.,Teradata Corporation,NYQ,2007-10-01,2026-11-10,57436302.19631195,True,True,False
+TEX,2006-12-20,2008-11-06,473,473,1.0,history_to_today,unknown,,,Terex Corporation,NYQ,1980-03-19,2026-11-10,113290226.92871094,True,True,False
+TFX,2019-01-18,2025-03-24,1552,1552,1.0,history_to_today,index_rule_still_listed,Teleflex,Market capitalization changes.,Teleflex Incorporated,NYQ,1980-03-17,2026-11-10,79491068.86291504,True,True,False
+THC,2000-01-01,2016-04-18,4097,4097,1.0,history_to_today,unclassified,Tenet Healthcare,,Tenet Healthcare Corporation,NYQ,1980-03-17,2026-11-10,46269623.73018265,True,True,False
+TKR,2000-01-01,2001-08-07,402,402,1.0,history_to_today,unknown,,,The Timken Company,NYQ,1973-02-21,2026-11-10,2397244.7727327347,True,True,False
+TRIP,2011-12-21,2019-12-23,2013,2013,1.0,history_to_today,index_rule_still_listed,TripAdvisor,Market capitalization changes.,"Tripadvisor, Inc.",NMS,2011-12-07,2026-11-10,103825633.92868043,True,True,False
+UA,2016-04-08,2022-06-21,1561,1561,1.0,history_to_today,index_rule_still_listed,Under Armour (Class C),Market capitalization changes.,"Under Armour, Inc.",NYQ,2016-03-23,2026-11-10,47303796.77062989,True,True,False
+UAA,2014-05-01,2022-06-21,2049,2049,1.0,history_to_today,index_rule_still_listed,Under Armour (Class A),Market capitalization changes.,"Under Armour, Inc.",NYQ,2005-11-18,2026-11-10,110688986.4692688,True,True,False
+UIS,2000-01-01,2008-11-11,2228,2228,1.0,history_to_today,unknown,,,Unisys Corporation,NYQ,1972-06-01,2026-11-10,14334963.480262756,True,True,False
+UNM,2000-01-01,2021-09-20,5463,5463,1.0,history_to_today,index_rule_still_listed,Unum,Market capitalization changes.,Unum Group,NYQ,1986-11-06,2026-11-10,46688230.89637756,True,True,False
+URBN,2010-02-08,2017-03-20,1790,1790,1.0,history_to_today,index_rule_still_listed,Urban Outfitters,Market capitalization changes.,"Urban Outfitters, Inc.",NMS,1993-11-09,2026-11-10,75812581.63394928,True,True,False
+VIAV,2000-07-27,2013-12-23,3372,3372,1.0,history_to_today,unknown,,,Viavi Solutions Inc.,NMS,1993-11-17,2026-11-10,72157974.76133633,True,True,False
+VNO,2005-08-12,2023-01-04,4378,4378,1.0,history_to_today,index_rule_still_listed,Vornado Realty Trust,Market capitalization changes.,Vornado Realty Trust,NYQ,1980-03-17,2026-11-10,84381874.29372978,True,True,False
+VNT,2020-10-12,2021-03-22,110,110,1.0,history_to_today,index_rule_still_listed,Vontier,Market capitalization changes.,Vontier Corporation,NYQ,2020-09-24,2026-11-10,66904881.788253784,True,True,False
+WHR,2000-01-01,2024-03-18,6089,6089,1.0,history_to_today,index_rule_still_listed,Whirlpool Corporation,Market capitalization changes.,Whirlpool Corporation,NYQ,1973-02-21,2026-11-10,97374101.19438171,True,True,False
+WOR,2000-01-01,2004-12-20,1247,1247,1.0,history_to_today,unknown,,,"Worthington Enterprises, Inc.",NYQ,1980-03-17,2026-11-10,4160002.931857109,True,True,False
+WU,2006-10-02,2021-12-20,3831,3831,1.0,history_to_today,index_rule_still_listed,Western Union,Market capitalization changes.,The Western Union Company,NYQ,2006-10-02,2026-11-10,95030108.04519652,True,True,False
+XRAY,2008-11-14,2024-04-02,3868,3868,1.0,history_to_today,index_rule_still_listed,Dentsply Sirona,Market capitalization changes.,DENTSPLY SIRONA Inc.,NMS,1987-08-12,2026-11-10,56780627.07595825,True,True,False
+XRX,2000-01-01,2021-03-22,5337,5337,1.0,history_to_today,index_rule_still_listed,Xerox,Market capitalization changes.,Xerox Holdings Corporation,NMS,1962-01-02,2026-11-10,67373461.52981758,True,True,False
+ZION,2001-06-25,2024-03-18,5717,5717,1.0,history_to_today,index_rule_still_listed,Zions Bancorporation,Market capitalization changes.,"Zions Bancorporation, National Association",NMS,1980-03-17,2026-11-10,65235212.30621338,True,True,False
+AIV,2003-03-14,2020-12-21,4475,4475,1.0,history_to_today_name_mismatch,spin_off_or_restructure,Aimco,Aimco completed the corporate spin-off of Apartment Income REIT.,Apartment Investment and Management Company,NYQ,1994-07-22,2026-11-10,37449610.75694729,True,True,False
+ATI,2000-01-01,2015-07-02,3898,3898,1.0,history_to_today_name_mismatch,spin_off_or_restructure,Allegheny Technologies,Spin off of Columbia Pipeline.,ATI Inc.,NYQ,1999-11-29,2026-11-10,43985777.023124695,True,True,False
+CNX,2006-06-28,2016-03-04,2437,2437,1.0,history_to_today_name_mismatch,unclassified,Consol Energy,,CNX Resources Corporation,NYQ,1999-04-30,2026-11-10,117021630.05859376,True,True,False
+OI,2000-01-01,2016-12-02,2232,2232,1.0,history_to_today_name_mismatch,index_rule_still_listed,Owens-Illinois,Market capitalization changes.,"O-I Glass, Inc.",NYQ,1991-12-11,2026-11-10,35637719.233226776,True,True,False
+VFC,2000-01-01,2024-04-01,6098,6098,1.0,history_to_today_name_mismatch,index_rule_still_listed,VF Corporation,Market capitalization changes.,V.F. Corporation,NYQ,1980-03-17,2026-11-10,88584041.4296608,True,True,False
+CE,2001-04-02,2025-03-24,2297,1569,0.6831,history_to_today_starts_late,index_rule_still_listed,Celanese,Market capitalization changes.,Celanese Corporation,NYQ,2005-01-21,2026-11-10,106012056.82983398,True,True,False
+SUN,2000-01-01,2012-10-05,3211,11,0.0034,history_to_today_starts_late,acquired_or_merged,Sunoco,Sunoco was acquired by Energy Transfer Partners (ETP),Sunoco LP,TEX,2012-09-20,2026-11-10,4687019.923591614,True,True,False
+BBT,2000-01-01,2019-12-09,5015,4892,0.9755,history_to_today_suspect,unknown,,,Beacon Financial Corporation,NYQ,2000-06-28,2026-11-10,1044984.9678039552,False,False,True
+CCU,2000-01-01,2008-07-31,2156,2156,1.0,history_to_today_suspect,unknown,,,Compañía Cervecerías Unidas S.A.,NYQ,1992-09-24,2026-11-10,553554.9886226654,False,False,True
+CPWR,2000-01-01,2012-01-03,3019,1279,0.4237,history_to_today_suspect,index_rule_still_listed,Compuware,Market capitalization changes.,Ocean Thermal Energy Corporation,OID,2006-12-04,2026-11-09,0.0,False,False,True
+CSR,2000-01-01,2000-06-16,115,115,1.0,history_to_today_suspect,unknown,,,Centerspace,NYQ,1997-10-17,2026-11-10,78912.5,False,False,True
+EP,2000-01-01,2012-05-25,3119,3119,1.0,history_to_today_suspect,acquired_or_merged,El Paso Corporation,El Paso was acquired by Kinder Morgan.,Empire Petroleum Corporation,ASE,1999-10-27,2026-11-10,426.24001693725586,False,False,True
+FMCC,2000-01-01,2008-09-11,2185,2185,1.0,history_to_today_suspect,unknown,,,Federal Home Loan Mortgage Corporation,OQB,1988-12-02,2026-11-10,181097915.7714844,False,False,True
+FNMA,2000-01-01,2008-09-11,2185,2185,1.0,history_to_today_suspect,unknown,,,Federal National Mortgage Association,OQB,1977-01-03,2026-11-10,249074443.75,False,False,True
+GENZ,2001-12-14,2011-04-04,2341,805,0.3439,history_to_today_suspect,acquired_or_merged,Genzyme,Genzyme was acquired by Sanofi Aventis.,VanEck Digital Native Economy ETF,NGM,2008-01-24,2026-11-10,220131.0007095337,False,False,True
+KG,2000-10-03,2010-12-20,2568,662,0.2578,history_to_today_suspect,acquired_or_merged,King Pharmaceuticals,King was acquired by Pfizer.,Kestrel Group Ltd,NCM,2008-05-06,2026-11-10,1209690.0,False,False,True
+NC,2000-01-01,2000-06-05,106,106,1.0,history_to_today_suspect,unknown,,,"NACCO Industries, Inc.",NYQ,1977-06-17,2026-11-10,1107606.6291418076,False,False,True
+PARA,2022-02-17,2025-08-08,870,870,1.0,history_to_today_suspect,unknown,,,"Parabolic Technologies, Inc.",NCM,2021-02-12,2026-11-10,126735.0,False,False,True
+SII,2006-10-02,2010-08-27,983,131,0.1333,history_to_today_suspect,acquired_or_merged,Smith International,Smith was acquired by Schlumberger.,Sprott Inc.,NYQ,2010-02-22,2026-11-10,0.0,False,False,True
+WEN,2000-01-01,2008-09-30,2198,2198,1.0,history_to_today_suspect,unknown,,,The Wendy's Company,NMS,1980-05-06,2026-11-10,948639.5135507584,False,False,True
+AABA,2000-01-01,2017-06-19,4392,0,0.0,no_history,unknown,,,,,,,,False,False,True
+AAMRQ,2000-01-01,2003-03-14,801,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+ABC,2001-08-30,2023-08-30,5533,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ABKFQ,2000-12-11,2008-06-11,1883,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+ABMD,2018-05-31,2022-12-22,1150,0,0.0,no_history,acquired_or_merged,Abiomed,Johnson & Johnson acquired Abiomed.,,,,,,False,False,True
+ABS,2000-01-01,2006-06-02,1612,0,0.0,no_history,acquired_or_merged,Albertsons,Albertsons was acquired by SuperValu and CVS Corp.,,,,,,False,False,True
+ACAS,2007-07-09,2009-03-04,417,0,0.0,no_history,index_rule_still_listed,American Capital,Market capitalization changes.,,,,,,False,False,True
+ACKH,2000-01-01,2000-11-17,223,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ACS,2004-04-02,2010-02-08,1472,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ADS,2013-12-23,2020-06-22,1634,0,0.0,no_history,index_rule_still_listed,Alliance Data Systems,Market capitalization changes.,,,,,,False,False,True
+AET,2000-01-01,2018-11-29,4758,0,0.0,no_history,acquired_or_merged,Aetna,CVS acquired Aetna.,,,,,,False,False,True
+AFS.A,2000-01-01,2000-12-01,232,0,0.0,no_history,unknown,,,,,,,,False,False,True
+AGC,2000-01-01,2001-08-29,418,0,0.0,no_history,unknown,,,,,,,,False,False,True
+AGN,2000-01-01,2020-05-12,5121,0,0.0,no_history,acquired_or_merged,Allergan,Allergan was acquired by AbbVie.,,,,,,False,False,True
+AKS,2008-07-01,2011-12-19,875,0,0.0,no_history,index_rule_still_listed,AK Steel,Market capitalization changes.,,,,,,False,False,True
+AL,2000-01-01,2002-07-22,638,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ALTR,2000-04-18,2015-12-28,3947,0,0.0,no_history,acquired_or_merged,Altera,Altera was acquired by Intel.,,,,,,False,False,True
+ALXN,2012-05-25,2021-07-21,2302,0,0.0,no_history,acquired_or_merged,Alexion Pharmaceuticals,AstraZeneca acquired Alexion Pharmaceuticals.,,,,,,False,False,True
+AMCC,2001-01-02,2006-05-18,1350,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ANDV,2007-09-27,2018-10-01,2772,0,0.0,no_history,acquired_or_merged,Andeavor,ANDV was acquired by Marathon Petroleum.,,,,,,False,False,True
+ANDW,2000-01-01,2006-10-02,1696,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ANRZQ,2011-06-02,2012-10-02,337,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+ANSS,2017-06-19,2025-07-18,2031,0,0.0,no_history,acquired_or_merged,Ansys,Synopsys acquired Ansys.,,,,,,False,False,True
+ANTM,2002-07-25,2022-06-28,5016,0,0.0,no_history,unknown,,,,,,,,False,False,True
+APCC,2000-06-01,2007-02-15,1685,0,0.0,no_history,unknown,,,,,,,,False,False,True
+APOL,2002-05-15,2013-07-01,2801,0,0.0,no_history,index_rule_still_listed,Apollo Education Group,Market capitalization changes.,,,,,,False,False,True
+ARC,2000-01-01,2000-04-18,74,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ARG,2009-09-09,2016-05-23,1687,0,0.0,no_history,acquired_or_merged,Airgas,Airgas was acquired by Air Liquide.,,,,,,False,False,True
+ARNC,2000-01-01,2020-04-06,5096,0,0.0,no_history,spin_off_or_restructure,Arconic,Arconic separated into 2 companies - Howmet remained in the index.,,,,,,False,False,True
+ASN,2004-12-20,2007-10-08,704,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ATGE,2009-06-09,2012-10-01,836,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ATVI,2015-08-31,2023-10-18,2047,0,0.0,no_history,acquired_or_merged,Activision Blizzard,Acquisition of Activision Blizzard by Microsoft.,,,,,,False,False,True
+AVP,2000-01-01,2015-03-23,3827,0,0.0,no_history,index_rule_still_listed,Avon Products,Market capitalization changes.,,,,,,False,False,True
+AW,2000-01-01,2008-12-05,2245,0,0.0,no_history,unknown,,,,,,,,False,False,True
+AWE,2001-07-09,2004-10-27,829,0,0.0,no_history,unknown,,,,,,,,False,False,True
+AYE,2000-12-11,2011-02-28,2567,0,0.0,no_history,acquired_or_merged,Allegheny Energy,Alleghany was acquired by First Energy.,,,,,,False,False,True
+AZA.A,2000-01-01,2001-06-25,372,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BCR,2000-01-01,2017-12-29,4527,0,0.0,no_history,acquired_or_merged,CR Bard,Becton Dickinson acquired CR Bard.,,,,,,False,False,True
+BDK,2000-01-01,2010-03-15,2563,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BFO,2000-01-01,2000-10-03,190,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BGEN,2000-01-31,2003-11-13,952,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BGG,2000-01-01,2001-04-03,315,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BHGE,2000-01-01,2019-10-18,4980,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BHMSQ,2000-01-01,2000-12-11,238,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+BIG,2000-01-01,2013-02-14,3299,0,0.0,no_history,index_rule_still_listed,Big Lots,Market capitalization changes.,,,,,,False,False,True
+BJS,2002-05-15,2010-04-29,2003,0,0.0,no_history,acquired_or_merged,BJ Services,BJ Services was acquired by Baker Hughes.,,,,,,False,False,True
+BK,2000-01-01,2026-05-21,6635,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BLL,2000-01-01,2022-05-10,5624,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BLS,2000-01-01,2007-01-03,1759,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BMC,2000-01-01,2013-09-11,3443,0,0.0,no_history,acquired_or_merged,BMC Software,BMC was acquired by a consortium.,,,,,,False,False,True
+BMET,2000-01-01,2007-07-12,1890,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BMS,2000-01-01,2014-12-05,3755,0,0.0,no_history,index_rule_still_listed,Bemis,BMS changed to AMCR post merger with Amcor; subsequently renamed to Amcor.,,,,,,False,False,True
+BNI,2000-01-01,2010-02-16,2544,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BOL,2000-01-01,2007-10-29,1966,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BRCM,2000-07-03,2016-02-01,3918,0,0.0,no_history,unclassified,Broadcom Corporation,,,,,,,False,False,True
+BRL,2006-02-27,2008-12-23,712,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BSC,2000-01-01,2008-06-02,2114,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BTUUQ,2006-11-20,2014-09-22,1971,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+BVSN,2000-11-06,2001-09-04,207,0,0.0,no_history,unknown,,,,,,,,False,False,True
+BXLT,2015-07-01,2016-06-03,233,0,0.0,no_history,acquired_or_merged,Baxalta,SHPG acquired Baxalta.,,,,,,False,False,True
+CA,2000-01-01,2018-11-06,4742,0,0.0,no_history,acquired_or_merged,CA Technologies,CA was acquired by Broadcom.,,,,,,False,False,True
+CBE,2000-01-01,2012-12-03,2691,0,0.0,no_history,acquired_or_merged,Cooper Industries,Cooper was acquired by Eaton Corp. (ETN),,,,,,False,False,True
+CBH,2006-06-06,2008-03-31,456,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CBS,2000-01-01,2019-12-05,5013,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CBSS,2004-12-20,2007-09-07,683,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CCE,2000-01-01,2016-05-31,4127,0,0.0,no_history,acquired_or_merged,Coca-Cola Enterprises,Coca-Cola Enterprises merged with European bottlers.,,,,,,False,False,True
+CCTYQ,2000-01-01,2008-03-31,2070,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+CDAY,2021-09-20,2024-02-01,595,0,0.0,no_history,rename_or_reorg,Ceridian,Ceridian changed its ticker symbol from CDAY to DAY.,,,,,,False,False,True
+CELG,2006-11-06,2019-11-21,3283,0,0.0,no_history,acquired_or_merged,Celgene,Bristol-Myers Squibb acquired Celgene.,,,,,,False,False,True
+CEN,2000-01-01,2001-04-02,314,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CEPH,2008-11-17,2011-10-14,733,0,0.0,no_history,acquired_or_merged,Cephalon,Cephalon was acquired by Teva Pharmaceutical Industries.,,,,,,False,False,True
+CERN,2010-04-30,2022-06-08,3048,0,0.0,no_history,acquired_or_merged,Cerner,Oracle acquired Cerner.,,,,,,False,False,True
+CFC,2000-01-01,2008-07-01,2135,0,0.0,no_history,index_rule_still_listed,Countrywide Financial Corp,Market capitalization changes.,,,,,,False,False,True
+CFN,2009-09-01,2015-03-17,1393,0,0.0,no_history,acquired_or_merged,Carefusion,Carefusion was acquired by Becton Dickinson.,,,,,,False,False,True
+CGP,2000-01-01,2001-01-30,271,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CHIR,2000-11-24,2006-04-20,1355,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CHK,2006-03-03,2018-03-19,3031,0,0.0,no_history,index_rule_still_listed,Chesapeake Energy,Market capitalization changes.,,,,,,False,False,True
+CIN,2000-01-01,2006-04-03,1570,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CIT.A,2000-07-17,2001-06-04,222,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CITGQ,2004-10-27,2009-07-27,1194,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+CMA,2000-01-01,2024-06-24,6156,0,0.0,no_history,index_rule_still_listed,Comerica,Market capitalization changes.,,,,,,False,False,True
+CMCSK,2015-09-21,2015-12-14,59,0,0.0,no_history,delisted_other,Comcast Series K,CMCSK shares were no longer listed.,,,,,,False,False,True
+CMVT,2000-01-01,2007-02-01,1779,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CMX,2004-03-25,2007-03-23,753,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CNG,2000-01-01,2000-01-31,19,0,0.0,no_history,unknown,,,,,,,,False,False,True
+COC.B,2000-01-01,2002-09-03,668,0,0.0,no_history,unknown,,,,,,,,False,False,True
+COG,2008-06-23,2021-10-04,3344,0,0.0,no_history,unknown,,,,,,,,False,False,True
+COL,2001-07-02,2018-11-27,4379,0,0.0,no_history,acquired_or_merged,Rockwell Collins,UTX acquired Rockwell Collins.,,,,,,False,False,True
+COV,2007-07-02,2015-01-27,1469,0,0.0,no_history,acquired_or_merged,Covidien,Covidien was acquired by Medtronic.,,,,,,False,False,True
+CPGX,2015-07-02,2016-07-01,252,0,0.0,no_history,acquired_or_merged,Columbia Pipeline Group,CPGX was acquired by TRP.,,,,,,False,False,True
+CPNLQ,2000-12-01,2005-12-02,1256,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+CPQ,2000-01-01,2002-05-06,585,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CTB,2000-01-01,2006-07-18,1643,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CTL,2000-01-01,2020-09-18,5211,0,0.0,no_history,unknown,,,,,,,,False,False,True
+CTLT,2020-09-21,2024-12-23,1071,0,0.0,no_history,acquired_or_merged,Catalent,Novo Holdings A/S acquired Catalent.,,,,,,False,False,True
+CTRA,2021-10-04,2026-05-07,1152,0,0.0,no_history,acquired_or_merged,Coterra Energy,Devon Energy acquired Coterra Energy.,,,,,,False,False,True
+CTX,2000-01-01,2009-08-19,2421,0,0.0,no_history,acquired_or_merged,Centex Corp.,Centex was acquired by Pulte Homes.,,,,,,False,False,True
+CTXS,2000-01-01,2022-10-03,5724,0,0.0,no_history,acquired_or_merged,Citrix Systems,Vista Equity Partners acquired Citrix Systems.,,,,,,False,False,True
+CVC,2010-12-20,2016-06-21,1384,0,0.0,no_history,acquired_or_merged,Cablevision Systems,Cablevision Systems was acquired by Altice.,,,,,,False,False,True
+CVG,2000-06-13,2009-12-21,2395,0,0.0,no_history,index_rule_still_listed,Convergys,Market capitalization changes.,,,,,,False,False,True
+CVH,2005-08-30,2013-05-07,1933,0,0.0,no_history,acquired_or_merged,Coventry Health Care,CVH was acquired by Aetna.,,,,,,False,False,True
+CXO,2016-02-22,2021-01-21,1238,0,0.0,no_history,acquired_or_merged,Concho Resources,ConocoPhillips acquired Concho Resources.,,,,,,False,False,True
+DALRQ,2000-01-01,2005-08-19,1415,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+DAY,2024-02-01,2026-02-09,506,0,0.0,no_history,acquired_or_merged,Dayforce,Thoma Bravo L.P. acquired Dayforce.,,,,,,False,False,True
+DCNAQ,2000-01-01,2006-03-03,1549,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+DDR,2007-03-23,2009-03-30,508,0,0.0,no_history,unknown,,,,,,,,False,False,True
+DF,2006-04-03,2013-05-24,1798,0,0.0,no_history,spin_off_or_restructure,Dean Foods,DF was too small after spinoff of White Wave Foods.,,,,,,False,False,True
+DFS,2007-07-02,2025-05-19,4499,0,0.0,no_history,acquired_or_merged,Discover Financial,Capital One acquired Discover Financial.,,,,,,False,False,True
+DISCA,2010-03-01,2022-04-11,3051,0,0.0,no_history,acquired_or_merged,"Discovery, Inc.",WarnerMedia and Discovery merged to create Warner Bros. Discovery.,,,,,,False,False,True
+DISCK,2014-08-07,2022-04-11,1933,0,0.0,no_history,acquired_or_merged,"Discovery, Inc.",WarnerMedia and Discovery merged to create Warner Bros. Discovery.,,,,,,False,False,True
+DISH,2017-03-13,2023-06-20,1578,0,0.0,no_history,index_rule_still_listed,Dish Network,Market capitalization changes.,,,,,,False,False,True
+DJ,2000-01-01,2007-12-14,1999,0,0.0,no_history,acquired_or_merged,Dow Jones,Dow Jones was acquired by News Corporation.,,,,,,False,False,True
+DNB,2008-12-02,2017-04-05,2099,0,0.0,no_history,acquired_or_merged,Dun & Bradstreet,Gartner acquired CEB.,,,,,,False,False,True
+DNR,2009-04-02,2015-03-23,1502,0,0.0,no_history,index_rule_still_listed,Denbury Resources,Market capitalization changes.,,,,,,False,False,True
+DO,2009-02-26,2016-10-03,1914,0,0.0,no_history,acquired_or_merged,Diamond Offshore Drilling,Siris Capital Group acquired Polycom.,,,,,,False,False,True
+DPHIQ,2000-01-01,2005-10-11,1451,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+DRE,2017-07-26,2022-10-03,1306,0,0.0,no_history,acquired_or_merged,Duke Realty,Prologis acquired Duke Realty.,,,,,,False,False,True
+DTV,2006-12-04,2015-07-27,2174,0,0.0,no_history,acquired_or_merged,DirecTV,DirecTV was acquired by AT&T.,,,,,,False,False,True
+DWDP,2017-09-01,2019-06-03,438,0,0.0,no_history,spin_off_or_restructure,DuPont,DWDP changed to DD after spinning off Corteva.,,,,,,False,False,True
+EDS,2000-01-01,2008-08-26,2174,0,0.0,no_history,unknown,,,,,,,,False,False,True
+EKDKQ,2000-01-01,2010-12-20,2758,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+ENDP,2015-01-27,2017-03-02,528,0,0.0,no_history,acquired_or_merged,Endo International,Regency Centers acquired EQY.,,,,,,False,False,True
+ENRNQ,2000-01-01,2001-11-30,479,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+EOP,2001-10-10,2007-02-12,1343,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ESRX,2003-09-26,2018-12-21,3836,0,0.0,no_history,acquired_or_merged,Express Scripts,Cigna acquired Express Scripts.,,,,,,False,False,True
+ESV,2007-01-04,2016-03-30,1669,0,0.0,no_history,acquired_or_merged,Ensco,Centene acquired Health Net.,,,,,,False,False,True
+ETFC,2004-04-01,2020-10-07,4158,0,0.0,no_history,acquired_or_merged,E-Trade,Morgan Stanley acquired E*Trade.,,,,,,False,False,True
+EVHC,2016-12-02,2018-10-11,467,0,0.0,no_history,acquired_or_merged,Envision Healthcare,EVHC was acquired by KKR.,,,,,,False,False,True
+FBF,2000-01-01,2004-04-01,1066,0,0.0,no_history,unknown,,,,,,,,False,False,True
+FBHS,2016-06-24,2022-12-19,1633,0,0.0,no_history,index_rule_still_listed,Fortune Brands Home & Security,Market capitalization changes.,,,,,,False,False,True
+FDC,2000-01-01,2007-09-25,1942,0,0.0,no_history,acquired_or_merged,First Data,FDC was acquired by KKR.,,,,,,False,False,True
+FDO,2001-08-06,2015-07-07,3499,0,0.0,no_history,acquired_or_merged,Family Dollar,Family Dollar was acquired.,,,,,,False,False,True
+FI,2023-06-07,2025-11-11,610,0,0.0,no_history,unknown,,,,,,,,False,False,True
+FII,2003-04-16,2013-01-02,2445,0,0.0,no_history,spin_off_or_restructure,Federated Investors,Abbott Labs completed the corporate spin-off of AbbVie.,,,,,,False,False,True
+FJ,2000-01-01,2000-11-24,227,0,0.0,no_history,unknown,,,,,,,,False,False,True
+FL,2016-04-04,2019-08-09,844,0,0.0,no_history,index_rule_still_listed,Foot Locker,Market capitalization changes.,,,,,,False,False,True
+FLIR,2009-01-02,2021-05-14,3112,0,0.0,no_history,acquired_or_merged,FLIR Systems,Teledyne Technologies acquired FLIR Systems.,,,,,,False,False,True
+FLT,2018-06-20,2024-03-25,1449,0,0.0,no_history,unknown,,,,,,,,False,False,True
+FLTWQ,2000-01-01,2000-01-31,19,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+FPC,2000-01-01,2000-12-01,232,0,0.0,no_history,unknown,,,,,,,,False,False,True
+FRC,2019-01-02,2023-05-04,1092,0,0.0,no_history,delisted_other,First Republic Bank,The Federal Deposit Insurance Corporation (FDIC) placed First Republic Bank into receivership.,,,,,,False,False,True
+FRX,2000-11-22,2014-07-01,3419,0,0.0,no_history,acquired_or_merged,Forest Laboratories,Actavis acquired Forest Laboratories.,,,,,,False,False,True
+FSH,2004-08-03,2006-11-10,575,0,0.0,no_history,unknown,,,,,,,,False,False,True
+FSL,2004-12-03,2006-12-04,504,0,0.0,no_history,unknown,,,,,,,,False,False,True
+FTR,2001-02-27,2017-03-20,4039,0,0.0,no_history,index_rule_still_listed,Frontier Communications,Market capitalization changes.,,,,,,False,False,True
+FWLT,2000-01-01,2000-01-31,19,0,0.0,no_history,unknown,,,,,,,,False,False,True
+GAPTQ,2000-01-01,2000-08-30,167,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+GAS,2000-01-01,2016-07-01,4149,0,0.0,no_history,acquired_or_merged,AGL Resources,AGL Resources was acquired by Southern Company.,,,,,,False,False,True
+GDW,2000-01-01,2006-10-02,1696,0,0.0,no_history,unknown,,,,,,,,False,False,True
+GGP,2007-07-02,2018-08-28,1534,0,0.0,no_history,acquired_or_merged,GGP Inc.,GGP was acquired by Brookfield Property Partners.,,,,,,False,False,True
+GLK,2000-01-01,2005-07-05,1382,0,0.0,no_history,acquired_or_merged,Great Lakes Chemical,Great Lakes Chemical was acquired by Crompton Corp.,,,,,,False,False,True
+GMCR,2014-03-24,2016-03-03,490,0,0.0,no_history,acquired_or_merged,Keurig Green Mountain,JAB Holding Company acquired Keurig Green Mountain.,,,,,,False,False,True
+GPS,2000-01-01,2022-02-02,5557,0,0.0,no_history,index_rule_still_listed,Gap,Market capitalization changes.,,,,,,False,False,True
+GPU,2000-01-01,2001-11-07,463,0,0.0,no_history,unknown,,,,,,,,False,False,True
+GR,2000-01-01,2012-07-27,3162,0,0.0,no_history,acquired_or_merged,Goodrich Corporation,Goodrich was acquired by United Technologies.,,,,,,False,False,True
+GRA,2000-01-01,2000-12-11,238,0,0.0,no_history,index_rule_still_listed,WR Grace,Market capitalization changes.,,,,,,False,False,True
+GTW,2000-01-01,2006-08-01,1653,0,0.0,no_history,unknown,,,,,,,,False,False,True
+GX,2000-01-01,2001-10-10,443,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HAR,2006-02-01,2017-03-13,2796,0,0.0,no_history,acquired_or_merged,Harman International,Samsung Electronics acquired Harman International Industries.,,,,,,False,False,True
+HBI,2015-03-23,2021-12-20,1700,0,0.0,no_history,index_rule_still_listed,Hanesbrands,Market capitalization changes.,,,,,,False,False,True
+HCBK,2007-02-15,2015-11-02,2194,0,0.0,no_history,spin_off_or_restructure,Hudson City Bancorp,HPQ completed the corporate spin-off of Hewlett Packard Enterprise.,,,,,,False,False,True
+HCP,2008-03-31,2019-11-05,2922,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HCR,2000-01-01,2007-11-09,1975,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HES,2000-01-01,2025-07-23,6426,0,0.0,no_history,acquired_or_merged,Hess Corporation,Chevron acquired Hess.,,,,,,False,False,True
+HET,2000-01-01,2008-01-29,2028,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HFC,2018-06-18,2021-06-04,746,0,0.0,no_history,index_rule_still_listed,HollyFrontier,Market capitalization changes.,,,,,,False,False,True
+HI,2000-01-01,2003-03-31,812,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HM,2000-01-01,2001-12-17,490,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HMA,2001-11-07,2007-03-02,1336,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HNZ,2000-01-01,2013-06-07,3377,0,0.0,no_history,acquired_or_merged,Heinz,HNZ was acquired by a consortium.,,,,,,False,False,True
+HOLX,2016-03-30,2026-04-09,2521,0,0.0,no_history,acquired_or_merged,Hologic,Blackstone Inc. and TPG Inc. acquired Hologic.,,,,,,False,False,True
+HOT,2000-11-17,2016-09-23,3985,0,0.0,no_history,acquired_or_merged,Starwood Hotels and Resorts,MAR acquired Starwood Hotels,,,,,,False,False,True
+HPC,2000-01-01,2008-11-14,2231,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HRS,2008-09-22,2019-06-01,2691,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HSH,2000-01-01,2012-06-29,3143,0,0.0,no_history,unknown,,,,,,,,False,False,True
+HSP,2004-05-03,2015-09-03,2855,0,0.0,no_history,acquired_or_merged,Hospira,Hospira was acquired.,,,,,,False,False,True
+IAC,2006-12-01,2008-08-21,432,0,0.0,no_history,unknown,,,,,,,,False,False,True
+IGT,2001-09-04,2014-06-20,3217,0,0.0,no_history,index_rule_still_listed,International Game Technology,Market capitalization changes.,,,,,,False,False,True
+IKN,2000-01-01,2000-06-29,124,0,0.0,no_history,unknown,,,,,,,,False,False,True
+IMNX,2001-09-21,2002-07-16,204,0,0.0,no_history,unknown,,,,,,,,False,False,True
+INCLF,2000-01-01,2002-07-22,638,0,0.0,no_history,unknown,,,,,,,,False,False,True
+IPG,2000-01-01,2025-11-28,6516,0,0.0,no_history,acquired_or_merged,Interpublic Group,Omnicom Group acquired (The) Interpublic Group.,,,,,,False,False,True
+JCP,2000-01-01,2013-12-02,3500,0,0.0,no_history,unknown,,,,,,,,False,False,True
+JEC,2007-10-26,2019-12-10,3051,0,0.0,no_history,unknown,,,,,,,,False,False,True
+JHF,2001-06-29,2004-04-29,709,0,0.0,no_history,unknown,,,,,,,,False,False,True
+JNPR,2006-06-02,2025-07-09,4804,0,0.0,no_history,acquired_or_merged,Juniper Networks,Hewlett Packard Enterprise acquired Juniper Networks.,,,,,,False,False,True
+JNS,2000-07-13,2011-11-23,2860,0,0.0,no_history,index_rule_still_listed,Janus Capital Group,Market capitalization changes.,,,,,,False,False,True
+JNY,2001-12-17,2009-03-04,1814,0,0.0,no_history,index_rule_still_listed,Jones Apparel Group,Market capitalization changes.,,,,,,False,False,True
+JOS,2000-01-01,2000-05-10,89,0,0.0,no_history,unknown,,,,,,,,False,False,True
+JOY,2011-02-28,2015-10-08,1161,0,0.0,no_history,index_rule_still_listed,Joy Global,Market capitalization changes.,,,,,,False,False,True
+JP,2000-01-01,2006-04-03,1570,0,0.0,no_history,unknown,,,,,,,,False,False,True
+JWN,2000-01-01,2020-06-22,5149,0,0.0,no_history,index_rule_still_listed,Nordstrom,Market capitalization changes.,,,,,,False,False,True
+K,2000-01-01,2025-12-11,6525,0,0.0,no_history,acquired_or_merged,Kellanova,Mars Inc. acquired Kellanova.,,,,,,False,False,True
+KATE,2000-01-01,2008-12-02,2242,0,0.0,no_history,unknown,,,,,,,,False,False,True
+KM,2000-01-01,2002-01-17,511,0,0.0,no_history,unknown,,,,,,,,False,False,True
+KMG,2000-01-01,2006-08-11,1661,0,0.0,no_history,unknown,,,,,,,,False,False,True
+KORS,2013-11-13,2018-09-19,1220,0,0.0,no_history,unknown,,,,,,,,False,False,True
+KRB,2000-01-01,2006-01-03,1508,0,0.0,no_history,unknown,,,,,,,,False,False,True
+KRFT,2012-10-02,2015-07-06,691,0,0.0,no_history,acquired_or_merged,Kraft Foods,Kraft merged with Heinz.,,,,,,False,False,True
+KRI,2000-01-01,2006-06-28,1630,0,0.0,no_history,unknown,,,,,,,,False,False,True
+KSE,2000-08-21,2007-08-27,1762,0,0.0,no_history,acquired_or_merged,KeySpan,KeySpan was acquired by National Grid plc.,,,,,,False,False,True
+KSU,2000-01-01,2021-12-14,2288,0,0.0,no_history,acquired_or_merged,Kansas City Southern,Canadian Pacific acquired Kansas City Southern.,,,,,,False,False,True
+LDG,2000-01-01,2001-07-02,377,0,0.0,no_history,unknown,,,,,,,,False,False,True
+LEHMQ,2000-01-01,2008-09-17,2189,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+LLL,2004-12-01,2019-07-01,3669,0,0.0,no_history,acquired_or_merged,L3 Technologies,L3 was acquired by Harris Corporation.,,,,,,False,False,True
+LLTC,2000-04-03,2017-03-13,4261,0,0.0,no_history,acquired_or_merged,Linear Technology,Analog Devices acquired Linear Technology.,,,,,,False,False,True
+LM,2006-04-24,2016-12-02,2673,0,0.0,no_history,index_rule_still_listed,Legg Mason,Market capitalization changes.,,,,,,False,False,True
+LO,2008-06-11,2015-06-12,1763,0,0.0,no_history,acquired_or_merged,Lorillard Tobacco Company,Lorillard was acquired.,,,,,,False,False,True
+LSI,2000-01-01,2014-05-07,3607,0,0.0,no_history,acquired_or_merged,LSI Corporation,Avago acquired LSI.,,,,,,False,False,True
+LVLT,2014-11-05,2017-10-13,740,0,0.0,no_history,acquired_or_merged,Level 3 Communications,CenturyLink acquired Level 3 Communications.,,,,,,False,False,True
+LXK,2000-01-01,2012-10-01,3207,0,0.0,no_history,spin_off_or_restructure,Lexmark,Tyco completed the corporate spin-off of ADT.,,,,,,False,False,True
+MAY,2000-01-01,2005-08-29,1421,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MDP,2000-01-01,2011-01-04,2768,0,0.0,no_history,spin_off_or_restructure,Meredith Corp,Motorola completed the corporate spin-off of Motorola Mobility.,,,,,,False,False,True
+MDR,2000-01-01,2003-08-20,911,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MEA,2000-01-01,2002-01-30,519,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MEE,2000-01-01,2011-06-02,989,0,0.0,no_history,acquired_or_merged,Massey Energy,Alpha Natural Resources acquired Massey Energy.,,,,,,False,False,True
+MEL,2000-01-01,2007-07-02,1883,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MER,2000-01-01,2009-01-02,2263,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MERQ,2000-06-29,2006-01-04,1385,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+MFE,2008-12-23,2011-03-01,549,0,0.0,no_history,acquired_or_merged,McAfee,McAfee was acquired by Intel.,,,,,,False,False,True
+MHS,2003-08-20,2012-04-02,2170,0,0.0,no_history,acquired_or_merged,Medco Health Solutions,Medco was acquired by Express Scripts.,,,,,,False,False,True
+MIL,2000-01-01,2010-07-15,2648,0,0.0,no_history,acquired_or_merged,Millipore,Millipore was acquired by Merck KGaA.,,,,,,False,False,True
+MJN,2009-12-21,2017-06-15,1883,0,0.0,no_history,acquired_or_merged,Mead Johnson,Reckitt Benckiser acquired Mead Johnson Nutrition.,,,,,,False,False,True
+MKG,2000-01-01,2000-10-18,201,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MMC,2000-01-01,2026-01-14,6547,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MNK,2014-08-19,2017-07-26,739,0,0.0,no_history,index_rule_still_listed,Mallinckrodt,Market capitalization changes.,,,,,,False,False,True
+MOLX,2000-01-01,2013-12-09,3505,0,0.0,no_history,acquired_or_merged,Molex,MOLX was acquired by Koch Industries.,,,,,,False,False,True
+MON,2002-08-14,2018-06-07,3981,0,0.0,no_history,acquired_or_merged,Monsanto,Bayer acquired Monsanto.,,,,,,False,False,True
+MRO,2000-01-01,2024-11-26,6265,0,0.0,no_history,acquired_or_merged,Marathon Oil,ConocoPhillips acquired Marathon Oil.,,,,,,False,False,True
+MTLQQ,2000-01-01,2009-06-03,2367,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+MWV,2000-01-01,2015-07-02,3898,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MWW,2001-06-04,2011-12-19,2653,0,0.0,no_history,index_rule_still_listed,Monster Worldwide,Market capitalization changes.,,,,,,False,False,True
+MXIM,2000-05-10,2021-08-30,2544,0,0.0,no_history,acquired_or_merged,Maxim Integrated,Analog Devices acquired Maxim Integrated Products.,,,,,,False,False,True
+MYG,2000-01-01,2006-04-03,1570,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MYL,2004-04-23,2020-11-17,4172,0,0.0,no_history,unknown,,,,,,,,False,False,True
+MZIAQ,2000-01-01,2000-06-29,124,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+NAV,2000-01-01,2006-12-20,1752,0,0.0,no_history,unknown,,,,,,,,False,False,True
+NBL,2007-10-08,2020-10-12,3276,0,0.0,no_history,acquired_or_merged,Noble Energy,Chevron acquired Noble Energy.,,,,,,False,False,True
+NCC,2000-01-01,2009-01-02,2263,0,0.0,no_history,unknown,,,,,,,,False,False,True
+NCE,2000-01-01,2000-08-21,160,0,0.0,no_history,unknown,,,,,,,,False,False,True
+NCR,2000-01-04,2007-10-01,1945,0,0.0,no_history,spin_off_or_restructure,NCR Corporation,NCR Corporation completed the corporate spin-off of Teradata.,,,,,,False,False,True
+NFB,2002-07-17,2006-12-01,1104,0,0.0,no_history,unknown,,,,,,,,False,False,True
+NGH,2000-01-01,2000-12-12,239,0,0.0,no_history,unknown,,,,,,,,False,False,True
+NLOK,2019-11-05,2022-11-08,758,0,0.0,no_history,unknown,,,,,,,,False,False,True
+NLSN,2013-07-09,2022-10-12,2333,0,0.0,no_history,acquired_or_merged,Nielsen Holdings,Elliott Investment Management acquired Nielsen Holdings.,,,,,,False,False,True
+NLV,2000-01-01,2000-01-06,3,0,0.0,no_history,unknown,,,,,,,,False,False,True
+NMK,2000-01-01,2002-02-01,521,0,0.0,no_history,unknown,,,,,,,,False,False,True
+NOVL,2000-01-01,2011-04-28,2847,0,0.0,no_history,acquired_or_merged,Novell,Novell was acquired by private equity firms.,,,,,,False,False,True
+NRTLQ,2000-01-01,2002-07-22,638,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+NSM,2000-01-01,2011-09-26,2951,0,0.0,no_history,acquired_or_merged,National Semiconductor,National Semi was acquired by Texas Instruments.,,,,,,False,False,True
+NVLS,2000-06-19,2012-06-05,3009,0,0.0,no_history,acquired_or_merged,Novellus Systems,Novellus Systems was acquired by Lam Research.,,,,,,False,False,True
+NXTL,2000-01-01,2005-08-15,1411,0,0.0,no_history,unknown,,,,,,,,False,False,True
+NYX,2007-10-25,2013-11-13,1524,0,0.0,no_history,acquired_or_merged,NYSE Euronext,ICE Exchange acquired NYSE Euronext.,,,,,,False,False,True
+OAT,2000-01-01,2001-08-03,400,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ODP,2000-01-01,2010-12-20,2758,0,0.0,no_history,index_rule_still_listed,Office Depot,Market capitalization changes.,,,,,,False,False,True
+OK,2000-01-01,2001-04-02,314,0,0.0,no_history,unknown,,,,,,,,False,False,True
+OMX,2000-01-01,2008-06-23,2129,0,0.0,no_history,index_rule_still_listed,OfficeMax,Market capitalization changes.,,,,,,False,False,True
+ONE,2000-01-01,2004-07-01,1128,0,0.0,no_history,unknown,,,,,,,,False,False,True
+OWENQ,2000-01-01,2000-10-02,189,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+PALM,2000-07-28,2002-08-14,511,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PBCT,2008-11-13,2022-04-04,3369,0,0.0,no_history,acquired_or_merged,People's United Financial,M&T Bank acquired People's United Financial.,,,,,,False,False,True
+PBG,2001-05-14,2010-03-01,2210,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PBY,2000-01-01,2000-04-03,63,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PCH,2000-01-01,2001-07-09,381,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PCP,2007-06-01,2016-02-01,2182,0,0.0,no_history,unclassified,Precision Castparts Corporation,,,,,,,False,False,True
+PDCO,2005-10-11,2018-03-19,3129,0,0.0,no_history,index_rule_still_listed,Patterson Companies,Market capitalization changes.,,,,,,False,False,True
+PDG,2000-01-01,2002-07-22,638,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PEAK,2019-11-05,2024-03-04,1087,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PETM,2012-10-05,2015-03-12,609,0,0.0,no_history,acquired_or_merged,PetSmart,PetSmart was acquired by private equity consortium.,,,,,,False,False,True
+PGL,2000-01-01,2007-02-22,1793,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PGN,2000-01-01,2012-07-02,3144,0,0.0,no_history,acquired_or_merged,Progress Energy,Progress Energy was acquired by Duke Energy.,,,,,,False,False,True
+PHA,2000-01-01,2003-04-16,824,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PKI,2000-01-01,2023-05-16,5879,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PLL,2000-01-01,2015-08-31,3939,0,0.0,no_history,acquired_or_merged,Pall Corporation,Pall was acquired.,,,,,,False,False,True
+PMCS,2001-08-03,2007-07-02,1483,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PNU,2000-01-01,2000-04-03,63,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PRD,2000-01-01,2000-12-12,239,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PSFT,2000-01-01,2004-12-29,1253,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PTV,2000-01-01,2010-11-17,2736,0,0.0,no_history,acquired_or_merged,Pactiv,Reynolds Group Holdings acquired Pactiv.,,,,,,False,False,True
+PVN,2000-01-01,2005-10-03,1445,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PWJ,2000-01-01,2000-11-06,214,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PX,2000-01-01,2018-10-31,4738,0,0.0,no_history,unknown,,,,,,,,False,False,True
+PXD,2008-09-24,2024-05-08,3931,0,0.0,no_history,acquired_or_merged,Pioneer Natural Resources,ExxonMobil acquired Pioneer Natural Resources.,,,,,,False,False,True
+QEP,2010-07-01,2015-07-01,1258,0,0.0,no_history,spin_off_or_restructure,QEP Resources,Baxter completed the corporate spin-off of Baxalta.,,,,,,False,False,True
+QLGC,2000-12-12,2011-01-18,2538,0,0.0,no_history,unknown,,,,,,,,False,False,True
+QTRN,2000-01-01,2003-09-26,937,0,0.0,no_history,acquired_or_merged,Quintiles Transnational,Acquired.,,,,,,False,False,True
+RAD,2000-01-01,2000-07-27,143,0,0.0,no_history,index_rule_still_listed,Rite Aid,Market capitalization changes.,,,,,,False,False,True
+RAI,2002-09-04,2017-07-25,3748,0,0.0,no_history,acquired_or_merged,Reynolds American,British American Tobacco (NYSE MKT:BTI) acquired Reynolds American.,,,,,,False,False,True
+RATL,2002-02-01,2003-02-21,265,0,0.0,no_history,unknown,,,,,,,,False,False,True
+RBK,2000-01-01,2006-02-01,1528,0,0.0,no_history,unknown,,,,,,,,False,False,True
+RDC,2000-01-01,2014-08-19,3679,0,0.0,no_history,index_rule_still_listed,Rowan Companies,Market capitalization changes.,,,,,,False,False,True
+RDS.A,2000-01-01,2002-07-22,638,0,0.0,no_history,unknown,,,,,,,,False,False,True
+RE,2017-06-19,2023-07-10,1523,0,0.0,no_history,unknown,,,,,,,,False,False,True
+RHT,2009-07-27,2019-07-15,2508,0,0.0,no_history,acquired_or_merged,Red Hat,IBM acquired Red Hat.,,,,,,False,False,True
+RLM,2000-01-01,2000-05-04,85,0,0.0,no_history,unknown,,,,,,,,False,False,True
+RNB,2000-01-01,2000-01-03,0,0,,no_history,unknown,,,,,,,,False,False,True
+ROH,2000-01-01,2009-04-02,2325,0,0.0,no_history,unknown,,,,,,,,False,False,True
+RRD,2000-01-01,2012-12-12,3256,0,0.0,no_history,index_rule_still_listed,RR Donnelley,Market capitalization changes.,,,,,,False,False,True
+RSHCQ,2000-01-01,2011-07-01,2892,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+RTN,2000-01-01,2020-04-06,5096,0,0.0,no_history,acquired_or_merged,Raytheon Company,United Technologies corporate spin-off of Otis and Carrier and acquired Raytheon Company.,,,,,,False,False,True
+RX,2000-01-01,2010-02-26,2552,0,0.0,no_history,acquired_or_merged,IMS Health,IMS was acquired by affiliates of TPG Capital,,,,,,False,False,True
+SAF,2000-01-01,2008-09-23,2193,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SAPE,2000-05-05,2002-05-13,504,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SBL,2000-12-11,2007-01-10,1526,0,0.0,no_history,acquired_or_merged,Symbol Technologies,Symbol Technologies was acquired by Motorola.,,,,,,False,False,True
+SCG,2009-01-02,2019-01-02,2516,0,0.0,no_history,acquired_or_merged,SCANA,Dominion Energy acquired SCANA.,,,,,,False,False,True
+SEBL,2000-05-05,2006-02-01,1442,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SEE,2000-01-01,2023-12-18,6028,0,0.0,no_history,index_rule_still_listed,Sealed Air,Market capitalization changes.,,,,,,False,False,True
+SFA,2000-01-01,2006-02-27,1545,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SGID,2000-01-01,2000-06-21,118,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SIAL,2000-01-01,2015-11-18,3995,0,0.0,no_history,acquired_or_merged,Sigma-Aldrich,Sigma-Aldrich was acquired by Merck KGaA.,,,,,,False,False,True
+SIVB,2018-03-19,2023-03-15,1256,0,0.0,no_history,delisted_other,SVB Financial Group,"The FDIC placed SVB's main subsidiary, Silicon Valley Bank, into receivership.",,,,,,False,False,True
+SLR,2000-01-01,2007-10-02,1947,0,0.0,no_history,acquired_or_merged,Solectron,Solectron was acquired by Flextronics.,,,,,,False,False,True
+SMI,2000-01-01,2000-12-12,239,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SMS,2000-01-01,2000-06-08,109,0,0.0,no_history,acquired_or_merged,Shared Medical Systems,Siemens AG acquired Shared Medical Systems.,,,,,,False,False,True
+SNI,2008-07-01,2018-03-07,2437,0,0.0,no_history,acquired_or_merged,Scripps Networks Interactive,Discovery Communications acquired Scripps Networks Interactive.,,,,,,False,False,True
+SNV,2000-01-01,2008-01-02,2010,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SOTR,2000-01-01,2004-11-01,1213,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SOV,2004-07-01,2009-01-30,1154,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SRCL,2008-11-19,2018-12-03,2526,0,0.0,no_history,index_rule_still_listed,Stericycle,Market capitalization changes.,,,,,,False,False,True
+STJ,2000-01-01,2017-01-05,4279,0,0.0,no_history,acquired_or_merged,St Jude Medical,Abbott Laboratories acquired St. Jude Medical.,,,,,,False,False,True
+STR,2006-12-01,2010-07-01,900,0,0.0,no_history,spin_off_or_restructure,Questar,"Company split. QEP retained, but ticker changed.",,,,,,False,False,True
+SUNEQ,2007-05-31,2011-12-19,1149,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+SVU,2000-01-01,2012-05-01,3101,0,0.0,no_history,spin_off_or_restructure,Supervalu,ConocoPhillips completed the corporate spin-off of Phillips 66.,,,,,,False,False,True
+SWN,2008-06-06,2017-04-04,2222,0,0.0,no_history,acquired_or_merged,Southwestern Energy,"HPE completed the corporate spin-off of Everett, merged with CSC to form DXC Technology.",,,,,,False,False,True
+SWY,2000-01-01,2015-01-27,3789,0,0.0,no_history,acquired_or_merged,Safeway,Safeway was acquired by a private equity consortium.,,,,,,False,False,True
+SXCL,2000-01-01,2001-05-14,343,0,0.0,no_history,unknown,,,,,,,,False,False,True
+SYMC,2003-03-31,2019-11-05,4180,0,0.0,no_history,unknown,,,,,,,,False,False,True
+TEG,2007-02-22,2015-06-30,2103,0,0.0,no_history,acquired_or_merged,Integrys Energy Group,Integrys was acquired.,,,,,,False,False,True
+TGNA,2000-01-01,2017-06-02,4381,0,0.0,no_history,spin_off_or_restructure,Tegna,TGNA completed the corporate spin-off of Cars.com.,,,,,,False,False,True
+TIE,2007-10-29,2012-12-24,1298,0,0.0,no_history,acquired_or_merged,Titanium Metals,TIE was acquired by Precision Cast Parts.,,,,,,False,False,True
+TIF,2000-06-21,2021-01-07,5169,0,0.0,no_history,acquired_or_merged,Tiffany & Co,LVMH Moet Hennessy-Louis Vuitton SE acquired Tiffany & Co.,,,,,,False,False,True
+TIN,2000-01-01,2007-12-31,2009,0,0.0,no_history,unknown,,,,,,,,False,False,True
+TLAB,2000-01-01,2011-12-21,3012,0,0.0,no_history,spin_off_or_restructure,Tellabs,Expedia completed the corporate spin-off of TripAdvisor.,,,,,,False,False,True
+TMC.A,2000-01-01,2000-06-13,112,0,0.0,no_history,unknown,,,,,,,,False,False,True
+TMK,2000-01-01,2019-08-08,4930,0,0.0,no_history,unknown,,,,,,,,False,False,True
+TNB,2000-01-01,2004-08-03,1150,0,0.0,no_history,unknown,,,,,,,,False,False,True
+TOY,2000-01-01,2005-07-22,1395,0,0.0,no_history,unknown,,,,,,,,False,False,True
+TRB,2000-01-01,2007-12-21,2004,0,0.0,no_history,acquired_or_merged,Tribune Media,Tribune was acquired.,,,,,,False,False,True
+TRW,2000-01-01,2002-12-12,739,0,0.0,no_history,unknown,,,,,,,,False,False,True
+TSG,2000-03-16,2007-04-02,1769,0,0.0,no_history,acquired_or_merged,Sabre Corporation,Sabre was acquired.,,,,,,False,False,True
+TSS,2008-01-02,2019-09-23,2951,0,0.0,no_history,acquired_or_merged,TSYS,Global Payments acquired TSS.,,,,,,False,False,True
+TUP,2000-01-01,2004-03-25,1061,0,0.0,no_history,unknown,,,,,,,,False,False,True
+TWC,2009-03-30,2016-05-18,1797,0,0.0,no_history,acquired_or_merged,Time Warner Cable,Time Warner Cable was acquired by Charter.,,,,,,False,False,True
+TWTR,2018-06-07,2022-11-01,1109,0,0.0,no_history,acquired_or_merged,Twitter,Elon Musk acquired Twitter.,,,,,,False,False,True
+TWX,2000-01-01,2018-06-15,4642,0,0.0,no_history,acquired_or_merged,Time Warner,AT&T acquired Time Warner.,,,,,,False,False,True
+TXU,2000-01-01,2007-10-10,1953,0,0.0,no_history,unknown,,,,,,,,False,False,True
+UAWGQ,2000-01-01,2002-05-15,592,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+UCM,2000-01-01,2000-10-23,204,0,0.0,no_history,unknown,,,,,,,,False,False,True
+UMG,2000-01-01,2000-06-15,114,0,0.0,no_history,unknown,,,,,,,,False,False,True
+UPR,2000-01-01,2000-07-17,135,0,0.0,no_history,unknown,,,,,,,,False,False,True
+USW,2000-01-01,2000-07-03,126,0,0.0,no_history,unknown,,,,,,,,False,False,True
+UTX,2000-01-01,2020-04-03,5095,0,0.0,no_history,unknown,,,,,,,,False,False,True
+UVN,2001-02-07,2007-03-29,1541,0,0.0,no_history,unknown,,,,,,,,False,False,True
+VAR,2007-02-12,2021-04-20,3571,0,0.0,no_history,acquired_or_merged,Varian Medical Systems,Siemens Healthineers acquired Varian Medical Systems.,,,,,,False,False,True
+VIAB,2006-01-03,2019-12-05,3505,0,0.0,no_history,acquired_or_merged,Viacom,CBS acquired Viacom to form ViacomCBS.,,,,,,False,False,True
+VIAC,2019-12-05,2022-02-17,555,0,0.0,no_history,unknown,,,,,,,,False,False,True
+VSTNQ,2000-06-29,2006-01-03,1384,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+VTSS,2000-12-12,2002-08-21,421,0,0.0,no_history,unknown,,,,,,,,False,False,True
+WAMUQ,2000-01-01,2008-09-30,2198,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+WBA,2000-01-01,2025-08-28,6452,0,0.0,no_history,acquired_or_merged,Walgreens Boots Alliance,Sycamore Partners acquired Walgreen Boots Alliance.,,,,,,False,False,True
+WCG,2018-09-17,2020-01-28,342,0,0.0,no_history,acquired_or_merged,WellCare,Centene acquired Wellcare.,,,,,,False,False,True
+WCOEQ,2000-01-01,2002-05-15,592,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+WFM,2006-01-03,2017-08-28,2933,0,0.0,no_history,acquired_or_merged,Whole Foods Market,Amazon acquired Whole Foods Market.,,,,,,False,False,True
+WFT,2005-07-22,2009-02-26,905,0,0.0,no_history,unknown,,,,,,,,False,False,True
+WIN,2006-07-18,2015-04-07,2194,0,0.0,no_history,index_rule_still_listed,Windstream Communications,Market capitalization changes.,,,,,,False,False,True
+WLA,2000-01-01,2000-06-20,117,0,0.0,no_history,unknown,,,,,,,,False,False,True
+WLL,2000-01-01,2002-02-11,527,0,0.0,no_history,unknown,,,,,,,,False,False,True
+WLP,2000-01-01,2004-12-01,1234,0,0.0,no_history,unknown,,,,,,,,False,False,True
+WLTW,2016-01-05,2022-01-10,1515,0,0.0,no_history,rename_or_reorg,Willis Towers Watson,Willis Towers Watson changed its ticker symbol from WLTW to WTW.,,,,,,False,False,True
+WNDXQ,2000-01-01,2004-12-03,1236,0,0.0,no_history,bankruptcy,,,,,,,,False,False,True
+WPX,2012-01-03,2014-03-24,557,0,0.0,no_history,index_rule_still_listed,WPX Energy,Market capitalization changes.,,,,,,False,False,True
+WRK,2015-07-02,2024-07-08,2267,0,0.0,no_history,unknown,,,,,,,,False,False,True
+WWY,2000-01-01,2008-10-07,2203,0,0.0,no_history,unknown,,,,,,,,False,False,True
+WYE,2000-01-01,2009-10-16,2462,0,0.0,no_history,unknown,,,,,,,,False,False,True
+WYND,2006-08-01,2018-05-31,2978,0,0.0,no_history,unknown,,,,,,,,False,False,True
+X,2000-01-01,2014-07-02,3646,0,0.0,no_history,index_rule_still_listed,United States Steel,Market capitalization changes.,,,,,,False,False,True
+XEC,2014-06-20,2020-03-03,1434,0,0.0,no_history,acquired_or_merged,Cimarex Energy,"Gardner Denver acquired Ingersoll Rand's industrial businesses then changed its name to the ""new"" Ingersoll Rand Inc.",,,,,,False,False,True
+XL,2001-09-04,2018-09-12,4282,0,0.0,no_history,acquired_or_merged,XL Group,XL was acquired by Axa.,,,,,,False,False,True
+XLNX,2000-01-01,2022-02-15,5566,0,0.0,no_history,acquired_or_merged,Xilinx,Advanced Micro Devices acquired Xilinx.,,,,,,False,False,True
+XTO,2004-12-29,2010-06-28,1383,0,0.0,no_history,acquired_or_merged,XTO Energy,XTO was acquired by ExxonMobil.,,,,,,False,False,True
+YNR,2000-01-06,2000-10-03,187,0,0.0,no_history,unknown,,,,,,,,False,False,True
+ABI,2000-01-01,2008-11-24,2237,0,0.0,ticker_reused_no_overlap,unknown,,,VictoryShares Pioneer Asset-Based Inc ETF,NGM,2025-06-26,2026-11-10,,False,False,True
+ABX,2000-01-01,2002-07-22,638,0,0.0,ticker_reused_no_overlap,unknown,,,"Abacus Global Management, Inc.",NYQ,2020-09-14,2026-11-10,,False,False,True
+ACV,2000-01-01,2006-11-17,1730,0,0.0,ticker_reused_no_overlap,unknown,,,Virtus Diversified Income & Convertible Fund,NYQ,2015-05-21,2026-11-10,,False,False,True
+ADCT,2000-01-01,2007-07-02,1883,0,0.0,ticker_reused_no_overlap,rename_or_reorg,ADC Telecommunications,Discover Financial Services was listed on New York Stock Exchange.,ADC Therapeutics SA,NYQ,2020-05-18,2026-11-10,,False,False,True
+ADT,2012-10-02,2016-05-02,899,0,0.0,ticker_reused_no_overlap,acquired_or_merged,ADT,ADT was acquired by Apollo.,ADT Inc.,NYQ,2018-01-19,2026-11-10,,False,False,True
+AM,2000-01-01,2004-05-03,1087,0,0.0,ticker_reused_no_overlap,unknown,,,Antero Midstream Corporation,NYQ,2017-05-04,2026-11-10,,False,False,True
+APC,2000-01-01,2019-08-09,4931,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Anadarko Petroleum,Occidental Petroleum acquired Anadarko Petroleum.,ARKO Petroleum Corp.,NCM,2026-02-12,2026-11-10,,False,False,True
+ASO,2000-01-01,2006-11-06,1721,0,0.0,ticker_reused_no_overlap,unknown,,,"Academy Sports and Outdoors, Inc.",NMS,2020-10-02,2026-11-10,,False,False,True
+AT,2000-01-01,2007-11-19,1981,0,0.0,ticker_reused_no_overlap,unknown,,,Defiance Robotics Actuators ETF,BTS,2026-09-17,2026-11-10,,False,False,True
+AV,2000-10-02,2007-10-26,1776,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Avaya,Avaya was acquired.,Corgi Aerospace & Commercial Aviation ETF,BTS,2026-05-06,2026-11-10,,False,False,True
+BBBY,2000-01-01,2017-07-26,4418,0,0.0,ticker_reused_no_overlap,index_rule_still_listed,Bed Bath & Beyond,Market capitalization changes.,"Bed Bath & Beyond, Inc.",NYQ,2026-07-17,2026-11-09,,False,False,True
+BEAM,2000-01-01,2014-05-01,3603,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Suntory Global Spirits,Beam was acquired by Suntory.,Beam Therapeutics Inc.,NMS,2020-02-06,2026-11-10,,False,False,True
+BUD,2000-01-01,2008-11-18,2233,0,0.0,ticker_reused_no_overlap,unknown,,,Anheuser-Busch InBev SA/NV,NYQ,2009-07-01,2026-11-10,,False,False,True
+CAM,2008-01-29,2016-04-04,2059,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Cameron International,Schlumberger acquired Cameron.,AB California Intermediate Municipal ETF,PCX,2025-10-06,2026-11-10,,False,False,True
+CG,2000-01-01,2000-11-02,212,0,0.0,ticker_reused_no_overlap,unknown,,,The Carlyle Group Inc.,NMS,2012-05-03,2026-11-10,,False,False,True
+CHA,2000-01-01,2000-06-19,116,0,0.0,ticker_reused_no_overlap,unknown,,,Chagee Holdings Limited,NMS,2025-04-17,2026-11-10,,False,False,True
+CNXT,2000-01-31,2002-06-26,602,0,0.0,ticker_reused_no_overlap,unknown,,,VanEck ChiNext Innovators ETF,PCX,2014-07-24,2026-11-10,,False,False,True
+COMS,2000-01-01,2000-07-28,144,0,0.0,ticker_reused_no_overlap,unknown,,,COMSovereign Holding Corp.,PNK,2008-08-15,2026-11-09,,False,False,True
+CR,2000-01-01,2004-12-20,1247,0,0.0,ticker_reused_no_overlap,unknown,,,Crane Company,NYQ,2023-03-29,2026-11-10,,False,False,True
+CSRA,2015-11-30,2018-04-04,589,0,0.0,ticker_reused_no_overlap,acquired_or_merged,CSRA,General Dynamics acquired CSRA.,Cohen & Steers Real Assets Active ETF,PCX,2026-08-12,2026-11-10,,False,False,True
+DYN,2000-10-03,2009-12-21,2317,0,0.0,ticker_reused_no_overlap,index_rule_still_listed,Dynegy,Market capitalization changes.,"Dyne Therapeutics, Inc.",NMS,2020-09-17,2026-11-10,,False,False,True
+EC,2000-01-01,2006-06-06,1614,0,0.0,ticker_reused_no_overlap,unknown,,,Ecopetrol S.A.,NYQ,2008-09-18,2026-11-10,,False,False,True
+EFU,2000-01-01,2000-11-02,212,0,0.0,ticker_reused_no_overlap,unknown,,,ProShares UltraShort MSCI EAFE,PCX,2007-10-25,2026-11-10,,False,False,True
+EMC,2000-01-01,2016-09-07,4196,0,0.0,ticker_reused_no_overlap,acquired_or_merged,EMC Corporation,Dell acquired EMC.,Global X Emerging Markets Great Consumer ETF,PCX,2023-05-15,2026-11-10,,False,False,True
+EQ,2006-05-18,2009-07-01,785,0,0.0,ticker_reused_no_overlap,unknown,,,"Equillium, Inc.",NCM,2018-10-12,2026-11-10,,False,False,True
+ETS,2000-01-01,2001-08-06,401,0,0.0,ticker_reused_no_overlap,unknown,,,Elite Express Holding Inc.,NCM,2025-08-21,2026-11-10,,False,False,True
+G,2000-01-01,2005-10-03,1445,0,0.0,ticker_reused_no_overlap,unknown,,,Genpact Limited,NYQ,2007-08-02,2026-11-10,,False,False,True
+GDT,2000-01-01,2006-04-24,1584,0,0.0,ticker_reused_no_overlap,unknown,,,WisdomTree Efficient TIPS Plus Gold Fund,BTS,2026-01-22,2026-11-10,,False,False,True
+GP,2000-01-01,2005-12-20,1500,0,0.0,ticker_reused_no_overlap,unknown,,,GreenPower Motor Company Inc.,NCM,2020-08-28,2026-11-10,,False,False,True
+GTE,2000-01-01,2000-07-03,126,0,0.0,ticker_reused_no_overlap,unknown,,,Gran Tierra Energy Inc.,ASE,2005-12-21,2026-11-10,,False,False,True
+H,2000-01-01,2007-04-10,548,0,0.0,ticker_reused_no_overlap,unknown,,,Hyatt Hotels Corporation,NYQ,2009-11-05,2026-11-10,,False,False,True
+INFO,2017-06-02,2022-03-02,1195,0,0.0,ticker_reused_no_overlap,acquired_or_merged,IHS Markit,S&P Global acquired IHS Markit.,Harbor PanAgora Dynamic Large Cap Core ETF,NYQ,2024-10-10,2026-11-10,,False,False,True
+JAVA,2000-01-01,2010-01-27,2531,0,0.0,ticker_reused_no_overlap,unknown,,,JPMorgan Active Value ETF,PCX,2021-10-05,2026-11-10,,False,False,True
+LB,2000-01-01,2021-08-03,5430,0,0.0,ticker_reused_no_overlap,unknown,,,LandBridge Corporation,NYQ,2024-06-28,2026-11-10,,False,False,True
+LIFE,2008-11-24,2014-01-24,1299,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Life Technologies,Life Technologies was acquired by Thermo Fisher Scientific.,Ethos Technologies Inc.,NMS,2026-01-29,2026-11-10,,False,False,True
+LU,2000-01-01,2006-12-01,1739,0,0.0,ticker_reused_no_overlap,unknown,,,Lufax Holding Ltd,NYQ,2020-10-30,2026-11-10,,False,False,True
+MEDI,2000-06-16,2007-06-01,1747,0,0.0,ticker_reused_no_overlap,unknown,,,Harbor Health Care ETF,PCX,2022-11-17,2026-11-10,,False,False,True
+MI,2002-02-11,2011-07-06,2367,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Marshall & Ilsley,Marshall & Ilsley was acquired by Bank of Montreal.,NFT Limited,ASE,2015-11-25,2026-11-10,,False,False,True
+MIR,2000-01-01,2003-07-17,676,0,0.0,ticker_reused_no_overlap,unknown,,,"Mirion Technologies, Inc.",NYQ,2020-08-20,2026-11-10,,False,False,True
+MMI,2011-01-04,2012-05-22,348,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Motorola Mobility,Motorola Mobility was acquired by Google.,"Marcus & Millichap, Inc.",NYQ,2013-10-31,2026-11-10,,False,False,True
+NE,2001-01-16,2015-07-20,3192,0,0.0,ticker_reused_no_overlap,spin_off_or_restructure,Noble Corporation,eBay completed the corporate spin-off of PayPal.,Noble Corporation plc,NYQ,2021-06-09,2026-11-10,,False,False,True
+NFX,2010-12-20,2019-02-15,2052,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Newfield Exploration,Encana acquired Newfield Exploration.,Corgi NFLX 2x Daily ETF,BTS,2026-07-07,2026-11-10,,False,False,True
+NSI,2000-01-01,2001-12-03,480,0,0.0,ticker_reused_no_overlap,unknown,,,National Security Emerging Markets Index ETF,NGM,2023-12-07,2026-11-10,,False,False,True
+PCL,2002-01-17,2016-02-22,3547,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Plum Creek Timber,Weyerhaeuser acquired Plum Creek Timber.,PGIM Corporate Bond 10+ Year ETF,BTS,2025-08-05,2026-11-10,,False,False,True
+PCS,2000-01-01,2004-04-23,1081,0,0.0,ticker_reused_no_overlap,acquired_or_merged,MetroPCS,A majority of MetroPCS was acquired by T-Mobile.,PGIM Corporate Bond 0-5 Year ETF,BTS,2025-08-01,2026-11-10,,False,False,True
+PD,2000-01-01,2007-03-20,1811,0,0.0,ticker_reused_no_overlap,unknown,,,"PagerDuty, Inc.",NYQ,2019-04-11,2026-11-10,,False,False,True
+POM,2007-11-09,2016-03-24,2106,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Pepco Holdings,Exelon acquired Pepco.,Pomdoctor Limited,NGM,2025-10-08,2026-11-10,,False,False,True
+PWER,2000-10-23,2005-03-14,1100,0,0.0,ticker_reused_no_overlap,unknown,,,Nomura Energy Transition ETF,PCX,2023-11-29,2026-11-10,,False,False,True
+RAL,2000-01-01,2001-12-13,488,0,0.0,ticker_reused_no_overlap,unknown,,,Ralliant Corporation,NYQ,2025-06-25,2026-11-10,,False,False,True
+RML,2000-01-01,2000-12-12,239,0,0.0,ticker_reused_no_overlap,unknown,,,Resolution Minerals Ltd,NCM,2026-09-09,2026-11-10,,False,False,True
+S,2000-01-01,2013-07-09,3398,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Sprint Nextel,Softbank consortium purchase resulted in public float below 50%.,"SentinelOne, Inc.",NYQ,2021-06-30,2026-11-10,,False,False,True
+SATS,2026-03-23,2026-06-24,64,0,0.0,ticker_reused_no_overlap,unknown,,,"Strive, Inc.",NGM,2026-10-20,2026-11-10,,False,False,True
+SBNY,2021-12-20,2023-03-15,309,0,0.0,ticker_reused_no_overlap,delisted_other,Signature Bank,The FDIC placed Signature Bank into FDIC Receivership.,Signature Bank,PNK,2024-08-15,2026-11-09,,False,False,True
+SDS,2002-07-22,2005-08-12,772,0,0.0,ticker_reused_no_overlap,unknown,,,ProShares UltraShort S&P500,PCX,2006-07-13,2026-11-10,,False,False,True
+SE,2007-01-03,2017-02-27,2555,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Spectra Energy,SE was acquired by ENB,Sea Limited,NYQ,2017-10-20,2026-11-10,,False,False,True
+SEG,2000-01-01,2000-11-22,226,0,0.0,ticker_reused_no_overlap,unknown,,,Seaport Entertainment Group Inc.,NYQ,2024-07-30,2026-11-10,,False,False,True
+SGP,2000-01-01,2009-11-04,2475,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Schering-Plough,Schering-Plough was acquired by Merck & Co.,"SpyGlass Pharma, Inc.",NMS,2026-02-06,2026-11-10,,False,False,True
+SHLD,2005-03-28,2012-09-05,1876,0,0.0,ticker_reused_no_overlap,index_rule_still_listed,Sears Holdings,SHLD below public float threshold.,Global X Defense Tech ETF,PCX,2023-09-14,2026-11-10,,False,False,True
+SPLS,2000-01-01,2017-09-13,4452,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Staples,Sycamore Partners acquired Staples.,PIMCO US Stocks PLUS Active Bond Exchange Traded Fund,BTS,2026-01-16,2026-11-10,,False,False,True
+STI,2000-01-01,2019-12-09,5015,0,0.0,ticker_reused_no_overlap,acquired_or_merged,SunTrust Banks,BB&T acquired SunTrust to form Truist Financial.,"Solidion Technology, Inc.",NCM,2022-05-02,2026-11-10,,False,False,True
+SUB,2000-01-01,2001-03-01,292,0,0.0,ticker_reused_no_overlap,unknown,,,iShares Short-Term National Muni Bond ETF,PCX,2008-11-19,2026-11-10,,False,False,True
+TE,2001-10-10,2016-07-01,3707,0,0.0,ticker_reused_no_overlap,acquired_or_merged,TECO Energy,TECO Energy was acquired by EMA.,T1 Energy Inc.,NYQ,2020-01-10,2026-11-10,,False,False,True
+TEK,2000-01-01,2007-11-16,1980,0,0.0,ticker_reused_no_overlap,unknown,,,iShares Technology Opportunities Active ETF,PCX,2024-10-22,2026-11-10,,False,False,True
+TMC,2000-01-01,2000-06-13,112,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Times Mirror,Tribune Co. acquired Times Mirror.,TMC the metals company Inc.,NMS,2021-09-10,2026-11-10,,False,False,True
+TOS,2000-01-01,2001-09-17,426,0,0.0,ticker_reused_no_overlap,unknown,,,Twin Oak Strategic Solutions ETF,BTS,2026-01-29,2026-11-10,,False,False,True
+TX,2000-01-01,2001-10-10,443,0,0.0,ticker_reused_no_overlap,unknown,,,Ternium S.A.,NYQ,2006-02-01,2026-11-10,,False,False,True
+UCL,2000-01-01,2005-08-11,1409,0,0.0,ticker_reused_no_overlap,unknown,,,uCloudlink Group Inc.,NGM,2020-06-10,2026-11-10,,False,False,True
+UK,2000-01-01,2001-02-07,277,0,0.0,ticker_reused_no_overlap,unknown,,,Ucommune International Ltd,NCM,2019-11-07,2026-11-10,,False,False,True
+UN,2000-01-01,2002-07-22,638,0,0.0,ticker_reused_no_overlap,unknown,,,Corgi UNH 2x Daily ETF,BTS,2026-07-07,2026-11-10,,False,False,True
+UPC,2000-01-01,2004-07-01,1128,0,0.0,ticker_reused_no_overlap,unknown,,,Universe Pharmaceuticals INC,NCM,2021-03-23,2026-11-10,,False,False,True
+UST,2000-01-01,2009-01-06,2265,0,0.0,ticker_reused_no_overlap,unknown,,,ProShares Ultra 7-10 Year Treasury,PCX,2010-02-02,2026-11-10,,False,False,True
+VO,2000-01-01,2000-12-11,238,0,0.0,ticker_reused_no_overlap,unknown,,,Vanguard Morningstar Mid-Cap ETF,PCX,2004-01-30,2026-11-10,,False,False,True
+VRTS,2000-04-03,2005-07-05,1319,0,0.0,ticker_reused_no_overlap,unknown,,,"Virtus Investment Partners, Inc.",NYQ,2009-01-02,2026-11-10,,False,False,True
+WB,2000-01-01,2009-01-02,2263,0,0.0,ticker_reused_no_overlap,acquired_or_merged,Wachovia Bank,Wachovia Bank was acquired by Wells Fargo.,Weibo Corporation,NMS,2014-04-17,2026-11-10,,False,False,True

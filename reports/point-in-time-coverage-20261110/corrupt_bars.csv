@@ -1,0 +1,27 @@
+ticker,group,outcome_class,first_member_since_2000,last_member_end,member_bars,member_bars_side_cost_over_200bps,member_bars_side_cost_max_bps,member_bars_adj_ratio_outside_0.2_5,member_bars_ratio_outside_0.2_5_no_split,member_bars_high_below_low,member_bars_open_close_outside_range,zero_volume_share,flat_ohlc_share,member_median_dollar_volume,yf_longName,yf_exchange,fails_cost_test,fails_ratio_test,fails_ohlc_test
+EP,past,history_to_today_suspect,2000-01-01,2012-05-25,3119.0,3099,5000.0,0,0,0,0,0.401,0.668,426.24001693725586,Empire Petroleum Corporation,ASE,True,False,False
+CPWR,past,history_to_today_suspect,2000-01-01,2012-01-03,1279.0,1114,5000.0,2,2,0,0,0.761,0.919,0.0,Ocean Thermal Energy Corporation,OID,True,True,False
+PARA,past,history_to_today_suspect,2022-02-17,2025-08-08,870.0,421,2394.5,1,0,0,0,0.334,0.282,126735.0,"Parabolic Technologies, Inc.",NCM,True,True,False
+GENZ,past,history_to_today_suspect,2001-12-14,2011-04-04,805.0,121,706.9,0,0,0,0,0.021,0.06,220131.0007095337,VanEck Digital Native Economy ETF,NGM,True,False,False
+SII,past,history_to_today_suspect,2006-10-02,2010-08-27,131.0,106,946.0,0,0,0,0,0.725,0.947,0.0,Sprott Inc.,NYQ,True,False,False
+CSR,past,history_to_today_suspect,2000-01-01,2000-06-16,115.0,30,247.9,0,0,0,0,0.026,0.226,78912.5,Centerspace,NYQ,True,False,False
+WMB,current,current_member,2000-01-01,,6755.0,20,251.9,0,0,0,0,0.0,0.0,172573886.42921448,"The Williams Companies, Inc.",NYQ,True,False,False
+GNW,past,history_to_today,2005-12-02,2015-11-18,2507.0,9,216.8,0,0,0,0,0.0,0.0,73425000.0,"Genworth Financial, Inc.",NYQ,True,False,False
+KG,past,history_to_today_suspect,2000-10-03,2010-12-20,662.0,8,216.3,0,0,0,0,0.003,0.005,1209690.0,Kestrel Group Ltd,NCM,True,False,False
+AMCR,current,current_member,2019-06-07,,1868.0,3,304.1,0,0,0,0,0.001,0.001,86257811.16680145,Amcor plc,NYQ,True,False,False
+FMCC,past,history_to_today_suspect,2000-01-01,2008-09-11,2185.0,2,249.4,1,1,0,0,0.0,0.0,181097915.7714844,Federal Home Loan Mortgage Corporation,OQB,True,True,False
+FNMA,past,history_to_today_suspect,2000-01-01,2008-09-11,2185.0,2,314.3,1,1,0,0,0.0,0.0,249074443.75,Federal National Mortgage Association,OQB,True,True,False
+FDXF,current,current_member,2026-06-01,,114.0,1,301.9,0,0,0,0,0.0,0.0,185647144.05288696,"FedEx Freight Holding Company, Inc.",NYQ,True,False,False
+NRG,current,current_member,2010-01-29,,4222.0,0,53.8,0,0,0,1,0.0,0.0,103639618.0308342,"NRG Energy, Inc.",NYQ,False,False,True
+WBD,current,current_member,2022-04-11,,1.0,0,,0,0,0,1,0.0,0.0,,Warner Bros. Discovery Inc,NMS,False,False,True
+VRT,current,current_member,2026-03-23,,162.0,0,42.8,0,0,0,1,0.0,0.0,1493861547.2351074,Vertiv Holdings Co,NYQ,False,False,True
+UHS,current,current_member,2014-09-22,,3053.0,0,72.1,0,0,0,1,0.0,0.0,89410640.50598145,"Universal Health Services, Inc.",NYQ,False,False,True
+UA,past,history_to_today,2016-04-08,2022-06-21,1561.0,0,72.0,0,0,0,1,0.001,0.0,47303796.77062989,"Under Armour, Inc.",NYQ,False,False,True
+A,current,current_member,2000-06-05,,6649.0,0,53.9,0,0,0,1,0.0,0.0,115381477.20445631,"Agilent Technologies, Inc.",NYQ,False,False,True
+MTB,current,current_member,2004-02-27,,5713.0,0,58.0,0,0,0,1,0.0,0.0,95863301.25579834,M&T Bank Corporation,NYQ,False,False,True
+MSI,current,current_member,2000-01-01,,6755.0,0,54.5,0,0,0,1,0.0,0.0,167728176.79138184,"Motorola Solutions, Inc.",NYQ,False,False,True
+MKC,current,current_member,2003-03-21,,5949.0,0,45.4,0,0,0,1,0.0,0.0,50140921.5927124,"McCormick & Company, Incorporated",NYQ,False,False,True
+ALL,current,current_member,2000-01-01,,6755.0,0,68.6,0,0,0,1,0.0,0.0,153173337.61749268,The Allstate Corporation,NYQ,False,False,True
+GIS,current,current_member,2000-01-01,,6755.0,0,33.7,0,0,0,1,0.0,0.0,159266625.0,"General Mills, Inc.",NYQ,False,False,True
+AME,current,current_member,2013-09-23,,3304.0,0,54.2,0,0,0,1,0.0,0.0,105675307.45506288,"AMETEK, Inc.",NYQ,False,False,True
+HII,current,current_member,2018-01-03,,2226.0,0,47.5,0,0,0,1,0.0,0.0,75646355.31082153,"Huntington Ingalls Industries, Inc.",NYQ,False,False,True

@@ -1,0 +1,75 @@
+{
+ "report": "reports/point-in-time-coverage-20261110.md",
+ "generated_at": "2026-11-10",
+ "membership_source": "https://raw.githubusercontent.com/fja05680/sp500/master/sp500_ticker_start_end.csv (MIT, downloaded 2026-11-10; repo last commit 2026-09-07; last membership date 2026-08-18)",
+ "reasons_source": "https://en.wikipedia.org/wiki/Historical_components_of_the_S%26P_500 (fetched 2026-11-10)",
+ "bars_source": "yfinance 1.7.0 Ticker.history(period='max', auto_adjust=False, actions=True), 2026-11-10",
+ "earnings_source": "yfinance 1.7.0 Ticker.get_earnings_dates(limit=100), 2026-11-10",
+ "trading_calendar": ".paper-training/local-sweep-20261110/bars/SPY.csv dates + weekdays to 2026-11-10",
+ "files": {
+  "corrupt_bars.csv": {
+   "bytes": 4047,
+   "sha256": "4e46c6a8e54c762f03b42addc9d7254b0d47f4e9a6ce8defe492753bd69e3f66"
+  },
+  "coverage_by_year.csv": {
+   "bytes": 2601,
+   "sha256": "3ca8f203a53d64708eabfffacf7dbfd0d9593bb751e336bbebd58f06c9a1b60a"
+  },
+  "coverage_per_ticker.csv": {
+   "bytes": 230150,
+   "sha256": "877f16b7cc5694c028e06a6b1be4552c52b4fd11026846eb3da9b6ea0a91cc1b"
+  },
+  "current_members_truncated_history.csv": {
+   "bytes": 1273,
+   "sha256": "0f6cef7bf735c6706a11628974ee5541b65e381858539f96e12135c861c27781"
+  },
+  "deletions_by_year.csv": {
+   "bytes": 1050,
+   "sha256": "6014fbd1ba2698045e34ef95e396dd07c8fd9dededd60045e680db9708e714d3"
+  },
+  "deletions_since_2000.csv": {
+   "bytes": 57814,
+   "sha256": "19898ccaf1d6998190d0ba4a07fdc593ed490a32aaa093d6c4eca7d234e8a831"
+  },
+  "delisting_outcomes.csv": {
+   "bytes": 82947,
+   "sha256": "57699e27679981d8fa906ea22792a82ec70c95e1eef8928e6bad0ad4897a6bb3"
+  },
+  "earnings_coverage_by_year.csv": {
+   "bytes": 2145,
+   "sha256": "6774dae6740461c4a2fd92a345d35476d4f155a3fd216116fb2518f1843561ef"
+  },
+  "earnings_coverage_per_ticker.csv": {
+   "bytes": 129094,
+   "sha256": "2886e1386f4958200989a1592aa843e4261e3ff1a3c94de1c491f9955c49ba83"
+  },
+  "earnings_events_raw.csv.gz": {
+   "bytes": 599122,
+   "sha256": "79ed83e4910f8e28eac6247a86223eb2a7d9ac5a254ad5c5013562410cb67e78"
+  },
+  "membership_by_year.csv": {
+   "bytes": 1342,
+   "sha256": "686cde29e380573b6124afc5947c36d1b62253de10dff93fe5140912e5f347cd"
+  },
+  "module_coverage_by_year.csv": {
+   "bytes": 570,
+   "sha256": "c4436e1cb4195e395063ad0653c0fe6e6e0ad16ff8df8dd4c169e7b1d3db57ba"
+  },
+  "sp500_ticker_start_end.source.csv": {
+   "bytes": 28058,
+   "sha256": "b2f4fe2f2e4dce8eaf0eb4fbd3946a32a20c1ddfe69687dfca3b6b59a0b71f9f"
+  },
+  "wiki_changes_classified.csv": {
+   "bytes": 47859,
+   "sha256": "e4d48237bcd0d0f6f2b38878eb8bf3a8e83018a85414cacc4da08f2bbd1c5acf"
+  },
+  "yfinance_bar_status.jsonl": {
+   "bytes": 286581,
+   "sha256": "34092503c622e95dd096709f00fa658ee708f6d68438d5b8b6de3842d71e4bb8"
+  },
+  "yfinance_earnings_status.jsonl": {
+   "bytes": 150883,
+   "sha256": "3b35a583f67a5f27034437f42f615489adb11684467a802f0f6ddbc3a9e763a2"
+  }
+ }
+}
