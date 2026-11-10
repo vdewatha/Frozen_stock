@@ -458,7 +458,10 @@ def attribution(states: Mapping[int, Mapping], fallback_sleeve: Optional[int] = 
 
 # ------------------------------------------------------------------ pricing
 
-FRESH_PRICE_AGE = timedelta(minutes=15)
+# Matches the ledger's allowance for book orders (BOOK_MAX_MINUTE_BAR_AGE):
+# SGOV prints on IEX only every 20+ minutes, and a 15-minute limit kept the
+# passive arm from ever planning a tranche. Orders are collared limits.
+FRESH_PRICE_AGE = timedelta(minutes=60)
 
 
 def latest_price(db: Session, symbol: str, *, now: Optional[datetime] = None) -> Optional[Decimal]:
