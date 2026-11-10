@@ -222,7 +222,17 @@ def test_held_back_session_opens_one_warning_then_resolves_when_an_order_is_sent
     assert again["alarm"] == "updated"
     assert db.query(Notification).filter(Notification.source == alarm.NOTIFICATION_SOURCE).count() == 1
 
+    # A probe going out clears the probes, not the slow book (2026-11-10).
     order(db, source="cost_probe", submitted_at=datetime(2026, 11, 10, 17, 40, tzinfo=UTC))
+    db.commit()
+    partial = alarm.check_held_back_session(db, now=datetime(2026, 11, 10, 17, 45, tzinfo=UTC), client=redis)
+    db.commit()
+    assert partial["alarm"] == "updated" and set(partial["held_back"]) == {"target_weight"}
+    db.refresh(warning)
+    assert warning.status != "resolved" and "cost probes" not in warning.message
+    assert "slow book (VOO/SGOV)" in warning.title and "1 other" in warning.message
+
+    order(db, source="target_weight_book", submitted_at=datetime(2026, 11, 10, 17, 50, tzinfo=UTC))
     db.commit()
     done = alarm.check_held_back_session(db, now=datetime(2026, 11, 10, 18, 0, tzinfo=UTC), client=redis)
     db.commit()

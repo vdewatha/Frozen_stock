@@ -439,10 +439,20 @@ def run_deployment_monitor(db: Session, *, source: str = "manual") -> dict:
     blocker_text = ", ".join(snapshot["blockers"]) or "none"
     readiness_text = ", ".join(snapshot["readiness_blockers"]) or "none"
     status = "ready" if snapshot["deployable"] else "blocked"
+    # Readiness can hold paper runs on a warning outside its allowed set (for
+    # example "Strategy availability" while only the slow book and probes
+    # trade) with no blocked check at all. Name those warnings, and raise a
+    # warning rather than a critical incident: on 2026-11-10 the alert read
+    # "blocked: none. Readiness blockers: none." at critical severity.
+    held_by = list((snapshot.get("readiness") or {}).get("paper_trading_unexpected_warnings") or [])
+    hard_block = bool(snapshot["blockers"] or snapshot["readiness_blockers"])
+    severity = "critical" if hard_block or not held_by else "warning"
+    title = "Deployment monitor blocked" if severity == "critical" else "Deployment monitor: paper runs held by a warning"
     message = (
         "Deployment monitor is ready for paper-only operation."
         if snapshot["deployable"]
         else f"Deployment monitor blocked: {blocker_text}. Readiness blockers: {readiness_text}."
+        + (f" Readiness warnings holding paper runs: {', '.join(held_by)}." if held_by else "")
     )
     notification = (
         db.query(Notification)
@@ -468,8 +478,8 @@ def run_deployment_monitor(db: Session, *, source: str = "manual") -> dict:
             notification_action = "resolved"
             notification_id = notification.id
     elif notification:
-        notification.severity = "critical"
-        notification.title = "Deployment monitor blocked"
+        notification.severity = severity
+        notification.title = title
         notification.message = message
         notification.payload = {"source": source, "snapshot": snapshot_payload}
         notification.updated_at = datetime.utcnow()
@@ -479,9 +489,9 @@ def run_deployment_monitor(db: Session, *, source: str = "manual") -> dict:
         notification = create_notification(
             db,
             category="deployment_monitor",
-            severity="critical",
+            severity=severity,
             source="deployment_monitor",
-            title="Deployment monitor blocked",
+            title=title,
             message=message,
             entity_type="deployment",
             payload={"source": source, "snapshot": snapshot_payload},
