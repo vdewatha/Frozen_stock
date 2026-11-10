@@ -10,9 +10,11 @@ trade and a system gate stopped it is not.
 
 The signal cycle, the slow book's rebalance and the cost probes record each
 held-back attempt here (Redis, per ET day; advisory, never raises). During the
-session ``check_held_back_session`` opens one warning per day when held-back
-attempts exist and no autonomous or probe order reached the broker, and
-resolves it once one does. A warning, not critical: a critical alert would
+session ``check_held_back_session`` opens one warning per day while any source
+was held back and none of *its own* orders reached the broker, and resolves it
+once each held-back source has sent one. (2026-11-10: the first cost probe
+went out at 10:30 while the slow book stayed stuck on SGOV; judging all
+sources together would have hidden that.) A warning, not critical: a critical alert would
 itself fail the launch-admission notifications gate.
 """
 from __future__ import annotations
@@ -41,6 +43,12 @@ SOURCE_LABELS = {
     "signals": "strategy signals",
     "target_weight": "slow book (VOO/SGOV)",
     "cost_probe": "cost probes",
+}
+# Order sources that show a held-back source did trade today.
+SOURCE_ORDER_SOURCES = {
+    "signals": ("scheduled_paper_signal", "paper_exploration"),
+    "target_weight": ("target_weight_book",),
+    "cost_probe": ("cost_probe",),
 }
 # Signal results refused by a system gate rather than by a strategy rule.
 SIGNAL_GATE_PREFIXES = (
@@ -153,19 +161,36 @@ def held_back_on(day: date, *, client: Any = None) -> dict[str, dict]:
 
 # ------------------------------------------------------------ the alarm
 
-def orders_sent_since(db: Session, since: datetime) -> int:
+def orders_sent_by_source(db: Session, since: datetime) -> dict[str, int]:
+    """Autonomous and probe orders that reached the broker since ``since``, per order source."""
+    from sqlalchemy import func
+
     from app.models.stock_paper import StockPaperOrder
     from app.services.stock_paper_ledger import AUTONOMOUS_ORDER_SOURCES, PROBE_SOURCE
 
-    return (
-        db.query(StockPaperOrder)
+    rows = (
+        db.query(StockPaperOrder.source, func.count(StockPaperOrder.id))
         .filter(
             StockPaperOrder.source.in_(sorted(AUTONOMOUS_ORDER_SOURCES | {PROBE_SOURCE})),
             StockPaperOrder.submitted_at.isnot(None),
             StockPaperOrder.submitted_at >= since,
         )
-        .count()
+        .group_by(StockPaperOrder.source)
+        .all()
     )
+    return {str(source): int(count) for source, count in rows}
+
+
+def orders_sent_since(db: Session, since: datetime) -> int:
+    return sum(orders_sent_by_source(db, since).values())
+
+
+def still_held_back(held: Mapping[str, Mapping], sent: Mapping[str, int]) -> dict[str, Mapping]:
+    """Held-back sources none of whose own orders reached the broker."""
+    return {
+        source: entry for source, entry in held.items()
+        if not any(sent.get(order_source) for order_source in SOURCE_ORDER_SOURCES.get(source, ()))
+    }
 
 
 def _open_alarm(db: Session, day: date):
@@ -208,37 +233,41 @@ def check_held_back_session(db: Session, *, now: Optional[datetime] = None, clie
     opened = _utc(bounds[0])
     if now < opened + FIRST_CHECK_AFTER_OPEN:
         return base | {"status": "skipped", "reason": "too early in the session"}
-    sent = orders_sent_since(db, opened)
+    by_source = orders_sent_by_source(db, opened)
+    sent = sum(by_source.values())
     existing = _open_alarm(db, today)
-    if sent:
+    held = still_held_back(held_back_on(today, client=client), by_source)
+    if not held:
         if existing is not None:
             existing.status = "resolved"
             existing.resolved_at = now.replace(tzinfo=None)
             existing.updated_at = now.replace(tzinfo=None)
-        return base | {"status": "complete", "orders_sent": sent, "resolved_alarm": existing is not None}
-    held = held_back_on(today, client=client)
-    if not held:
-        return base | {"status": "complete", "orders_sent": 0, "held_back": {}}
+        return base | {"status": "complete", "orders_sent": sent, "held_back": {},
+                       "resolved_alarm": existing is not None}
+    labels = ", ".join(SOURCE_LABELS.get(s, s) for s in held)
     message = (
-        "No autonomous or cost-probe paper order has reached the broker this session, "
-        f"and these wanted to trade but were held back: {describe(held)}."
+        f"These wanted to trade this session but were held back and have sent no order: {describe(held)}."
+        + (f" ({sent} other autonomous or probe order(s) did reach the broker.)" if sent else "")
     )
-    payload = {"session": today.isoformat(), "held_back": held, "checked_at": now.isoformat()}
+    payload = {"session": today.isoformat(), "held_back": held, "orders_sent": by_source,
+               "checked_at": now.isoformat()}
+    title = f"Held back all session: {labels}"
     if existing is not None:
+        existing.title = title
         existing.message = message
         existing.payload = payload
         existing.updated_at = now.replace(tzinfo=None)
-        return base | {"status": "complete", "orders_sent": 0, "held_back": held, "alarm": "updated"}
+        return base | {"status": "complete", "orders_sent": sent, "held_back": held, "alarm": "updated"}
     create_notification(
         db,
         category=NOTIFICATION_CATEGORY,
         severity="warning",
         source=NOTIFICATION_SOURCE,
-        title=f"No paper orders today: held back ({', '.join(SOURCE_LABELS.get(s, s) for s in held)})",
+        title=title,
         message=message,
         entity_type="session",
         entity_id=int(today.strftime("%Y%m%d")),
         payload=payload,
     )
-    logger.warning("held-back session: no orders sent; %s", describe(held))
-    return base | {"status": "complete", "orders_sent": 0, "held_back": held, "alarm": "opened"}
+    logger.warning("held-back session: no orders sent by %s; %s", labels, describe(held))
+    return base | {"status": "complete", "orders_sent": sent, "held_back": held, "alarm": "opened"}
