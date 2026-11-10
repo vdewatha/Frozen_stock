@@ -9,7 +9,7 @@ def test_feature_generation_is_skipped_during_the_session():
     with patch("app.services.intraday_data.session_bounds", return_value=(now - timedelta(hours=1), now + timedelta(hours=5))), \
          patch.object(jobs, "_run_job") as run_job:
         result = jobs.daily_feature_generation()
-    assert result["status"] == "skipped"
+    assert result["status"] == "deferred"
     run_job.assert_not_called()
 
 

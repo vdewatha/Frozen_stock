@@ -10,10 +10,18 @@ Two pieces:
 
 * ``record_task_success`` (connected to Celery's ``task_success`` signal)
   stores each task's last successful completion in a Redis hash.
-* ``queue_missed_jobs`` runs once when the beat launcher starts. For each
-  entry in ``CATCHUP_ENTRIES`` whose crontab had a firing since the recorded
-  last success, it queues the task once, staggered, so a restart never fires
-  a burst of heavy jobs at the same moment.
+* ``queue_missed_jobs`` runs when the beat launcher starts and again each
+  weekday after the close (``missed_job_catchup_job``). For each entry in
+  ``CATCHUP_ENTRIES`` whose crontab had a firing since the recorded last
+  success, it queues the task once, staggered, so a restart never fires a
+  burst of heavy jobs at the same moment.
+
+Strategy discovery and the experiment engine refuse to run during the
+session. On 2026-11-10 a 09:01 ET restart queued both in-session; they
+returned "skipped" and that counted as a successful run, so neither would
+have run until the next Sunday (the engine had never completed a run). Those
+runs now report "deferred", which is not a success, they are not queued
+during the session, and the after-close pass picks them up.
 
 Only report, research and bookkeeping jobs are listed. Trading jobs (the
 target-weight rebalance, the paper cycle) must never run outside their
@@ -44,6 +52,10 @@ STAGGER_SECONDS = 120
 SCHEDULE_TZ = ZoneInfo("America/New_York")
 # "skipped" is a run too: usually another worker held the job's lease.
 FAILED_STATUSES = {"failed", "error"}
+# A job that declined to run at this hour has not run.
+NOT_A_RUN_STATUSES = FAILED_STATUSES | {"deferred"}
+# Entries whose task defers itself from 30 minutes before the open to the close.
+SESSION_DEFERRED_ENTRIES = frozenset({"strategy-discovery", "experiment-engine"})
 
 # Beat entry names (celery_app.conf.beat_schedule keys), in dependency order.
 CATCHUP_ENTRIES: tuple[str, ...] = (
@@ -85,7 +97,7 @@ def _utc(value: datetime) -> datetime:
 
 def record_task_success(client, task_name: str, result: Any, now: Optional[datetime] = None) -> None:
     """Store the task's completion time unless its result reports a failure or skip."""
-    if isinstance(result, dict) and str(result.get("status", "")).lower() in FAILED_STATUSES:
+    if isinstance(result, dict) and str(result.get("status", "")).lower() in NOT_A_RUN_STATUSES:
         return
     stamp = _utc(now or datetime.now(timezone.utc)).isoformat()
     client.hset(LAST_SUCCESS_KEY, task_name, stamp)
@@ -133,6 +145,15 @@ def missed_firing(schedule, last_success: Optional[datetime], now: datetime) -> 
     return latest
 
 
+def in_session_deferral_window(now: datetime) -> bool:
+    """From 30 minutes before the regular open to the close (the jobs' own rule)."""
+    from app.services.intraday_data import session_bounds
+
+    now = _utc(now)
+    bounds = session_bounds(now.astimezone(SCHEDULE_TZ).date())
+    return bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]
+
+
 def queue_missed_jobs(
     client,
     beat_schedule: dict,
@@ -156,6 +177,8 @@ def queue_missed_jobs(
             continue
         if next_firing(schedule, now) - now <= NEXT_RUN_GRACE:
             continue
+        if name in SESSION_DEFERRED_ENTRIES and in_session_deferral_window(now):
+            continue  # it would only defer itself; the after-close pass queues it
         # One catch-up per entry per window, even if beat restarts repeatedly.
         if not client.set(f"{CATCHUP_MARKER_PREFIX}{name}", missed.isoformat(), nx=True, ex=CATCHUP_MARKER_TTL_SECONDS):
             continue

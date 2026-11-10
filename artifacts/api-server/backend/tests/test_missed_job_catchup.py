@@ -44,8 +44,11 @@ def test_weekend_outage_catches_up_the_weekly_jobs_once_and_staggered():
     )
     names = [item["entry"] for item in queued]
     # Sunday's runs after 10:17 ET and Monday's pre-open dailies were missed.
-    for missed in ("signal-autopsy", "experiment-engine", "market-events", "daily-economic-data-import"):
+    for missed in ("signal-autopsy", "market-events", "daily-economic-data-import"):
         assert missed in names
+    # The experiment engine was missed too, but it defers itself in-session:
+    # the after-close pass queues it instead (see test_deferred_weekly_runs).
+    assert "experiment-engine" not in names
     # Saturday's weekly jobs and Sunday 10:00 discovery ran before the freeze.
     for ran in ("yardstick", "weekly-performance-report", "strategy-discovery"):
         assert ran not in names

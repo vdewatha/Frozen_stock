@@ -542,7 +542,7 @@ def daily_feature_generation() -> dict:
     now = datetime.now(timezone.utc)
     bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
     if bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]:
-        return {"status": "skipped", "job": "daily_feature_generation",
+        return {"status": "deferred", "job": "daily_feature_generation",
                 "reason": "model retraining is deferred outside the regular session"}
 
     def work(db):
@@ -1856,7 +1856,7 @@ def meta_label_retrain_job() -> dict:
     now = datetime.now(timezone.utc)
     bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
     if bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]:
-        return {"status": "skipped", "job": "meta_label_retrain_job",
+        return {"status": "deferred", "job": "meta_label_retrain_job",
                 "reason": "model retraining is deferred outside the regular session"}
 
     def work(db):
@@ -1877,7 +1877,7 @@ def strategy_discovery_job() -> dict:
     now = datetime.now(timezone.utc)
     bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
     if bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]:
-        return {"status": "skipped", "job": "strategy_discovery_job",
+        return {"status": "deferred", "job": "strategy_discovery_job",
                 "reason": "strategy discovery is deferred outside the regular session"}
 
     def work(db):
@@ -1898,7 +1898,7 @@ def experiment_engine_job() -> dict:
     now = datetime.now(timezone.utc)
     bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
     if bounds is not None and bounds[0] - timedelta(minutes=30) <= now < bounds[1]:
-        return {"status": "skipped", "job": "experiment_engine_job",
+        return {"status": "deferred", "job": "experiment_engine_job",
                 "reason": "the experiment engine is deferred outside the regular session"}
 
     def work(db):
@@ -1909,6 +1909,21 @@ def experiment_engine_job() -> dict:
         return {"job": "experiment_engine_job", **result}
 
     return _run_job("experiment_engine_job", work)
+
+
+@celery_app.task
+def missed_job_catchup_job() -> dict:
+    """Weekdays after the close: queue weekly research runs deferred or missed during the day."""
+    import redis
+
+    from app.tasks.catchup import queue_missed_jobs
+
+    client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=5)
+    try:
+        queued = queue_missed_jobs(client, celery_app.conf.beat_schedule, celery_app.send_task)
+    finally:
+        client.close()
+    return {"status": "complete", "job": "missed_job_catchup_job", "queued": [item["entry"] for item in queued]}
 
 
 @celery_app.task
