@@ -80,3 +80,70 @@ def test_issues_open_once_and_close_on_recovery():
         assert commands == []  # already open: no duplicate, no comment spam
         uptime.reconcile_issues({"down": False, "halted": False}, [attempt()], MARKET)
         assert commands == [("issue", "close")]
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+def run_watch(results, watch_seconds, reconcile=None):
+    """Run main() in watch mode over scripted probe results."""
+    clock = FakeClock()
+    queue = list(results)
+    calls = []
+
+    def fake_probe():
+        clock.now += 1
+        return queue.pop(0) if queue else attempt()
+
+    with patch.object(uptime, "WATCH_SECONDS", watch_seconds), \
+         patch.object(uptime, "INTERVAL_SECONDS", 120), \
+         patch.object(uptime, "RETRY_SECONDS", 120), \
+         patch.object(uptime, "probe", side_effect=fake_probe), \
+         patch.object(uptime, "reconcile_issues",
+                      side_effect=reconcile or (lambda wanted, attempts, now: calls.append(wanted))), \
+         patch.dict(uptime.os.environ, {"UPTIME_DRY_RUN": "0"}):
+        assert uptime.main(sleep=clock.sleep, clock=clock) == 0
+    return calls, clock
+
+
+def test_single_check_without_watch():
+    calls, _ = run_watch([attempt()], 0)
+    assert calls == [{"down": False, "halted": False}]
+
+
+def test_watch_reports_a_freeze_within_minutes_and_updates_issues_only_on_change():
+    down = attempt(["startup:TimeoutError:None"])
+    # Healthy, then frozen for two full rounds, then back.
+    results = [attempt(), down, down, down, down, down, down, attempt()]
+    calls, clock = run_watch(results, 3600)
+    assert calls == [{"down": False, "halted": False}, {"down": True, "halted": False},
+                     {"down": False, "halted": False}]
+    assert clock.now <= 3600
+
+
+def test_watch_stops_before_its_deadline_even_when_rounds_are_slow():
+    down = attempt(["startup:TimeoutError:None"])
+    _, clock = run_watch([down] * 200, 7200)
+    assert clock.now <= 7200
+    # The whole run, worst case, stays inside the 350-minute job timeout.
+    assert 19800 + uptime.round_seconds() < 350 * 60
+
+
+def test_failed_issue_update_is_retried_next_round():
+    attempts_made = []
+
+    def flaky(wanted, attempts, now):
+        attempts_made.append(wanted)
+        if len(attempts_made) == 1:
+            raise uptime.subprocess.CalledProcessError(1, "gh", stderr="rate limited")
+
+    run_watch([attempt(), attempt()], 600, reconcile=flaky)
+    assert len(attempts_made) >= 2

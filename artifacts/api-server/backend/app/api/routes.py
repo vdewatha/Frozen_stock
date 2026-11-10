@@ -154,6 +154,14 @@ _readiness_refresh_error: str | None = None
 _READINESS_REFRESH_DEADLINE_SECONDS = 300
 _readiness_refresh_started_at: float | None = None
 _readiness_refresh_generation = 0
+# The snapshot only refreshed when someone asked for it, and one build takes
+# 1.5-4 minutes on the hosted VM, so the first caller after a quiet stretch got
+# whatever was left from the last request (on 2026-11-10 a boot-time "blocked"
+# snapshot sat there for 16 minutes after trading resumed). The keeper asks
+# for a refresh on this interval so the snapshot stays at most this old plus
+# one build.
+_READINESS_KEEPER_INTERVAL_SECONDS = 300
+_readiness_keeper_started = False
 LEGACY_STOCK_EVIDENCE_QUARANTINE = (
     "Legacy simulator paper_trades/StrategyMemory are quarantined and cannot be "
     "used for stock risk, scoring, allocation, or governance."
@@ -183,10 +191,12 @@ def ready() -> dict:
     only; the details stay behind authentication.
     """
     snapshot = system_readiness()
+    age_seconds = _snapshot_age_seconds(snapshot)
     if snapshot["overall_status"] != "ready":
         raise HTTPException(status_code=503, detail={
             "status": snapshot["overall_status"],
             "generated_at": jsonable_encoder(snapshot.get("generated_at")),
+            "age_seconds": age_seconds,
             "checks": [
                 {"name": check.get("name"), "status": check.get("status")}
                 for check in snapshot.get("checks") or []
@@ -200,7 +210,36 @@ def ready() -> dict:
         "paper_only": True,
         "live_trading": False,
         "generated_at": snapshot["generated_at"],
+        "age_seconds": age_seconds,
     }
+
+
+def _snapshot_age_seconds(snapshot: dict) -> float | None:
+    generated_at = snapshot.get("generated_at")
+    if not isinstance(generated_at, datetime):
+        return None
+    return round(max(0.0, (datetime.utcnow() - generated_at).total_seconds()), 1)
+
+
+def start_readiness_keeper(interval_seconds: float | None = None) -> bool:
+    """Keep the readiness snapshot warm in the background (once per process)."""
+    global _readiness_keeper_started
+    with _readiness_cache_lock:
+        if _readiness_keeper_started:
+            return False
+        _readiness_keeper_started = True
+    interval = interval_seconds or _READINESS_KEEPER_INTERVAL_SECONDS
+
+    def keep() -> None:
+        while True:
+            try:
+                system_readiness()
+            except Exception as exc:  # never let the keeper die
+                print(f"readiness keeper: {exc.__class__.__name__}", flush=True)
+            time.sleep(interval)
+
+    threading.Thread(target=keep, name="readiness-keeper", daemon=True).start()
+    return True
 
 
 @router.get("/heartbeat")
@@ -313,6 +352,7 @@ def _refresh_readiness_snapshot(generation: int | None = None) -> None:
         # of the refresh that replaced it.
         return generation is None or generation == _readiness_refresh_generation
 
+    started = time.monotonic()
     db = SessionLocal()
     try:
         snapshot = readiness_snapshot(db)
@@ -320,10 +360,19 @@ def _refresh_readiness_snapshot(generation: int | None = None) -> None:
             if current():
                 _readiness_cache = snapshot
                 _readiness_refresh_error = None
+        print(
+            f"readiness refresh: {snapshot.get('overall_status')} in {time.monotonic() - started:.1f}s",
+            flush=True,
+        )
     except Exception as exc:  # readiness remains explicitly blocked
         with _readiness_cache_lock:
             if current():
                 _readiness_refresh_error = exc.__class__.__name__
+        # Previously silent: the old snapshot kept being served with no trace.
+        print(
+            f"readiness refresh failed after {time.monotonic() - started:.1f}s: {exc.__class__.__name__}: {exc}"[:500],
+            flush=True,
+        )
     finally:
         db.close()
         with _readiness_cache_lock:

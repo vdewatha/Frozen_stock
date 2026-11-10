@@ -9,6 +9,12 @@ recovers, so a freeze is noticed without anyone opening the dashboard:
 - "halted": the app is up but trading has been halted for 30+ minutes during
   regular market hours, which a short automatic pause never reaches.
 
+With UPTIME_WATCH_SECONDS set, one run keeps checking every
+UPTIME_INTERVAL_SECONDS until that much time has passed, so a freeze is
+reported within minutes. GitHub's scheduled runs alone are far too sparse: on
+2026-11-09 the */10 cron ran twice overnight and a 19:18 ET freeze was only
+reported at 22:34. The workflow chains the next watch run itself.
+
 Stdlib only. One request at a time, never concurrent, to keep load on the
 small VM negligible. Uses the gh CLI with GH_TOKEN for issues.
 """
@@ -28,6 +34,8 @@ APP_URL = os.environ.get("APP_URL", "https://frozenstock.replit.app").rstrip("/"
 MENTION = os.environ.get("ALERT_MENTION", "").strip()
 TRIES = int(os.environ.get("UPTIME_TRIES", "3"))
 RETRY_SECONDS = int(os.environ.get("UPTIME_RETRY_SECONDS", "120"))
+WATCH_SECONDS = int(os.environ.get("UPTIME_WATCH_SECONDS", "0"))
+INTERVAL_SECONDS = int(os.environ.get("UPTIME_INTERVAL_SECONDS", "120"))
 TIMEOUT_SECONDS = 25
 HALT_ALERT_SECONDS = 30 * 60
 ET = ZoneInfo("America/New_York")
@@ -139,7 +147,8 @@ def reconcile_issues(wanted: dict[str, bool], attempts: list[dict], now: datetim
             gh("label", "create", label, "--color", color, "--description", description, "--force")
             hint = (
                 "Check the Replit deployment logs, then `/api/startup`. The gateway's stall watchdog "
-                "restarts a frozen process after 3 minutes; if this stays open, republish."
+                "restarts a frozen backend after 3 minutes. If the logs have stopped entirely, the "
+                "whole app is frozen and only a republish brings it back."
                 if kind == "down" else
                 "Open the dashboard's recovery panel to see the pause reason; most halts self-clear "
                 "once the broker ledger matches again."
@@ -153,22 +162,46 @@ def reconcile_issues(wanted: dict[str, bool], attempts: list[dict], now: datetim
             print(f"closed {kind} alert #{number}")
 
 
-def main() -> int:
+def check_round(sleep=time.sleep) -> list[dict]:
+    """Up to TRIES probes; stops at the first one that passes."""
     attempts: list[dict] = []
     for index in range(TRIES):
         attempts.append(probe())
-        print(json.dumps(attempts[-1], default=str))
+        print(json.dumps(attempts[-1], default=str), flush=True)
         if not attempts[-1]["problems"]:
             break
         if index + 1 < TRIES:
-            time.sleep(RETRY_SECONDS)
-    now = datetime.now(timezone.utc)
-    wanted = evaluate(attempts, now)
-    print(f"alerts: {wanted}")
-    if os.environ.get("UPTIME_DRY_RUN") == "1":
-        return 0
-    reconcile_issues(wanted, attempts, now)
-    return 0
+            sleep(RETRY_SECONDS)
+    return attempts
+
+
+def round_seconds() -> int:
+    """Longest one round can take: every try timing out, plus the retries."""
+    return TRIES * 2 * TIMEOUT_SECONDS + (TRIES - 1) * RETRY_SECONDS
+
+
+def main(sleep=time.sleep, clock=time.monotonic) -> int:
+    dry_run = os.environ.get("UPTIME_DRY_RUN") == "1"
+    deadline = clock() + max(0, WATCH_SECONDS)
+    last_wanted: dict[str, bool] | None = None
+    rounds = 0
+    while True:
+        attempts = check_round(sleep)
+        rounds += 1
+        now = datetime.now(timezone.utc)
+        wanted = evaluate(attempts, now)
+        print(f"round {rounds} alerts: {wanted}", flush=True)
+        # Issues only change when the verdict does, so a long watch costs two
+        # GitHub API calls per change rather than per round.
+        if not dry_run and wanted != last_wanted:
+            try:
+                reconcile_issues(wanted, attempts, now)
+                last_wanted = wanted
+            except subprocess.CalledProcessError as exc:  # retried next round
+                print(f"issue update failed: {exc.stderr or exc}", flush=True)
+        if clock() + INTERVAL_SECONDS + round_seconds() > deadline:
+            return 0
+        sleep(INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
