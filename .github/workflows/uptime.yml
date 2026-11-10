@@ -2,15 +2,21 @@ name: Uptime
 
 # Outside freeze alert for the deployed paper bot. Opens an issue labelled
 # "uptime: down" (or "uptime: halted") and closes it on recovery; see
-# .github/scripts/uptime_check.py. Scheduled runs can start a few minutes late.
+# .github/scripts/uptime_check.py.
+#
+# Each run watches for about 5.5 hours, checking every 2 minutes, then starts
+# the next run itself. Scheduled runs alone proved far too sparse (two in a
+# night for a */10 cron); the hourly cron only restarts the chain if it broke.
+# A run that arrives while one is watching waits as the single pending run.
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "7 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
   issues: write
+  actions: write
 
 concurrency:
   group: uptime
@@ -20,7 +26,7 @@ jobs:
   check:
     name: Check deployment
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,4 +36,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APP_URL: ${{ vars.UPTIME_URL || 'https://frozenstock.replit.app' }}
           ALERT_MENTION: "@${{ github.repository_owner }}"
+          UPTIME_WATCH_SECONDS: "19800"
+          UPTIME_INTERVAL_SECONDS: "120"
         run: python3 .github/scripts/uptime_check.py
+      - name: Start the next watch run
+        if: always() && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run uptime.yml --ref main --repo "${{ github.repository }}"

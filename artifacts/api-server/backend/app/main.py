@@ -159,6 +159,9 @@ def load_application_routes() -> None:
         print("FastAPI core routes ready", flush=True)
 
         if settings.environment == "production":
+            from app.api.routes import start_readiness_keeper
+
+            start_readiness_keeper()
             threading.Thread(
                 target=_seed_defaults_background,
                 name="seed-defaults",
