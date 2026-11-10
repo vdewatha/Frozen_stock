@@ -60,3 +60,46 @@ def test_observed_performance_uses_same_explicit_policy_but_remains_provisional(
     result = calculate_observed_change(baseline, rows, orders=orders, cash_policy=CENT, **kwargs)
     assert result["status"] == "provisional" and result["net_change"] == "0"
     assert result["costs_complete"] is False and result["qualifying"] is False
+
+
+def test_exact_policy_explains_cent_rounding_without_adopting_cent(monkeypatch):
+    from app.core.config import settings
+    from app.services.paper_cash_policy import reconcile_with_policy
+
+    report, diagnostic = reports()
+    saved = deepcopy((report, diagnostic))
+    result = reconcile_with_policy(report, diagnostic, EXACT, broker="alpaca_paper", currency="USD")
+    assert result["status"] == "matched" and result["cash_residual"] == "0"
+    assert result["cash_policy"] == EXACT and result["cash_rounding_explained"] is True
+    assert result["unrounded_cash_residual"] == "0.000078362364"
+    assert result["cash_rounding_adjustment"] == "0.000078362364"
+    assert result["all_in_costs"] == "unknown" and result["launch_authorized"] is False
+    assert (report, diagnostic) == saved
+    # The explicit cent policy is untouched: no explanation flag, same match.
+    cent = reconcile_with_policy(report, diagnostic, CENT, broker="alpaca_paper", currency="USD")
+    assert cent == apply_policy(report, diagnostic, CENT, broker="alpaca_paper", currency="USD")
+    assert "cash_rounding_explained" not in cent
+    # Off switch: back to the exact mismatch.
+    monkeypatch.setattr(settings, "alpaca_paper_cent_rounding_explained", False)
+    assert reconcile_with_policy(report, diagnostic, EXACT, broker="alpaca_paper", currency="USD")["status"] == "mismatch"
+
+
+def test_explanation_never_hides_a_real_cent_or_bad_evidence():
+    from app.services.paper_cash_policy import reconcile_with_policy
+
+    # One real cent off: the diagnostic is a mismatch, so is the report.
+    report, diagnostic = reports("99999.99")
+    assert reconcile_with_policy(report, diagnostic, EXACT, broker="alpaca_paper", currency="USD")["status"] == "mismatch"
+    # Diagnostic evidence that disagrees with the reconciliation keeps the
+    # mismatch instead of raising inside the reconcile.
+    report, diagnostic = reports()
+    diagnostic["rounding_adjustment_since_baseline"] = "0.01"
+    result = reconcile_with_policy(report, diagnostic, EXACT, broker="alpaca_paper", currency="USD")
+    assert result["status"] == "mismatch" and "cash_rounding_explained" not in result
+    # Unavailable diagnostic (e.g. a non-terminal order): mismatch.
+    report, diagnostic = reports()
+    result = reconcile_with_policy(report, {**diagnostic, "status": "unavailable"}, EXACT, broker="alpaca_paper", currency="USD")
+    assert result["status"] == "mismatch"
+    # Other brokers or currencies get no rounding hypothesis at all.
+    report, diagnostic = reports()
+    assert reconcile_with_policy(report, diagnostic, EXACT, broker="tradier_sandbox", currency="USD")["status"] == "mismatch"

@@ -107,6 +107,13 @@ class Settings(BaseSettings):
     # The paper Activity SSE provides bounded historical replay and structured
     # cash-impact evidence. It does not turn missing commissions into zero.
     alpaca_activity_sse_enabled: bool = False
+    # Alpaca settles each order's cash to the cent while the ledger replays
+    # fills at full precision, so a fractional-share fill leaves a sub-cent
+    # residual (2026-11-10: the slow book's first SGOV/VOO tranche halted the
+    # account on $0.00084). When the cent diagnostic explains the whole residual
+    # per order, the reconciliation counts as matched under the account's own
+    # policy instead of halting for an operator. Never a cost or trading approval.
+    alpaca_paper_cent_rounding_explained: bool = True
     # Bounded warm-up after a supervised restart (see stock_restart_grace).
     # Only stale-heartbeat / stale-data findings that predate the recorded
     # worker start are deferred, new entries stay blocked while warming up,

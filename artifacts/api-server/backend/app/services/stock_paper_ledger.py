@@ -2443,9 +2443,9 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                     {row["symbol"]: row["quantity"] for row in position_values},
                     currency=account.currency, broker=account.broker,
                 )
-                from app.services.paper_cash_policy import apply_policy
-                report = apply_policy(report, report["cash_precision_diagnostic"], account.cash_policy,
-                                      broker=account.broker, currency=account.currency)
+                from app.services.paper_cash_policy import reconcile_with_policy
+                report = reconcile_with_policy(report, report["cash_precision_diagnostic"], account.cash_policy,
+                                               broker=account.broker, currency=account.currency)
                 from app.services.paper_cost_sensitivity import evaluate
                 report["modeled_cost_sensitivity"] = evaluate(
                     account.activity_baseline, raw_fills,
@@ -2463,8 +2463,12 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                 adapter_repair_resolved = bool(
                     cleanup_was_recorded and report.get("status") == "matched"
                 )
-                # Exact means no rounding: cent-level residuals that a cash
-                # policy rounds to "matched" keep their dedicated review flow.
+                # Exact means no rounding: cent-level residuals that the
+                # explicit cent policy rounds to "matched" keep their dedicated
+                # review flow. A residual the cent diagnostic explains under
+                # the account's own policy (cash_rounding_explained) is the
+                # broker's per-order settlement rounding, not a discrepancy,
+                # so it clears a residual halt like an exact replay does.
                 try:
                     exact_cash = (
                         Decimal(str(report.get("unrounded_cash_residual", report.get("cash_residual")))) == 0
@@ -2472,11 +2476,12 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                     )
                 except (InvalidOperation, ValueError, TypeError):
                     exact_cash = False
+                rounding_explained = report.get("cash_rounding_explained") is True
                 v2_replay_matched = bool(
                     report.get("status") == "matched"
                     and report.get("cash_equation_matches") is True
                     and report.get("inventory_equation_matches") is True
-                    and exact_cash
+                    and (exact_cash or rounding_explained)
                 )
             except ValueError as exc:
                 raise StockPaperError(str(exc)) from exc
@@ -2628,21 +2633,29 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                 account.reconciliation_required = False
                 account.status = "reconciled"
                 account.halt_reason = None
+                if rounding_explained:
+                    how = "the broker's per-order cent rounding (cash_rounding_explained)"
+                    resolution = ("Residual resolved: the v2 activity replay from the frozen baseline matches "
+                                  "once the broker's per-order cent rounding is applied; all-in costs remain unverified.")
+                    message = "Residual resolved by the v2 activity replay with the broker's per-order cent rounding explained"
+                else:
+                    how = "an exact v2 activity replay"
+                    resolution = ("Residual resolved by an exact v2 activity replay from the frozen baseline "
+                                  "(late broker activity); all-in costs remain unverified.")
+                    message = "Stale residual resolved by an exact v2 activity replay from the frozen baseline"
                 # The review flag was raised by this same residual. Broker
-                # evidence has now replayed it exactly, so it no longer needs a
-                # human; without this, an otherwise-explained pause (for
-                # example the monitor's broker/reconciliation breach) stayed
-                # operator-only until someone pressed Resume.
+                # evidence has now replayed it (exactly, or up to the broker's
+                # own cent settlement), so it no longer needs a human; without
+                # this, an otherwise-explained pause (for example the monitor's
+                # broker/reconciliation breach) stayed operator-only until
+                # someone pressed Resume.
                 review_cleared = False
                 recovery_state = db.get(StockPaperRecoveryState, 1)
                 if recovery_state is not None and recovery_state.accounting_review_required:
                     recovery_state.accounting_review_required = False
                     recovery_state.accounting_reviewed_at = datetime.now(UTC)
                     recovery_state.accounting_reviewed_by = "stock_reconciler"
-                    recovery_state.accounting_review_reason = (
-                        "Residual resolved by an exact v2 activity replay from the frozen baseline "
-                        "(late broker activity); all-in costs remain unverified."
-                    )
+                    recovery_state.accounting_review_reason = resolution
                     recovery_state.updated_by = "stock_reconciler"
                     review_cleared = True
                 _event(
@@ -2650,8 +2663,10 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
                     account,
                     "accounting_residual_reclassified",
                     "resolved",
-                    "Stale residual resolved by an exact v2 activity replay from the frozen baseline",
-                    {"activity_count": len(raw_fills), "accounting_review_cleared": review_cleared},
+                    message,
+                    {"activity_count": len(raw_fills), "accounting_review_cleared": review_cleared,
+                     "resolved_by": how,
+                     "cash_rounding_adjustment": str(report.get("cash_rounding_adjustment") or "0")},
                 )
             elif legacy_cash_halt_resolved:
                 # Older deployments halted on supported cash activity because
