@@ -1523,7 +1523,13 @@ def _upsert_orders(db: Session, account: StockPaperAccount, rows: list[dict],
                                     reserved_cash=Decimal("0"), status=str(raw.get("status") or "unknown"), source="broker_import")
             db.add(order)
         else:
-            immutable = (order.symbol, order.side, order.quantity, order.order_type, order.time_in_force, order.limit_price)
+            # A market order has no broker limit price. Cost probes are market
+            # orders that keep their decision price in limit_price for the
+            # cost calibration, so the first probe (2026-11-10) halted the
+            # account as "corrupted evidence". Compare the limit only where the
+            # broker holds one.
+            local_limit = None if order.order_type == "market" else order.limit_price
+            immutable = (order.symbol, order.side, order.quantity, order.order_type, order.time_in_force, local_limit)
             if immutable != (symbol, side, quantity, order_type, tif, limit_price):
                 raise StockPaperError("Broker order immutable fields changed; refusing corrupted evidence")
             order.broker_order_id = broker_order_id
