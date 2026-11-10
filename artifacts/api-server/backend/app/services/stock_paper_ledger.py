@@ -1912,6 +1912,35 @@ def _late_feed_acceptable_for_daily_bar_order(
     return strategy is not None and daily_bar_execution(strategy)
 
 
+# The slow book's T-bill ETF (``passive_arm_tbill_symbol``, SGOV) prints on
+# IEX only a few times an hour, and the bar-less run from the open to its
+# first print can never be verified as "no trade", so its feed stays
+# incomplete all session (2026-11-10: first IEX print 09:51 ET) and every
+# slow-book SGOV order was refused. Its price moves about 2 bps a day and the
+# book sends collared limit orders, so an older bar is a safe reference: a
+# wrong one can only leave the order unfilled.
+SPARSE_TBILL_MAX_MINUTE_BAR_AGE = timedelta(minutes=120)
+
+
+def _sparse_tbill_feed_acceptable(market: dict, symbol: str, source: str | None, now: datetime) -> bool:
+    """True for a slow-book order on the arm's T-bill ETF whose verified feed
+    is only sparse (gaps, an older newest bar), never for any other symbol or
+    source and never when the provider refresh is unverified."""
+    if source != TARGET_WEIGHT_SOURCE:
+        return False
+    if str(symbol or "").strip().upper() != settings.passive_arm_tbill_symbol.strip().upper():
+        return False
+    if market.get("execution_status") != "stale" or market.get("status") not in {"stale", "incomplete"}:
+        return False
+    if market.get("entitlement_state") != "verified":
+        return False
+    latest = market.get("exchange_timestamp")
+    if not isinstance(latest, datetime):
+        return False
+    bar_close = _utc(latest) + timedelta(minutes=1)
+    return bar_close <= now and now - bar_close <= SPARSE_TBILL_MAX_MINUTE_BAR_AGE
+
+
 def _validate_reference_price(db: Session, symbol: str, price: Decimal) -> None:
     latest = (
         db.query(IntradayBar)
@@ -3318,7 +3347,7 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     if market.get("execution_status", market["status"]) != "ready" and not (
         source in AUTONOMOUS_ORDER_SOURCES
         and _late_feed_acceptable_for_daily_bar_order(db, market, signal_id, now)
-    ):
+    ) and not _sparse_tbill_feed_acceptable(market, symbol, source, now):
         raise StockPaperError(
             "Stock paper order blocked by stale/unavailable market data: "
             f"{market.get('execution_status', market['status'])}"
@@ -3532,7 +3561,7 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     if market.get("execution_status", market["status"]) != "ready" and not (
         order.source in AUTONOMOUS_ORDER_SOURCES
         and _late_feed_acceptable_for_daily_bar_order(db, market, order.signal_id, now)
-    ):
+    ) and not _sparse_tbill_feed_acceptable(market, order.symbol, order.source, now):
         raise StockPaperError(
             "Reserved order blocked by stale/unavailable market data: "
             f"{market.get('execution_status', market['status'])}"

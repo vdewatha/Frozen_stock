@@ -324,7 +324,9 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
         state, reason = "Stopped", "Kill switch enabled"
     elif account.status != "reconciled" or account.reconciliation_required:
         state, reason = "Blocked", account.halt_reason or f"Broker account {account.status}"
-    elif recovery and recovery.status != "armed":
+    # "resumable" is tradable everywhere else (heartbeat, launch admission,
+    # risk actions); showing it as Paused contradicted a trading bot.
+    elif recovery and recovery.status not in {"armed", "resumable"}:
         state, reason = "Paused", recovery.pause_reason or recovery.status
     elif stale:
         state, reason = "Unknown", "Broker snapshot is stale"
