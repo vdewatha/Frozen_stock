@@ -177,6 +177,22 @@ class ExitRearmTests(unittest.TestCase):
             self.assertEqual(again["submitted_count"], 0)
             self.assertEqual(again["results"][0]["status"], "covered")
 
+    def test_open_cost_probe_position_is_left_to_the_probe(self):
+        # 2026-11-10: re-arm put an OCO on the QQQ probe share, and the probe's
+        # own sell was then refused as "would create a short position".
+        with Session(self.engine) as db:
+            self.legacy(db)
+            with patch("app.services.cost_probes.open_probe_symbols", return_value={"SPY"}):
+                gateway = RearmGateway(positions=[_position("10")])
+                result = self.rearm(db, gateway)
+            self.assertEqual(result["submitted_count"], 0, result)
+            self.assertEqual(gateway.payloads, [])
+            self.assertEqual(result["results"][0]["reason"], "open cost probe; it sells its own share")
+            # Once the probe is closed the position is protected as usual.
+            with patch("app.services.cost_probes.open_probe_symbols", return_value=set()):
+                again = self.rearm(db, RearmGateway(positions=[_position("10")]))
+            self.assertEqual(again["submitted_count"], 1, again)
+
     def test_oco_holds_inventory_so_an_app_sell_cannot_double_sell(self):
         with Session(self.engine) as db, ExitStack() as stack:
             self.legacy(db)

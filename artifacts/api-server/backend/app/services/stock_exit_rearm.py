@@ -380,6 +380,9 @@ def rearm_broker_exits(db: Session, gateway=None, *, now: datetime | None = None
     from app.services.target_weight_book import book_symbols
 
     target_book = book_symbols(db)
+    from app.services.cost_probes import open_probe_symbols
+
+    probe_held = open_probe_symbols(db)
     for position in positions:
         if halted_now:
             break
@@ -389,6 +392,11 @@ def rearm_broker_exits(db: Session, gateway=None, *, now: datetime | None = None
             # Slow-book holdings (target_weight_book.py) are rebalanced to target
             # weights; they carry no stop or take-profit by design.
             results.append(entry | {"status": "skipped", "reason": "target-weight book holding; no broker exits"})
+            continue
+        if symbol in probe_held:
+            # A cost probe sells its share itself after a short hold; resting
+            # exits would commit the share and block that sell.
+            results.append(entry | {"status": "skipped", "reason": "open cost probe; it sells its own share"})
             continue
         raw = broker.get(symbol)
         broker_qty = _dec(raw.get("qty")) if raw else None

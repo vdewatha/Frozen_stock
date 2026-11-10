@@ -179,3 +179,16 @@ def test_public_ready_reads_the_cached_snapshot_and_hides_details():
     ready = {"overall_status": "ready", "generated_at": "t", "checks": []}
     with patch.object(routes, "system_readiness", return_value=ready):
         assert routes.ready()["status"] == "ready"
+
+
+def test_open_probe_symbols_lists_bought_unsold_probes():
+    buy = MagicMock(id=1)
+    rows = [
+        {"symbol": "qqq", "buy": buy, "sell": None, "recorded": False, "closed_elsewhere": False},
+        {"symbol": "SPY", "buy": buy, "sell": MagicMock(status="filled"), "recorded": False, "closed_elsewhere": False},
+        {"symbol": "IWM", "buy": buy, "sell": None, "recorded": True, "closed_elsewhere": False},
+        {"symbol": "DIA", "buy": None, "sell": None, "recorded": False, "closed_elsewhere": False},
+    ]
+    with patch.object(cost_probes, "probes", return_value=rows), \
+            patch.object(cost_probes, "_fills", return_value={"quantity": 1}):
+        assert cost_probes.open_probe_symbols(MagicMock()) == {"QQQ"}
