@@ -762,8 +762,9 @@ def strategy_learning_scope_job(
         if not is_known_strategy(strategy_slug):
             # A target-weight row (passive arm, defensive sleeve shadow) has no
             # indicator class to backtest. Close the dispatch as done so the
-            # batch recovery does not republish it, raise no alert, and close
-            # the alerts its earlier failures opened.
+            # batch recovery does not republish it, and raise no alert. Close
+            # the alerts its earlier "Unknown strategy" failures left open, or
+            # the retry job keeps requeuing them every few minutes.
             if dispatch:
                 dispatch.status = "succeeded"
                 dispatch.lease_expires_at = None
