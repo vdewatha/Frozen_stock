@@ -1912,6 +1912,29 @@ def _late_feed_acceptable_for_daily_bar_order(
     return strategy is not None and daily_bar_execution(strategy)
 
 
+# The slow book trades SGOV, a T-bill ETF that prints on IEX only every 20+
+# minutes, so its feed is almost never "ready" (gaps that long are never
+# verified as no-trade) and the passive arm never bought anything. Book orders
+# are limit orders collared around the reference (target_weight_limit_collar_bps),
+# so an older reference can cost a fill, never a price beyond the collar.
+BOOK_MAX_MINUTE_BAR_AGE = timedelta(minutes=60)
+
+
+def _late_feed_acceptable_for_book_order(market: dict, now: datetime) -> bool:
+    """True when only lateness or gaps keep the feed from ready and the newest
+    real bar is from this session and at most ``BOOK_MAX_MINUTE_BAR_AGE`` old."""
+    if market.get("execution_status") != "stale" or market.get("status") not in {"stale", "incomplete"}:
+        return False
+    latest = market.get("exchange_timestamp")
+    if not isinstance(latest, datetime):
+        return False
+    bar_close = _utc(latest) + timedelta(minutes=1)
+    if bar_close > now or now - bar_close > BOOK_MAX_MINUTE_BAR_AGE:
+        return False
+    bounds = session_bounds(now.astimezone(ZoneInfo("America/New_York")).date())
+    return bounds is not None and _utc(latest) >= bounds[0]
+
+
 def _validate_reference_price(db: Session, symbol: str, price: Decimal) -> None:
     latest = (
         db.query(IntradayBar)
@@ -3318,6 +3341,8 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     if market.get("execution_status", market["status"]) != "ready" and not (
         source in AUTONOMOUS_ORDER_SOURCES
         and _late_feed_acceptable_for_daily_bar_order(db, market, signal_id, now)
+    ) and not (
+        source == TARGET_WEIGHT_SOURCE and _late_feed_acceptable_for_book_order(market, now)
     ):
         raise StockPaperError(
             "Stock paper order blocked by stale/unavailable market data: "
@@ -3532,6 +3557,8 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     if market.get("execution_status", market["status"]) != "ready" and not (
         order.source in AUTONOMOUS_ORDER_SOURCES
         and _late_feed_acceptable_for_daily_bar_order(db, market, order.signal_id, now)
+    ) and not (
+        order.source == TARGET_WEIGHT_SOURCE and _late_feed_acceptable_for_book_order(market, now)
     ):
         raise StockPaperError(
             "Reserved order blocked by stale/unavailable market data: "
