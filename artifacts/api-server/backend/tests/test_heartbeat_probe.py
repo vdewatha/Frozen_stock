@@ -132,6 +132,12 @@ def test_route_is_public_cached_and_returns_503_when_stopped(db, store):
     ))
     app.include_router(router)
     app.dependency_overrides[get_db] = lambda: db
+    # The route reads the real clock, so stamp the monitoring jobs relative to
+    # it (stamps pinned to NOW went stale once the real clock passed NOW).
+    real_now = datetime.now(UTC)
+    state(db).last_monitor_heartbeat_at = real_now - timedelta(minutes=2)
+    state(db).last_watchdog_heartbeat_at = real_now - timedelta(minutes=3)
+    db.commit()
     client = TestClient(app)
     hb.reset_cache()
     try:
