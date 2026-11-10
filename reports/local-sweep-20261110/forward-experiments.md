@@ -88,6 +88,26 @@ in the first review. Candidates 4 and 5 carry `vix_gate: "above", vix_level: 20`
 5. The measured cost of the class from the host's calibration table, and whether it changed the acting cost.
 6. The sample reached against the verdict sample, and the words "inconclusive" where it has not been reached.
 
+## Registration
+
+Registered in the paper bot on **2026-11-10**, commit `6d69727` (branch `claude/forward-experiments-wiring-5c7d38`,
+`artifacts/api-server/backend/app/services/forward_experiments.py`). The bot carries a byte-identical copy of
+`forward-experiments.json` (`app/services/data/forward-experiments-20261110.json`, SHA-256 verified on every load) and
+records one `forward_experiment` / `register` audit row per candidate with the candidate verbatim and the terms above.
+Mechanism, chosen here and recorded on each registration row: candidates 1, 2, 3 and 5 are `rule_<id>` rows with status
+`paper_trading_candidate` (exploration sizing; 3 with `market_gate_sma: 50`, 5 with `vix_gate: "above", vix_level: 20`),
+candidate 1 reusing the discovery explore row after a verbatim check of its rule, exits and scope; candidate 4 is a
+tag-and-compare on discovery's ungated `rule_4ec6c68526` row (its trades decided with `vix_above_20` true are exactly the
+gated row's trades, without a twin row colliding on the same symbols), or a gated row where that row does not exist;
+candidate 6 is a tag-and-compare on `ibs_mean_reversion`, which is unchanged. Rows in `shadow` status (IBS since the
+short-horizon re-verdict) contribute their BUY decisions scored as the paper path would have traded them (next open, the
+row's tested exits over stored daily bars, costs both sides); rows that place entries contribute their closed round
+trips. Every paper signal now records `gate_readings` (`vix_above_20`, `spy_sma50`) at decision time; a missing VIX close
+is recorded as unknown, never guessed. The mutation step is off by default (`strategy_discovery_mutation_enabled`).
+Reviews are `forward_experiment` / `review` audit rows (append-only), each with the table below rendered; the Saturday
+job records one when the schedule calls for it, and `GET /stock-paper/forward-experiments` shows the live reading at any
+time. First scheduled review: 91 days after the first decision bar and no earlier than **2027-02-10**.
+
 ## Reviews
 
 _None yet._
