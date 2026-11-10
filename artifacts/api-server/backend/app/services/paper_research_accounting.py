@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.models import StockPaperBrokerActivity, StockPaperFill, StockPaperLedgerEvent, StockPaperOrder, StockPaperPosition
 from app.services import alpaca_activity_v2 as activity
 from app.services.alpaca_cash_precision import diagnose
-from app.services.paper_cash_policy import EXACT, CENT, MONETARY_REVIEW_REASON, apply_policy
+from app.services.paper_cash_policy import EXACT, CENT, MONETARY_REVIEW_REASON, reconcile_with_policy
 from app.services.paper_cost_sensitivity import evaluate
 from app.services.alpaca_paper_cost_contract import assess as assess_cost_contract
 
@@ -146,7 +146,7 @@ def _assess(db, account, *, now=None, transport_review=False, probe_review=False
         diagnostic = diagnose(account.activity_baseline, raw, [o.raw_payload for o in orders], account.cash, {},
                               currency=account.currency, broker=account.broker)
         require(diagnostic.get("status") == "consistent", "Orders and activities need unambiguous monetary evidence")
-        report = apply_policy(report, diagnostic, account.cash_policy, broker=account.broker, currency=account.currency)
+        report = reconcile_with_policy(report, diagnostic, account.cash_policy, broker=account.broker, currency=account.currency)
         require(report["status"] == "matched", "Cash and inventory must reconcile")
         latest = db.query(StockPaperLedgerEvent).filter_by(account_id=account.id, event_type="activity_reconciliation").order_by(StockPaperLedgerEvent.id.desc()).first()
         require(latest is not None and 0 <= (now-utc(latest.created_at)).total_seconds() <= 120,

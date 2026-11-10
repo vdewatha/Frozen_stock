@@ -218,6 +218,10 @@ def reviewed_ledger(ledger, monkeypatch):
 
     db, broker = ledger
     monkeypatch.setattr(settings, "allow_live_trading", False)
+    # The explicit operator path: with the automatic cent-rounding explanation
+    # off, the sub-cent residual halts and the cent policy is adopted and
+    # reviewed by hand (see test_cent_rounding_residual for the default).
+    monkeypatch.setattr(settings, "alpaca_paper_cent_rounding_explained", False)
     initialize(db, broker)
     _, fills, orders = evidence()
     broker.rows.extend(fills)

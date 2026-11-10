@@ -40,6 +40,38 @@ def apply_policy(report, diagnostic, policy, *, broker, currency):
             "all_in_costs": "unknown", "launch_authorized": False}
 
 
+ROUNDING_EXPLAINED = "cash_rounding_explained"
+
+
+def reconcile_with_policy(report, diagnostic, policy, *, broker, currency):
+    """``apply_policy`` under the account's own policy, then explain a cent residual.
+
+    Alpaca settles each order's cash to the cent; the ledger replays fills at
+    full precision, so a fractional-share fill leaves a sub-cent residual that
+    the exact policy reports as a mismatch. When the cent diagnostic shows the
+    residual is exactly the broker's per-order rounding (and inventory
+    matches), the report is returned as matched with ``cash_rounding_explained``
+    set, keeping the account's declared policy. Evidence that disagrees with
+    the rounding hypothesis keeps the mismatch instead of raising. Never a fee,
+    cost or trading approval: ``all_in_costs`` stays unknown and
+    ``launch_authorized`` stays False, exactly as under the explicit cent policy.
+    """
+    from app.core.config import settings
+
+    result = apply_policy(report, diagnostic, policy, broker=broker, currency=currency)
+    if (result["status"] == "matched" or policy != EXACT
+            or not settings.alpaca_paper_cent_rounding_explained
+            or broker != "alpaca_paper" or currency != "USD"):
+        return result
+    try:
+        explained = apply_policy(report, diagnostic, CENT, broker=broker, currency=currency)
+    except ValueError:
+        return result
+    if explained["status"] != "matched":
+        return result
+    return {**explained, "cash_policy": policy, ROUNDING_EXPLAINED: True}
+
+
 def adopt_cent_policy(db, *, actor, apply=False):
     from datetime import datetime, timezone
     from sqlalchemy import select
