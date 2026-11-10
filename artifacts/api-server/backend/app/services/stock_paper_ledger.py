@@ -34,6 +34,7 @@ from app.services.intraday_data import MARKET_DATA_PROVIDER, feed_status, sessio
 from app.services.risk import DEFAULT_RISK_RULES, PortfolioState, StrategyState, approve_trade
 from app.services.strategies.registry import get_strategy
 from app.services.trusted_data import UntrustedMarketData, trusted_history, trusted_intraday_observation
+from app.services.forward_gate_readings import FEATURE_KEY as GATE_READINGS_KEY, gate_readings
 from app.services import alpaca_activity_v2
 
 logger = logging.getLogger(__name__)
@@ -3138,6 +3139,15 @@ def _load_signal_inputs(db: Session, symbol: str) -> tuple[Any, str, dict]:
     return prices, source, observation
 
 
+def _spy_frame_for_readings(db: Session):
+    """SPY's trusted daily frame for the gate readings; None when unavailable (the reading says so)."""
+    try:
+        return trusted_history(db, "SPY", require_active=False)[0]
+    except Exception as exc:  # a reading only
+        logger.info("gate readings: SPY history unavailable: %s", exc.__class__.__name__)
+        return None
+
+
 def _signal_feed(source: str, observation: dict, now: datetime) -> dict:
     from app.services.feed_hygiene import signal_feed
 
@@ -3209,6 +3219,8 @@ def _create_stock_paper_signal(
     strategy = _resolve_signal_strategy(db, strategy_slug, allowed_statuses)
     prices, source, observation = _load_signal_inputs(db, symbol)
     generated = get_strategy(strategy_slug, strategy.parameters).generate_signal(symbol, prices)
+    # The same gate readings the batched cycle records (forward_gate_readings.py).
+    generated.features = {**(generated.features or {}), GATE_READINGS_KEY: gate_readings(prices, _spy_frame_for_readings(db))}
     now = datetime.now(UTC)
     signal = _build_stock_paper_signal(strategy, symbol, generated, source, observation, research_only, now)
     db.add(signal)

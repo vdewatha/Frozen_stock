@@ -673,6 +673,7 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
     from app.core.config import settings
     from app.models import Strategy
     from app.services.audit import write_audit_log
+    from app.services.forward_experiments import is_registered_row
 
     now = now or datetime.now(UTC)
     by_id = {row["id"]: row for row in result["candidates"]}
@@ -689,8 +690,12 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
         strategy.parameters = evidence
         refreshed.append(slug)
         # Only an unpromoted candidate is retired here; a promoted strategy is
-        # governed by its forward-trial evidence, not by the backtest.
-        if not admissible(row, require_proven=require_proven) and strategy.current_status == DISCOVERED_STATUS:
+        # governed by its forward-trial evidence, not by the backtest.  A row
+        # registered as a frozen forward experiment (forward_experiments.py)
+        # is governed by its pre-registered review alone and never retired by
+        # a re-grade.
+        if (not admissible(row, require_proven=require_proven) and strategy.current_status == DISCOVERED_STATUS
+                and not is_registered_row(strategy.parameters)):
             strategy.current_status = "retired"
             live -= 1
             retired.append(slug)

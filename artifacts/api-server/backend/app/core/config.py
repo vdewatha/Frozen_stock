@@ -489,7 +489,12 @@ class Settings(BaseSettings):
     # Mutation: each run breeds children of the near-misses (rule_mutation),
     # charges every child ever tried to the deflated Sharpe, and stops when
     # three runs in a row produced no child better than its parent.
-    strategy_discovery_mutation_enabled: bool = True
+    # Paused (off by default) since 2026-11-10 by the frozen forward
+    # experiments of reports/local-sweep-20261110/forward-experiments.md:
+    # no new rule, gate, lookback or universe is tested on history while the
+    # six pre-registered candidates collect their forward samples; the
+    # library's weekly re-grading (same hashes, no new trials) continues.
+    strategy_discovery_mutation_enabled: bool = False
     strategy_discovery_mutation_budget_seconds: int = Field(default=300, ge=0, le=3600)
     # Experiment engine: weekly, the repeating loss lessons choose which gate
     # experiments to replay; a candidate that passes the pre-registered rule is

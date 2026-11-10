@@ -2045,6 +2045,19 @@ def yardstick_job() -> dict:
 
 
 @celery_app.task
+def forward_experiments_review_job() -> dict:
+    """Weekly (Saturday, after the yardstick): append a review of the frozen forward experiments when the schedule calls for one (paper only)."""
+    def work(db):
+        from app.services.forward_experiments import record_review
+
+        result = record_review(db)
+        db.commit()
+        return {"job": "forward_experiments_review_job", **result, "live_authorized": False}
+
+    return _run_job("forward_experiments_review_job", work)
+
+
+@celery_app.task
 def cost_probe_job() -> dict:
     """In session: one tick of the cost probes (record a finished round trip, close a due probe or open the week's next)."""
     def work(db):

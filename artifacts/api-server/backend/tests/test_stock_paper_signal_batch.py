@@ -131,8 +131,10 @@ class SignalBatchTests(unittest.TestCase):
         outcomes, stats, commits = self._run(data, symbols)
         elapsed = time.perf_counter() - started
 
-        # O(symbols) data loads, never O(symbols x strategies).
-        self.assertEqual(sorted(data.daily_calls), sorted(symbols))
+        # O(symbols) data loads, never O(symbols x strategies).  SPY is loaded
+        # once a cycle for the gate readings every signal records
+        # (forward_gate_readings.py), whatever the symbol count.
+        self.assertEqual(sorted(data.daily_calls), sorted([*symbols, "SPY"]))
         self.assertEqual(sorted(data.intraday_calls), sorted(symbols))
         self.assertEqual(stats["daily_loads"], 50)
         self.assertEqual(stats["intraday_loads"], 50)
@@ -156,7 +158,7 @@ class SignalBatchTests(unittest.TestCase):
         _outcomes, warm, _commits = self._run(data, symbols)
         self.assertEqual(warm["strategy_computes"], 0)
         self.assertEqual(warm["strategy_cache_hits"], 400)
-        self.assertEqual(len(data.daily_calls), 50)
+        self.assertEqual(len(data.daily_calls), 51)  # the 50 symbols plus SPY for the gate readings
         self.assertLess(time.perf_counter() - started, elapsed)
 
     def test_batched_signals_match_per_pair_signals_exactly(self):

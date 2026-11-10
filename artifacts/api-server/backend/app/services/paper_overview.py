@@ -375,6 +375,8 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
                 "at": _iso(signal.signal_time),
                 "withheld": timing.get("withheld_action") == "BUY" if isinstance(timing, dict) else None,
                 "reason": signal.reason,
+                # The frozen forward experiments' readings at decision time (forward_gate_readings.py).
+                "gate_readings": (signal.features or {}).get("gate_readings"),
             } if signal else None),
             # Cadence is not a durable per-strategy next-run timestamp.
             "next_evaluation_at": None,

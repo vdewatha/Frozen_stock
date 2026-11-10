@@ -196,8 +196,10 @@ def test_cumulative_trials_reach_the_deflated_sharpe():
 # ---------------------------------------------------------------- scheduled run
 
 def _run(db, frames, now, **overrides):  # noqa: F811
+    # Mutation is paused by default since the 2026-11-10 frozen forward
+    # experiments; these tests exercise the machinery with it switched on.
     patches = {"paper_execution_symbols": list(frames), "strategy_discovery_history_start": "2013-01-01",
-               "replay_point_in_time_universe": False, **overrides}
+               "replay_point_in_time_universe": False, "strategy_discovery_mutation_enabled": True, **overrides}
     with patch.multiple(settings, **patches):
         return sd.run_strategy_discovery(db, now=now, loader=lambda symbol: frames[symbol].copy())
 
@@ -250,7 +252,7 @@ def test_mutation_pauses_after_three_stale_runs_and_honours_the_setting(db):  # 
     write_audit_log(db, event_type="strategy_discovery", action="run", status="complete", message="x",
                     payload={"mutation": {"status": "complete", "improved": False, "stale_runs": 2}})
     with patch.object(sd, "MUTATION_CHILDREN", 4):
-        ran = step(strategy_discovery_mutation_budget_seconds=600)
+        ran = step(strategy_discovery_mutation_budget_seconds=600, strategy_discovery_mutation_enabled=True)
     assert ran["status"] == "complete" and ran["stale_runs"] in (0, 3) and ran["budget_seconds"] == 600
     write_audit_log(db, event_type="strategy_discovery", action="run", status="complete", message="x",
                     payload={"mutation": {"status": "complete", "improved": False, "stale_runs": 3}})

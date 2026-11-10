@@ -1111,7 +1111,21 @@ def ensure_strategy_lineup(db: Session) -> dict:
         "passive_arm_admission": admit_passive_arm(db),
         "target_weight_exemption_granted": grant_target_weight_exemption(db),
         "defensive_shadow_admission": admit_defensive_shadow(db),
+        # The six frozen forward experiments of the 2026-11-10 local sweep
+        # (forward_experiments.py): bound once, recorded verbatim, paper only.
+        "forward_experiments": register_forward_experiments_once(db),
     }
+
+
+def register_forward_experiments_once(db: Session) -> dict:
+    """Idempotent registration of the frozen forward experiments; a failure never stops the seed."""
+    from app.services.forward_experiments import register_forward_experiments
+
+    try:
+        return register_forward_experiments(db)
+    except Exception as exc:  # the seed must finish; the view shows "unregistered"
+        db.rollback()
+        return {"status": "failed", "error": f"{exc.__class__.__name__}: {exc}"[:200]}
 
 
 def seed_defaults(db: Session) -> None:
