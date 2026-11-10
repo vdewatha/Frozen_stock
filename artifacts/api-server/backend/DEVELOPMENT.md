@@ -16,3 +16,24 @@ PostgreSQL row-level `FOR UPDATE` locking. Do not treat those tests as proof of
 multi-process locking behavior. A PostgreSQL locking test must run only against
 an explicitly provisioned, isolated test schema/database; never point it at the
 application or production database.
+## CI test shards
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the backend suite as four
+parallel shards plus two separate jobs for the Celery/IEX crash-recovery
+integration tests, which start their own `redis-server` and take minutes each.
+The required "Backend tests" check is a gate job that passes only when every
+shard and crash-recovery job passed.
+
+Shards are cut by recorded test durations (`pytest-split`) stored in
+`tests/.test_durations`. A test missing from that file is assumed to take the
+average recorded duration, so new tests need no action. Refreshing shard
+balance (when one shard runs noticeably longer than the others) means running
+the non-crash suite once with `--store-durations` and committing the file:
+
+```bash
+PYTHONPATH=. python -m pytest -q -p no:warnings --store-durations \
+  --durations-path tests/.test_durations tests \
+  --ignore=tests/test_celery_worker_crash.py \
+  --ignore=tests/test_iex_lease_crash.py \
+  --ignore=tests/test_job_lease_previous_boot.py
+```
