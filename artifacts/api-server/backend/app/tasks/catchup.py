@@ -57,6 +57,18 @@ NOT_A_RUN_STATUSES = FAILED_STATUSES | {"deferred"}
 # Entries whose task defers itself from 30 minutes before the open to the close.
 SESSION_DEFERRED_ENTRIES = frozenset({"strategy-discovery", "experiment-engine"})
 
+# One-off catch-ups, each queued at most once and only inside its window.
+# The 11-10 09:01 ET restart's in-session "skipped" experiment engine run was
+# recorded as a success before "deferred" existed, so the stamp hides the lost
+# Sunday 11-08 run (the engine has never completed one) until 11-15. Strategy
+# discovery is not listed: it ran Sunday 10:00, before the 10:17 freeze.
+ONE_OFF_CATCHUPS: tuple[tuple[str, str, datetime, datetime], ...] = (
+    ("experiment-engine", "20261110-deferral-recorded-as-run",
+     datetime(2026, 11, 10, 14, 0, tzinfo=timezone.utc), datetime(2026, 11, 15, 17, 0, tzinfo=timezone.utc)),
+)
+ONE_OFF_MARKER_PREFIX = "celery:catchup:oneoff:"
+ONE_OFF_MARKER_TTL_SECONDS = 60 * 24 * 60 * 60
+
 # Beat entry names (celery_app.conf.beat_schedule keys), in dependency order.
 CATCHUP_ENTRIES: tuple[str, ...] = (
     # Pre-open dailies.
@@ -194,4 +206,27 @@ def queue_missed_jobs(
             **{key: value for key, value in options.items() if key in {"queue", "routing_key", "priority"}},
         )
         queued.append({"entry": name, "task": task, "missed": missed.isoformat(), "countdown": countdown})
+    for name, tag, not_before, not_after in ONE_OFF_CATCHUPS:
+        entry = beat_schedule.get(name)
+        if not entry or not (not_before <= now < not_after) or any(item["entry"] == name for item in queued):
+            continue
+        if next_firing(entry["schedule"], now) - now <= NEXT_RUN_GRACE:
+            continue
+        if name in SESSION_DEFERRED_ENTRIES and in_session_deferral_window(now):
+            continue  # keep the one-off for the after-close pass
+        if not client.set(f"{ONE_OFF_MARKER_PREFIX}{name}:{tag}", now.isoformat(), nx=True,
+                          ex=ONE_OFF_MARKER_TTL_SECONDS):
+            continue
+        countdown = len(queued) * STAGGER_SECONDS
+        options = dict(entry.get("options") or {})
+        expires = options.pop("expires", None)
+        send_task(
+            entry["task"],
+            args=entry.get("args", ()),
+            kwargs=entry.get("kwargs", {}),
+            countdown=countdown,
+            expires=countdown + (expires if isinstance(expires, (int, float)) else 2 * 60 * 60),
+            **{key: value for key, value in options.items() if key in {"queue", "routing_key", "priority"}},
+        )
+        queued.append({"entry": name, "task": entry["task"], "missed": None, "one_off": tag, "countdown": countdown})
     return queued
