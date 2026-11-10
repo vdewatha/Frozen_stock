@@ -1,5 +1,7 @@
 # Verdict inputs: 2026-11-07
 
+> **Note added 2026-11-10.** The point-in-time replay behind these inputs included 18 past members whose tickers yfinance now serves under unrelated companies, ETFs or post-bankruptcy shells. The "corrupt bars" dropped as cost artifacts (EP, CPWR, PARA, SII, GENZ) are exactly this ticker reuse, FNMA/FMCC's two flagged bars are the conservatorship days, and 13 more reused tickers (BBT on Brookline Bancorp's bars, CCU on a Chilean brewer's ADR, CSR, KG, WEN, NC and others) passed the cost filter and stayed in every figure. `point_in_time_universe.coverage()` now rejects those histories before a replay; this report's numbers were not rerun. See `reports/point-in-time-coverage-20261110.md`, section 4.
+
 Experiment 1 of `reports/Frozen stock research priorities.md` (ranked table, row 1): measure the inputs every
 threshold of the forward verdict depends on, before building the always-valid judge on assumed ones. Paper only.
 

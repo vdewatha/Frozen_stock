@@ -101,10 +101,11 @@ def test_load_membership_caches_refreshes_monthly_and_keeps_the_old_file(tmp_pat
         pit.load_membership(download=False, now=NOW, path=tmp_path / "none.csv")
 
 
-def _bars(start: str, end: str) -> pd.DataFrame:
+def _bars(start: str, end: str, close: float = 10.0, volume: float = 1_000_000) -> pd.DataFrame:
+    """Flat bars of a liquid stock: $10M a day clears the identity check's dollar-volume floor."""
     dates = pd.bdate_range(start, end)
-    return pd.DataFrame({"date": dates.strftime("%Y-%m-%d"), "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0,
-                         "volume": 1000})
+    return pd.DataFrame({"date": dates.strftime("%Y-%m-%d"), "open": close, "high": close * 1.05, "low": close * 0.95,
+                         "close": close, "volume": volume})
 
 
 def test_coverage_with_a_fake_loader_never_fails_on_one_symbol(tmp_path):
@@ -121,14 +122,26 @@ def test_coverage_with_a_fake_loader_never_fails_on_one_symbol(tmp_path):
     cov = pit.coverage(m, loader=loader, now=NOW, cache_path=cache)
     assert cov["symbols"]["AAL"]["status"] == "missing" and cov["symbols"]["BRK.B"]["status"] == "empty"
     assert cov["available"] == ["AAPL", "AMD", "META"] and cov["missing"] == ["AAL", "BRK.B"]
-    # 2016: members AAL, AAPL, BRK.B, META (AMD rejoined 2017) -> AAPL and META have data
-    assert cov["by_year"]["2016"] == {"members": 4, "with_data": 2, "coverage": 0.5}
+    assert cov["rejected"] == [] and cov["rejections"] == {}
+    assert cov["symbols"]["AMD"]["identity"]["median_dollar_volume"] == 10_000_000.0
+    # 2016: members AAL (past), AAPL, BRK.B, META (current; AMD rejoined 2017) -> AAPL and META have data
+    assert cov["by_year"]["2016"] == {"members": 4, "with_data": 2, "coverage": 0.5,
+                                      "current_members": 3, "current_with_data": 2, "current_coverage": 0.6667,
+                                      "past_members": 1, "past_with_data": 0, "past_coverage": 0.0}
     # 2005: members AAL? no (out 1997-2015); AAPL, AMD -> AMD's history starts 2016, so only AAPL
-    assert cov["by_year"]["2005"] == {"members": 2, "with_data": 1, "coverage": 0.5}
+    assert cov["by_year"]["2005"] == {"members": 2, "with_data": 1, "coverage": 0.5,
+                                      "current_members": 2, "current_with_data": 1, "current_coverage": 0.5,
+                                      "past_members": 0, "past_with_data": 0, "past_coverage": None}
     # 2020: AAL, AAPL, AMD, BRK.B, META -> AAPL, AMD, META
-    assert cov["by_year"]["2020"] == {"members": 5, "with_data": 3, "coverage": 0.6}
+    assert cov["by_year"]["2020"] == {"members": 5, "with_data": 3, "coverage": 0.6,
+                                      "current_members": 4, "current_with_data": 3, "current_coverage": 0.75,
+                                      "past_members": 1, "past_with_data": 0, "past_coverage": 0.0}
     assert cov["coverage_since_2010"] == round(float(np.mean(
         [cov["by_year"][str(y)]["coverage"] for y in range(2010, 2027)])), 4)
+    # current and past members are always reported apart: the only past member (AAL) has no history
+    assert cov["coverage_since_2010_past"] == 0.0 and cov["coverage_since_2010_current"] > cov["coverage_since_2010"]
+    assert cov["groups"] == {"current": {"tickers": 4, "ok": 3, "rejected": 0, "empty": 1, "missing": 0},
+                             "past": {"tickers": 1, "ok": 0, "rejected": 0, "empty": 0, "missing": 1}}
     assert pit.replay_symbols(["spy", "AAPL"], cov) == ["AAPL", "AMD", "META", "SPY"]
     # cached for a month, recomputed on demand
     cov2 = pit.coverage(m, loader=lambda t: (_ for _ in ()).throw(RuntimeError("no")), now=NOW, cache_path=cache)
@@ -136,6 +149,129 @@ def test_coverage_with_a_fake_loader_never_fails_on_one_symbol(tmp_path):
     cov3 = pit.coverage(m, loader=lambda t: (_ for _ in ()).throw(RuntimeError("no")), now=NOW, cache_path=cache,
                         refresh=True)
     assert cov3["available"] == []
+
+
+# ---------------------------------------------------------- identity check
+
+REUSED = """ticker,start_date,end_date
+AAPL,1996-01-02,
+OLDCO,2000-01-03,2012-05-25
+"""
+
+
+def _old_rule_accepts(frame: pd.DataFrame, spans) -> bool:
+    """The test the module used before the identity check: 60 rows overlapping the membership interval."""
+    dates = pd.to_datetime(frame["date"])
+    return int(pit.member_days_mask(dates, spans).sum()) >= pit.MIN_HISTORY_ROWS
+
+
+def _otc_shell(start: str, end: str, seed: int = 11) -> pd.DataFrame:
+    """A penny stock now served under a past member's ticker: $0.04 prints, mostly zero volume, flat OHLC."""
+    rng = np.random.default_rng(seed)
+    dates = pd.bdate_range(start, end)
+    close = 0.04 * np.cumprod(1 + rng.normal(0, 0.08, len(dates)))
+    volume = np.where(rng.random(len(dates)) < 0.6, 0, rng.integers(100, 5000, len(dates)))
+    return pd.DataFrame({"date": dates.strftime("%Y-%m-%d"), "open": close, "high": close, "low": close,
+                         "close": close, "volume": volume})
+
+
+def test_a_reused_ticker_the_old_rule_accepted_is_rejected_with_its_reasons():
+    m = pit.Membership.from_frame(pit.parse_membership(REUSED))
+    spans = m.intervals["OLDCO"]
+    # The shell's history covers every member day, so the old test counted it as available.
+    shell = _otc_shell("1999-06-01", "2026-11-05")
+    assert _old_rule_accepts(shell, spans)
+    verdict = pit.identity_check("OLDCO", shell, spans)
+    assert not verdict["ok"] and verdict["member_bars"] > 3000
+    reasons = " ".join(verdict["reasons"])
+    assert "dollar_volume_below_floor" in reasons and "cost_artifacts" in reasons
+    assert verdict["median_dollar_volume"] < 1_000 and verdict["cost_artifact_share"] > 0.5
+    # A listed substitute with normal-looking bars but a tenth of the member's turnover (BB&T on Brookline's bars).
+    thin = _bars("1999-06-01", "2026-11-05", close=12.0, volume=80_000)   # $0.96M a day
+    assert _old_rule_accepts(thin, spans)
+    verdict = pit.identity_check("OLDCO", thin, spans)
+    assert verdict["reasons"] == [r for r in verdict["reasons"] if r.startswith("dollar_volume_below_floor")]
+    assert not verdict["ok"]
+    # The genuine member: liquid, no cost artifacts, no impossible day-over-day ratio.
+    assert pit.identity_check("OLDCO", _bars("1999-06-01", "2012-05-24"), spans)["ok"]
+    # A history that starts after the company left (the next tenant's) has no member-day bars at all.
+    late = _bars("2016-01-04", "2026-11-05")
+    assert not _old_rule_accepts(late, spans)
+    verdict = pit.identity_check("OLDCO", late, spans)
+    assert not verdict["ok"] and verdict["reasons"][0].startswith("member_bars_below_minimum: 0 bars")
+
+
+def test_price_ratio_breaks_reject_unless_they_are_splits():
+    m = pit.Membership.from_frame(pit.parse_membership(REUSED))
+    spans = m.intervals["OLDCO"]
+    bars = _bars("1999-06-01", "2012-05-24", close=50.0)
+    broken = bars.copy()
+    broken.loc[broken.index[1500]:, "close"] = 5.0   # a 0.1x day with no split: another instrument's prints
+    broken.loc[broken.index[1500]:, ["open", "high", "low"]] = [5.0, 5.25, 4.75]
+    verdict = pit.identity_check("OLDCO", broken, spans)
+    assert not verdict["ok"] and verdict["price_ratio_breaks"] == 1
+    assert verdict["reasons"] == [r for r in verdict["reasons"] if r.startswith("price_ratio_outside_bounds")]
+    split = broken.copy()
+    split["stock splits"] = 0.0
+    split.loc[split.index[1500], "stock splits"] = 10.0
+    assert pit.identity_check("OLDCO", split, spans)["ok"]
+    # a break on a non-member day (after the company left) is not the member's problem
+    after = _bars("1999-06-01", "2014-12-31", close=50.0)
+    after.loc[after.index[-10]:, "close"] = 5.0
+    assert pit.identity_check("OLDCO", after, spans)["ok"]
+
+
+def test_name_match_against_the_removal_record():
+    assert pit.names_match("El Paso Corporation", "Empire Petroleum Corporation") is False
+    assert pit.names_match("BB&T Corp", "Brookline Bancorp, Inc.") is False
+    assert pit.names_match("Genzyme", "VanEck Digital Native Economy ETF") is False
+    assert pit.names_match("Compuware", "Compuware Corporation") is True
+    assert pit.names_match("Wendy's International", "The Wendy's Company") is True
+    assert pit.names_match("Agilent Technologies, Inc.", "Agilent Technologies Inc") is True
+    assert pit.names_match("El Paso Corporation", None) is None and pit.names_match("", "x") is None
+    m = pit.Membership.from_frame(pit.parse_membership(REUSED))
+    spans = m.intervals["OLDCO"]
+    genuine = _bars("1999-06-01", "2012-05-24")
+    verdict = pit.identity_check("OLDCO", genuine, spans, expected_name="Old Company Corp",
+                                 served_name="Newco Shell Inc")
+    assert not verdict["ok"] and verdict["reasons"][0].startswith("name_mismatch")
+    assert verdict["name"] == {"expected": "Old Company Corp", "served": "Newco Shell Inc", "match": False}
+    assert pit.identity_check("OLDCO", genuine, spans, expected_name="Old Company Corp")["name"]["match"] is None
+    # a membership source that carries names feeds the check through the Membership
+    named = pit.parse_membership("ticker,start_date,end_date,name\nOLDCO,2000-01-03,2012-05-25,Old Company\n")
+    assert pit.Membership.from_frame(named).names == {"OLDCO": "Old Company"}
+
+
+def test_coverage_rejects_the_reused_ticker_and_the_replay_mask_denies_it(tmp_path):
+    m = pit.Membership.from_frame(pit.parse_membership(REUSED))
+    histories = {"AAPL": _bars("1990-01-02", "2026-11-05"), "OLDCO": _otc_shell("1999-06-01", "2026-11-05")}
+    cov = pit.coverage(m, loader=histories.__getitem__, now=NOW, cache_path=tmp_path / "cov.json",
+                       served_names={"OLDCO": "Ocean Thermal Energy Corporation"}, names={"OLDCO": "Compuware"})
+    assert cov["available"] == ["AAPL"] and cov["rejected"] == ["OLDCO"] and cov["missing"] == []
+    reasons = cov["rejections"]["OLDCO"]
+    assert [r.split(":")[0] for r in reasons] == ["name_mismatch", "dollar_volume_below_floor", "cost_artifacts"]
+    assert cov["symbols"]["OLDCO"]["status"] == "rejected" and cov["symbols"]["OLDCO"]["reasons"] == reasons
+    # the past member's bars never count as coverage, so past coverage is zero and current is full
+    assert cov["by_year"]["2005"]["past_with_data"] == 0 and cov["by_year"]["2005"]["current_coverage"] == 1.0
+    assert cov["coverage_since_2010_past"] == 0.0 and cov["coverage_since_2010_current"] == 1.0
+    assert cov["groups"]["past"] == {"tickers": 1, "ok": 0, "rejected": 1, "empty": 0, "missing": 0}
+    assert pit.replay_symbols(["SPY"], cov) == ["AAPL", "SPY"]
+    # a coverage cache written before the identity check is not trusted
+    stale = tmp_path / "old.json"
+    stale.write_text(json.dumps({"available": ["OLDCO"], "missing": []}))
+    assert pit.coverage(m, loader=histories.__getitem__, now=NOW, cache_path=stale)["rejected"] == ["OLDCO"]
+    # the replay context leaves the symbol out, its mask denies every bar, its summary says why
+    context = pit.replay_universe(["SPY"], loader=histories.__getitem__, earnings_loader=lambda s: pd.DataFrame(),
+                                  now=NOW, membership=m, coverage_result=cov)
+    assert context.symbols == ["AAPL", "SPY"]
+    dates = ["2005-01-03", "2010-01-04"]
+    assert not context.mask("OLDCO", dates).any() and m.mask("OLDCO", dates).all()
+    assert context.mask("AAPL", dates).all() and context.mask("SPY", dates).all()
+    summary = context.summary()
+    assert summary["rejected_members"] == {"OLDCO": reasons}
+    assert summary["coverage_since_2010_past"] == 0.0 and summary["coverage_since_2010_current"] == 1.0
+    assert summary["members"]["past"]["rejected"] == 1
+    assert summary["coverage_by_year_past"]["2010"] == 0.0 and summary["coverage_by_year_current"]["2010"] == 1.0
 
 
 # ------------------------------------------------------------- replay mask
@@ -190,6 +326,7 @@ def test_replay_universe_builds_the_context_from_the_given_loaders():
     summary = context.summary()
     assert summary["mode"] == "point_in_time" and summary["symbols"] == 3
     assert summary["available_members"] == 2 and summary["missing_members"] == 3  # AAL, BRK.B, META: no history
+    assert summary["rejected_members"] == {} and summary["coverage_since_2010_past"] == 0.0
 
 
 def test_engine_and_discovery_use_the_point_in_time_universe_when_enabled(db, monkeypatch):  # noqa: F811

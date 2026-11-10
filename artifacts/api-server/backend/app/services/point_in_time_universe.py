@@ -32,10 +32,53 @@ Cached data format (all under ``meta_label_learning.history_dir()``)
   ``last_date``.  The membership file is refreshed after ``REFRESH_AFTER``
   (30 days); a failed refresh keeps the old file.
 * ``universe/sp500_coverage.json``: ``checked_at``, ``start``, ``by_year``
-  (``{"2010": {"members": n, "with_data": n, "coverage": share}}``),
-  ``coverage_since_2010`` (mean of the yearly shares from 2010), ``available``
-  and ``missing`` ticker lists and ``symbols`` (``status`` ok / empty / missing,
-  ``rows``, ``first``, ``last`` per ticker).  Refreshed after ``REFRESH_AFTER``.
+  (``{"2010": {"members": n, "with_data": n, "coverage": share,
+  "current_members": n, "current_with_data": n, "current_coverage": share,
+  "past_members": n, "past_with_data": n, "past_coverage": share}}``; a
+  *current* member still holds an open interval, a *past* member does not),
+  ``coverage_since_2010`` / ``coverage_since_2010_current`` /
+  ``coverage_since_2010_past`` (means of the yearly shares from 2010; the
+  blended figure is a survivors' average and is never reported alone),
+  ``groups`` (ticker counts per status for current and past members),
+  ``available``, ``rejected`` and ``missing`` ticker lists, ``rejections``
+  (``{ticker: [reason, ...]}``) and ``symbols`` (``status`` ok / rejected /
+  empty / missing, ``rows``, ``first``, ``last`` and the ``identity`` record
+  per ticker).  Refreshed after ``REFRESH_AFTER``.
+
+Ticker identity: a history only counts when it is the member's own
+------------------------------------------------------------------
+yfinance serves a ticker's *current* instrument.  When a past member's symbol
+was reused (BBT is Brookline Bancorp today, EP Empire Petroleum, CPWR an OTC
+shell, GENZ a VanEck ETF, CCU a Chilean brewer's ADR) the bars on the old
+member's dates belong to another company, and the 2026-11-10 coverage audit
+(``reports/point-in-time-coverage-20261110.md``, section 4) found 18 such past
+members that the old "60 overlapping rows" test had counted as available.
+``identity_check`` therefore runs before any bar counts, on the bars that fall
+on the ticker's own member days:
+
+* at least ``MIN_MEMBER_BARS`` member-day bars (a history that starts after
+  the company left is the next tenant's);
+* a name match with the removal record, where the membership source or the
+  caller gives one (``names``) and the data source says whose history it
+  serves (``served_names``); the fja05680 file has no names, so this test is
+  recorded as unchecked unless a caller supplies both;
+* a dollar-volume floor: the median ``close x volume`` on member days at least
+  ``MIN_MEMBER_DOLLAR_VOLUME`` (every genuine still-listed past member in the
+  audit clears $2.4M; the substitutes with normal-looking bars sit at $0.1-1.2M);
+* the cost-artifact test: the share of member-day bars whose one-side
+  execution cost under the default ``BarrierConfig`` exceeds
+  ``COST_ARTIFACT_SIDE_BPS`` (the per-bar form of the verdict-inputs rule, an
+  intrabar stop exit losing more than 2 x stop + 100 bps, which needs about
+  200 bps a side) must stay under ``MAX_COST_ARTIFACT_SHARE``: thin OTC prints
+  push the impact term to its cap on most bars, a genuine crash on a few;
+* the price-sanity test: no day-over-day adjusted close ratio outside
+  ``PRICE_RATIO_BOUNDS`` on a member day that is not a split.
+
+A rejected ticker is listed with its reasons in ``coverage()['rejections']``
+and in ``ReplayUniverse.summary()['rejected_members']``; its symbol is left
+out of the replay and ``ReplayUniverse.mask`` denies it on every bar.  The
+check cannot recover a missing name (74% of past-member constituent-days have
+no bar at all); it only stops a wrong one being used.
 * ``<YAHOO>.csv``: the shared adjusted daily history cache
   (``strategy_scorecard.load_daily_history``); dotted tickers are stored under
   their Yahoo spelling (``BRK.B`` -> ``BRK-B.csv``).
@@ -85,6 +128,17 @@ FIRST_DATE = "2000-01-01"
 COVERAGE_FROM_YEAR = 2010
 MIN_HISTORY_ROWS = 60
 MIN_SOURCE_ROWS = 400
+# Identity check (see the module docstring): thresholds from the 2026-11-10
+# coverage audit, ``reports/point-in-time-coverage-20261110.md`` section 4.
+MIN_MEMBER_BARS = MIN_HISTORY_ROWS
+MIN_MEMBER_DOLLAR_VOLUME = 2_000_000.0
+COST_ARTIFACT_SIDE_BPS = 200.0
+MAX_COST_ARTIFACT_SHARE = 0.05
+PRICE_RATIO_BOUNDS = (0.2, 5.0)
+_NAME_NOISE = frozenset({
+    "inc", "incorporated", "corp", "corporation", "co", "company", "companies", "ltd", "limited", "plc", "the",
+    "holdings", "holding", "group", "sa", "nv", "ag", "llc", "lp", "trust", "and", "international", "intl",
+})
 # A ticker change inside one company: the old symbol's membership days belong
 # to the symbol the daily history is cached under.
 TICKER_ALIASES: dict[str, str] = {"FB": "META"}
@@ -134,11 +188,17 @@ def parse_membership(source: str | pd.DataFrame) -> pd.DataFrame:
         "start": pd.to_datetime(frame["start_date"], errors="coerce"),
         "end": pd.to_datetime(frame["end_date"], errors="coerce"),
     })
+    # An optional company name (the fja05680 file has none; a richer source may).
+    if "name" in frame.columns:
+        out["name"] = frame["name"].map(lambda n: "" if pd.isna(n) else str(n).strip())
+    else:
+        out["name"] = ""
     out = out[out["ticker"].ne("") & out["ticker"].ne("NAN") & out["start"].notna()]
     out = out[out["end"].isna() | (out["end"] > out["start"])]
     merged = []
     for ticker, group in out.sort_values(["ticker", "start"]).groupby("ticker", sort=True):
         current_start, current_end = None, None
+        name = next((n for n in group["name"] if n), "")
         for start, end in zip(group["start"], group["end"]):
             if current_start is None:
                 current_start, current_end = start, end
@@ -147,10 +207,10 @@ def parse_membership(source: str | pd.DataFrame) -> pd.DataFrame:
                 if not pd.isna(current_end):
                     current_end = end if pd.isna(end) else max(current_end, end)
                 continue
-            merged.append((ticker, current_start, current_end))
+            merged.append((ticker, current_start, current_end, name))
             current_start, current_end = start, end
-        merged.append((ticker, current_start, current_end))
-    return pd.DataFrame(merged, columns=["ticker", "start", "end"]).reset_index(drop=True)
+        merged.append((ticker, current_start, current_end, name))
+    return pd.DataFrame(merged, columns=["ticker", "start", "end", "name"]).reset_index(drop=True)
 
 
 @dataclass(frozen=True)
@@ -159,15 +219,25 @@ class Membership:
 
     intervals: Mapping[str, tuple[tuple[pd.Timestamp, Optional[pd.Timestamp]], ...]]
     source: dict = field(default_factory=dict)
+    # Company name per ticker where the membership source gives one (else absent).
+    names: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_frame(cls, frame: pd.DataFrame, source: Optional[dict] = None) -> "Membership":
         intervals: dict[str, list] = {}
+        names: dict[str, str] = {}
         for row in frame.itertuples(index=False):
             end = None if pd.isna(row.end) else pd.Timestamp(row.end)
             intervals.setdefault(str(row.ticker), []).append((pd.Timestamp(row.start), end))
+            name = getattr(row, "name", "")
+            if isinstance(name, str) and name and str(row.ticker) not in names:
+                names[str(row.ticker)] = name
         return cls({ticker: tuple(sorted(spans, key=lambda span: span[0])) for ticker, spans in intervals.items()},
-                   dict(source or {}))
+                   dict(source or {}), names)
+
+    def is_current(self, ticker: str) -> bool:
+        """``ticker`` still holds an open membership interval (a *current* member; else a *past* one)."""
+        return any(end is None for _, end in self.intervals.get(str(ticker).upper(), ()))
 
     def tickers(self, since: Optional[str] = FIRST_DATE) -> list[str]:
         """Tickers that were members on or after ``since`` (single stocks only)."""
@@ -309,23 +379,165 @@ def _overlaps(a_start, a_end, b_start, b_end) -> bool:
     return (a_end is None or a_end > b_start) and (b_end is None or b_end > a_start)
 
 
+# ------------------------------------------------------------ identity check
+
+def normalize_name(name) -> str:
+    """Lower-case words of a company name without punctuation and legal-form noise (``Inc``, ``Corp``, ``The``)."""
+    if name is None or (isinstance(name, float) and np.isnan(name)):
+        return ""
+    text = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in str(name).lower().replace("'", ""))
+    return " ".join(word for word in text.split() if word not in _NAME_NOISE)
+
+
+def names_match(expected, served) -> Optional[bool]:
+    """Do two company names denote one company?  ``None`` when either is unknown.
+
+    Normalised names are equal, one is a prefix of the other (``Wendys`` /
+    ``Wendys International``), or they share the first significant word
+    (``Compuware`` / ``Compuware Corp``).  ``El Paso`` against ``Empire
+    Petroleum`` and ``BB&T`` against ``Brookline Bancorp`` do not match.
+    """
+    a, b = normalize_name(expected), normalize_name(served)
+    if not a or not b:
+        return None
+    if a == b or a.startswith(b + " ") or b.startswith(a + " "):
+        return True
+    return a.split()[0] == b.split()[0]
+
+
+def member_days_mask(dates, spans: Iterable[tuple], start: Optional[str] = None) -> np.ndarray:
+    """Per-bar: the bar's date falls inside one of ``spans`` (and on or after ``start``)."""
+    index = pd.DatetimeIndex(pd.to_datetime(dates)).normalize()
+    out = np.zeros(len(index), dtype=bool)
+    for span_start, span_end in spans:
+        inside = index >= span_start
+        if span_end is not None:
+            inside &= index < span_end
+        out |= np.asarray(inside)
+    if start is not None:
+        out &= np.asarray(index >= pd.Timestamp(start))
+    return out
+
+
+def identity_check(ticker: str, frame: Optional[pd.DataFrame], spans: Iterable[tuple], *, start: Optional[str] = FIRST_DATE,
+                   expected_name: Optional[str] = None, served_name: Optional[str] = None,
+                   min_member_bars: int = MIN_MEMBER_BARS, min_dollar_volume: float = MIN_MEMBER_DOLLAR_VOLUME,
+                   cost_side_bps: float = COST_ARTIFACT_SIDE_BPS, max_cost_share: float = MAX_COST_ARTIFACT_SHARE,
+                   ratio_bounds: tuple[float, float] = PRICE_RATIO_BOUNDS) -> dict:
+    """Does ``frame`` (a daily history served under ``ticker``) belong to the member that held ``spans``?
+
+    Returns ``ok`` plus every failed test in ``reasons`` and the measured
+    values (``member_bars``, ``median_dollar_volume``, ``cost_artifact_share``,
+    ``price_ratio_breaks``, ``name``) so the coverage cache says *why* a
+    ticker was rejected.  The tests are described in the module docstring;
+    the price tests run on the full contiguous series and are counted on the
+    member days, so a membership gap never reads as a crash.
+    """
+    from app.services.triple_barrier import BarrierConfig, prior_liquidity, side_cost_bps
+
+    spans = tuple(spans)
+    reasons: list[str] = []
+    name = {"expected": expected_name or None, "served": served_name or None,
+            "match": names_match(expected_name, served_name)}
+    if name["match"] is False:
+        reasons.append(f"name_mismatch: membership record '{expected_name}', data source serves '{served_name}'")
+    result = {"member_bars": 0, "median_dollar_volume": None, "cost_artifact_share": None, "price_ratio_breaks": None,
+              "name": name}
+    if frame is None or not len(frame) or "date" not in frame.columns or "close" not in frame.columns:
+        reasons.append(f"member_bars_below_minimum: 0 bars on member days (need {min_member_bars})")
+        return {"ok": False, "reasons": reasons, **result}
+    bars = frame.copy()
+    bars["date"] = pd.to_datetime(bars["date"])
+    bars = bars.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+    member = member_days_mask(bars["date"], spans, start)
+    result["member_bars"] = int(member.sum())
+    if result["member_bars"] < min_member_bars:
+        reasons.append(f"member_bars_below_minimum: {result['member_bars']} bars on member days (need {min_member_bars})")
+        return {"ok": False, "reasons": reasons, **result}
+    close = pd.to_numeric(bars["close"], errors="coerce").astype(float)
+    volume = pd.to_numeric(bars["volume"], errors="coerce").astype(float) if "volume" in bars.columns \
+        else pd.Series(np.nan, index=bars.index)
+    # Dollar-volume floor on member days (NaN volume unknown, zero volume counts as zero).
+    dollar = (close * volume)[member]
+    median_dollar = float(dollar.median()) if dollar.notna().any() else None
+    result["median_dollar_volume"] = None if median_dollar is None else round(median_dollar, 2)
+    if median_dollar is None or median_dollar < min_dollar_volume:
+        shown = "unknown" if median_dollar is None else f"${median_dollar:,.0f}"
+        reasons.append(f"dollar_volume_below_floor: median member-day dollar volume {shown} (floor ${min_dollar_volume:,.0f})")
+    # Cost-artifact share: one-side execution cost of the default barrier order on each member-day bar.
+    config = BarrierConfig()
+    sigma_bps, adv = prior_liquidity(bars[["close", "volume"]] if "volume" in bars.columns else bars[["close"]],
+                                     config.volatility_lookback)
+    costs = np.array([side_cost_bps(float(sigma_bps[i]), float(adv[i]) if np.isfinite(adv[i]) else float("nan"),
+                                    config.position_notional / close.iloc[i] if close.iloc[i] > 0 else 0.0, config)
+                      for i in np.flatnonzero(member)])
+    share = float(np.mean(costs > cost_side_bps)) if len(costs) else 0.0
+    result["cost_artifact_share"] = round(share, 4)
+    if share > max_cost_share:
+        reasons.append(f"cost_artifacts: {share:.1%} of member-day bars cost over {cost_side_bps:.0f} bps a side "
+                       f"(ceiling {max_cost_share:.0%})")
+    # Price sanity: a day-over-day adjusted close ratio outside the bounds on a member day that is not a split.
+    ratio = close / close.shift(1)
+    split_column = next((c for c in bars.columns if str(c).lower() in {"stock splits", "splits", "split"}), None)
+    is_split = pd.to_numeric(bars[split_column], errors="coerce").fillna(0).ne(0) if split_column is not None \
+        else pd.Series(False, index=bars.index)
+    low, high = ratio_bounds
+    breaks = member & ratio.notna().to_numpy() & ((ratio < low) | (ratio > high)).to_numpy() & ~is_split.to_numpy()
+    result["price_ratio_breaks"] = int(breaks.sum())
+    if breaks.any():
+        days = ", ".join(str(d.date()) for d in bars["date"][breaks].head(3))
+        reasons.append(f"price_ratio_outside_bounds: {int(breaks.sum())} member-day close ratio(s) outside "
+                       f"[{low}, {high}] without a split ({days})")
+    return {"ok": not reasons, "reasons": reasons, **result}
+
+
+def _lookup(source, ticker: str) -> Optional[str]:
+    if source is None:
+        return None
+    if callable(source):
+        try:
+            value = source(ticker)
+        except Exception as exc:  # a metadata lookup must never fail the coverage run
+            logger.debug("name lookup failed for %s: %s", ticker, exc)
+            return None
+    else:
+        value = source.get(ticker)
+    return str(value) if value else None
+
+
+# -------------------------------------------------------------------- coverage
+
+def _coverage_row(members: int, with_data: int) -> dict:
+    return {"members": members, "with_data": with_data, "coverage": round(with_data / members, 4) if members else None}
+
+
 def coverage(membership: Membership, *, loader: Optional[Callable[[str], pd.DataFrame]] = None,
              download: bool = False, now: Optional[datetime] = None, start: str = FIRST_DATE,
-             cache_path: Optional[Path] = None, refresh: bool = False) -> dict:
-    """Which past members still have daily history, and the yearly coverage share.
+             cache_path: Optional[Path] = None, refresh: bool = False,
+             names: Optional[Mapping[str, str]] = None, served_names=None) -> dict:
+    """Which members have a usable daily history of their own, and the yearly coverage, current and past apart.
 
     ``loader(ticker)`` returns a daily frame (default: the shared cache,
     downloading when ``download``); one failing ticker is recorded as missing,
-    never raised.  The result is cached at ``cache_path`` for ``REFRESH_AFTER``.
+    never raised.  A history that exists but fails ``identity_check`` (a
+    reused ticker's bars) is ``rejected`` with its reasons.  ``names`` are the
+    members' company names (default: those the membership source gives) and
+    ``served_names`` (mapping or callable) the name the data source serves
+    under each ticker; the name test runs where both are known.  The result
+    is cached at ``cache_path`` for ``REFRESH_AFTER``.
     """
     now = now or datetime.now(UTC)
     if cache_path is not None and not refresh and not _stale(cache_path, now, REFRESH_AFTER):
         try:
-            return json.loads(cache_path.read_text())
+            cached = json.loads(cache_path.read_text())
+            if "rejections" in cached:  # a cache written before the identity check is recomputed
+                return cached
         except ValueError:
             pass
     load = loader or _default_loader(download)
     first = pd.Timestamp(start)
+    expected_names = dict(membership.names)
+    expected_names.update({str(k).upper(): v for k, v in (names or {}).items()})
     symbols: dict[str, dict] = {}
     for ticker in membership.tickers(since=start):
         try:
@@ -333,39 +545,63 @@ def coverage(membership: Membership, *, loader: Optional[Callable[[str], pd.Data
             dates = pd.to_datetime(frame["date"]) if frame is not None and len(frame) else pd.Series(dtype="datetime64[ns]")
             if len(dates) < MIN_HISTORY_ROWS:
                 symbols[ticker] = {"status": "empty", "rows": int(len(dates))}
-            else:
-                symbols[ticker] = {"status": "ok", "rows": int(len(dates)), "first": str(dates.min().date()),
-                                   "last": str(dates.max().date())}
+                continue
+            identity = identity_check(ticker, frame, membership.intervals.get(ticker, ()), start=start,
+                                      expected_name=expected_names.get(ticker), served_name=_lookup(served_names, ticker))
+            info = {"status": "ok" if identity["ok"] else "rejected", "rows": int(len(dates)),
+                    "first": str(dates.min().date()), "last": str(dates.max().date()),
+                    "identity": {k: v for k, v in identity.items() if k not in ("ok", "reasons")}}
+            if not identity["ok"]:
+                info["reasons"] = identity["reasons"]
+            symbols[ticker] = info
         except Exception as exc:  # a delisted ticker yfinance no longer serves
             symbols[ticker] = {"status": "missing", "error": f"{exc.__class__.__name__}: {exc}"[:160]}
     by_year: dict[str, dict] = {}
     for year in range(first.year, now.year + 1):
         year_start, year_end = pd.Timestamp(year=year, month=1, day=1), pd.Timestamp(year=year + 1, month=1, day=1)
-        members, with_data = 0, 0
+        counts = {"current": [0, 0], "past": [0, 0]}
         for ticker, spans in membership.intervals.items():
             if ticker in ALWAYS_MEMBERS:
                 continue
             active = [(s, e) for s, e in spans if _overlaps(s, e, year_start, year_end)]
             if not active:
                 continue
-            members += 1
+            group = counts["current" if membership.is_current(ticker) else "past"]
+            group[0] += 1
             info = symbols.get(ticker) or {}
             if info.get("status") != "ok":
                 continue
             data_start, data_end = pd.Timestamp(info["first"]), pd.Timestamp(info["last"]) + pd.Timedelta(days=1)
             if any(_overlaps(data_start, data_end, max(s, year_start), min(e, year_end) if e is not None else year_end)
                    for s, e in active):
-                with_data += 1
-        by_year[str(year)] = {"members": members, "with_data": with_data,
-                              "coverage": round(with_data / members, 4) if members else None}
-    recent = [row["coverage"] for year, row in by_year.items()
-              if int(year) >= COVERAGE_FROM_YEAR and row["coverage"] is not None]
+                group[1] += 1
+        current, past = counts["current"], counts["past"]
+        row = _coverage_row(current[0] + past[0], current[1] + past[1])
+        row.update({f"current_{k}": v for k, v in _coverage_row(*current).items()})
+        row.update({f"past_{k}": v for k, v in _coverage_row(*past).items()})
+        by_year[str(year)] = row
+
+    def since_2010(key: str) -> Optional[float]:
+        recent = [row[key] for year, row in by_year.items() if int(year) >= COVERAGE_FROM_YEAR and row[key] is not None]
+        return round(float(np.mean(recent)), 4) if recent else None
+
+    groups = {}
+    for group_name, is_group in (("current", membership.is_current), ("past", lambda t: not membership.is_current(t))):
+        tickers = [t for t in symbols if is_group(t)]
+        groups[group_name] = {"tickers": len(tickers),
+                              **{status: sum(1 for t in tickers if symbols[t]["status"] == status)
+                                 for status in ("ok", "rejected", "empty", "missing")}}
     result = {
         "checked_at": now.isoformat(), "start": start, "source": dict(membership.source),
         "by_year": by_year,
-        "coverage_since_2010": round(float(np.mean(recent)), 4) if recent else None,
+        "coverage_since_2010": since_2010("coverage"),
+        "coverage_since_2010_current": since_2010("current_coverage"),
+        "coverage_since_2010_past": since_2010("past_coverage"),
+        "groups": groups,
         "available": sorted(t for t, info in symbols.items() if info["status"] == "ok"),
-        "missing": sorted(t for t, info in symbols.items() if info["status"] != "ok"),
+        "rejected": sorted(t for t, info in symbols.items() if info["status"] == "rejected"),
+        "rejections": {t: info["reasons"] for t, info in sorted(symbols.items()) if info["status"] == "rejected"},
+        "missing": sorted(t for t, info in symbols.items() if info["status"] in ("empty", "missing")),
         "symbols": symbols,
     }
     if cache_path is not None:
@@ -378,8 +614,20 @@ def coverage(membership: Membership, *, loader: Optional[Callable[[str], pd.Data
 
 
 def replay_symbols(base_symbols: Iterable[str], coverage_result: Mapping) -> list[str]:
-    """Today's list plus every past member with history (sorted, upper-case)."""
+    """Today's list plus every member whose own history passed the identity check (sorted, upper-case)."""
     return sorted({s.upper() for s in base_symbols} | set(coverage_result.get("available") or ()))
+
+
+def rejecting_mask(membership: Membership, rejected: Iterable[str]) -> UniverseMask:
+    """``membership.mask`` that also denies every bar of the ``rejected`` tickers (a reused symbol's history)."""
+    denied = frozenset(str(t).upper() for t in rejected)
+
+    def mask(symbol: str, dates) -> np.ndarray:
+        if str(symbol).upper() in denied:
+            return np.zeros(len(pd.DatetimeIndex(pd.to_datetime(dates))), dtype=bool)
+        return membership.mask(symbol, dates)
+
+    return mask
 
 
 # ------------------------------------------------------------- replay context
@@ -399,8 +647,14 @@ class ReplayUniverse:
         return {"mode": "point_in_time", "symbols": len(self.symbols),
                 "available_members": len(self.coverage.get("available") or ()),
                 "missing_members": len(self.coverage.get("missing") or ()),
+                "rejected_members": dict(self.coverage.get("rejections") or {}),
+                "members": self.coverage.get("groups") or {},
                 "coverage_since_2010": self.coverage.get("coverage_since_2010"),
+                "coverage_since_2010_current": self.coverage.get("coverage_since_2010_current"),
+                "coverage_since_2010_past": self.coverage.get("coverage_since_2010_past"),
                 "coverage_by_year": {year: row["coverage"] for year, row in by_year.items()},
+                "coverage_by_year_current": {year: row.get("current_coverage") for year, row in by_year.items()},
+                "coverage_by_year_past": {year: row.get("past_coverage") for year, row in by_year.items()},
                 "source": self.coverage.get("source") or {}}
 
 
@@ -434,7 +688,9 @@ def replay_universe(base_symbols: Iterable[str], *, loader: Optional[Callable] =
 
     With the default loaders the first run downloads every past member's
     history once (the coverage check); later runs read the monthly cache and
-    refresh a symbol's bars only when its CSV is older than a week.
+    refresh a symbol's bars only when its CSV is older than a week.  A member
+    whose history failed the identity check is left out of ``symbols`` and
+    denied by ``mask`` on every bar.
     """
     now = now or datetime.now(UTC)
     base = sorted({s.upper() for s in base_symbols})
@@ -445,7 +701,9 @@ def replay_universe(base_symbols: Iterable[str], *, loader: Optional[Callable] =
                                    cache_path=None if loader is not None else coverage_path())
     symbols = replay_symbols(base, coverage_result)
     earnings = earnings_loader or budgeted_earnings_loader(base, now=now)
-    return ReplayUniverse(symbols=symbols, mask=membership.mask, loader=frames_loader, earnings_loader=earnings,
+    rejected = coverage_result.get("rejected") or ()
+    mask = rejecting_mask(membership, rejected) if rejected else membership.mask
+    return ReplayUniverse(symbols=symbols, mask=mask, loader=frames_loader, earnings_loader=earnings,
                           coverage=dict(coverage_result))
 
 
