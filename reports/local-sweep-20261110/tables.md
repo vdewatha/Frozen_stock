@@ -1,72 +1,72 @@
 ## Top 25 trials by month-clustered t of net OOS trade returns (2015-01 → 2026-11, 11 bps a side)
 
-| Family | Universe | Gate | Rule | Trades | Net bps @11 | Net bps @25 | PF | Max DD | Windows + | Excess bps | t (net) | t (excess) | boot p | Bonf. p |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| gap_down_recovery | index_etfs | spy_sma10 | BUY when gap < -0.02; exit when ret_1 > 0 | 23 | 138.1 | 109.8 | 39.11 | 1.8% | 88% | 133.6 | 7.83 | 7.53 | 0.0620 | 1.000 |
-| weekly_reversal | index_etfs | spy_sma50 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 13 | 167.8 | 139.3 | 48.56 | 1.2% | 100% | 159.6 | 5.90 | 5.63 | 0.0180 | 1.000 |
-| weekly_reversal | index_etfs | spy_sma50 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when ret_1 > 0 | 14 | 137.7 | 109.3 | 41.04 | 0.9% | 100% | 131.7 | 5.35 | 5.17 | 0.0160 | 1.000 |
-| weekly_reversal | index_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 22 | 186.3 | 157.8 | 17.54 | 1.5% | 100% | 177.5 | 5.09 | 4.80 | 0.0140 | 1.000 |
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 453 | 326.3 | 299.8 | 2.37 | 4.9% | 83% | 37.4 | 5.06 | 0.60 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 892 | 174.3 | 146.4 | 1.82 | 4.3% | 88% | 34.4 | 4.81 | 0.99 | 0.0000 | 0.000 |
-| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 105 | 81.0 | 52.8 | 4.36 | 2.2% | 78% | 70.5 | 4.81 | 4.08 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 324 | 313.7 | 287.6 | 2.36 | 3.2% | 83% | 14.4 | 4.78 | 0.23 | 0.0000 | 0.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 940 | 97.6 | 69.1 | 1.91 | 3.7% | 90% | 71.0 | 4.71 | 3.33 | 0.0000 | 0.000 |
-| hand:ibs_mean_reversion | paper_45 | vix_above_20 | hand-written ibs_mean_reversion (seeded parameters) | 4368 | 71.7 | 42.9 | 1.70 | 10.0% | 90% | 50.0 | 4.67 | 3.21 | 0.0000 | 0.000 |
-| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 142 | 109.5 | 77.2 | 2.95 | 2.3% | 71% | 97.7 | 4.63 | 4.02 | 0.0010 | 1.000 |
-| down_streak | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and down_streak >= 5; exit when dist_sma_5 > 0 | 32 | 130.9 | 102.6 | 12.38 | 1.2% | 85% | 122.1 | 4.60 | 4.20 | 0.0050 | 1.000 |
-| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 0 | 716 | 257.5 | 230.2 | 1.97 | 6.5% | 83% | -33.3 | 4.56 | -0.62 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | spy_sma10 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1018 | 216.0 | 184.3 | 1.82 | 7.2% | 88% | -34.0 | 4.55 | -0.81 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | spy_sma50 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1010 | 225.9 | 194.9 | 1.86 | 7.5% | 83% | -24.1 | 4.52 | -0.54 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 454 | 191.0 | 164.6 | 2.06 | 4.2% | 79% | 38.0 | 4.47 | 0.90 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_not_trending | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 525 | 240.2 | 214.1 | 1.94 | 4.1% | 79% | -63.8 | 4.44 | -1.23 | 0.0000 | 0.000 |
-| down_streak | single_stocks | none | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 2138 | 48.4 | 20.4 | 1.47 | 4.4% | 96% | 19.9 | 4.39 | 1.74 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | spy_sma20 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1029 | 213.3 | 182.5 | 1.80 | 7.2% | 83% | -35.0 | 4.38 | -0.81 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_not_trending | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 1280 | 135.7 | 107.9 | 1.61 | 6.3% | 88% | -5.8 | 4.37 | -0.19 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | spy_sma50 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1397 | 137.6 | 106.7 | 1.64 | 7.2% | 83% | -15.7 | 4.36 | -0.53 | 0.0000 | 0.000 |
-| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 5; exit when dist_sma_5 > 0 | 60 | 95.2 | 66.9 | 5.71 | 2.1% | 88% | 85.5 | 4.33 | 3.82 | 0.0040 | 1.000 |
-| breakout_momentum | single_stocks | none | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1068 | 203.1 | 171.6 | 1.76 | 7.2% | 88% | -42.1 | 4.33 | -1.01 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_not_downtrend | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1068 | 203.0 | 171.5 | 1.76 | 7.2% | 88% | -42.2 | 4.32 | -1.01 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 638 | 172.5 | 144.5 | 1.82 | 3.4% | 88% | 30.6 | 4.32 | 0.80 | 0.0000 | 0.000 |
+| Family | Universe | Gate | Rule | Trades | Net bps @11 | Net bps @25 | PF | Max DD | Windows + | Excess bps | t (net) | t (excess) | boot p (floor 0.001) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| gap_down_recovery | index_etfs | spy_sma10 | BUY when gap < -0.02; exit when ret_1 > 0 | 23 | 138.1 | 109.8 | 39.11 | 1.8% | 88% | 133.6 | 7.83 | 7.53 | 0.062 |
+| weekly_reversal | index_etfs | spy_sma50 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 13 | 167.8 | 139.3 | 48.56 | 1.2% | 100% | 159.6 | 5.90 | 5.63 | 0.018 |
+| weekly_reversal | index_etfs | spy_sma50 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when ret_1 > 0 | 14 | 137.7 | 109.3 | 41.04 | 0.9% | 100% | 131.7 | 5.35 | 5.17 | 0.016 |
+| weekly_reversal | index_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 22 | 186.3 | 157.8 | 17.54 | 1.5% | 100% | 177.5 | 5.09 | 4.80 | 0.014 |
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 453 | 326.3 | 299.8 | 2.37 | 4.9% | 83% | 37.4 | 5.06 | 0.60 | < 0.001 |
+| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 892 | 174.3 | 146.4 | 1.82 | 4.3% | 88% | 34.4 | 4.81 | 0.99 | < 0.001 |
+| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 105 | 81.0 | 52.8 | 4.36 | 2.2% | 78% | 70.5 | 4.81 | 4.08 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 324 | 313.7 | 287.6 | 2.36 | 3.2% | 83% | 14.4 | 4.78 | 0.23 | < 0.001 |
+| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 940 | 97.6 | 69.1 | 1.91 | 3.7% | 90% | 71.0 | 4.71 | 3.33 | < 0.001 |
+| hand:ibs_mean_reversion | paper_45 | vix_above_20 | hand-written ibs_mean_reversion (seeded parameters) | 4368 | 71.7 | 42.9 | 1.70 | 10.0% | 90% | 50.0 | 4.67 | 3.21 | < 0.001 |
+| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 142 | 109.5 | 77.2 | 2.95 | 2.3% | 71% | 97.7 | 4.63 | 4.02 | < 0.001 |
+| down_streak | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and down_streak >= 5; exit when dist_sma_5 > 0 | 32 | 130.9 | 102.6 | 12.38 | 1.2% | 85% | 122.1 | 4.60 | 4.20 | 0.005 |
+| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 0 | 716 | 257.5 | 230.2 | 1.97 | 6.5% | 83% | -33.3 | 4.56 | -0.62 | < 0.001 |
+| breakout_momentum | single_stocks | spy_sma10 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1018 | 216.0 | 184.3 | 1.82 | 7.2% | 88% | -34.0 | 4.55 | -0.81 | < 0.001 |
+| breakout_momentum | single_stocks | spy_sma50 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1010 | 225.9 | 194.9 | 1.86 | 7.5% | 83% | -24.1 | 4.52 | -0.54 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 454 | 191.0 | 164.6 | 2.06 | 4.2% | 79% | 38.0 | 4.47 | 0.90 | < 0.001 |
+| earnings_drift | single_stocks | adx_not_trending | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 525 | 240.2 | 214.1 | 1.94 | 4.1% | 79% | -63.8 | 4.44 | -1.23 | < 0.001 |
+| down_streak | single_stocks | none | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 2138 | 48.4 | 20.4 | 1.47 | 4.4% | 96% | 19.9 | 4.39 | 1.74 | < 0.001 |
+| breakout_momentum | single_stocks | spy_sma20 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1029 | 213.3 | 182.5 | 1.80 | 7.2% | 83% | -35.0 | 4.38 | -0.81 | < 0.001 |
+| breakout_momentum | single_stocks | adx_not_trending | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 1280 | 135.7 | 107.9 | 1.61 | 6.3% | 88% | -5.8 | 4.37 | -0.19 | < 0.001 |
+| breakout_momentum | single_stocks | spy_sma50 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1397 | 137.6 | 106.7 | 1.64 | 7.2% | 83% | -15.7 | 4.36 | -0.53 | < 0.001 |
+| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 5; exit when dist_sma_5 > 0 | 60 | 95.2 | 66.9 | 5.71 | 2.1% | 88% | 85.5 | 4.33 | 3.82 | 0.004 |
+| breakout_momentum | single_stocks | none | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1068 | 203.1 | 171.6 | 1.76 | 7.2% | 88% | -42.1 | 4.33 | -1.01 | < 0.001 |
+| breakout_momentum | single_stocks | adx_not_downtrend | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1068 | 203.0 | 171.5 | 1.76 | 7.2% | 88% | -42.2 | 4.32 | -1.01 | < 0.001 |
+| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 638 | 172.5 | 144.5 | 1.82 | 3.4% | 88% | 30.6 | 4.32 | 0.80 | < 0.001 |
 
 ## Top 15 trials (≥100 trades) by t of excess over the symbol's own causal drift
 
-| Family | Universe | Gate | Rule | Trades | Net bps @11 | Net bps @25 | PF | Max DD | Windows + | Excess bps | t (net) | t (excess) | boot p | Bonf. p |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 105 | 81.0 | 52.8 | 4.36 | 2.2% | 78% | 70.5 | 4.81 | 4.08 | 0.0000 | 0.000 |
-| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 142 | 109.5 | 77.2 | 2.95 | 2.3% | 71% | 97.7 | 4.63 | 4.02 | 0.0010 | 1.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 940 | 97.6 | 69.1 | 1.91 | 3.7% | 90% | 71.0 | 4.71 | 3.33 | 0.0000 | 0.000 |
-| calm_market_dip | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 242 | 66.1 | 38.1 | 2.32 | 2.0% | 90% | 53.6 | 4.12 | 3.22 | 0.0000 | 0.000 |
-| hand:ibs_mean_reversion | paper_45 | vix_above_20 | hand-written ibs_mean_reversion (seeded parameters) | 4368 | 71.7 | 42.9 | 1.70 | 10.0% | 90% | 50.0 | 4.67 | 3.21 | 0.0000 | 0.000 |
-| calm_market_dip | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 5; exit when dist_sma_5 > 0 | 126 | 84.4 | 56.3 | 3.61 | 2.0% | 85% | 71.7 | 3.75 | 3.10 | 0.0010 | 1.000 |
-| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 148 | 139.6 | 111.3 | 3.86 | 6.9% | 93% | 119.1 | 3.63 | 3.10 | 0.0000 | 0.000 |
-| weekly_reversal | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when ret_1 > 0 | 831 | 79.6 | 49.0 | 1.75 | 4.3% | 86% | 61.9 | 3.96 | 3.05 | 0.0000 | 0.000 |
-| down_streak | index_etfs | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 138 | 87.8 | 59.6 | 2.91 | 5.6% | 79% | 77.5 | 3.46 | 3.01 | 0.0010 | 1.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 466 | 127.1 | 99.9 | 2.31 | 2.6% | 71% | 102.3 | 3.84 | 3.01 | 0.0000 | 0.000 |
-| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 436 | 134.2 | 106.0 | 2.89 | 8.9% | 86% | 113.6 | 3.50 | 2.97 | 0.0000 | 0.000 |
-| down_streak | sector_etfs | vix_above_20 | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 214 | 90.9 | 63.5 | 2.56 | 3.3% | 90% | 80.5 | 3.32 | 2.88 | 0.0010 | 1.000 |
-| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 3 | 448 | 114.1 | 85.8 | 2.65 | 6.7% | 94% | 96.2 | 3.30 | 2.78 | 0.0020 | 1.000 |
-| weekly_reversal | single_stocks | vix_above_20 | BUY when ret_5 < -0.05; exit when ret_1 > 0 | 2021 | 65.4 | 37.0 | 1.54 | 12.5% | 90% | 48.4 | 3.78 | 2.78 | 0.0000 | 0.000 |
-| weekly_reversal | single_stocks | vix_above_20 | BUY when ret_5 < -0.08; exit when ret_1 > 0 | 943 | 86.1 | 58.5 | 1.59 | 12.3% | 81% | 68.7 | 3.34 | 2.69 | 0.0120 | 1.000 |
+| Family | Universe | Gate | Rule | Trades | Net bps @11 | Net bps @25 | PF | Max DD | Windows + | Excess bps | t (net) | t (excess) | boot p (floor 0.001) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 105 | 81.0 | 52.8 | 4.36 | 2.2% | 78% | 70.5 | 4.81 | 4.08 | < 0.001 |
+| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 142 | 109.5 | 77.2 | 2.95 | 2.3% | 71% | 97.7 | 4.63 | 4.02 | < 0.001 |
+| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 940 | 97.6 | 69.1 | 1.91 | 3.7% | 90% | 71.0 | 4.71 | 3.33 | < 0.001 |
+| calm_market_dip | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 242 | 66.1 | 38.1 | 2.32 | 2.0% | 90% | 53.6 | 4.12 | 3.22 | < 0.001 |
+| hand:ibs_mean_reversion | paper_45 | vix_above_20 | hand-written ibs_mean_reversion (seeded parameters) | 4368 | 71.7 | 42.9 | 1.70 | 10.0% | 90% | 50.0 | 4.67 | 3.21 | < 0.001 |
+| calm_market_dip | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 5; exit when dist_sma_5 > 0 | 126 | 84.4 | 56.3 | 3.61 | 2.0% | 85% | 71.7 | 3.75 | 3.10 | < 0.001 |
+| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 148 | 139.6 | 111.3 | 3.86 | 6.9% | 93% | 119.1 | 3.63 | 3.10 | < 0.001 |
+| weekly_reversal | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when ret_1 > 0 | 831 | 79.6 | 49.0 | 1.75 | 4.3% | 86% | 61.9 | 3.96 | 3.05 | < 0.001 |
+| down_streak | index_etfs | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 138 | 87.8 | 59.6 | 2.91 | 5.6% | 79% | 77.5 | 3.46 | 3.01 | < 0.001 |
+| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 466 | 127.1 | 99.9 | 2.31 | 2.6% | 71% | 102.3 | 3.84 | 3.01 | < 0.001 |
+| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 436 | 134.2 | 106.0 | 2.89 | 8.9% | 86% | 113.6 | 3.50 | 2.97 | < 0.001 |
+| down_streak | sector_etfs | vix_above_20 | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 214 | 90.9 | 63.5 | 2.56 | 3.3% | 90% | 80.5 | 3.32 | 2.88 | < 0.001 |
+| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 3 | 448 | 114.1 | 85.8 | 2.65 | 6.7% | 94% | 96.2 | 3.30 | 2.78 | 0.002 |
+| weekly_reversal | single_stocks | vix_above_20 | BUY when ret_5 < -0.05; exit when ret_1 > 0 | 2021 | 65.4 | 37.0 | 1.54 | 12.5% | 90% | 48.4 | 3.78 | 2.78 | < 0.001 |
+| weekly_reversal | single_stocks | vix_above_20 | BUY when ret_5 < -0.08; exit when ret_1 > 0 | 943 | 86.1 | 58.5 | 1.59 | 12.3% | 81% | 68.7 | 3.34 | 2.69 | 0.012 |
 
 ## Top 15 paper-executable trials (close-timed, ≥100 trades) by net t
 
-| Family | Universe | Gate | Rule | Trades | Net bps @11 | Net bps @25 | PF | Max DD | Windows + | Excess bps | t (net) | t (excess) | boot p | Bonf. p |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 453 | 326.3 | 299.8 | 2.37 | 4.9% | 83% | 37.4 | 5.06 | 0.60 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 892 | 174.3 | 146.4 | 1.82 | 4.3% | 88% | 34.4 | 4.81 | 0.99 | 0.0000 | 0.000 |
-| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 105 | 81.0 | 52.8 | 4.36 | 2.2% | 78% | 70.5 | 4.81 | 4.08 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 324 | 313.7 | 287.6 | 2.36 | 3.2% | 83% | 14.4 | 4.78 | 0.23 | 0.0000 | 0.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 940 | 97.6 | 69.1 | 1.91 | 3.7% | 90% | 71.0 | 4.71 | 3.33 | 0.0000 | 0.000 |
-| hand:ibs_mean_reversion | paper_45 | vix_above_20 | hand-written ibs_mean_reversion (seeded parameters) | 4368 | 71.7 | 42.9 | 1.70 | 10.0% | 90% | 50.0 | 4.67 | 3.21 | 0.0000 | 0.000 |
-| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 142 | 109.5 | 77.2 | 2.95 | 2.3% | 71% | 97.7 | 4.63 | 4.02 | 0.0010 | 1.000 |
-| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 0 | 716 | 257.5 | 230.2 | 1.97 | 6.5% | 83% | -33.3 | 4.56 | -0.62 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | spy_sma10 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1018 | 216.0 | 184.3 | 1.82 | 7.2% | 88% | -34.0 | 4.55 | -0.81 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | spy_sma50 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1010 | 225.9 | 194.9 | 1.86 | 7.5% | 83% | -24.1 | 4.52 | -0.54 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 454 | 191.0 | 164.6 | 2.06 | 4.2% | 79% | 38.0 | 4.47 | 0.90 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_not_trending | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 525 | 240.2 | 214.1 | 1.94 | 4.1% | 79% | -63.8 | 4.44 | -1.23 | 0.0000 | 0.000 |
-| down_streak | single_stocks | none | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 2138 | 48.4 | 20.4 | 1.47 | 4.4% | 96% | 19.9 | 4.39 | 1.74 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | spy_sma20 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1029 | 213.3 | 182.5 | 1.80 | 7.2% | 83% | -35.0 | 4.38 | -0.81 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_not_trending | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 1280 | 135.7 | 107.9 | 1.61 | 6.3% | 88% | -5.8 | 4.37 | -0.19 | 0.0000 | 0.000 |
+| Family | Universe | Gate | Rule | Trades | Net bps @11 | Net bps @25 | PF | Max DD | Windows + | Excess bps | t (net) | t (excess) | boot p (floor 0.001) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 453 | 326.3 | 299.8 | 2.37 | 4.9% | 83% | 37.4 | 5.06 | 0.60 | < 0.001 |
+| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 892 | 174.3 | 146.4 | 1.82 | 4.3% | 88% | 34.4 | 4.81 | 0.99 | < 0.001 |
+| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 105 | 81.0 | 52.8 | 4.36 | 2.2% | 78% | 70.5 | 4.81 | 4.08 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 324 | 313.7 | 287.6 | 2.36 | 3.2% | 83% | 14.4 | 4.78 | 0.23 | < 0.001 |
+| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 940 | 97.6 | 69.1 | 1.91 | 3.7% | 90% | 71.0 | 4.71 | 3.33 | < 0.001 |
+| hand:ibs_mean_reversion | paper_45 | vix_above_20 | hand-written ibs_mean_reversion (seeded parameters) | 4368 | 71.7 | 42.9 | 1.70 | 10.0% | 90% | 50.0 | 4.67 | 3.21 | < 0.001 |
+| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 142 | 109.5 | 77.2 | 2.95 | 2.3% | 71% | 97.7 | 4.63 | 4.02 | < 0.001 |
+| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 0 | 716 | 257.5 | 230.2 | 1.97 | 6.5% | 83% | -33.3 | 4.56 | -0.62 | < 0.001 |
+| breakout_momentum | single_stocks | spy_sma10 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1018 | 216.0 | 184.3 | 1.82 | 7.2% | 88% | -34.0 | 4.55 | -0.81 | < 0.001 |
+| breakout_momentum | single_stocks | spy_sma50 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1010 | 225.9 | 194.9 | 1.86 | 7.5% | 83% | -24.1 | 4.52 | -0.54 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 454 | 191.0 | 164.6 | 2.06 | 4.2% | 79% | 38.0 | 4.47 | 0.90 | < 0.001 |
+| earnings_drift | single_stocks | adx_not_trending | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 525 | 240.2 | 214.1 | 1.94 | 4.1% | 79% | -63.8 | 4.44 | -1.23 | < 0.001 |
+| down_streak | single_stocks | none | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 2138 | 48.4 | 20.4 | 1.47 | 4.4% | 96% | 19.9 | 4.39 | 1.74 | < 0.001 |
+| breakout_momentum | single_stocks | spy_sma20 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 1029 | 213.3 | 182.5 | 1.80 | 7.2% | 83% | -35.0 | 4.38 | -0.81 | < 0.001 |
+| breakout_momentum | single_stocks | adx_not_trending | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 1280 | 135.7 | 107.9 | 1.61 | 6.3% | 88% | -5.8 | 4.37 | -0.19 | < 0.001 |
 
 ## The bot's hand-written strategies on the 45-symbol paper universe (OOS 2015 →)
 
@@ -131,16 +131,20 @@
 | adx_not_downtrend | 305 | -1.1 | 0.0 | 34% | 85% | -1.4 pts | 31% |
 | adx_range | 305 | -6.0 | 3.9 | 35% | 46% | -4.2 pts | 34% |
 
-## Walk-forward selection: pick the best in-sample variant, trade it the next 6 months (11 bps)
+## Walk-forward selection: pick the best in-sample variant, trade it the next 6 months
 
-| Fit window | Selection pool | Windows picked | In-sample bps (promised) | Next-window bps (realised) | OOS trades | Windows + |
-|---|---|---|---|---|---|---|
-| anchored | all close-timed trials | 24 | 496.4 | 197.3 | 92 | 61% |
-| anchored | per family × universe (38 pools, trade-weighted) | 24 | 83.4 | 26.6 | 32124 | 63% |
-| 6m | all close-timed trials | 24 | 715.4 | 161.0 | 328 | 62% |
-| 6m | per family × universe (38 pools, trade-weighted) | 23 | 153.4 | 25.2 | 41877 | 63% |
+| Cost bps/side | Fit window | Selection pool | Windows picked | In-sample bps (promised) | Next-window bps (realised) | OOS trades | Windows + |
+|---|---|---|---|---|---|---|---|
+| 11.0 | anchored | all close-timed trials | 24 | 496.4 | 197.3 | 92 | 61% |
+| 11.0 | anchored | per family × universe (38 pools, trade-weighted) | 24 | 83.4 | 26.6 | 32124 | 63% |
+| 11.0 | 6m | all close-timed trials | 24 | 715.4 | 161.0 | 328 | 62% |
+| 11.0 | 6m | per family × universe (38 pools, trade-weighted) | 23 | 153.4 | 25.2 | 41877 | 63% |
+| 25.0 | anchored | all close-timed trials | 24 | 470.0 | 175.3 | 92 | 61% |
+| 25.0 | anchored | per family × universe (38 pools, trade-weighted) | 24 | 55.1 | -0.3 | 30893 | 57% |
+| 25.0 | 6m | all close-timed trials | 24 | 686.4 | 109.3 | 480 | 67% |
+| 25.0 | 6m | per family × universe (38 pools, trade-weighted) | 23 | 124.6 | -3.6 | 41966 | 51% |
 
-### Global pick per window, anchored fit
+### Global pick per window, anchored fit (11 bps)
 
 | Window | Pick | In-sample bps | OOS trades | OOS bps |
 |---|---|---|---|---|
@@ -169,7 +173,7 @@
 | 2026H1 | 768b7c4c93:adx_range | 475.2 | 0 | n/a |
 | 2026H2 | 768b7c4c93:adx_range | 475.2 | 2 | 432.3 |
 
-### Global pick per window, 6m fit
+### Global pick per window, 6m fit (11 bps)
 
 | Window | Pick | In-sample bps | OOS trades | OOS bps |
 |---|---|---|---|---|
@@ -334,97 +338,97 @@
 
 ## Shortlist: close-timed, ≥100 trades, windows+ ≥60%, excess over drift >0, t≥2 @11 and t≥1.5 @25
 
-| Family | Universe | Gate | Rule | Trades | Net bps @11 | Net bps @25 | PF | Max DD | Windows + | Excess bps | t (net) | t (excess) | boot p | Bonf. p |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 453 | 326.3 | 299.8 | 2.37 | 4.9% | 83% | 37.4 | 5.06 | 0.60 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 892 | 174.3 | 146.4 | 1.82 | 4.3% | 88% | 34.4 | 4.81 | 0.99 | 0.0000 | 0.000 |
-| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 105 | 81.0 | 52.8 | 4.36 | 2.2% | 78% | 70.5 | 4.81 | 4.08 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 324 | 313.7 | 287.6 | 2.36 | 3.2% | 83% | 14.4 | 4.78 | 0.23 | 0.0000 | 0.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 940 | 97.6 | 69.1 | 1.91 | 3.7% | 90% | 71.0 | 4.71 | 3.33 | 0.0000 | 0.000 |
-| hand:ibs_mean_reversion | paper_45 | vix_above_20 | hand-written ibs_mean_reversion (seeded parameters) | 4368 | 71.7 | 42.9 | 1.70 | 10.0% | 90% | 50.0 | 4.67 | 3.21 | 0.0000 | 0.000 |
-| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 142 | 109.5 | 77.2 | 2.95 | 2.3% | 71% | 97.7 | 4.63 | 4.02 | 0.0010 | 1.000 |
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 454 | 191.0 | 164.6 | 2.06 | 4.2% | 79% | 38.0 | 4.47 | 0.90 | 0.0000 | 0.000 |
-| down_streak | single_stocks | none | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 2138 | 48.4 | 20.4 | 1.47 | 4.4% | 96% | 19.9 | 4.39 | 1.74 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 638 | 172.5 | 144.5 | 1.82 | 3.4% | 88% | 30.6 | 4.32 | 0.80 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 and ret_1 > 0.02 | 142 | 261.9 | 233.9 | 2.86 | 2.0% | 96% | 94.2 | 4.24 | 1.57 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_range | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 599 | 174.4 | 145.9 | 1.85 | 3.2% | 79% | 29.0 | 4.20 | 0.74 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 10 | 214 | 360.2 | 335.5 | 2.41 | 3.3% | 83% | 41.6 | 4.18 | 0.49 | 0.0000 | 0.000 |
-| calm_market_dip | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 242 | 66.1 | 38.1 | 2.32 | 2.0% | 90% | 53.6 | 4.12 | 3.22 | 0.0000 | 0.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and down_streak >= 4; exit when dist_sma_5 > 0 | 450 | 74.8 | 42.5 | 1.77 | 2.3% | 81% | 49.0 | 4.01 | 2.53 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 324 | 192.6 | 166.1 | 2.07 | 2.7% | 83% | 35.2 | 4.00 | 0.74 | 0.0000 | 0.000 |
-| weekly_reversal | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when ret_1 > 0 | 831 | 79.6 | 49.0 | 1.75 | 4.3% | 86% | 61.9 | 3.96 | 3.05 | 0.0000 | 0.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 466 | 127.1 | 99.9 | 2.31 | 2.6% | 71% | 102.3 | 3.84 | 3.01 | 0.0000 | 0.000 |
-| weekly_reversal | single_stocks | vix_above_20 | BUY when ret_5 < -0.05; exit when ret_1 > 0 | 2021 | 65.4 | 37.0 | 1.54 | 12.5% | 90% | 48.4 | 3.78 | 2.78 | 0.0000 | 0.000 |
-| calm_market_dip | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 5; exit when dist_sma_5 > 0 | 126 | 84.4 | 56.3 | 3.61 | 2.0% | 85% | 71.7 | 3.75 | 3.10 | 0.0010 | 1.000 |
-| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 and ret_1 > 0.02 | 118 | 249.8 | 221.8 | 2.71 | 1.3% | 87% | 83.2 | 3.66 | 1.25 | 0.0000 | 0.000 |
-| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 148 | 139.6 | 111.3 | 3.86 | 6.9% | 93% | 119.1 | 3.63 | 3.10 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_range | BUY when at_high_100 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 413 | 173.9 | 145.0 | 1.86 | 2.8% | 71% | 25.9 | 3.62 | 0.57 | 0.0010 | 1.000 |
-| earnings_drift | single_stocks | adx_not_downtrend | BUY when earn_surprise > 0 and ret_1 > 0.02 | 387 | 171.9 | 144.7 | 1.79 | 5.2% | 88% | 1.1 | 3.61 | 0.02 | 0.0000 | 0.000 |
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 10 | 119 | 411.2 | 386.1 | 2.71 | 2.4% | 74% | 88.7 | 3.60 | 0.77 | 0.0020 | 1.000 |
-| down_streak | single_stocks | none | BUY when dist_sma_200 > 0 and down_streak >= 5; exit when dist_sma_5 > 0 | 528 | 65.2 | 33.4 | 1.86 | 1.5% | 75% | 37.5 | 3.59 | 2.01 | 0.0010 | 1.000 |
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 5 | 240 | 300.8 | 275.1 | 2.11 | 4.0% | 79% | 2.3 | 3.56 | 0.03 | 0.0010 | 1.000 |
-| down_streak | single_stocks | none | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 976 | 61.8 | 34.1 | 1.62 | 3.3% | 75% | 34.8 | 3.54 | 1.93 | 0.0000 | 0.000 |
-| breakout_momentum | single_stocks | adx_range | BUY when at_high_252 == 1; exit when dist_sma_50 < 0 | 481 | 157.7 | 130.0 | 1.73 | 3.2% | 75% | 9.4 | 3.52 | 0.22 | 0.0020 | 1.000 |
-| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 436 | 134.2 | 106.0 | 2.89 | 8.9% | 86% | 113.6 | 3.50 | 2.97 | 0.0000 | 0.000 |
-| weekly_reversal | single_stocks | none | BUY when dist_sma_200 > 0 and ret_5 < -0.08; exit when ret_1 > 0 | 537 | 80.3 | 48.2 | 1.60 | 3.5% | 79% | 60.5 | 3.48 | 2.61 | 0.0000 | 0.000 |
-| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.03; exit when dist_sma_5 > 0 | 553 | 51.5 | 22.8 | 1.82 | 4.5% | 71% | 38.6 | 3.47 | 2.54 | 0.0050 | 1.000 |
-| down_streak | index_etfs | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 138 | 87.8 | 59.6 | 2.91 | 5.6% | 79% | 77.5 | 3.46 | 3.01 | 0.0010 | 1.000 |
-| earnings_drift | single_stocks | spy_sma50 | BUY when earn_surprise > 5 and ret_1 > 0.02 | 181 | 224.9 | 197.3 | 2.16 | 3.6% | 74% | 41.0 | 3.42 | 0.63 | 0.0020 | 1.000 |
-| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 0 and ret_1 > 0.02 | 244 | 173.9 | 146.6 | 1.90 | 2.7% | 83% | 6.1 | 3.41 | 0.12 | 0.0010 | 1.000 |
-| weekly_reversal | single_stocks | vix_above_20 | BUY when ret_5 < -0.08; exit when ret_1 > 0 | 943 | 86.1 | 58.5 | 1.59 | 12.3% | 81% | 68.7 | 3.34 | 2.69 | 0.0120 | 1.000 |
-| weekly_reversal | sector_etfs | spy_sma50 | BUY when dist_sma_200 > 0 and ret_5 < -0.03; exit when dist_sma_5 > 0 | 356 | 57.0 | 28.9 | 1.97 | 4.5% | 79% | 43.9 | 3.33 | 2.51 | 0.0010 | 1.000 |
-| down_streak | sector_etfs | vix_above_20 | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 214 | 90.9 | 63.5 | 2.56 | 3.3% | 90% | 80.5 | 3.32 | 2.88 | 0.0010 | 1.000 |
-| calm_market_dip | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 5; exit when dist_sma_5 > 0 | 327 | 69.5 | 41.7 | 1.88 | 1.5% | 71% | 41.5 | 3.31 | 1.91 | 0.0000 | 0.000 |
-| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 3 | 448 | 114.1 | 85.8 | 2.65 | 6.7% | 94% | 96.2 | 3.30 | 2.78 | 0.0020 | 1.000 |
-| weekly_reversal | single_stocks | spy_sma50 | BUY when dist_sma_200 > 0 and ret_5 < -0.08; exit when ret_1 > 0 | 268 | 77.5 | 49.7 | 1.72 | 1.2% | 71% | 57.0 | 3.28 | 2.41 | 0.0050 | 1.000 |
-| bollinger_low | sector_etfs | spy_sma20 | BUY when bb_pctb_20 < 0; exit when bb_pctb_20 > 0.5 | 169 | 69.0 | 40.9 | 1.93 | 3.2% | 74% | 41.8 | 3.22 | 1.92 | 0.0020 | 1.000 |
-| weekly_reversal | single_stocks | none | BUY when ret_5 < -0.08; exit when ret_1 > 0 | 1384 | 57.2 | 28.9 | 1.39 | 12.3% | 67% | 38.5 | 3.21 | 2.17 | 0.0130 | 1.000 |
-| down_streak | sector_etfs | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 393 | 71.4 | 43.5 | 2.04 | 5.1% | 90% | 60.5 | 3.20 | 2.66 | 0.0020 | 1.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when ret_1 > 0 | 955 | 54.0 | 25.5 | 1.60 | 3.8% | 76% | 39.9 | 3.20 | 2.35 | 0.0010 | 1.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and down_streak >= 5; exit when dist_sma_5 > 0 | 203 | 125.0 | 86.7 | 2.66 | 1.0% | 76% | 99.5 | 3.18 | 2.49 | 0.0070 | 1.000 |
-| down_streak | single_stocks | adx_trend_up | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 101 | 89.0 | 60.8 | 2.96 | 0.6% | 79% | 61.3 | 3.12 | 2.10 | 0.0020 | 1.000 |
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 5 | 240 | 189.1 | 164.0 | 1.90 | 3.7% | 79% | 28.4 | 3.12 | 0.47 | 0.0020 | 1.000 |
-| earnings_drift | single_stocks | spy_sma50 | BUY when dist_sma_200 > 0 and earn_surprise > 5 and ret_1 > 0.02 | 167 | 211.5 | 184.0 | 2.06 | 3.6% | 70% | 31.3 | 3.11 | 0.47 | 0.0040 | 1.000 |
-| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 5 | 180 | 212.6 | 187.3 | 2.10 | 2.7% | 75% | 49.0 | 3.10 | 0.72 | 0.0030 | 1.000 |
-| weekly_reversal | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and ret_5 < -0.08; exit when ret_1 > 0 | 308 | 114.0 | 78.6 | 1.80 | 3.4% | 70% | 95.0 | 3.07 | 2.54 | 0.0060 | 1.000 |
-| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 3 | 152 | 121.5 | 93.2 | 3.26 | 6.5% | 88% | 103.9 | 3.03 | 2.60 | 0.0030 | 1.000 |
-| earnings_drift | single_stocks | adx_not_downtrend | BUY when earn_surprise > 5 and ret_1 > 0.02 | 235 | 197.0 | 169.9 | 1.88 | 4.7% | 79% | 18.7 | 3.02 | 0.30 | 0.0000 | 0.000 |
-| bollinger_low | sector_etfs | spy_sma10 | BUY when bb_pctb_20 < 0; exit when bb_pctb_20 > 0.5 | 138 | 72.5 | 40.2 | 2.00 | 2.1% | 78% | 45.1 | 3.00 | 1.84 | 0.0030 | 1.000 |
-| bollinger_low | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and bb_pctb_20 < 0.05; exit when dist_sma_5 > 0 | 269 | 78.5 | 48.0 | 2.45 | 4.4% | 76% | 65.4 | 2.96 | 2.42 | 0.0050 | 1.000 |
-| turn_of_month | single_stocks | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 3 | 1102 | 122.5 | 93.8 | 2.00 | 5.3% | 88% | 80.2 | 2.94 | 1.94 | 0.0030 | 1.000 |
-| weekly_reversal | sector_etfs | none | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 201 | 91.1 | 60.4 | 2.05 | 4.6% | 74% | 78.7 | 2.93 | 2.52 | 0.0030 | 1.000 |
-| weekly_reversal | index_etfs | spy_sma50 | BUY when ret_5 < -0.03; exit when dist_sma_5 > 0 | 112 | 73.5 | 45.3 | 2.57 | 5.6% | 78% | 60.5 | 2.90 | 2.32 | 0.0070 | 1.000 |
-| breakout_momentum | single_stocks | adx_range | BUY when at_high_252 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 322 | 158.2 | 130.3 | 1.73 | 2.8% | 67% | 3.7 | 2.89 | 0.07 | 0.0090 | 1.000 |
-| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 5; exit when ret_1 > 0 | 468 | 80.2 | 50.8 | 1.99 | 2.6% | 76% | 67.0 | 2.88 | 2.39 | 0.0040 | 1.000 |
-| pullback_in_uptrend | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and rsi_3 < 10; exit when dist_sma_5 > 0 | 377 | 90.1 | 55.0 | 1.75 | 4.6% | 86% | 62.2 | 2.87 | 1.96 | 0.0010 | 1.000 |
-| turn_of_month | single_stocks | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 1073 | 116.6 | 87.6 | 1.88 | 6.9% | 93% | 67.3 | 2.86 | 1.67 | 0.0030 | 1.000 |
-| bollinger_low | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and bb_pctb_20 < 0; exit when dist_sma_5 > 0 | 220 | 76.0 | 48.1 | 2.35 | 4.3% | 76% | 63.0 | 2.82 | 2.30 | 0.0070 | 1.000 |
-| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 10 | 119 | 237.4 | 214.3 | 2.21 | 1.9% | 61% | 67.0 | 2.81 | 0.78 | 0.0070 | 1.000 |
-| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 5 | 436 | 165.3 | 137.0 | 2.56 | 13.7% | 93% | 138.3 | 2.77 | 2.32 | 0.0030 | 1.000 |
-| earnings_drift | single_stocks | adx_not_downtrend | BUY when dist_sma_200 > 0 and earn_surprise > 5 and ret_1 > 0.02 | 213 | 182.4 | 155.2 | 1.81 | 3.7% | 79% | 4.7 | 2.76 | 0.07 | 0.0030 | 1.000 |
-| earnings_drift | single_stocks | spy_sma20 | BUY when earn_surprise > 5 and ret_1 > 0.02 | 181 | 188.9 | 161.4 | 1.90 | 2.7% | 75% | 12.3 | 2.75 | 0.18 | 0.0050 | 1.000 |
-| n_day_low | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and at_low_20 == 1; exit when dist_sma_5 > 0 | 134 | 76.7 | 48.7 | 2.58 | 7.5% | 81% | 65.1 | 2.73 | 2.27 | 0.0080 | 1.000 |
-| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 5 and ret_1 > 0.02 | 145 | 178.9 | 151.6 | 1.94 | 2.5% | 75% | 7.0 | 2.70 | 0.11 | 0.0070 | 1.000 |
-| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 10 | 214 | 173.5 | 149.8 | 1.76 | 3.5% | 71% | 3.4 | 2.68 | 0.05 | 0.0110 | 1.000 |
-| bollinger_low | single_stocks | none | BUY when bb_pctb_20 < 0; exit when bb_pctb_20 > 0.5 | 1655 | 81.9 | 54.2 | 1.38 | 18.5% | 88% | 19.9 | 2.68 | 0.66 | 0.0020 | 1.000 |
-| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 5 | 148 | 167.5 | 139.2 | 2.94 | 14.4% | 100% | 140.6 | 2.65 | 2.22 | 0.0080 | 1.000 |
-| turn_of_month | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and tdays_left == 2; exit when tdom == 3 | 221 | 107.7 | 79.5 | 2.53 | 4.5% | 88% | 88.5 | 2.59 | 2.13 | 0.0120 | 1.000 |
-| breakout_momentum | index_etfs | spy_sma50 | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 233 | 68.9 | 40.7 | 1.66 | 9.7% | 67% | 6.8 | 2.56 | 0.26 | 0.0200 | 1.000 |
-| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 5 | 448 | 144.2 | 115.9 | 2.29 | 14.5% | 75% | 119.7 | 2.53 | 2.09 | 0.0140 | 1.000 |
-| bollinger_low | single_stocks | adx_not_trending | BUY when bb_pctb_20 < 0; exit when bb_pctb_20 > 0.5 | 1157 | 73.6 | 45.8 | 1.39 | 7.9% | 83% | 13.6 | 2.53 | 0.46 | 0.0010 | 1.000 |
-| turn_of_month | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and tdays_left == 1; exit when tdom == 5 | 219 | 144.4 | 116.1 | 2.64 | 6.0% | 85% | 121.0 | 2.51 | 2.10 | 0.0180 | 1.000 |
-| bollinger_low | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and bb_pctb_20 < 0; exit when dist_sma_5 > 0 | 102 | 77.5 | 49.4 | 2.73 | 7.2% | 80% | 65.7 | 2.50 | 2.08 | 0.0130 | 1.000 |
-| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_100 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 181 | 296.0 | 268.4 | 2.06 | 6.8% | 69% | 60.4 | 2.45 | 0.58 | 0.0370 | 1.000 |
-| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 302 | 147.5 | 120.2 | 1.60 | 6.4% | 76% | 5.7 | 2.44 | 0.10 | 0.0410 | 1.000 |
-| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 5 | 152 | 153.0 | 124.6 | 2.61 | 15.2% | 81% | 128.8 | 2.40 | 2.01 | 0.0180 | 1.000 |
-| earnings_drift | single_stocks | spy_sma50 | BUY when earn_surprise > 10 and ret_1 > 0.02 | 107 | 196.0 | 168.4 | 1.93 | 3.1% | 74% | 9.3 | 2.39 | 0.11 | 0.0210 | 1.000 |
-| weekly_reversal | sector_etfs | adx_not_trending | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 136 | 90.1 | 62.5 | 2.08 | 3.2% | 76% | 78.1 | 2.38 | 2.05 | 0.0080 | 1.000 |
-| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 324 | 142.0 | 114.8 | 1.63 | 6.2% | 72% | 4.9 | 2.34 | 0.09 | 0.0470 | 1.000 |
-| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 255 | 263.5 | 236.0 | 1.88 | 6.6% | 75% | 36.8 | 2.34 | 0.37 | 0.0340 | 1.000 |
-| weekly_reversal | sector_etfs | adx_not_downtrend | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 149 | 81.8 | 54.1 | 1.93 | 3.4% | 76% | 69.6 | 2.31 | 1.96 | 0.0090 | 1.000 |
-| earnings_drift | single_stocks | adx_not_downtrend | BUY when earn_surprise > 10 and ret_1 > 0.02 | 143 | 183.3 | 156.1 | 1.77 | 3.1% | 75% | 1.0 | 2.31 | 0.01 | 0.0260 | 1.000 |
-| turn_of_month | single_stocks | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 5 | 1073 | 123.4 | 95.3 | 1.72 | 11.1% | 93% | 59.7 | 2.24 | 1.09 | 0.0130 | 1.000 |
-| turn_of_month | single_stocks | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 5 | 1102 | 132.8 | 103.5 | 1.77 | 12.4% | 75% | 75.6 | 2.24 | 1.27 | 0.0210 | 1.000 |
-| turn_of_month | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and tdays_left == 2; exit when tdom == 5 | 221 | 147.4 | 119.2 | 2.46 | 8.6% | 75% | 120.9 | 2.20 | 1.80 | 0.0260 | 1.000 |
-| weekly_reversal | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 140 | 93.4 | 65.7 | 2.08 | 4.7% | 79% | 81.6 | 2.17 | 1.88 | 0.0200 | 1.000 |
-| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_100 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 220 | 164.1 | 136.8 | 1.75 | 6.3% | 69% | 20.2 | 2.06 | 0.28 | 0.0610 | 1.000 |
+| Family | Universe | Gate | Rule | Trades | Net bps @11 | Net bps @25 | PF | Max DD | Windows + | Excess bps | t (net) | t (excess) | boot p (floor 0.001) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 453 | 326.3 | 299.8 | 2.37 | 4.9% | 83% | 37.4 | 5.06 | 0.60 | < 0.001 |
+| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1; exit when dist_sma_50 < 0 | 892 | 174.3 | 146.4 | 1.82 | 4.3% | 88% | 34.4 | 4.81 | 0.99 | < 0.001 |
+| calm_market_dip | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 105 | 81.0 | 52.8 | 4.36 | 2.2% | 78% | 70.5 | 4.81 | 4.08 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 324 | 313.7 | 287.6 | 2.36 | 3.2% | 83% | 14.4 | 4.78 | 0.23 | < 0.001 |
+| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 940 | 97.6 | 69.1 | 1.91 | 3.7% | 90% | 71.0 | 4.71 | 3.33 | < 0.001 |
+| hand:ibs_mean_reversion | paper_45 | vix_above_20 | hand-written ibs_mean_reversion (seeded parameters) | 4368 | 71.7 | 42.9 | 1.70 | 10.0% | 90% | 50.0 | 4.67 | 3.21 | < 0.001 |
+| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.05; exit when dist_sma_5 > 0 | 142 | 109.5 | 77.2 | 2.95 | 2.3% | 71% | 97.7 | 4.63 | 4.02 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 | 454 | 191.0 | 164.6 | 2.06 | 4.2% | 79% | 38.0 | 4.47 | 0.90 | < 0.001 |
+| down_streak | single_stocks | none | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 2138 | 48.4 | 20.4 | 1.47 | 4.4% | 96% | 19.9 | 4.39 | 1.74 | < 0.001 |
+| breakout_momentum | single_stocks | adx_range | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 638 | 172.5 | 144.5 | 1.82 | 3.4% | 88% | 30.6 | 4.32 | 0.80 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 0 and ret_1 > 0.02 | 142 | 261.9 | 233.9 | 2.86 | 2.0% | 96% | 94.2 | 4.24 | 1.57 | < 0.001 |
+| breakout_momentum | single_stocks | adx_range | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 599 | 174.4 | 145.9 | 1.85 | 3.2% | 79% | 29.0 | 4.20 | 0.74 | < 0.001 |
+| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 10 | 214 | 360.2 | 335.5 | 2.41 | 3.3% | 83% | 41.6 | 4.18 | 0.49 | < 0.001 |
+| calm_market_dip | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 10; exit when dist_sma_5 >  | 242 | 66.1 | 38.1 | 2.32 | 2.0% | 90% | 53.6 | 4.12 | 3.22 | < 0.001 |
+| down_streak | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and down_streak >= 4; exit when dist_sma_5 > 0 | 450 | 74.8 | 42.5 | 1.77 | 2.3% | 81% | 49.0 | 4.01 | 2.53 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 | 324 | 192.6 | 166.1 | 2.07 | 2.7% | 83% | 35.2 | 4.00 | 0.74 | < 0.001 |
+| weekly_reversal | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when ret_1 > 0 | 831 | 79.6 | 49.0 | 1.75 | 4.3% | 86% | 61.9 | 3.96 | 3.05 | < 0.001 |
+| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 466 | 127.1 | 99.9 | 2.31 | 2.6% | 71% | 102.3 | 3.84 | 3.01 | < 0.001 |
+| weekly_reversal | single_stocks | vix_above_20 | BUY when ret_5 < -0.05; exit when ret_1 > 0 | 2021 | 65.4 | 37.0 | 1.54 | 12.5% | 90% | 48.4 | 3.78 | 2.78 | < 0.001 |
+| calm_market_dip | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 5; exit when dist_sma_5 > 0 | 126 | 84.4 | 56.3 | 3.61 | 2.0% | 85% | 71.7 | 3.75 | 3.10 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 0 and ret_1 > 0.02 | 118 | 249.8 | 221.8 | 2.71 | 1.3% | 87% | 83.2 | 3.66 | 1.25 | < 0.001 |
+| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 148 | 139.6 | 111.3 | 3.86 | 6.9% | 93% | 119.1 | 3.63 | 3.10 | < 0.001 |
+| breakout_momentum | single_stocks | adx_range | BUY when at_high_100 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 413 | 173.9 | 145.0 | 1.86 | 2.8% | 71% | 25.9 | 3.62 | 0.57 | < 0.001 |
+| earnings_drift | single_stocks | adx_not_downtrend | BUY when earn_surprise > 0 and ret_1 > 0.02 | 387 | 171.9 | 144.7 | 1.79 | 5.2% | 88% | 1.1 | 3.61 | 0.02 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 10 | 119 | 411.2 | 386.1 | 2.71 | 2.4% | 74% | 88.7 | 3.60 | 0.77 | 0.002 |
+| down_streak | single_stocks | none | BUY when dist_sma_200 > 0 and down_streak >= 5; exit when dist_sma_5 > 0 | 528 | 65.2 | 33.4 | 1.86 | 1.5% | 75% | 37.5 | 3.59 | 2.01 | < 0.001 |
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 5 | 240 | 300.8 | 275.1 | 2.11 | 4.0% | 79% | 2.3 | 3.56 | 0.03 | < 0.001 |
+| down_streak | single_stocks | none | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 976 | 61.8 | 34.1 | 1.62 | 3.3% | 75% | 34.8 | 3.54 | 1.93 | < 0.001 |
+| breakout_momentum | single_stocks | adx_range | BUY when at_high_252 == 1; exit when dist_sma_50 < 0 | 481 | 157.7 | 130.0 | 1.73 | 3.2% | 75% | 9.4 | 3.52 | 0.22 | 0.002 |
+| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 436 | 134.2 | 106.0 | 2.89 | 8.9% | 86% | 113.6 | 3.50 | 2.97 | < 0.001 |
+| weekly_reversal | single_stocks | none | BUY when dist_sma_200 > 0 and ret_5 < -0.08; exit when ret_1 > 0 | 537 | 80.3 | 48.2 | 1.60 | 3.5% | 79% | 60.5 | 3.48 | 2.61 | < 0.001 |
+| weekly_reversal | sector_etfs | spy_sma50 | BUY when ret_5 < -0.03; exit when dist_sma_5 > 0 | 553 | 51.5 | 22.8 | 1.82 | 4.5% | 71% | 38.6 | 3.47 | 2.54 | 0.005 |
+| down_streak | index_etfs | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 138 | 87.8 | 59.6 | 2.91 | 5.6% | 79% | 77.5 | 3.46 | 3.01 | < 0.001 |
+| earnings_drift | single_stocks | spy_sma50 | BUY when earn_surprise > 5 and ret_1 > 0.02 | 181 | 224.9 | 197.3 | 2.16 | 3.6% | 74% | 41.0 | 3.42 | 0.63 | 0.002 |
+| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 0 and ret_1 > 0.02 | 244 | 173.9 | 146.6 | 1.90 | 2.7% | 83% | 6.1 | 3.41 | 0.12 | < 0.001 |
+| weekly_reversal | single_stocks | vix_above_20 | BUY when ret_5 < -0.08; exit when ret_1 > 0 | 943 | 86.1 | 58.5 | 1.59 | 12.3% | 81% | 68.7 | 3.34 | 2.69 | 0.012 |
+| weekly_reversal | sector_etfs | spy_sma50 | BUY when dist_sma_200 > 0 and ret_5 < -0.03; exit when dist_sma_5 > 0 | 356 | 57.0 | 28.9 | 1.97 | 4.5% | 79% | 43.9 | 3.33 | 2.51 | < 0.001 |
+| down_streak | sector_etfs | vix_above_20 | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 214 | 90.9 | 63.5 | 2.56 | 3.3% | 90% | 80.5 | 3.32 | 2.88 | < 0.001 |
+| calm_market_dip | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and vol_ratio_20_100 < 1 and rsi_2 < 5; exit when dist_sma_5 > 0 | 327 | 69.5 | 41.7 | 1.88 | 1.5% | 71% | 41.5 | 3.31 | 1.91 | < 0.001 |
+| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 3 | 448 | 114.1 | 85.8 | 2.65 | 6.7% | 94% | 96.2 | 3.30 | 2.78 | 0.002 |
+| weekly_reversal | single_stocks | spy_sma50 | BUY when dist_sma_200 > 0 and ret_5 < -0.08; exit when ret_1 > 0 | 268 | 77.5 | 49.7 | 1.72 | 1.2% | 71% | 57.0 | 3.28 | 2.41 | 0.005 |
+| bollinger_low | sector_etfs | spy_sma20 | BUY when bb_pctb_20 < 0; exit when bb_pctb_20 > 0.5 | 169 | 69.0 | 40.9 | 1.93 | 3.2% | 74% | 41.8 | 3.22 | 1.92 | 0.002 |
+| weekly_reversal | single_stocks | none | BUY when ret_5 < -0.08; exit when ret_1 > 0 | 1384 | 57.2 | 28.9 | 1.39 | 12.3% | 67% | 38.5 | 3.21 | 2.17 | 0.013 |
+| down_streak | sector_etfs | vix_above_20 | BUY when down_streak >= 4; exit when dist_sma_5 > 0 | 393 | 71.4 | 43.5 | 2.04 | 5.1% | 90% | 60.5 | 3.20 | 2.66 | 0.002 |
+| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 4; exit when ret_1 > 0 | 955 | 54.0 | 25.5 | 1.60 | 3.8% | 76% | 39.9 | 3.20 | 2.35 | < 0.001 |
+| down_streak | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and down_streak >= 5; exit when dist_sma_5 > 0 | 203 | 125.0 | 86.7 | 2.66 | 1.0% | 76% | 99.5 | 3.18 | 2.49 | 0.007 |
+| down_streak | single_stocks | adx_trend_up | BUY when down_streak >= 5; exit when dist_sma_5 > 0 | 101 | 89.0 | 60.8 | 2.96 | 0.6% | 79% | 61.3 | 3.12 | 2.10 | 0.002 |
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 5 | 240 | 189.1 | 164.0 | 1.90 | 3.7% | 79% | 28.4 | 3.12 | 0.47 | 0.002 |
+| earnings_drift | single_stocks | spy_sma50 | BUY when dist_sma_200 > 0 and earn_surprise > 5 and ret_1 > 0.02 | 167 | 211.5 | 184.0 | 2.06 | 3.6% | 70% | 31.3 | 3.11 | 0.47 | 0.004 |
+| earnings_drift | single_stocks | adx_range | BUY when dist_sma_200 > 0 and earn_surprise > 5 | 180 | 212.6 | 187.3 | 2.10 | 2.7% | 75% | 49.0 | 3.10 | 0.72 | 0.003 |
+| weekly_reversal | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and ret_5 < -0.08; exit when ret_1 > 0 | 308 | 114.0 | 78.6 | 1.80 | 3.4% | 70% | 95.0 | 3.07 | 2.54 | 0.006 |
+| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 3 | 152 | 121.5 | 93.2 | 3.26 | 6.5% | 88% | 103.9 | 3.03 | 2.60 | 0.003 |
+| earnings_drift | single_stocks | adx_not_downtrend | BUY when earn_surprise > 5 and ret_1 > 0.02 | 235 | 197.0 | 169.9 | 1.88 | 4.7% | 79% | 18.7 | 3.02 | 0.30 | < 0.001 |
+| bollinger_low | sector_etfs | spy_sma10 | BUY when bb_pctb_20 < 0; exit when bb_pctb_20 > 0.5 | 138 | 72.5 | 40.2 | 2.00 | 2.1% | 78% | 45.1 | 3.00 | 1.84 | 0.003 |
+| bollinger_low | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and bb_pctb_20 < 0.05; exit when dist_sma_5 > 0 | 269 | 78.5 | 48.0 | 2.45 | 4.4% | 76% | 65.4 | 2.96 | 2.42 | 0.005 |
+| turn_of_month | single_stocks | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 3 | 1102 | 122.5 | 93.8 | 2.00 | 5.3% | 88% | 80.2 | 2.94 | 1.94 | 0.003 |
+| weekly_reversal | sector_etfs | none | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 201 | 91.1 | 60.4 | 2.05 | 4.6% | 74% | 78.7 | 2.93 | 2.52 | 0.003 |
+| weekly_reversal | index_etfs | spy_sma50 | BUY when ret_5 < -0.03; exit when dist_sma_5 > 0 | 112 | 73.5 | 45.3 | 2.57 | 5.6% | 78% | 60.5 | 2.90 | 2.32 | 0.007 |
+| breakout_momentum | single_stocks | adx_range | BUY when at_high_252 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 322 | 158.2 | 130.3 | 1.73 | 2.8% | 67% | 3.7 | 2.89 | 0.07 | 0.009 |
+| down_streak | single_stocks | vix_above_20 | BUY when down_streak >= 5; exit when ret_1 > 0 | 468 | 80.2 | 50.8 | 1.99 | 2.6% | 76% | 67.0 | 2.88 | 2.39 | 0.004 |
+| pullback_in_uptrend | single_stocks | vix_above_20 | BUY when dist_sma_200 > 0 and rsi_3 < 10; exit when dist_sma_5 > 0 | 377 | 90.1 | 55.0 | 1.75 | 4.6% | 86% | 62.2 | 2.87 | 1.96 | < 0.001 |
+| turn_of_month | single_stocks | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 3 | 1073 | 116.6 | 87.6 | 1.88 | 6.9% | 93% | 67.3 | 2.86 | 1.67 | 0.003 |
+| bollinger_low | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and bb_pctb_20 < 0; exit when dist_sma_5 > 0 | 220 | 76.0 | 48.1 | 2.35 | 4.3% | 76% | 63.0 | 2.82 | 2.30 | 0.007 |
+| earnings_drift | single_stocks | adx_range | BUY when earn_surprise > 10 | 119 | 237.4 | 214.3 | 2.21 | 1.9% | 61% | 67.0 | 2.81 | 0.78 | 0.007 |
+| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 5 | 436 | 165.3 | 137.0 | 2.56 | 13.7% | 93% | 138.3 | 2.77 | 2.32 | 0.003 |
+| earnings_drift | single_stocks | adx_not_downtrend | BUY when dist_sma_200 > 0 and earn_surprise > 5 and ret_1 > 0.02 | 213 | 182.4 | 155.2 | 1.81 | 3.7% | 79% | 4.7 | 2.76 | 0.07 | 0.003 |
+| earnings_drift | single_stocks | spy_sma20 | BUY when earn_surprise > 5 and ret_1 > 0.02 | 181 | 188.9 | 161.4 | 1.90 | 2.7% | 75% | 12.3 | 2.75 | 0.18 | 0.005 |
+| n_day_low | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and at_low_20 == 1; exit when dist_sma_5 > 0 | 134 | 76.7 | 48.7 | 2.58 | 7.5% | 81% | 65.1 | 2.73 | 2.27 | 0.008 |
+| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 5 and ret_1 > 0.02 | 145 | 178.9 | 151.6 | 1.94 | 2.5% | 75% | 7.0 | 2.70 | 0.11 | 0.007 |
+| earnings_drift | single_stocks | adx_not_trending | BUY when earn_surprise > 10 | 214 | 173.5 | 149.8 | 1.76 | 3.5% | 71% | 3.4 | 2.68 | 0.05 | 0.011 |
+| bollinger_low | single_stocks | none | BUY when bb_pctb_20 < 0; exit when bb_pctb_20 > 0.5 | 1655 | 81.9 | 54.2 | 1.38 | 18.5% | 88% | 19.9 | 2.68 | 0.66 | 0.002 |
+| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 5 | 148 | 167.5 | 139.2 | 2.94 | 14.4% | 100% | 140.6 | 2.65 | 2.22 | 0.008 |
+| turn_of_month | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and tdays_left == 2; exit when tdom == 3 | 221 | 107.7 | 79.5 | 2.53 | 4.5% | 88% | 88.5 | 2.59 | 2.13 | 0.012 |
+| breakout_momentum | index_etfs | spy_sma50 | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 233 | 68.9 | 40.7 | 1.66 | 9.7% | 67% | 6.8 | 2.56 | 0.26 | 0.020 |
+| turn_of_month | sector_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 5 | 448 | 144.2 | 115.9 | 2.29 | 14.5% | 75% | 119.7 | 2.53 | 2.09 | 0.014 |
+| bollinger_low | single_stocks | adx_not_trending | BUY when bb_pctb_20 < 0; exit when bb_pctb_20 > 0.5 | 1157 | 73.6 | 45.8 | 1.39 | 7.9% | 83% | 13.6 | 2.53 | 0.46 | < 0.001 |
+| turn_of_month | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and tdays_left == 1; exit when tdom == 5 | 219 | 144.4 | 116.1 | 2.64 | 6.0% | 85% | 121.0 | 2.51 | 2.10 | 0.018 |
+| bollinger_low | index_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and bb_pctb_20 < 0; exit when dist_sma_5 > 0 | 102 | 77.5 | 49.4 | 2.73 | 7.2% | 80% | 65.7 | 2.50 | 2.08 | 0.013 |
+| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_100 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 181 | 296.0 | 268.4 | 2.06 | 6.8% | 69% | 60.4 | 2.45 | 0.58 | 0.037 |
+| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 302 | 147.5 | 120.2 | 1.60 | 6.4% | 76% | 5.7 | 2.44 | 0.10 | 0.041 |
+| turn_of_month | index_etfs | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 5 | 152 | 153.0 | 124.6 | 2.61 | 15.2% | 81% | 128.8 | 2.40 | 2.01 | 0.018 |
+| earnings_drift | single_stocks | spy_sma50 | BUY when earn_surprise > 10 and ret_1 > 0.02 | 107 | 196.0 | 168.4 | 1.93 | 3.1% | 74% | 9.3 | 2.39 | 0.11 | 0.021 |
+| weekly_reversal | sector_etfs | adx_not_trending | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 136 | 90.1 | 62.5 | 2.08 | 3.2% | 76% | 78.1 | 2.38 | 2.05 | 0.008 |
+| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_100 == 1; exit when dist_sma_50 < 0 | 324 | 142.0 | 114.8 | 1.63 | 6.2% | 72% | 4.9 | 2.34 | 0.09 | 0.047 |
+| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_50 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 255 | 263.5 | 236.0 | 1.88 | 6.6% | 75% | 36.8 | 2.34 | 0.37 | 0.034 |
+| weekly_reversal | sector_etfs | adx_not_downtrend | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 149 | 81.8 | 54.1 | 1.93 | 3.4% | 76% | 69.6 | 2.31 | 1.96 | 0.009 |
+| earnings_drift | single_stocks | adx_not_downtrend | BUY when earn_surprise > 10 and ret_1 > 0.02 | 143 | 183.3 | 156.1 | 1.77 | 3.1% | 75% | 1.0 | 2.31 | 0.01 | 0.026 |
+| turn_of_month | single_stocks | vix_above_20 | BUY when tdays_left == 3; exit when tdom == 5 | 1073 | 123.4 | 95.3 | 1.72 | 11.1% | 93% | 59.7 | 2.24 | 1.09 | 0.013 |
+| turn_of_month | single_stocks | vix_above_20 | BUY when tdays_left == 2; exit when tdom == 5 | 1102 | 132.8 | 103.5 | 1.77 | 12.4% | 75% | 75.6 | 2.24 | 1.27 | 0.021 |
+| turn_of_month | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and tdays_left == 2; exit when tdom == 5 | 221 | 147.4 | 119.2 | 2.46 | 8.6% | 75% | 120.9 | 2.20 | 1.80 | 0.026 |
+| weekly_reversal | sector_etfs | vix_above_20 | BUY when dist_sma_200 > 0 and ret_5 < -0.05; exit when dist_sma_5 > 0 | 140 | 93.4 | 65.7 | 2.08 | 4.7% | 79% | 81.6 | 2.17 | 1.88 | 0.020 |
+| breakout_momentum | single_stocks | vix_above_20 | BUY when at_high_100 == 1 and vol_ratio_20_100 < 1; exit when dist_sma_50 < 0 | 220 | 164.1 | 136.8 | 1.75 | 6.3% | 69% | 20.2 | 2.06 | 0.28 | 0.061 |

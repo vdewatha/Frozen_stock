@@ -1,5 +1,15 @@
 # Local full-history walk-forward sweep: 2026-11-10
 
+> Revised 2026-11-10 after review: the per-trial bootstrap p-values (1,000 draws) cannot resolve a Bonferroni
+> threshold of 0.05 / 3,086, so the "Bonferroni on bootstrap p" and "BH on bootstrap p" counts were removed and the
+> familywise decisions rest on the max-statistic reality check and on the normal approximation to the clustered t;
+> the walk-forward selection is now reported at both costs (it realises −0.3 and −3.6 bps at 25 bps a side, not
+> +27 / +25); the narrative counts for the hand-written strategies are generated from the results; section 8 no
+> longer says PEAD and breakouts "survive every correction". Reproducibility: `reports/local-sweep-20261110/
+> run_manifest.json` (data hashes, versions, seeds, configuration), `per_window.csv.gz` (every trial × window) and a
+> durable copy of the bar snapshot and symbol × window results outside the repo. Cost provenance:
+> `reports/execution-cost-provenance-20261110.md`. Frozen forward tests: `reports/local-sweep-20261110/forward-experiments.md`.
+
 **Verdict.** Nothing survives. 3,104 trials (350 library rules × 10 gate settings, 54 opening-gap rules, and the
 bot's 9 hand-written strategies × 10 gates) were replayed on 26 years of free daily bars for the 45 paper symbols and
 judged on 24 six-month windows from 2015-01 to 2026-11, net of 11 and 25 bps a side. At 25 bps, White's reality check
@@ -8,14 +18,17 @@ them is a post-earnings-drift or 50-day-breakout rule on today's megacaps whose 
 stock is about zero (t between −0.8 and +1.0): the survivorship trap already documented on 2026-11-02, not an edge.
 The only rules that beat their symbol's own drift after a Bonferroni correction are four index-ETF rules with 13–32
 trades, which is a handful of 2020 crash days, not a strategy. Among the 2,522 rules with at least 100 trades, the
-count whose excess over drift reaches t ≥ 2 at 25 bps is 6, where chance alone would give 57. The bot's own strategies all lose or break even at 25
-bps (RSI(2) −13, IBS 0, Bollinger +21, channel breakout −5, trend pullback −11, MA crossover −14, MACD +1, ensemble −6
-bps per trade); the "proof" they failed in paper is consistent with history. The one theme the sweep keeps finding is
+count whose excess over drift reaches t ≥ 2 at 25 bps is 6, where chance alone would give 57. Of the bot's own nine strategies, five are negative at 25
+bps a side (RSI(2) −13, channel breakout −5, trend pullback −11, MA crossover −14, ensemble −6 bps per trade), two are
+within 1 bp of zero (IBS +0.3, MACD +0.9) and two are positive but not statistically established (RSI(14) +12 with
+t 0.65, Bollinger +21 with t 1.0); none clears t = 2 at that cost, and six of nine have a negative excess over
+holding the stock. The failed paper proofs are consistent with history. The one theme the sweep keeps finding is
 *dip buying when the VIX is at or above 20* (86% of rules improve, median +25 bps), but that gate was chosen with
 hindsight across 3,000 trials, it keeps only 41% of trades, and for the bot's IBS rule it loses money before 2015 at
 25 bps. A 6-month lookback overstates badly: the fifteen best rules of the last six months average +283 bps there and
 +82 bps over the full walk-forward, the correlation between a rule's last-6-month and 2015→2026 expectancy is −0.23,
-and picking the best rule per family on a 6-month fit promises +153 bps and delivers +25. Six candidates are worth
+and picking the best rule per family on a 6-month fit promises +153 bps and delivers +25 at 11 bps a side, and
+promises +125 and delivers −3.6 at 25 bps. Six candidates are worth
 pre-registering as forward tests (below), none as a claim. To go further the data has to change, not the search:
 point-in-time index membership (to test PEAD and breakouts without survivorship), a dated earnings calendar for
 delisted names, and the bot's own measured round-trip cost on the symbols it would actually trade one share of.
@@ -44,7 +57,11 @@ delisted names, and the bot's own measured round-trip cost on the symbols it wou
   fill at the next open, stop first inside a bar, gaps fill at the open, indicator exit at the next open, one
   position per symbol, with a flat 11 or 25 bps per side instead of the volatility-scaled model. Returns are per
   trade in bps, so the one-share minimum does not change them; the tables also give the mean net dollars per trade
-  at one share (adjusted price), which is what the paper account would actually book.
+  at one share (adjusted price), which is what the paper account would actually book. In round-trip terms the two
+  scenarios are 22 and 50 bps, which bracket the yardstick's 10 and 25 bps round-trip brackets from below and
+  above and sit either side of the published volatility-scaled model (about 27 bps a round trip on the ETFs, 33 on
+  the stocks); where each number comes from, and what has actually been measured, is in
+  `reports/execution-cost-provenance-20261110.md`.
 * **Walk-forward.** Everything before 2015-01-01 is the fit window (anchored, expanding); the test period is 24
   six-month windows 2015H1 → 2026H2 (the last one is 2026-07-01 → 2026-11-09). None of these rules has fitted
   parameters, so "fit" means selection: at each window start the best variant by in-sample mean net return is
@@ -59,10 +76,16 @@ delisted names, and the bot's own measured round-trip cost on the symbols it wou
   trials with at least one OOS trade, its Romano-Wolf style step-down, Bonferroni and Benjamini-Hochberg on
   per-trial bootstrap p-values, and Bonferroni on the clustered t of net and excess returns (z = 4.16 for 3,086
   trials).
-* **Code.** `artifacts/api-server/backend/scripts/local_sweep.py` (sweep, 6,208 evaluations in 6.5 minutes on 8
-  workers, ~2 GB) and `scripts/local_sweep_report.py` (corrections and tables). Full tables:
-  `reports/local-sweep-20261110/tables.md`; per-trial summary: `candidates.csv.gz`; calendars used for the event
-  check are in the same folder.
+* **Code and reproducibility.** `artifacts/api-server/backend/scripts/local_sweep.py` (sweep, 6,208 evaluations in
+  6.5 minutes on 8 workers, ~2 GB) and `scripts/local_sweep_report.py` (corrections and tables). In
+  `reports/local-sweep-20261110/`: `run_manifest.json` (SHA-256 of every input bar, earnings and calendar file and of
+  every output, the bar snapshot's first/last date and row count per symbol, library versions, the bootstrap seed,
+  draws and block length, every configuration value, and the commands), `tables.md` (full tables),
+  `candidates.csv.gz` (one row per trial and cost), `per_symbol.csv.gz` (trial × symbol), `per_window.csv.gz`
+  (trial × six-month window, with the anchored and 6-month in-sample statistics used for selection) and the
+  calendars. The bar snapshot itself (47 CSVs, 2026-11-10), the 1.1 M-row trial × symbol × window table, the OOS
+  daily-return matrix and the raw results are kept outside the repo at
+  `.paper-training/local-sweep-20261110/` on the research machine; their hashes are in the manifest.
 
 ## 2. Trial count and corrections
 
@@ -74,12 +97,17 @@ delisted names, and the bot's own measured round-trip cost on the symbols it wou
 | Median net bps per trade (gross 38.7) | +16.7 | −11.6 |
 | Reality check p-value (best trial vs cash) | 0.038 | 0.087 |
 | Step-down survivors | 6 (all PEAD / 50-day breakout on megacaps) | 0 |
-| Bonferroni on bootstrap p | 82 | 16 (11 PEAD, 5 breakout) |
-| Benjamini-Hochberg 5% FDR discoveries | 193 | 16 |
+| Trials whose per-trial bootstrap p hit the 1/1,000 floor (not resolvable against 0.05 / 3,086) | 82 | 16 (11 PEAD, 5 breakout) |
 | Bonferroni on clustered t, net | 41 | 6 |
 | Bonferroni on clustered t, **excess over drift** | 5 | 2 |
 | Trials (≥100 trades) with excess t ≥ 2.0, vs 57 expected by chance | 48 | 6 |
 | Trials (≥100 trades) with excess t ≥ 2.5, vs 16 expected by chance | 23 | 0 |
+
+A per-trial bootstrap p-value from 1,000 draws cannot go below 0.001, three orders of magnitude above the
+familywise threshold of about 0.000016, so no Bonferroni or Benjamini-Hochberg decision is made on those p-values;
+the row only says how many trials sat at the floor. The familywise decisions rest on the reality check (whose
+95% quantile of the bootstrap maximum is well resolved by 1,000 draws) and on the normal approximation to the
+month-clustered t (Bonferroni z = 4.16).
 
 Every survivor of the net-return corrections is one of two things. (a) Post-earnings drift and new-high breakouts on
 single stocks: +180 to +330 bps per trade and 83–88% positive windows, but the excess over simply holding the same
@@ -105,8 +133,9 @@ Hand-written strategies on the 45-symbol universe, 2015 → 2026 (the last-6-mon
 | MACD momentum | none | 7,283 | +30.4 | +0.9 | 1.16 | 13.3% | 67% | −18.3 | 2.28 | 0.07 | 0.23 | 357 / −37 |
 | Ensemble | none | 5,076 | +22.8 | −5.5 | 1.12 | 12.3% | 67% | −25.7 | 1.68 | −0.41 | −0.04 | 295 / −46 |
 
-* At 11 bps every one is positive but no t clears 2 except IBS and the two slow reversions, and none clears the
-  Bonferroni bar. At 25 bps, which is where the cost calibration put the bot's own fills, six of nine lose.
+* At 11 bps all nine are positive and four reach t ≥ 2 (IBS, RSI(14), Bollinger, MACD); none clears the
+  Bonferroni bar. At 25 bps a side (50 a round trip, the sweep's stress case, not a measured number) five are
+  negative, two are within 1 bp of zero and two are positive with t below 1; no t reaches 2.
 * Every trend/momentum strategy has a clearly negative excess over drift (−18 to −37 bps): on this universe they are
   worse than holding.
 * Gates that look good on one strategy were found by searching nine gates × nine strategies. The best gate per
@@ -163,18 +192,22 @@ do not generalise beyond the strategies they were fitted on.
 
 ## 5. Walk-forward selection, and how much a 6-month lookback overstates
 
-Picking the best in-sample variant at each window start and trading it the next six months (11 bps):
+Picking the best in-sample variant at each window start and trading it the next six months:
 
-| Fit window | Pool | In-sample bps promised | Next-window bps realised | OOS trades | Windows + |
-|---|---|---|---|---|---|
-| Anchored (2000 → window) | all 3,050 close-timed trials | +496 | +197 | 92 | 61% |
-| Anchored | best variant per family × universe (38 pools) | +83 | +27 | 32,124 | 63% |
-| Trailing 6 months | all close-timed trials | +715 | +161 | 328 | 62% |
-| Trailing 6 months | per family × universe | +153 | +25 | 41,877 | 63% |
+| Cost a side | Fit window | Pool | In-sample bps promised | Next-window bps realised | OOS trades | Windows + |
+|---|---|---|---|---|---|---|
+| 11 | Anchored (2000 → window) | all 3,050 close-timed trials | +496 | +197 | 92 | 61% |
+| 11 | Anchored | best variant per family × universe (38 pools) | +83 | +27 | 32,124 | 63% |
+| 11 | Trailing 6 months | all close-timed trials | +715 | +161 | 328 | 62% |
+| 11 | Trailing 6 months | per family × universe | +153 | +25 | 41,877 | 63% |
+| 25 | Anchored | all close-timed trials | +470 | +175 | 92 | 61% |
+| 25 | Anchored | per family × universe | +55 | **−0.3** | 30,893 | 57% |
+| 25 | Trailing 6 months | all close-timed trials | +686 | +109 | 480 | 67% |
+| 25 | Trailing 6 months | per family × universe | +125 | **−3.6** | 41,966 | 51% |
 
 The global pick is always a rare PEAD rule (1–5 trades a window), so its +197 bps is 92 trades in 12 years. The per
 pool rows are the honest number: selection on the expanding window overstates by 3×, selection on six months by 6×,
-and the realised +25 bps is before the 14 bps of extra cost the 25 bps case adds.
+and the extra 28 bps a round trip of the 25 bps case turns the realised +27 and +25 into −0.3 and −3.6.
 
 What a 6-month lookback would pick today (top 15 by net bps over 2026-05-11 → 2026-11-09, ≥ 10 trades) against the
 same rule's full record:
@@ -250,7 +283,12 @@ Notes for the registration:
 * 6 fails the pre-2015 condition at 25 bps and is included only because it is the bot's own active rule: the
   cheapest test is to tag IBS entries by VIX regime in paper and compare, which costs nothing.
 * At one share, every candidate books $1–3 per trade. The passive VOO/SGOV arm's daily move is larger. Trade counts
-  are 12–80 a year per candidate (6: about 400), so a forward verdict at 25 bps needs one to three years.
+  are 12–80 a year per candidate (6: about 400). 100 trades is a checkpoint, not a verdict: with a per-trade
+  standard deviation of 270–440 bps (`verdict-inputs-20261107.md`) and a same-date residual correlation of
+  0.07–0.17 (`liquid-universe-20261107.md`), establishing a 30 bps edge at t = 2 needs about 330 independent
+  trades, or 500–1,000 clustered ones. Only candidate 6 reaches that inside a few years; the frozen spec in
+  `reports/local-sweep-20261110/forward-experiments.md` states each candidate's required sample and the fixed
+  review rule.
 * None of these is a claim: after the correction for 3,086 trials, the best excess-over-drift t among them is 4.0
   (candidate 3, z-bar 4.16) and the others are 2.5–3.3. Among the 2,522 close-timed trials with ≥ 100 trades, the
   number whose excess-over-drift t reaches 2.0 is 48 at 11 bps and **6 at 25 bps**, against 57 expected from pure
@@ -260,9 +298,15 @@ Notes for the registration:
 ## 8. What would be needed to go further
 
 * **Point-in-time membership** for the single-stock universe. PEAD and breakouts are the only families whose net
-  returns survive every correction, and the only reason they are rejected is that the universe is today's winners.
-  Index constituent histories (S&P 500 additions and deletions) are available free from Wikipedia change logs and
-  from the SEC's EDGAR filings but need to be assembled; `point_in_time_universe` already supports a membership mask.
+  returns clear the clustered-t Bonferroni bar at both costs (and the step-down reality check at 11 bps, though not
+  at 25), and their excess over drift is about zero because the universe is today's winners; survivorship is the
+  first unresolved problem, not the only one.
+  A membership list alone is not enough: former members' prices, delisting returns, corporate actions, ticker
+  changes and correctly timed earnings dates are all needed, and the point-in-time replay already in the repo
+  (`point_in_time_universe`, 704 names, coverage 80.9% since 2010 per `survivorship-20261106.md`) found corrupt
+  bars on five delisted names that set the whole tail (`verdict-inputs-20261107.md`). Assess coverage and effort
+  with a fixed budget before committing; if it cannot be made reliable, keep the ETF experiments and defer the
+  stock-specific claims.
 * **A dated earnings calendar for delisted and small names** to go with it; yfinance only has today's tickers.
 * **The bot's own round-trip cost by symbol class** at one share (`paper_cost_calibration`): the verdict flips
   between 11 and 25 bps for most families, and the 5 / 10 / 25 bps brackets of the yardstick are what should be
@@ -271,3 +315,6 @@ Notes for the registration:
   SPY/sector ETFs exist from 1993/1998, so the gate can be checked on one more regime without new data.
 * **Not more rules.** 350 rules × 10 gates on 45 symbols found nothing that a 6-month lookback would not have
   flattered by 3–6×; the search itself is the problem, and every further trial raises the bar.
+* **This sweep says nothing about intraday scalping.** Every rule here is a daily signal with a 1–40 session
+  hold. If scalping remains a goal, the relevant investment is timestamped intraday quotes, signals and execution
+  records, not more daily-bar searches.

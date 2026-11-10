@@ -40,6 +40,8 @@
    "days": 2981,
    "samples": 1000,
    "mean_block": 20,
+   "per_trial_p_floor": 0.001,
+   "trials_at_p_floor": 82,
    "best": "e038b8cfbe:none",
    "best_mean_daily_bps": 2.7654904988594353,
    "best_statistic": 0.015099172918262469,
@@ -53,8 +55,6 @@
     "94d4afa886:none",
     "94d4afa886:adx_not_downtrend"
    ],
-   "bonferroni_survivors": 82,
-   "bh_fdr_5pct_discoveries": 193,
    "bonferroni_z": 4.15587563134374,
    "net_t_survivors": 41,
    "excess_t_survivors": 5,
@@ -66,14 +66,14 @@
    "days": 2981,
    "samples": 1000,
    "mean_block": 20,
+   "per_trial_p_floor": 0.001,
+   "trials_at_p_floor": 16,
    "best": "e038b8cfbe:none",
    "best_mean_daily_bps": 2.418946096440777,
    "best_statistic": 0.01320709125747452,
    "null_max_95": 0.014371475452070235,
    "p_value": 0.087,
    "stepdown_survivors": [],
-   "bonferroni_survivors": 16,
-   "bh_fdr_5pct_discoveries": 16,
    "bonferroni_z": 4.15587563134374,
    "net_t_survivors": 6,
    "excess_t_survivors": 2,
@@ -81,8 +81,83 @@
    "excess_t_ge_2": 20
   }
  },
+ "hand_written": {
+  "strategies": 9,
+  "positive_at_11": 9,
+  "positive_at_25": 4,
+  "negative_at_25": 5,
+  "within_1bp_of_zero_at_25": 2,
+  "t_ge_2_at_11": 4,
+  "t_ge_2_at_25": 0,
+  "excess_negative": 6,
+  "rows": {
+   "rsi2_pullback": {
+    "mean11": 16.0,
+    "mean25": -13.4,
+    "t11": 1.29,
+    "t25": -1.05,
+    "excess": -9.2
+   },
+   "ibs_mean_reversion": {
+    "mean11": 28.7,
+    "mean25": 0.3,
+    "t11": 3.46,
+    "t25": 0.03,
+    "excess": 4.8
+   },
+   "rsi_mean_reversion": {
+    "mean11": 39.9,
+    "mean25": 12.3,
+    "t11": 2.06,
+    "t25": 0.65,
+    "excess": 2.1
+   },
+   "bollinger_mean_reversion": {
+    "mean11": 50.0,
+    "mean25": 21.2,
+    "t11": 2.28,
+    "t25": 1.0,
+    "excess": 12.0
+   },
+   "channel_breakout": {
+    "mean11": 24.9,
+    "mean25": -4.8,
+    "t11": 1.92,
+    "t25": -0.38,
+    "excess": -36.1
+   },
+   "trend_pullback": {
+    "mean11": 17.0,
+    "mean25": -10.9,
+    "t11": 1.22,
+    "t25": -0.8,
+    "excess": -36.9
+   },
+   "moving_average_crossover": {
+    "mean11": 16.6,
+    "mean25": -13.9,
+    "t11": 1.44,
+    "t25": -1.23,
+    "excess": -35.6
+   },
+   "macd_momentum": {
+    "mean11": 30.4,
+    "mean25": 0.9,
+    "t11": 2.28,
+    "t25": 0.07,
+    "excess": -18.3
+   },
+   "ensemble": {
+    "mean11": 22.8,
+    "mean25": -5.5,
+    "t11": 1.68,
+    "t25": -0.41,
+    "excess": -25.7
+   }
+  }
+ },
  "selection": {
-  "anchored | all close-timed trials": {
+  "anchored | all close-timed trials | 11 bps": {
    "all": {
     "windows_picked": 24,
     "windows_active": 18,
@@ -92,7 +167,7 @@
     "positive_window_fraction": 0.6111111111111112
    }
   },
-  "anchored | per family \u00d7 universe": {
+  "anchored | per family \u00d7 universe | 11 bps": {
    "pullback_in_uptrend / index_etfs": {
     "windows_picked": 24,
     "windows_active": 11,
@@ -398,7 +473,7 @@
     "positive_window_fraction": 0.5454545454545454
    }
   },
-  "6m | all close-timed trials": {
+  "6m | all close-timed trials | 11 bps": {
    "all": {
     "windows_picked": 24,
     "windows_active": 24,
@@ -408,7 +483,7 @@
     "positive_window_fraction": 0.625
    }
   },
-  "6m | per family \u00d7 universe": {
+  "6m | per family \u00d7 universe | 11 bps": {
    "pullback_in_uptrend / index_etfs": {
     "windows_picked": 22,
     "windows_active": 22,
@@ -713,6 +788,638 @@
     "oos_mean_bps": 39.694772048329085,
     "positive_window_fraction": 0.6666666666666666
    }
+  },
+  "anchored | all close-timed trials | 25 bps": {
+   "all": {
+    "windows_picked": 24,
+    "windows_active": 18,
+    "promised_mean_bps": 469.98024826146803,
+    "oos_trades": 92,
+    "oos_mean_bps": 175.33901415480352,
+    "positive_window_fraction": 0.6111111111111112
+   }
+  },
+  "anchored | per family \u00d7 universe | 25 bps": {
+   "pullback_in_uptrend / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 11,
+    "promised_mean_bps": 59.21954897148169,
+    "oos_trades": 23,
+    "oos_mean_bps": 5.923963761668439,
+    "positive_window_fraction": 0.45454545454545453
+   },
+   "pullback_in_uptrend / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 20,
+    "promised_mean_bps": 28.922109378860352,
+    "oos_trades": 79,
+    "oos_mean_bps": -114.29436168234719,
+    "positive_window_fraction": 0.6
+   },
+   "pullback_in_uptrend / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 22,
+    "promised_mean_bps": 39.685637494148075,
+    "oos_trades": 371,
+    "oos_mean_bps": 43.151102274561076,
+    "positive_window_fraction": 0.6818181818181818
+   },
+   "n_day_low / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 18,
+    "promised_mean_bps": 36.28092760359187,
+    "oos_trades": 57,
+    "oos_mean_bps": 7.510227898260036,
+    "positive_window_fraction": 0.6666666666666666
+   },
+   "n_day_low / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 18.25077603986027,
+    "oos_trades": 326,
+    "oos_mean_bps": 34.56708000086009,
+    "positive_window_fraction": 0.7142857142857143
+   },
+   "n_day_low / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 22.338776349090978,
+    "oos_trades": 526,
+    "oos_mean_bps": -47.32390643028242,
+    "positive_window_fraction": 0.42857142857142855
+   },
+   "down_streak / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 18,
+    "promised_mean_bps": 69.61629805864688,
+    "oos_trades": 74,
+    "oos_mean_bps": 64.96553241368514,
+    "positive_window_fraction": 0.7222222222222222
+   },
+   "down_streak / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 21.43061937367214,
+    "oos_trades": 253,
+    "oos_mean_bps": 36.55858349771603,
+    "positive_window_fraction": 0.7142857142857143
+   },
+   "down_streak / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 61.59635479060793,
+    "oos_trades": 467,
+    "oos_mean_bps": 90.6762474001012,
+    "positive_window_fraction": 0.7142857142857143
+   },
+   "turn_of_month / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 15,
+    "promised_mean_bps": 39.067062057145314,
+    "oos_trades": 93,
+    "oos_mean_bps": 59.93775918082785,
+    "positive_window_fraction": 0.7333333333333333
+   },
+   "turn_of_month / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 14,
+    "promised_mean_bps": 29.211785855793078,
+    "oos_trades": 245,
+    "oos_mean_bps": 66.6162313648513,
+    "positive_window_fraction": 0.7857142857142857
+   },
+   "turn_of_month / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 20.921479537344364,
+    "oos_trades": 2043,
+    "oos_mean_bps": -31.859658919312736,
+    "positive_window_fraction": 0.42857142857142855
+   },
+   "bollinger_low / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 36.885095870555325,
+    "oos_trades": 169,
+    "oos_mean_bps": -13.390699936094398,
+    "positive_window_fraction": 0.6666666666666666
+   },
+   "bollinger_low / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 34.345045194789954,
+    "oos_trades": 223,
+    "oos_mean_bps": 21.55120611113043,
+    "positive_window_fraction": 0.5714285714285714
+   },
+   "bollinger_low / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 13,
+    "promised_mean_bps": 42.980489067576144,
+    "oos_trades": 221,
+    "oos_mean_bps": -64.09754950323399,
+    "positive_window_fraction": 0.38461538461538464
+   },
+   "weekly_reversal / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 8,
+    "promised_mean_bps": 136.9129138762454,
+    "oos_trades": 34,
+    "oos_mean_bps": -235.04523666593167,
+    "positive_window_fraction": 0.625
+   },
+   "weekly_reversal / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 17,
+    "promised_mean_bps": 138.50263279110462,
+    "oos_trades": 45,
+    "oos_mean_bps": 18.986288100508187,
+    "positive_window_fraction": 0.6470588235294118
+   },
+   "weekly_reversal / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 156.96957187346302,
+    "oos_trades": 59,
+    "oos_mean_bps": -41.40140636577296,
+    "positive_window_fraction": 0.42857142857142855
+   },
+   "breakout_momentum / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 5,
+    "promised_mean_bps": 211.89484185458187,
+    "oos_trades": 16,
+    "oos_mean_bps": 180.680471940398,
+    "positive_window_fraction": 0.6
+   },
+   "breakout_momentum / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 12,
+    "promised_mean_bps": 54.091410608361,
+    "oos_trades": 75,
+    "oos_mean_bps": 43.3721356427682,
+    "positive_window_fraction": 0.5
+   },
+   "breakout_momentum / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 156.83971942403932,
+    "oos_trades": 497,
+    "oos_mean_bps": 98.8837340600589,
+    "positive_window_fraction": 0.6190476190476191
+   },
+   "gap_down_recovery / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 9,
+    "promised_mean_bps": 52.60139963426602,
+    "oos_trades": 31,
+    "oos_mean_bps": 37.141844019731664,
+    "positive_window_fraction": 0.7777777777777778
+   },
+   "gap_down_recovery / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 18,
+    "promised_mean_bps": 23.83613500504643,
+    "oos_trades": 104,
+    "oos_mean_bps": -108.45405082538296,
+    "positive_window_fraction": 0.4444444444444444
+   },
+   "gap_down_recovery / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": -10.126568530609628,
+    "oos_trades": 575,
+    "oos_mean_bps": -90.38467528262129,
+    "positive_window_fraction": 0.2608695652173913
+   },
+   "calm_market_dip / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 16,
+    "promised_mean_bps": 62.312921537054365,
+    "oos_trades": 60,
+    "oos_mean_bps": 66.92757838026809,
+    "positive_window_fraction": 0.75
+   },
+   "calm_market_dip / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 17,
+    "promised_mean_bps": 41.63006965673572,
+    "oos_trades": 67,
+    "oos_mean_bps": 14.745014412354614,
+    "positive_window_fraction": 0.7058823529411765
+   },
+   "calm_market_dip / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 23.864946162004856,
+    "oos_trades": 431,
+    "oos_mean_bps": 19.947675761644202,
+    "positive_window_fraction": 0.5652173913043478
+   },
+   "earnings_drift / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 18,
+    "promised_mean_bps": 469.98024826146803,
+    "oos_trades": 92,
+    "oos_mean_bps": 175.33901415480352,
+    "positive_window_fraction": 0.6111111111111112
+   },
+   "sector_reversal / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 10.545850884825011,
+    "oos_trades": 584,
+    "oos_mean_bps": -5.072314408884396,
+    "positive_window_fraction": 0.4583333333333333
+   },
+   "hand:rsi2_pullback / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 21,
+    "promised_mean_bps": 18.177403890183513,
+    "oos_trades": 1502,
+    "oos_mean_bps": -1.0889481741729519,
+    "positive_window_fraction": 0.6190476190476191
+   },
+   "hand:ibs_mean_reversion / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 22,
+    "promised_mean_bps": 6.3152456760013385,
+    "oos_trades": 4254,
+    "oos_mean_bps": 33.09137210461098,
+    "positive_window_fraction": 0.7727272727272727
+   },
+   "hand:rsi_mean_reversion / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 13.340458444144758,
+    "oos_trades": 1703,
+    "oos_mean_bps": -6.249951105087603,
+    "positive_window_fraction": 0.4782608695652174
+   },
+   "hand:bollinger_mean_reversion / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": -8.167316311591344,
+    "oos_trades": 1062,
+    "oos_mean_bps": 3.0427911094724567,
+    "positive_window_fraction": 0.4583333333333333
+   },
+   "hand:channel_breakout / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": -9.485887040282607,
+    "oos_trades": 1983,
+    "oos_mean_bps": -0.8228133940543718,
+    "positive_window_fraction": 0.4583333333333333
+   },
+   "hand:trend_pullback / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 13.666227164323962,
+    "oos_trades": 948,
+    "oos_mean_bps": -9.510476251705743,
+    "positive_window_fraction": 0.4166666666666667
+   },
+   "hand:moving_average_crossover / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": -20.002917261249458,
+    "oos_trades": 4852,
+    "oos_mean_bps": -18.67598399690822,
+    "positive_window_fraction": 0.391304347826087
+   },
+   "hand:macd_momentum / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": -2.924041813913765,
+    "oos_trades": 4218,
+    "oos_mean_bps": 1.1522863561332717,
+    "positive_window_fraction": 0.5416666666666666
+   },
+   "hand:ensemble / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 22,
+    "promised_mean_bps": -7.548567230114865,
+    "oos_trades": 2531,
+    "oos_mean_bps": -19.863490824307654,
+    "positive_window_fraction": 0.4090909090909091
+   }
+  },
+  "6m | all close-timed trials | 25 bps": {
+   "all": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 686.3896930384493,
+    "oos_trades": 480,
+    "oos_mean_bps": 109.34503170406043,
+    "positive_window_fraction": 0.6666666666666666
+   }
+  },
+  "6m | per family \u00d7 universe | 25 bps": {
+   "pullback_in_uptrend / index_etfs": {
+    "windows_picked": 22,
+    "windows_active": 22,
+    "promised_mean_bps": 17.598917120755832,
+    "oos_trades": 283,
+    "oos_mean_bps": -18.73835854545363,
+    "positive_window_fraction": 0.36363636363636365
+   },
+   "pullback_in_uptrend / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 60.220985489383075,
+    "oos_trades": 391,
+    "oos_mean_bps": -27.58221010103037,
+    "positive_window_fraction": 0.5
+   },
+   "pullback_in_uptrend / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 142.6617464146734,
+    "oos_trades": 692,
+    "oos_mean_bps": -28.653482897047557,
+    "positive_window_fraction": 0.5217391304347826
+   },
+   "n_day_low / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 77.35527157999688,
+    "oos_trades": 340,
+    "oos_mean_bps": -35.33177622635328,
+    "positive_window_fraction": 0.4583333333333333
+   },
+   "n_day_low / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 81.38430948705391,
+    "oos_trades": 720,
+    "oos_mean_bps": -36.07303704937369,
+    "positive_window_fraction": 0.5416666666666666
+   },
+   "n_day_low / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 102.82235498310786,
+    "oos_trades": 1892,
+    "oos_mean_bps": -25.94270543849753,
+    "positive_window_fraction": 0.43478260869565216
+   },
+   "down_streak / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 59.52469499639409,
+    "oos_trades": 295,
+    "oos_mean_bps": -22.863158958048913,
+    "positive_window_fraction": 0.4583333333333333
+   },
+   "down_streak / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 91.12445385644985,
+    "oos_trades": 470,
+    "oos_mean_bps": -11.080715875256416,
+    "positive_window_fraction": 0.6666666666666666
+   },
+   "down_streak / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 164.7135061453657,
+    "oos_trades": 626,
+    "oos_mean_bps": 23.968108379818393,
+    "positive_window_fraction": 0.5652173913043478
+   },
+   "turn_of_month / index_etfs": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 100.88866536621607,
+    "oos_trades": 330,
+    "oos_mean_bps": -20.301194056944944,
+    "positive_window_fraction": 0.391304347826087
+   },
+   "turn_of_month / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 19,
+    "promised_mean_bps": 205.4603017398409,
+    "oos_trades": 547,
+    "oos_mean_bps": 14.340357898955688,
+    "positive_window_fraction": 0.47368421052631576
+   },
+   "turn_of_month / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 20,
+    "promised_mean_bps": 230.0854977840634,
+    "oos_trades": 1548,
+    "oos_mean_bps": 24.04578545681681,
+    "positive_window_fraction": 0.75
+   },
+   "bollinger_low / index_etfs": {
+    "windows_picked": 20,
+    "windows_active": 20,
+    "promised_mean_bps": 43.0109415737203,
+    "oos_trades": 145,
+    "oos_mean_bps": -30.003920608436008,
+    "positive_window_fraction": 0.6
+   },
+   "bollinger_low / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 164.62915598438363,
+    "oos_trades": 364,
+    "oos_mean_bps": -30.191389960503265,
+    "positive_window_fraction": 0.5833333333333334
+   },
+   "bollinger_low / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 227.9143348854358,
+    "oos_trades": 749,
+    "oos_mean_bps": -16.026247118432753,
+    "positive_window_fraction": 0.6521739130434783
+   },
+   "weekly_reversal / index_etfs": {
+    "windows_picked": 20,
+    "windows_active": 20,
+    "promised_mean_bps": 77.44492893788657,
+    "oos_trades": 212,
+    "oos_mean_bps": -12.79195279858922,
+    "positive_window_fraction": 0.6
+   },
+   "weekly_reversal / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 149.6599040357373,
+    "oos_trades": 495,
+    "oos_mean_bps": -23.84644021462164,
+    "positive_window_fraction": 0.6521739130434783
+   },
+   "weekly_reversal / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 22,
+    "promised_mean_bps": 207.91143439198189,
+    "oos_trades": 597,
+    "oos_mean_bps": -10.29972815208338,
+    "positive_window_fraction": 0.6363636363636364
+   },
+   "breakout_momentum / index_etfs": {
+    "windows_picked": 19,
+    "windows_active": 19,
+    "promised_mean_bps": 124.99930049190509,
+    "oos_trades": 192,
+    "oos_mean_bps": 54.338237330196534,
+    "positive_window_fraction": 0.5789473684210527
+   },
+   "breakout_momentum / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 180.95845974868215,
+    "oos_trades": 359,
+    "oos_mean_bps": -12.388659298324596,
+    "positive_window_fraction": 0.5217391304347826
+   },
+   "breakout_momentum / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 457.07736394673583,
+    "oos_trades": 576,
+    "oos_mean_bps": 117.10124085308979,
+    "positive_window_fraction": 0.5833333333333334
+   },
+   "gap_down_recovery / index_etfs": {
+    "windows_picked": 20,
+    "windows_active": 16,
+    "promised_mean_bps": 17.295186390040502,
+    "oos_trades": 242,
+    "oos_mean_bps": -48.834482802893284,
+    "positive_window_fraction": 0.3125
+   },
+   "gap_down_recovery / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 22,
+    "promised_mean_bps": 51.03475239909371,
+    "oos_trades": 653,
+    "oos_mean_bps": -86.79427197236222,
+    "positive_window_fraction": 0.3181818181818182
+   },
+   "gap_down_recovery / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 103.98367338007115,
+    "oos_trades": 643,
+    "oos_mean_bps": -63.366942590823456,
+    "positive_window_fraction": 0.25
+   },
+   "calm_market_dip / index_etfs": {
+    "windows_picked": 17,
+    "windows_active": 17,
+    "promised_mean_bps": 18.670863942263903,
+    "oos_trades": 160,
+    "oos_mean_bps": -8.869465067018751,
+    "positive_window_fraction": 0.5294117647058824
+   },
+   "calm_market_dip / sector_etfs": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 29.38134221783925,
+    "oos_trades": 326,
+    "oos_mean_bps": -9.860329674376823,
+    "positive_window_fraction": 0.4583333333333333
+   },
+   "calm_market_dip / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 117.39727400443148,
+    "oos_trades": 519,
+    "oos_mean_bps": -1.8310548078735676,
+    "positive_window_fraction": 0.4583333333333333
+   },
+   "earnings_drift / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 583.085499750791,
+    "oos_trades": 275,
+    "oos_mean_bps": 114.7396460212528,
+    "positive_window_fraction": 0.5833333333333334
+   },
+   "sector_reversal / single_stocks": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 155.00189641637755,
+    "oos_trades": 758,
+    "oos_mean_bps": -4.513275490552144,
+    "positive_window_fraction": 0.5
+   },
+   "hand:rsi2_pullback / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 68.75838756193097,
+    "oos_trades": 1879,
+    "oos_mean_bps": -10.50201312377189,
+    "positive_window_fraction": 0.43478260869565216
+   },
+   "hand:ibs_mean_reversion / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 67.5959133294756,
+    "oos_trades": 5104,
+    "oos_mean_bps": 15.351106504127813,
+    "positive_window_fraction": 0.6521739130434783
+   },
+   "hand:rsi_mean_reversion / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 124.62819573109118,
+    "oos_trades": 2484,
+    "oos_mean_bps": -5.418203014784971,
+    "positive_window_fraction": 0.5217391304347826
+   },
+   "hand:bollinger_mean_reversion / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 22,
+    "promised_mean_bps": 130.1814676758857,
+    "oos_trades": 1807,
+    "oos_mean_bps": 4.152054698535648,
+    "positive_window_fraction": 0.5909090909090909
+   },
+   "hand:channel_breakout / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 36.671033867784224,
+    "oos_trades": 1533,
+    "oos_mean_bps": 8.363765055722274,
+    "positive_window_fraction": 0.4782608695652174
+   },
+   "hand:trend_pullback / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 23,
+    "promised_mean_bps": 55.202040154939596,
+    "oos_trades": 2601,
+    "oos_mean_bps": -19.170985543891394,
+    "positive_window_fraction": 0.391304347826087
+   },
+   "hand:moving_average_crossover / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 22,
+    "promised_mean_bps": 48.727050457408474,
+    "oos_trades": 4704,
+    "oos_mean_bps": -15.305789309366432,
+    "positive_window_fraction": 0.3181818181818182
+   },
+   "hand:macd_momentum / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 81.78652849289197,
+    "oos_trades": 4147,
+    "oos_mean_bps": 3.646743495565915,
+    "positive_window_fraction": 0.5
+   },
+   "hand:ensemble / paper_45": {
+    "windows_picked": 24,
+    "windows_active": 24,
+    "promised_mean_bps": 78.14026345154862,
+    "oos_trades": 2308,
+    "oos_mean_bps": 13.939425105663608,
+    "positive_window_fraction": 0.625
+   }
   }
  },
  "six_month_vs_wf": {
@@ -797,7 +1504,7 @@
    "excess_t": 0.5977412486372634,
    "positive_window_fraction": 0.8333333333333334,
    "max_dd": 0.04893523454666138,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "6b6bf1cd5c:adx_range",
@@ -814,7 +1521,7 @@
    "excess_t": 0.9946467782465993,
    "positive_window_fraction": 0.875,
    "max_dd": 0.042708516120910645,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "4ec6c68526:vix_above_20",
@@ -831,7 +1538,7 @@
    "excess_t": 4.081432458062884,
    "positive_window_fraction": 0.7777777777777778,
    "max_dd": 0.02177894115447998,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "b5ea73f43b:adx_range",
@@ -848,7 +1555,7 @@
    "excess_t": 0.22642231827401244,
    "positive_window_fraction": 0.8333333333333334,
    "max_dd": 0.03151434659957886,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "7df4090f31:vix_above_20",
@@ -865,7 +1572,7 @@
    "excess_t": 3.32575839210967,
    "positive_window_fraction": 0.9047619047619048,
    "max_dd": 0.03692108392715454,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "ibs_mean_reversion:vix_above_20",
@@ -882,7 +1589,7 @@
    "excess_t": 3.2078193743162844,
    "positive_window_fraction": 0.9047619047619048,
    "max_dd": 0.10047239065170288,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "213239cdf2:spy_sma50",
@@ -916,7 +1623,7 @@
    "excess_t": 0.8983266686414813,
    "positive_window_fraction": 0.7916666666666666,
    "max_dd": 0.04195183515548706,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "7df4090f31:none",
@@ -933,7 +1640,7 @@
    "excess_t": 1.7415861140050557,
    "positive_window_fraction": 0.9583333333333334,
    "max_dd": 0.043607354164123535,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "7500408e3b:adx_range",
@@ -950,7 +1657,7 @@
    "excess_t": 0.8022063835683895,
    "positive_window_fraction": 0.875,
    "max_dd": 0.03406745195388794,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "1e0728b6a9:adx_range",
@@ -967,7 +1674,7 @@
    "excess_t": 1.5709913136774938,
    "positive_window_fraction": 0.9565217391304348,
    "max_dd": 0.02022862434387207,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "6fb0a1269f:adx_range",
@@ -984,7 +1691,7 @@
    "excess_t": 0.739525742869212,
    "positive_window_fraction": 0.7916666666666666,
    "max_dd": 0.031835317611694336,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "060aa8a70d:adx_not_trending",
@@ -1001,7 +1708,7 @@
    "excess_t": 0.4933513142565949,
    "positive_window_fraction": 0.8333333333333334,
    "max_dd": 0.03304547071456909,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "f37929753b:vix_above_20",
@@ -1018,7 +1725,7 @@
    "excess_t": 3.22473246551992,
    "positive_window_fraction": 0.9047619047619048,
    "max_dd": 0.020442068576812744,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "b1f23bf46d:vix_above_20",
@@ -1035,7 +1742,7 @@
    "excess_t": 2.534894736620297,
    "positive_window_fraction": 0.8095238095238095,
    "max_dd": 0.022598326206207275,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "e021f66e7b:adx_range",
@@ -1052,7 +1759,7 @@
    "excess_t": 0.7415331528448197,
    "positive_window_fraction": 0.8333333333333334,
    "max_dd": 0.02665996551513672,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "ef8b3fd2fb:vix_above_20",
@@ -1069,7 +1776,7 @@
    "excess_t": 3.048935140239643,
    "positive_window_fraction": 0.8571428571428571,
    "max_dd": 0.04304397106170654,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "422a713776:vix_above_20",
@@ -1086,7 +1793,7 @@
    "excess_t": 3.0103412005512693,
    "positive_window_fraction": 0.7142857142857143,
    "max_dd": 0.025682806968688965,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "362354f409:vix_above_20",
@@ -1103,7 +1810,7 @@
    "excess_t": 2.7837527877026784,
    "positive_window_fraction": 0.9047619047619048,
    "max_dd": 0.12476527690887451,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "be21113675:vix_above_20",
@@ -1137,7 +1844,7 @@
    "excess_t": 1.2496625127792946,
    "positive_window_fraction": 0.8695652173913043,
    "max_dd": 0.012537062168121338,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "ff3dce4439:vix_above_20",
@@ -1154,7 +1861,7 @@
    "excess_t": 3.102108302125041,
    "positive_window_fraction": 0.9285714285714286,
    "max_dd": 0.06911206245422363,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "a4bc87e1c6:adx_range",
@@ -1188,7 +1895,7 @@
    "excess_t": 0.0245244612292485,
    "positive_window_fraction": 0.875,
    "max_dd": 0.0517236590385437,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "060aa8a70d:adx_range",
@@ -1256,7 +1963,7 @@
    "excess_t": 1.9308082574337584,
    "positive_window_fraction": 0.75,
    "max_dd": 0.03285616636276245,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "5284f6f939:adx_range",
@@ -1290,7 +1997,7 @@
    "excess_t": 2.9725868838529226,
    "positive_window_fraction": 0.8571428571428571,
    "max_dd": 0.08894765377044678,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "1cd460d679:none",
@@ -1307,7 +2014,7 @@
    "excess_t": 2.611734653109514,
    "positive_window_fraction": 0.7916666666666666,
    "max_dd": 0.03510802984237671,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "e0897717d9:spy_sma50",
@@ -1443,7 +2150,7 @@
    "excess_t": 1.9057120045790432,
    "positive_window_fraction": 0.7142857142857143,
    "max_dd": 0.015372753143310547,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "3d4cbc8732:vix_above_20",
@@ -1681,7 +2388,7 @@
    "excess_t": 0.29746140609357,
    "positive_window_fraction": 0.7916666666666666,
    "max_dd": 0.04658770561218262,
-   "boot_p": 0.0
+   "boot_p": 0.001
   },
   {
    "id": "1ecc809888:spy_sma10",

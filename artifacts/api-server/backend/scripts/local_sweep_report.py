@@ -127,14 +127,18 @@ def reality_check(matrix: np.ndarray, labels: list[str], *, samples: int = BOOTS
             break
         survivors.append(labels[picked])
         remaining[picked] = False
-    bonferroni = int((per_trial_p * k < 0.05).sum())
-    sorted_p = np.sort(per_trial_p)
-    bh = int(np.max(np.where(sorted_p <= 0.05 * np.arange(1, k + 1) / k, np.arange(1, k + 1), 0))) if k else 0
+    # With ``samples`` draws a per-trial p-value cannot be resolved below 1/samples, so it cannot be
+    # compared with a Bonferroni threshold of 0.05 / k (about 1.6e-5 for 3,086 trials).  The per-trial
+    # p is reported as a floor ("< 1/samples") and the familywise decisions use the max-statistic
+    # bootstrap (reality check and step-down) and the normal approximation on the clustered t.
+    floor = 1.0 / samples
+    at_floor = int((per_trial_p < floor).sum())
     return {"trials": int(k), "days": int(t), "samples": samples, "mean_block": MEAN_BLOCK,
+            "per_trial_p_floor": floor, "trials_at_p_floor": at_floor,
             "best": labels[best], "best_mean_daily_bps": float(means[best] * 1e4),
             "best_statistic": float(observed[best]), "null_max_95": float(np.quantile(max_null, 0.95)),
-            "p_value": p_rc, "stepdown_survivors": survivors, "bonferroni_survivors": bonferroni,
-            "bh_fdr_5pct_discoveries": bh, "per_trial_p": {labels[i]: float(per_trial_p[i]) for i in range(k)}}
+            "p_value": p_rc, "stepdown_survivors": survivors,
+            "per_trial_p": {labels[i]: float(max(per_trial_p[i], floor)) for i in range(k)}}
 
 
 # ------------------------------------------------------------------ walk-forward selection
@@ -188,6 +192,10 @@ def main() -> None:
                                     "symbol": symbol, **s})
     per_symbol = pd.DataFrame(per_symbol_rows)
     per_symbol.to_csv(OUT / "per_symbol.csv", index=False)
+    window_rows = [{"id": r["id"], "cost_bps": r["cost_bps"], "family": r["family"], "universe": r["universe"], "gate": r["gate"],
+                    "window": w, **stats, **{f"fit_{k}": v for k, v in r["fit"][w].items()}}
+                   for r in results for w, stats in r["windows"].items()]
+    pd.DataFrame(window_rows).to_csv(OUT / "per_window.csv", index=False)
     summary: dict = {"windows": windows}
     md: list[str] = []
 
@@ -234,13 +242,13 @@ def main() -> None:
                 "mean25": fmt(r25["mean_bps"]), "pf": fmt(row["pf"], 2), "dd": fmt(row["max_dd"] * 100 if row["max_dd"] is not None else None, 1, "%"),
                 "posw": fmt(row["positive_window_fraction"] * 100 if row["positive_window_fraction"] is not None else None, 0, "%"),
                 "excess": fmt(row["excess_mean_bps"]), "t": fmt(row["clustered_t"], 2), "t25": fmt(r25["clustered_t"], 2),
-                "ex_t": fmt(row["excess_t"], 2), "boot_p": fmt(row.get("boot_p"), 4),
-                "bonf_p": fmt(min(1.0, row.get("boot_p", 1.0) * summary["trials"]["with_oos_trades"]), 3),
+                "ex_t": fmt(row["excess_t"], 2),
+                "boot_p": ("< 0.001" if row.get("boot_p") is not None and row.get("boot_p") <= 0.001 else fmt(row.get("boot_p"), 3)),
                 "hold": fmt(row["mean_hold"], 1), "usd": fmt(row["usd_1sh_mean"], 2), "l6": f"{row['last6m_trades']} / {fmt(row['last6m_mean_bps'])}"}
 
     cols = [("family", "Family"), ("universe", "Universe"), ("gate", "Gate"), ("description", "Rule"), ("trades", "Trades"),
             ("mean11", "Net bps @11"), ("mean25", "Net bps @25"), ("pf", "PF"), ("dd", "Max DD"), ("posw", "Windows +"),
-            ("excess", "Excess bps"), ("t", "t (net)"), ("ex_t", "t (excess)"), ("boot_p", "boot p"), ("bonf_p", "Bonf. p")]
+            ("excess", "Excess bps"), ("t", "t (net)"), ("ex_t", "t (excess)"), ("boot_p", "boot p (floor 0.001)")]
     top = traded.sort_values("clustered_t", ascending=False).head(25)
     md.append("## Top 25 trials by month-clustered t of net OOS trade returns (2015-01 → 2026-11, 11 bps a side)\n")
     md.append(table([enrich(r) for _, r in top.iterrows()], cols))
@@ -265,6 +273,17 @@ def main() -> None:
             e = enrich(row)
             e["strategy"], e["gate"] = name, label
             hand_rows.append(e)
+    ungated = traded[(traded["family"].str.startswith("hand:")) & (traded["gate"] == "none")]
+    u25 = f25.loc[ungated["id"]]
+    summary["hand_written"] = {
+        "strategies": int(len(ungated)),
+        "positive_at_11": int((ungated["mean_bps"] > 0).sum()), "positive_at_25": int((u25["mean_bps"] > 0).sum()),
+        "negative_at_25": int((u25["mean_bps"] < 0).sum()), "within_1bp_of_zero_at_25": int((u25["mean_bps"].abs() < 1).sum()),
+        "t_ge_2_at_11": int((ungated["clustered_t"] >= 2).sum()), "t_ge_2_at_25": int((u25["clustered_t"] >= 2).sum()),
+        "excess_negative": int((ungated["excess_mean_bps"] < 0).sum()),
+        "rows": {r["base_id"]: {"mean11": round(r["mean_bps"], 1), "mean25": round(f25.loc[r["id"], "mean_bps"], 1),
+                                "t11": round(r["clustered_t"], 2), "t25": round(f25.loc[r["id"], "clustered_t"], 2),
+                                "excess": round(r["excess_mean_bps"], 1)} for _, r in ungated.iterrows()}}
     md.append(table(hand_rows, [("strategy", "Strategy"), ("gate", "Gate"), ("trades", "Trades"), ("mean11", "Net bps @11"),
                                 ("mean25", "Net bps @25"), ("pf", "PF"), ("dd", "Max DD"), ("posw", "Windows +"),
                                 ("excess", "Excess bps"), ("t", "t (net)"), ("t25", "t @25"), ("ex_t", "t (excess)"),
@@ -307,17 +326,17 @@ def main() -> None:
                                 ("better_t", "t improved")]))
 
     # walk-forward selection
-    md.append("\n## Walk-forward selection: pick the best in-sample variant, trade it the next 6 months (11 bps)\n")
+    md.append("\n## Walk-forward selection: pick the best in-sample variant, trade it the next 6 months\n")
     sel_rows = []
     selections = {}
-    for lookback, min_trades in (("anchored", MIN_FIT_ANCHORED), ("6m", MIN_FIT_6M)):
+    for cost, lookback, min_trades in ((c, lb, mt) for c in (11.0, 25.0) for lb, mt in (("anchored", MIN_FIT_ANCHORED), ("6m", MIN_FIT_6M))):
         for pool_name, key in (("all close-timed trials", lambda r: "all"),
                                ("per family × universe", lambda r: f"{r['family']} / {r['universe']}")):
-            sel = walk_forward_selection(results, 11.0, key, lookback=lookback, min_trades=min_trades)
-            selections[(lookback, pool_name)] = sel
+            sel = walk_forward_selection(results, cost, key, lookback=lookback, min_trades=min_trades)
+            selections[(lookback, pool_name, cost)] = sel
             if pool_name.startswith("all"):
                 s = sel["all"]
-                sel_rows.append({"lookback": lookback, "pool": pool_name, "picked": s["windows_picked"],
+                sel_rows.append({"cost": cost, "lookback": lookback, "pool": pool_name, "picked": s["windows_picked"],
                                  "promised": fmt(s["promised_mean_bps"]), "oos": fmt(s["oos_mean_bps"]), "trades": s["oos_trades"],
                                  "posw": fmt(s["positive_window_fraction"] * 100 if s["positive_window_fraction"] is not None else None, 0, "%")})
             else:
@@ -326,18 +345,18 @@ def main() -> None:
                 oos_n = sum(s["oos_trades"] for s in vals)
                 oos = sum(s["oos_mean_bps"] * s["oos_trades"] for s in vals) / oos_n if oos_n else None
                 posw = np.mean([s["positive_window_fraction"] for s in vals if s["positive_window_fraction"] is not None])
-                sel_rows.append({"lookback": lookback, "pool": f"{pool_name} ({len(vals)} pools, trade-weighted)",
+                sel_rows.append({"cost": cost, "lookback": lookback, "pool": f"{pool_name} ({len(vals)} pools, trade-weighted)",
                                  "picked": int(np.mean([s["windows_picked"] for s in vals])), "promised": fmt(promised),
                                  "oos": fmt(oos), "trades": oos_n, "posw": fmt(posw * 100, 0, "%")})
-    md.append(table(sel_rows, [("lookback", "Fit window"), ("pool", "Selection pool"), ("picked", "Windows picked"),
+    md.append(table(sel_rows, [("cost", "Cost bps/side"), ("lookback", "Fit window"), ("pool", "Selection pool"), ("picked", "Windows picked"),
                                ("promised", "In-sample bps (promised)"), ("oos", "Next-window bps (realised)"),
                                ("trades", "OOS trades"), ("posw", "Windows +")]))
-    summary["selection"] = {f"{k[0]} | {k[1]}": {p: {kk: vv for kk, vv in v.items() if kk != "picks"} for p, v in sel.items()}
+    summary["selection"] = {f"{k[0]} | {k[1]} | {k[2]:g} bps": {p: {kk: vv for kk, vv in v.items() if kk != "picks"} for p, v in sel.items()}
                             for k, sel in selections.items()}
     # the global chains in detail
     for lookback in ("anchored", "6m"):
-        picks = selections[(lookback, "all close-timed trials")]["all"]["picks"]
-        md.append(f"\n### Global pick per window, {lookback} fit\n")
+        picks = selections[(lookback, "all close-timed trials", 11.0)]["all"]["picks"]
+        md.append(f"\n### Global pick per window, {lookback} fit (11 bps)\n")
         md.append(table([{"window": p["window"], "id": p["id"], "promised": fmt(p["promised_bps"]), "n": p["oos_trades"],
                           "oos": fmt(p["oos_mean_bps"])} for p in picks],
                         [("window", "Window"), ("id", "Pick"), ("promised", "In-sample bps"), ("n", "OOS trades"), ("oos", "OOS bps")]))
