@@ -1,0 +1,756 @@
+yahoo,kind,status,rows,first,last,with_surprise,columns,group,outcome_class,usable_member_events,usable_first,usable_last
+A,with_history,ok,100,2002-02-19,2026-11-23,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-02-19 16:00:00,2026-08-26 16:00:00
+AAL,with_history,ok,53,2014-01-28,2027-01-26,52.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,38.0,2015-04-24 07:00:00,2024-07-25 07:00:00
+AAP,with_history,ok,100,2002-05-23,2027-02-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,33.0,2015-08-13 08:00:00,2023-08-23 06:00:00
+AAPL,with_history,ok,100,2002-07-16,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-07-16 16:00:00,2026-11-02 16:00:00
+ABBV,with_history,ok,57,2013-03-15,2027-02-03,56.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,56.0,2013-03-15 15:00:00,2026-10-30 07:00:00
+ABI,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+ABNB,with_history,ok,25,2021-02-26,2027-02-11,23.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,12.0,2023-11-01 16:00:00,2026-11-05 16:00:00
+ABT,with_history,ok,100,2002-04-09,2027-01-28,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-07-11 07:00:00,2026-10-21 07:00:00
+ABX,with_history,ok,11,2024-08-12,2027-03-11,10.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+ACGL,with_history,ok,100,2002-05-13,2027-02-08,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,16.0,2023-02-13 16:00:00,2026-10-27 16:00:00
+ACN,with_history,ok,100,2002-04-11,2026-12-17,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,61.0,2011-09-27 16:00:00,2026-10-01 06:00:00
+ACV,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+ADBE,with_history,ok,100,2002-03-14,2026-12-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-03-14 16:00:00,2026-09-10 16:00:00
+ADCT,with_history,ok,28,2020-08-18,2027-03-10,27.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+ADI,with_history,ok,100,2002-02-14,2026-11-24,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-02-14 16:00:00,2026-08-19 07:00:00
+ADM,with_history,ok,100,2001-10-23,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2001-10-23 18:00:00,2026-11-03 06:00:00
+ADP,with_history,ok,100,2002-04-15,2027-01-27,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-15 07:00:00,2026-10-28 06:00:00
+ADSK,with_history,ok,100,2002-02-21,2026-11-24,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-02-21 16:00:00,2026-08-27 16:00:00
+ADT,with_history,ok,37,2018-03-15,2027-03-01,36.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+AEE,with_history,ok,100,2002-04-22,2027-02-10,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-22 10:00:00,2026-11-05 16:00:00
+AEP,with_history,ok,100,2002-04-24,2027-02-11,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-24 07:00:00,2026-10-28 06:00:00
+AES,with_history,ok,100,2002-04-25,2027-03-01,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-04-25 02:00:00,2026-11-03 16:00:00
+AFL,with_history,ok,100,2002-07-23,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-07-23 16:00:00,2026-11-04 16:00:00
+AIG,with_history,ok,100,2002-04-25,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,93.0,2002-04-25 07:00:00,2026-11-03 16:00:00
+AIV,with_history,ok,1,2027-03-01,2027-03-01,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_name_mismatch,,,
+AIZ,with_history,ok,92,2004-05-12,2027-02-09,91.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,79.0,2007-05-02 17:00:00,2026-11-03 16:00:00
+AJG,with_history,ok,100,2002-04-23,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,42.0,2016-07-28 16:00:00,2026-10-29 16:00:00
+AKAM,with_history,ok,100,2002-04-18,2027-02-18,94.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,77.0,2007-07-25 16:00:00,2026-11-05 16:00:00
+ALB,with_history,ok,100,2002-01-23,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,42.0,2016-08-03 17:00:00,2026-11-04 16:00:00
+ALGN,with_history,ok,100,2002-07-24,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,37.0,2017-07-27 16:00:00,2026-10-28 16:00:00
+ALK,with_history,ok,100,2002-04-19,2027-01-21,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,30.0,2016-07-21 06:00:00,2023-10-19 06:00:00
+ALL,with_history,ok,100,2002-07-18,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-18 07:00:00,2026-11-04 16:00:00
+ALLE,with_history,ok,53,2014-02-19,2027-02-16,52.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,52.0,2014-02-19 17:00:00,2026-10-22 06:00:00
+AM,with_history,ok,40,2017-06-02,2027-02-10,39.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+AMAT,with_history,ok,100,2002-02-12,2026-11-12,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-05-14 16:00:00,2026-08-13 16:00:00
+AMCR,with_history,ok,30,2019-08-20,2027-02-02,29.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,29.0,2019-08-20 16:00:00,2026-11-04 16:00:00
+AMD,with_history,ok,100,2002-04-17,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,84.0,2002-04-17 17:00:00,2026-11-03 16:00:00
+AME,with_history,ok,100,2002-04-23,2027-02-02,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,53.0,2013-10-29 07:00:00,2026-11-03 06:00:00
+AMG,with_history,ok,100,2002-07-24,2027-02-11,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,22.0,2014-07-29 07:00:00,2019-10-28 07:00:00
+AMGN,with_history,ok,100,2002-07-24,2027-02-02,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-24 16:00:00,2026-11-03 16:00:00
+AMP,with_history,ok,86,2005-10-24,2027-01-28,85.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,84.0,2005-10-24 06:00:00,2026-10-29 08:00:00
+AMT,with_history,ok,100,2002-08-08,2027-02-23,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,76.0,2008-03-14 14:00:00,2026-10-27 07:00:00
+AMTM,with_history,ok,9,2024-12-16,2026-11-23,8.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,1.0,2024-12-16 16:00:00,2024-12-16 16:00:00
+AMZN,with_history,ok,100,2002-07-23,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,80.0,2006-02-02 16:00:00,2026-10-29 16:00:00
+AN,with_history,ok,100,2002-04-23,2027-02-12,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,57.0,2003-04-28 06:00:00,2017-08-02 07:00:00
+ANET,with_history,ok,51,2014-08-07,2027-02-09,50.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,33.0,2018-11-01 16:00:00,2026-11-03 16:00:00
+ANF,with_history,ok,100,2002-02-22,2026-11-24,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,26.0,2007-05-23 16:00:00,2013-11-21 07:00:00
+AON,with_history,ok,100,2002-04-30,2027-01-29,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-30 09:00:00,2026-10-28 06:00:00
+AOS,with_history,ok,67,2010-07-20,2027-01-28,66.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,38.0,2017-07-26 06:00:00,2026-10-29 06:00:00
+APA,with_history,ok,100,2002-10-24,2027-02-24,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-10-24 09:00:00,2026-11-03 19:00:00
+APC,with_history,ok,5,2026-03-30,2027-03-29,4.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+APD,with_history,ok,100,2002-04-23,2027-01-29,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-23 07:00:00,2026-11-05 06:00:00
+APH,with_history,ok,100,2002-07-17,2027-01-27,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,73.0,2008-10-16 08:00:00,2026-10-28 08:00:00
+APO,with_history,ok,64,2011-05-12,2027-02-08,63.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,8.0,2025-02-04 06:00:00,2026-11-03 08:00:00
+APP,with_history,ok,24,2021-05-12,2027-02-10,23.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,5.0,2025-11-05 16:00:00,2026-11-04 16:00:00
+APTV,with_history,ok,61,2012-01-26,2027-02-01,60.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,56.0,2013-02-05 07:00:00,2026-11-02 19:00:00
+ARE,with_history,ok,93,2002-08-02,2027-01-25,88.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,36.0,2017-05-01 16:00:00,2026-08-03 16:00:00
+ARES,with_history,ok,52,2014-06-10,2027-02-04,51.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,4.0,2026-02-05 06:00:00,2026-10-29 06:00:00
+ASH,with_history,ok,100,2002-10-21,2027-02-01,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,26.0,2002-10-21 08:00:00,2008-10-28 07:00:00
+ASO,with_history,ok,25,2020-12-10,2026-12-08,24.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+AT,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+ATI,with_history,ok,100,2002-04-17,2027-02-02,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_name_mismatch,50.0,2002-04-17 08:00:00,2015-04-21 07:00:00
+ATO,with_history,ok,100,2002-05-15,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,31.0,2019-05-07 17:00:00,2026-11-04 11:00:00
+AV,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+AVB,with_history,ok,1,2026-10-28,2026-10-28,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_stub,,,
+AVGO,with_history,ok,70,2009-12-03,2026-12-09,68.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,49.0,2014-05-29 16:00:00,2026-06-03 16:00:00
+AVY,with_history,ok,100,2002-04-23,2027-02-03,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-23 11:00:00,2026-10-29 06:00:00
+AWK,with_history,ok,75,2008-08-11,2027-02-17,74.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,43.0,2016-05-04 17:00:00,2026-10-28 16:00:00
+AXON,with_history,ok,100,2002-04-22,2027-02-24,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,15.0,2023-05-09 16:00:00,2026-11-05 16:00:00
+AXP,with_history,ok,100,2002-04-18,2027-01-29,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-18 13:00:00,2026-10-23 07:00:00
+AYI,with_history,ok,98,2002-10-03,2027-01-07,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,8.0,2016-06-29 08:00:00,2018-04-04 08:00:00
+AZO,with_history,ok,100,2002-02-26,2026-12-08,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-02-26 17:00:00,2026-09-22 06:00:00
+BA,with_history,ok,100,2002-04-17,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,93.0,2002-04-17 08:00:00,2026-10-27 07:00:00
+BAC,with_history,ok,100,2002-04-15,2027-01-15,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-15 07:00:00,2026-10-14 06:00:00
+BALL,with_history,ok,100,2002-07-25,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,18.0,2022-08-04 06:00:00,2026-11-03 06:00:00
+BAX,with_history,ok,100,2002-04-18,2027-02-11,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 06:00:00,2026-10-29 07:00:00
+BBBY,with_history,ok,1,2027-02-22,2027-02-22,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+BBT,with_history,ok,100,2002-04-24,2027-01-27,91.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,62.0,2002-04-24 16:00:00,2019-10-28 16:00:00
+BBWI,with_history,ok,100,2002-02-28,2026-11-19,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,13.0,2021-08-18 16:00:00,2024-08-28 06:00:00
+BBY,with_history,ok,100,2002-04-02,2026-11-24,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-02 08:00:00,2026-08-27 07:00:00
+BC,with_history,ok,100,2002-01-29,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,26.0,2002-01-29 09:00:00,2008-04-24 09:00:00
+BDX,with_history,ok,100,2002-04-24,2027-02-09,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-24 19:00:00,2026-11-05 06:00:00
+BEAM,with_history,ok,29,2020-03-30,2027-02-23,28.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+BEN,with_history,ok,100,2002-04-25,2027-01-29,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-25 09:00:00,2026-11-06 08:00:00
+BF-B,with_history,ok,100,2002-08-27,2026-12-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-08-27 17:00:00,2026-09-02 08:00:00
+BG,with_history,ok,100,2002-04-22,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,15.0,2023-05-03 06:00:00,2026-10-29 06:00:00
+BHF,with_history,ok,39,2017-08-10,2027-02-22,38.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,7.0,2017-08-10 06:00:00,2019-02-11 16:00:00
+BIIB,with_history,ok,100,2002-04-18,2027-02-05,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,92.0,2004-03-02 17:00:00,2026-10-28 06:00:00
+BIO,with_history,ok,100,2002-04-23,2027-02-11,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,17.0,2020-07-30 16:00:00,2024-08-01 16:00:00
+BKNG,with_history,ok,100,2002-07-31,2027-02-24,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,69.0,2009-11-09 16:00:00,2026-11-03 16:00:00
+BKR,with_history,ok,39,2017-07-28,2027-01-25,38.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,28.0,2019-10-30 06:00:00,2026-10-27 17:00:00
+BLDR,with_history,ok,86,2005-10-27,2027-02-18,84.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,12.0,2024-02-22 07:00:00,2026-10-29 06:00:00
+BLK,with_history,ok,29,2007-07-18,2027-01-14,28.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,18.0,2022-07-15 07:00:00,2026-10-14 06:00:00
+BMY,with_history,ok,100,2002-04-25,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-25 09:00:00,2026-10-29 07:00:00
+BNY,with_history,ok,100,2002-04-17,2027-01-15,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,2.0,2026-07-15 06:00:00,2026-10-15 06:00:00
+BR,with_history,ok,80,2007-05-15,2027-02-02,77.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,34.0,2018-08-07 07:00:00,2026-11-03 07:00:00
+BRK-B,with_history,ok,69,2010-05-07,2027-03-01,67.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,67.0,2010-05-07 17:00:00,2026-11-07 08:00:00
+BRO,with_history,ok,100,2002-07-11,2027-01-25,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,21.0,2021-10-25 17:00:00,2026-10-26 17:00:00
+BSX,with_history,ok,100,2002-04-16,2027-02-10,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-16 16:00:00,2026-10-28 06:00:00
+BUD,with_history,ok,69,2010-03-04,2027-02-18,68.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+BWA,with_history,ok,100,2002-04-22,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,53.0,2012-02-14 08:00:00,2025-02-06 06:00:00
+BX,with_history,ok,79,2007-08-13,2027-01-28,77.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,13.0,2023-10-19 06:00:00,2026-10-22 06:00:00
+BXP,with_history,ok,100,2001-10-23,2027-01-26,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,83.0,2006-04-25 20:00:00,2026-10-27 16:00:00
+C,with_history,ok,100,2002-04-15,2027-01-14,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-15 06:00:00,2026-10-13 07:00:00
+CAG,with_history,ok,100,2002-03-28,2026-12-18,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,95.0,2002-03-28 07:00:00,2026-04-01 07:00:00
+CAH,with_history,ok,100,2002-04-23,2027-02-04,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-23 07:00:00,2026-11-05 06:00:00
+CAM,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+CAR,with_history,ok,100,2002-04-18,2027-02-18,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,15.0,2002-04-18 16:00:00,2006-04-26 16:00:00
+CARR,with_history,ok,28,2020-05-08,2027-02-04,27.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,27.0,2020-05-08 07:00:00,2026-10-29 06:00:00
+CASY,with_history,ok,100,2002-02-28,2026-12-08,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,2.0,2026-06-09 16:00:00,2026-09-08 16:00:00
+CAT,with_history,ok,100,2002-04-16,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-16 08:00:00,2026-10-29 06:00:00
+CB,with_history,ok,100,2002-05-01,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-01 09:00:00,2026-10-20 16:00:00
+CBOE,with_history,ok,67,2010-08-05,2027-02-05,66.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,39.0,2017-05-09 07:00:00,2026-10-30 07:00:00
+CBRE,with_history,ok,91,2004-08-05,2027-02-11,90.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,80.0,2007-02-06 17:00:00,2026-10-22 06:00:00
+CCEP,with_history,ok,17,2016-06-01,2027-02-18,15.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,,,
+CCI,with_history,ok,100,2002-08-08,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,58.0,2012-04-25 16:00:00,2026-10-21 16:00:00
+CCK,with_history,ok,100,2002-04-18,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,,,
+CCL,with_history,ok,100,2002-06-20,2026-12-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-06-20 08:00:00,2026-09-29 09:00:00
+CCU,with_history,ok,79,2004-05-04,2027-02-23,77.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,12.0,2004-05-03 20:00:00,2008-04-29 15:00:00
+CDNS,with_history,ok,100,2002-04-16,2027-02-18,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,36.0,2017-10-26 16:00:00,2026-10-26 16:00:00
+CDW,with_history,ok,54,2013-11-01,2027-02-03,53.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,29.0,2019-10-31 07:00:00,2026-11-04 07:00:00
+CE,with_history,ok,89,2005-02-28,2027-02-16,88.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_starts_late,25.0,2019-01-28 16:00:00,2025-02-18 16:00:00
+CEG,with_history,ok,21,2022-02-25,2027-02-24,19.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,19.0,2022-05-12 06:00:00,2026-11-09 06:00:00
+CF,with_history,ok,86,2005-11-09,2027-02-17,83.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,71.0,2008-10-27 16:00:00,2026-11-04 16:00:00
+CFG,with_history,ok,50,2014-10-27,2027-01-15,49.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,43.0,2016-04-21 06:00:00,2026-10-16 06:00:00
+CG,with_history,ok,59,2012-08-08,2027-02-04,58.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+CHA,with_history,ok,6,2025-08-29,2026-11-27,5.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+CHD,with_history,ok,100,2002-05-03,2027-01-29,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,44.0,2016-02-02 07:00:00,2026-10-30 06:00:00
+CHRW,with_history,ok,100,2002-04-23,2027-01-27,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,79.0,2007-04-24 16:00:00,2026-10-28 08:00:00
+CHTR,with_history,ok,61,2012-02-27,2027-01-29,60.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,40.0,2016-11-03 08:00:00,2026-11-06 07:00:00
+CI,with_history,ok,100,2002-08-02,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-08-02 04:00:00,2026-11-05 06:00:00
+CIEN,with_history,ok,100,2002-02-21,2026-12-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,35.0,2002-02-21 09:00:00,2026-09-03 07:00:00
+CINF,with_history,ok,100,2002-04-25,2027-02-08,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-25 08:00:00,2026-10-26 16:00:00
+CL,with_history,ok,100,2002-04-18,2027-01-29,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 07:00:00,2026-10-30 06:00:00
+CLF,with_history,ok,100,2002-01-30,2027-02-08,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,17.0,2010-02-17 16:00:00,2014-02-13 18:00:00
+CLX,with_history,ok,100,2002-05-02,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-02 08:00:00,2026-11-02 16:00:00
+CMCSA,with_history,ok,100,2002-05-01,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-05-01 10:00:00,2026-10-22 07:00:00
+CME,with_history,ok,97,2003-01-30,2027-02-03,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,81.0,2006-10-24 07:00:00,2026-10-21 07:00:00
+CMG,with_history,ok,85,2006-03-13,2027-02-09,84.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,62.0,2011-07-19 16:00:00,2026-10-28 16:00:00
+CMI,with_history,ok,100,2002-04-25,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-25 07:00:00,2026-11-05 07:00:00
+CMS,with_history,ok,100,2002-05-01,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-01 10:00:00,2026-10-27 06:00:00
+CNC,with_history,ok,100,2002-04-26,2027-02-05,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,44.0,2002-04-26 18:00:00,2026-10-27 06:00:00
+CNP,with_history,ok,100,2002-04-29,2027-02-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-29 08:00:00,2026-10-27 06:00:00
+CNX,with_history,ok,100,2002-04-25,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_name_mismatch,36.0,2006-07-27 07:00:00,2016-01-29 06:00:00
+CNXT,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+COF,with_history,ok,100,2002-04-16,2027-01-19,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-16 16:00:00,2026-10-20 16:00:00
+COHR,with_history,ok,100,2002-04-17,2027-02-03,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,3.0,2026-05-06 16:00:00,2026-11-04 16:00:00
+COIN,with_history,ok,24,2021-05-13,2027-02-11,23.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,4.0,2025-07-31 16:00:00,2026-07-30 16:00:00
+COMS,with_history,ok,4,2021-08-16,2022-12-15,3.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+COO,with_history,ok,100,2002-06-04,2026-12-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,40.0,2016-12-08 16:00:00,2026-09-09 16:00:00
+COP,with_history,ok,100,2002-04-25,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-25 08:00:00,2026-11-05 07:00:00
+COR,with_history,ok,100,2002-04-25,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,13.0,2023-11-02 06:00:00,2026-11-04 06:00:00
+COST,with_history,ok,100,2002-03-05,2026-12-10,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-05-30 04:00:00,2026-09-24 16:00:00
+COTY,with_history,ok,55,2013-09-17,2027-02-04,54.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,16.0,2016-11-09 07:00:00,2020-08-27 06:00:00
+CPAY,with_history,ok,65,2011-02-23,2027-02-03,64.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,11.0,2024-05-08 16:00:00,2026-11-04 16:00:00
+CPB,with_history,ok,100,2002-02-13,2026-12-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,98.0,2002-02-13 08:00:00,2026-06-08 07:00:00
+CPRI,with_history,ok,61,2012-02-14,2027-02-02,60.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,17.0,2016-02-02 06:00:00,2020-02-05 06:00:00
+CPRT,with_history,ok,100,2002-05-21,2026-11-19,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,33.0,2018-09-19 09:00:00,2026-09-10 16:00:00
+CPT,with_history,ok,100,2002-05-02,2027-02-04,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,18.0,2022-04-28 16:00:00,2026-07-30 16:00:00
+CPWR,with_history,empty,0,,,,,past,history_to_today_suspect,,,
+CR,with_history,ok,100,2002-10-17,2027-01-25,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,10.0,2002-10-17 17:00:00,2004-10-21 17:00:00
+CRH,with_history,ok,12,2024-05-10,2027-02-17,11.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,4.0,2026-02-18 16:00:00,2026-10-29 06:00:00
+CRL,with_history,ok,100,2002-05-01,2027-02-17,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,22.0,2021-08-04 07:00:00,2026-11-04 07:00:00
+CRM,with_history,ok,90,2004-08-19,2026-12-02,88.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,71.0,2008-11-20 16:00:00,2026-08-26 16:00:00
+CRWD,with_history,ok,31,2019-07-18,2026-12-01,30.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,9.0,2024-08-28 16:00:00,2026-08-26 16:00:00
+CSCO,with_history,ok,100,2002-05-07,2026-11-12,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-07 16:00:00,2026-08-12 16:00:00
+CSGP,with_history,ok,100,2002-07-23,2027-02-23,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,17.0,2022-10-25 16:00:00,2026-10-27 16:00:00
+CSR,with_history,ok,81,2005-03-11,2027-02-16,74.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,,,
+CSRA,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+CSX,with_history,ok,100,2002-07-25,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-07-25 09:00:00,2026-10-21 16:00:00
+CTAS,with_history,ok,100,2002-07-11,2026-12-17,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-07-11 07:00:00,2026-09-23 08:00:00
+CTSH,with_history,ok,100,2002-04-16,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,80.0,2007-02-05 06:00:00,2026-10-29 06:00:00
+CTVA,with_history,ok,31,2019-05-31,2026-11-11,30.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,29.0,2019-08-01 06:00:00,2026-07-30 16:00:00
+CVNA,with_history,ok,40,2017-06-06,2027-02-17,39.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,4.0,2026-02-18 16:00:00,2026-10-28 16:00:00
+CVS,with_history,ok,100,2002-05-08,2027-02-09,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-05-08 07:00:00,2026-11-04 06:00:00
+CVX,with_history,ok,100,2002-04-25,2027-01-29,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-25 09:00:00,2026-10-30 06:00:00
+CZR,with_history,ok,49,2015-03-16,2027-02-16,47.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,13.0,2021-05-04 16:00:00,2025-07-29 16:00:00
+D,with_history,ok,100,2002-04-18,2027-02-22,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 07:00:00,2026-10-30 07:00:00
+DAL,with_history,ok,79,2007-07-18,2027-01-13,78.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,53.0,2013-10-22 07:00:00,2026-10-09 06:00:00
+DASH,with_history,ok,25,2021-02-25,2027-02-17,24.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,7.0,2025-05-06 07:00:00,2026-10-29 07:00:00
+DD,with_history,ok,98,2001-10-25,2027-02-09,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,87.0,2001-10-25 06:00:00,2026-11-03 06:00:00
+DDOG,with_history,ok,30,2019-11-12,2027-02-11,29.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,6.0,2025-08-07 07:00:00,2026-11-04 07:00:00
+DDS,with_history,ok,1,2026-11-12,2026-11-12,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,,,
+DE,with_history,ok,100,2002-02-12,2026-11-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-02-12 08:00:00,2026-08-20 06:00:00
+DECK,with_history,ok,100,2002-02-21,2027-01-28,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,11.0,2024-05-23 16:00:00,2026-10-22 16:00:00
+DELL,with_history,ok,32,2019-03-29,2026-11-24,31.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,8.0,2024-11-26 16:00:00,2026-09-01 16:00:00
+DG,with_history,ok,69,2009-12-10,2026-12-03,67.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,55.0,2012-12-11 07:00:00,2026-08-27 06:00:00
+DGX,with_history,ok,100,2002-04-18,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2003-01-23 16:00:00,2026-10-22 06:00:00
+DHI,with_history,ok,100,2002-04-22,2027-01-19,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,83.0,2005-07-21 05:00:00,2026-10-29 06:00:00
+DHR,with_history,ok,100,2002-04-18,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 06:00:00,2026-10-21 06:00:00
+DIS,with_history,ok,100,2002-01-31,2026-11-17,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-01-31 16:00:00,2026-08-05 06:00:00
+DLR,with_history,ok,87,2005-02-28,2027-02-11,85.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,42.0,2016-07-28 16:00:00,2026-10-29 16:00:00
+DLTR,with_history,ok,100,2002-01-24,2026-11-24,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,59.0,2012-02-22 07:00:00,2026-08-27 06:00:00
+DLX,with_history,ok,100,2001-10-18,2027-01-27,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,9.0,2001-10-18 08:00:00,2004-10-28 08:00:00
+DOC,with_history,ok,100,2002-04-23,2027-02-01,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,11.0,2024-04-25 16:00:00,2026-11-02 16:00:00
+DOV,with_history,ok,100,2002-04-15,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-15 18:00:00,2026-10-22 06:00:00
+DOW,with_history,ok,32,2019-05-02,2027-01-28,31.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,31.0,2019-05-02 06:00:00,2026-10-21 20:00:00
+DPZ,with_history,ok,90,2004-10-19,2027-02-22,87.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,26.0,2020-07-16 07:00:00,2026-10-13 06:00:00
+DRI,with_history,ok,100,2002-03-21,2026-12-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-03-21 16:00:00,2026-09-24 07:00:00
+DTE,with_history,ok,100,2002-04-24,2027-02-16,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-24 07:00:00,2026-11-05 06:00:00
+DUK,with_history,ok,100,2002-04-17,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-17 06:00:00,2026-11-05 06:00:00
+DVA,with_history,ok,100,2002-05-10,2027-02-01,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,74.0,2008-08-04 16:00:00,2026-10-29 16:00:00
+DVN,with_history,ok,100,2002-05-02,2027-02-16,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-05-02 08:00:00,2026-11-05 16:00:00
+DXC,with_history,ok,100,2002-05-14,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,82.0,2002-05-14 16:00:00,2023-08-02 16:00:00
+DXCM,with_history,ok,87,2005-08-02,2027-02-11,84.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,26.0,2020-07-28 16:00:00,2026-10-29 16:00:00
+DYN,with_history,ok,26,2020-11-05,2027-03-01,25.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+EA,with_history,ok,1,2026-11-03,2026-11-03,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_stub,,,
+EBAY,with_history,ok,100,2002-04-18,2027-02-24,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-10-17 16:00:00,2026-10-28 16:00:00
+EC,with_history,ok,60,2011-03-01,2026-11-12,59.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+ECHO,with_history,ok,76,2008-02-26,2027-03-01,75.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,1.0,2026-08-03 06:00:00,2026-08-03 06:00:00
+ECL,with_history,ok,100,2002-04-23,2027-02-09,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-23 08:00:00,2026-10-27 08:00:00
+ED,with_history,ok,100,2002-04-18,2027-02-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 13:00:00,2026-11-05 16:00:00
+EFU,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+EFX,with_history,ok,100,2002-04-18,2027-02-03,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,95.0,2003-01-23 07:00:00,2026-10-20 06:00:00
+EG,with_history,ok,100,2002-04-23,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,14.0,2023-07-26 16:00:00,2026-10-28 16:00:00
+EHC,with_history,ok,100,2000-04-24,2027-02-04,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,11.0,2000-04-24 18:00:00,2003-03-03 06:00:00
+EIX,with_history,ok,100,2002-05-03,2027-02-17,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-05-03 08:00:00,2026-10-29 16:00:00
+EL,with_history,ok,100,2002-04-30,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,83.0,2006-01-26 06:00:00,2026-11-02 06:00:00
+ELV,with_history,ok,100,2002-04-29,2027-01-28,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,18.0,2022-07-20 06:00:00,2026-10-21 06:00:00
+EMC,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+EME,with_history,ok,100,2002-04-30,2027-02-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,5.0,2025-10-30 07:00:00,2026-10-29 07:00:00
+EMN,with_history,ok,100,2002-04-25,2027-01-28,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,93.0,2002-04-25 18:00:00,2025-11-03 16:00:00
+EMR,with_history,ok,100,2002-05-02,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-02 16:00:00,2026-11-04 06:00:00
+ENPH,with_history,ok,60,2012-05-10,2027-02-02,59.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,19.0,2021-02-09 16:00:00,2025-07-22 16:00:00
+EOG,with_history,ok,100,2002-04-29,2027-02-23,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-29 17:00:00,2026-11-05 16:00:00
+EP,with_history,ok,1,2026-11-12,2026-11-12,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,,,
+EPAM,with_history,ok,61,2012-03-27,2027-02-18,60.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,18.0,2022-02-17 06:00:00,2026-05-07 06:00:00
+EQ,with_history,ok,34,2018-11-15,2026-11-12,32.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+EQIX,with_history,ok,100,2001-02-07,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,47.0,2015-04-29 16:00:00,2026-10-28 16:00:00
+EQR,with_history,ok,1,2027-02-11,2027-02-11,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_stub,,,
+EQT,with_history,ok,100,2002-04-19,2027-02-23,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,57.0,2009-01-29 07:00:00,2026-10-27 16:00:00
+ERIE,with_history,ok,100,2002-04-22,2027-02-22,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,9.0,2024-10-31 16:00:00,2026-10-29 16:00:00
+ES,with_history,ok,100,2002-04-23,2027-02-11,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,71.0,2009-04-29 18:00:00,2026-11-04 16:00:00
+ESS,with_history,ok,100,2001-10-24,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,51.0,2014-05-07 16:00:00,2026-10-27 16:00:00
+ETN,with_history,ok,100,2002-04-15,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-15 07:00:00,2026-11-03 06:00:00
+ETR,with_history,ok,100,2002-07-30,2027-02-11,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-30 06:00:00,2026-11-02 06:00:00
+ETS,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+ETSY,with_history,ok,48,2015-05-19,2027-02-25,46.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,16.0,2020-10-28 16:00:00,2024-07-31 16:00:00
+EVRG,with_history,ok,100,2000-03-28,2027-02-18,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,34.0,2018-08-08 17:00:00,2026-11-05 07:00:00
+EW,with_history,ok,100,2002-07-24,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,63.0,2011-04-20 16:00:00,2026-11-04 16:00:00
+EXC,with_history,ok,100,2002-04-23,2027-02-11,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-22 20:00:00,2026-10-30 06:00:00
+EXE,with_history,ok,25,2021-03-01,2027-02-16,24.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,7.0,2025-04-29 16:00:00,2026-10-27 16:00:00
+EXPD,with_history,ok,100,2002-05-08,2027-02-16,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,77.0,2007-11-06 09:00:00,2026-11-03 08:00:00
+EXPE,with_history,ok,86,2005-11-03,2027-02-11,85.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,76.0,2007-11-07 09:00:00,2026-11-04 16:00:00
+EXR,with_history,ok,89,2004-11-22,2027-02-18,85.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,44.0,2016-02-23 16:00:00,2026-10-27 16:00:00
+F,with_history,ok,100,2002-04-17,2027-02-10,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,95.0,2002-04-17 07:00:00,2026-10-28 16:00:00
+FANG,with_history,ok,58,2012-11-16,2027-02-22,57.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,32.0,2019-02-19 16:00:00,2026-11-02 16:00:00
+FAST,with_history,ok,100,2002-04-10,2027-01-19,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,72.0,2008-10-13 07:00:00,2026-07-14 06:00:00
+FCPT,with_history,ok,43,2016-03-22,2027-02-10,37.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,,,
+FCX,with_history,ok,100,2002-04-18,2027-01-21,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-18 08:00:00,2026-10-27 08:00:00
+FDS,with_history,ok,100,2002-03-14,2026-12-17,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,20.0,2021-12-21 07:00:00,2026-09-30 07:00:00
+FDX,with_history,ok,100,2001-12-19,2026-10-28,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2001-12-19 07:00:00,2026-10-28 16:00:00
+FDXF,with_history,ok,2,2026-09-08,2026-10-29,1.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,1.0,2026-10-29 16:00:00,2026-10-29 16:00:00
+FE,with_history,ok,100,2002-04-24,2027-02-16,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-24 11:00:00,2026-10-27 16:00:00
+FERG,with_history,ok,20,2021-12-07,2027-03-01,19.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,2.0,2026-08-10 06:00:00,2026-11-09 06:00:00
+FFIV,with_history,ok,100,2002-04-24,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,64.0,2011-01-19 16:00:00,2026-10-27 16:00:00
+FHN,with_history,ok,100,2002-04-16,2027-01-13,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,42.0,2002-07-15 08:00:00,2013-04-19 07:00:00
+FICO,with_history,ok,100,2002-04-23,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,15.0,2023-04-27 16:00:00,2026-11-04 16:00:00
+FIS,with_history,ok,100,2002-04-23,2027-02-23,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,80.0,2007-02-06 17:00:00,2026-11-04 07:00:00
+FISV,with_history,ok,100,2002-07-22,2027-02-10,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,88.0,2002-07-22 18:00:00,2026-11-03 07:00:00
+FITB,with_history,ok,100,2002-07-16,2027-01-19,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-07-16 07:00:00,2026-10-19 06:00:00
+FIX,with_history,ok,100,1999-11-03,2027-02-18,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,4.0,2026-02-19 16:00:00,2026-10-22 16:00:00
+FLEX,with_history,ok,100,2002-04-25,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,2.0,2026-07-29 07:00:00,2026-10-28 07:00:00
+FLR,with_history,ok,100,2002-04-30,2027-02-19,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,67.0,2002-04-30 16:00:00,2019-05-02 07:00:00
+FLS,with_history,ok,100,2002-04-23,2027-02-04,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,50.0,2008-10-28 16:00:00,2021-02-23 16:00:00
+FMC,with_history,ok,100,2002-04-18,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,61.0,2010-02-04 16:00:00,2025-02-04 16:00:00
+FMCC,with_history,ok,91,1999-04-15,2027-02-11,61.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,32.0,1999-07-15 08:00:00,2008-08-06 06:00:00
+FNMA,with_history,ok,91,1999-05-13,2027-02-10,46.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,29.0,2000-01-12 09:00:00,2008-08-08 07:00:00
+FOSL,with_history,ok,92,1999-05-11,2026-11-10,89.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,15.0,2012-05-08 07:00:00,2015-11-12 16:00:00
+FOX,with_history,ok,25,2019-08-07,2027-02-04,23.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,22.0,2019-08-07 16:00:00,2026-11-02 08:00:00
+FOXA,with_history,ok,32,2019-05-08,2027-02-04,31.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,29.0,2019-05-08 16:00:00,2026-11-02 08:00:00
+FRT,with_history,ok,96,2000-05-04,2027-02-11,93.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,44.0,2016-02-09 16:00:00,2026-10-30 07:00:00
+FSLR,with_history,ok,81,2007-02-13,2027-02-23,80.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,46.0,2009-10-28 16:00:00,2026-10-29 16:00:00
+FTI,with_history,ok,41,2017-02-24,2027-02-25,40.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,16.0,2017-02-24 11:00:00,2020-10-21 16:00:00
+FTNT,with_history,ok,69,2010-01-27,2027-02-04,68.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,33.0,2018-11-01 16:00:00,2026-10-28 16:00:00
+FTV,with_history,ok,43,2016-08-02,2027-02-03,42.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,42.0,2016-08-02 16:00:00,2026-10-28 07:00:00
+G,with_history,ok,78,2007-11-13,2027-02-04,77.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+GD,with_history,ok,100,2002-04-17,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-17 07:00:00,2026-10-30 07:00:00
+GDDY,with_history,ok,48,2015-05-12,2027-02-25,47.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,10.0,2024-08-01 16:00:00,2026-10-29 16:00:00
+GDT,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+GE,with_history,ok,100,2002-07-12,2027-01-21,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-12 08:00:00,2026-10-20 06:00:00
+GEHC,with_history,ok,17,2023-01-30,2027-02-03,16.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,16.0,2023-01-30 06:00:00,2026-10-28 06:00:00
+GEN,with_history,ok,100,2002-04-24,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,17.0,2022-11-08 16:00:00,2026-10-28 16:00:00
+GENZ,with_history,empty,0,,,,,past,history_to_today_suspect,,,
+GEV,with_history,ok,12,2024-04-25,2027-01-27,11.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,11.0,2024-04-25 06:00:00,2026-10-28 06:00:00
+GHC,with_history,ok,83,1999-04-23,2027-02-24,82.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,24.0,2008-02-27 08:00:00,2014-05-02 08:00:00
+GILD,with_history,ok,100,2002-07-24,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,90.0,2004-07-29 16:00:00,2026-10-29 16:00:00
+GIS,with_history,ok,100,2002-03-20,2026-12-23,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-03-20 08:00:00,2026-09-23 07:00:00
+GL,with_history,ok,100,2002-04-18,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,29.0,2019-10-23 16:00:00,2026-10-21 16:00:00
+GLW,with_history,ok,100,2002-04-22,2027-01-26,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-23 16:00:00,2026-10-27 07:00:00
+GM,with_history,ok,65,2011-02-24,2027-01-27,64.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,52.0,2013-07-25 08:00:00,2026-10-20 06:00:00
+GME,with_history,ok,99,2002-03-11,2026-12-08,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,33.0,2008-03-18 08:00:00,2016-03-24 16:00:00
+GNRC,with_history,ok,68,2010-05-07,2027-02-10,67.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,23.0,2021-04-29 06:00:00,2026-10-28 06:00:00
+GNW,with_history,ok,90,2004-07-09,2027-03-01,88.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,39.0,2006-01-20 01:00:00,2015-10-29 17:00:00
+GOOG,with_history,ok,68,2010-05-05,2027-02-03,67.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,51.0,2014-04-16 16:00:00,2026-10-28 16:00:00
+GOOGL,with_history,ok,90,2004-10-21,2027-02-03,89.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,83.0,2006-04-20 16:00:00,2026-10-28 16:00:00
+GP,with_history,ok,25,2019-07-29,2026-07-29,23.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+GPC,with_history,ok,100,2002-04-16,2027-02-16,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-16 10:00:00,2026-10-20 06:00:00
+GPN,with_history,ok,100,2001-09-20,2027-02-17,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,40.0,2016-07-28 06:00:00,2026-11-05 06:00:00
+GRMN,with_history,ok,100,2002-05-01,2027-02-17,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,55.0,2013-02-20 07:00:00,2026-10-28 07:00:00
+GS,with_history,ok,100,2002-03-19,2027-01-19,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-09-24 08:00:00,2026-10-13 07:00:00
+GT,with_history,ok,100,2002-04-24,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,65.0,2002-04-24 08:00:00,2019-02-08 07:00:00
+GTE,with_history,ok,74,2008-03-13,2027-03-03,72.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+GWW,with_history,ok,100,2002-04-16,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-16 07:00:00,2026-11-04 08:00:00
+H,with_history,ok,69,2010-02-25,2027-02-11,68.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+HAL,with_history,ok,100,2002-05-07,2027-01-20,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-07 06:00:00,2026-10-20 06:00:00
+HAS,with_history,ok,100,2002-04-22,2027-02-09,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-22 07:00:00,2026-10-20 06:00:00
+HBAN,with_history,ok,100,2002-04-18,2027-01-21,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,95.0,2002-04-18 07:00:00,2026-10-22 06:00:00
+HCA,with_history,ok,64,2011-05-04,2027-01-26,63.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,47.0,2015-02-03 08:00:00,2026-10-27 07:00:00
+HD,with_history,ok,100,2002-02-26,2026-11-17,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-02-26 08:00:00,2026-08-18 06:00:00
+HIG,with_history,ok,100,2002-04-22,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-22 16:00:00,2026-10-26 16:00:00
+HII,with_history,ok,64,2011-05-11,2027-02-04,63.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,36.0,2018-02-15 07:00:00,2026-10-29 07:00:00
+HLT,with_history,ok,53,2014-02-27,2027-02-10,52.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,37.0,2017-07-26 06:00:00,2026-10-27 06:00:00
+HOG,with_history,ok,100,2002-04-16,2027-02-10,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,72.0,2002-04-16 17:00:00,2020-04-28 06:00:00
+HON,with_history,ok,100,2002-07-16,2027-01-28,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-07-16 07:00:00,2026-10-22 06:00:00
+HONA,with_history,ok,3,2026-08-05,2027-02-24,2.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,2.0,2026-08-05 16:00:00,2026-10-28 16:00:00
+HOOD,with_history,ok,23,2021-08-18,2027-02-10,22.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,5.0,2025-11-05 16:00:00,2026-10-27 16:00:00
+HP,with_history,ok,100,2002-04-24,2026-11-18,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,41.0,2010-04-29 05:00:00,2020-04-30 17:00:00
+HPE,with_history,ok,45,2015-12-17,2026-11-23,43.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,43.0,2015-12-17 17:00:00,2026-06-01 16:00:00
+HPQ,with_history,ok,100,2002-02-13,2026-11-24,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-02-13 16:00:00,2026-08-26 16:00:00
+HRB,with_history,ok,100,2001-11-28,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,75.0,2001-11-28 16:00:00,2020-09-01 16:00:00
+HRL,with_history,ok,100,2002-02-14,2026-12-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,70.0,2009-05-21 07:00:00,2026-08-27 06:00:00
+HSIC,with_history,ok,100,2002-08-06,2027-02-23,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,47.0,2015-05-04 07:00:00,2026-11-03 06:00:00
+HST,with_history,ok,100,2002-02-27,2027-02-17,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,78.0,2007-04-25 06:00:00,2026-11-04 16:00:00
+HSY,with_history,ok,100,2002-04-18,2027-02-04,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-18 08:00:00,2026-10-29 06:00:00
+HUBB,with_history,ok,100,2002-07-24,2027-02-02,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,13.0,2023-10-31 07:00:00,2026-10-27 07:00:00
+HUM,with_history,ok,100,2002-04-29,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-29 02:00:00,2026-11-06 06:00:00
+HWM,with_history,ok,42,2017-01-31,2027-02-18,41.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,27.0,2020-05-05 07:00:00,2026-10-29 07:00:00
+IBKR,with_history,ok,79,2007-07-26,2027-01-26,78.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,5.0,2025-10-16 16:00:00,2026-10-15 16:00:00
+IBM,with_history,ok,100,2002-04-17,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-17 16:00:00,2026-10-21 16:00:00
+ICE,with_history,ok,85,2006-02-23,2027-02-04,84.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,77.0,2007-10-25 07:00:00,2026-10-29 07:00:00
+IDXX,with_history,ok,100,2002-04-12,2027-02-01,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,40.0,2017-02-02 07:00:00,2026-11-02 06:00:00
+IEX,with_history,ok,100,2002-04-16,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,29.0,2019-10-29 16:00:00,2026-10-28 07:00:00
+IFF,with_history,ok,100,2002-04-25,2027-02-10,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-04-25 06:00:00,2026-11-03 16:00:00
+ILMN,with_history,ok,100,2002-04-18,2027-02-04,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,33.0,2016-02-02 16:00:00,2024-05-02 16:00:00
+INCY,with_history,ok,100,2002-04-30,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,39.0,2017-05-04 07:00:00,2026-10-29 07:00:00
+INFO,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+INTC,with_history,ok,100,2002-07-16,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,93.0,2002-07-16 16:00:00,2026-10-29 16:00:00
+INTU,with_history,ok,100,2002-02-13,2026-11-19,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-02-13 16:00:00,2026-08-25 16:00:00
+INVH,with_history,ok,41,2017-03-30,2027-02-17,40.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,17.0,2022-10-26 16:00:00,2026-10-28 16:00:00
+IP,with_history,ok,100,2002-04-19,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-19 08:00:00,2026-10-28 07:00:00
+IPGP,with_history,ok,81,2007-03-06,2027-02-11,80.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,17.0,2018-05-01 08:00:00,2022-05-03 08:00:00
+IQV,with_history,ok,55,2013-08-01,2027-02-11,54.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,37.0,2017-10-26 07:00:00,2026-10-27 07:00:00
+IR,with_history,ok,39,2017-08-02,2027-02-11,38.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,38.0,2017-08-02 16:00:00,2026-10-29 16:00:00
+IRM,with_history,ok,100,2002-05-01,2027-02-11,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,72.0,2009-02-26 06:00:00,2026-11-05 06:00:00
+ISRG,with_history,ok,100,2002-04-25,2027-01-21,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,74.0,2008-07-22 16:00:00,2026-10-20 16:00:00
+IT,with_history,ok,100,2002-01-22,2027-02-02,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,39.0,2017-05-04 06:00:00,2026-11-03 06:00:00
+ITT,with_history,ok,100,2002-04-24,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,39.0,2002-04-24 07:00:00,2011-10-28 09:00:00
+ITW,with_history,ok,100,2002-04-17,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-17 08:00:00,2026-10-27 08:00:00
+IVZ,with_history,ok,100,2002-04-24,2027-01-26,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,73.0,2008-10-29 07:00:00,2026-10-27 06:00:00
+J,with_history,ok,100,2002-01-17,2026-11-23,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,27.0,2020-02-04 06:00:00,2026-08-04 16:00:00
+JAVA,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+JBHT,with_history,ok,100,2002-07-15,2027-01-15,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,46.0,2015-07-17 08:00:00,2026-10-15 16:00:00
+JBL,with_history,ok,100,2002-03-19,2026-12-16,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,60.0,2002-03-19 16:00:00,2026-09-30 07:00:00
+JCI,with_history,ok,100,2002-07-18,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-07-18 07:00:00,2026-10-27 06:00:00
+JEF,with_history,ok,66,2010-11-05,2027-01-06,64.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,33.0,2010-11-05 15:00:00,2019-07-03 07:00:00
+JKHY,with_history,ok,100,2002-04-16,2027-02-02,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,32.0,2019-02-05 16:00:00,2026-11-03 16:00:00
+JNJ,with_history,ok,100,2002-04-16,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-16 08:00:00,2026-10-13 06:00:00
+JPM,with_history,ok,100,2002-04-17,2027-01-14,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-17 07:00:00,2026-10-13 06:00:00
+KBH,with_history,ok,100,2002-03-21,2026-12-17,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,29.0,2002-03-21 08:00:00,2009-09-25 08:00:00
+KDP,with_history,ok,34,2018-11-07,2027-02-23,33.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,18.0,2022-07-28 06:00:00,2026-11-03 07:00:00
+KEY,with_history,ok,100,2002-07-16,2027-01-20,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-16 06:00:00,2026-10-20 06:00:00
+KEYS,with_history,ok,49,2014-12-22,2026-11-19,48.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,32.0,2018-11-20 16:00:00,2026-08-18 16:00:00
+KG,with_history,empty,0,,,,,past,history_to_today_suspect,,,
+KHC,with_history,ok,46,2015-11-05,2027-02-10,45.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,45.0,2015-11-05 16:00:00,2026-11-04 07:00:00
+KIM,with_history,ok,100,2001-04-26,2027-02-11,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,83.0,2006-04-25 07:00:00,2026-10-29 06:00:00
+KKR,with_history,ok,66,2010-11-03,2027-02-04,65.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,10.0,2024-07-31 06:00:00,2026-11-09 06:00:00
+KLAC,with_history,ok,100,2002-07-30,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-30 16:00:00,2026-10-28 16:00:00
+KMB,with_history,ok,100,2002-04-23,2027-02-02,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-23 07:00:00,2026-11-05 06:00:00
+KMI,with_history,ok,68,2006-04-19,2027-01-27,66.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,61.0,2006-04-19 16:00:00,2026-10-21 16:00:00
+KMX,with_history,ok,100,2002-04-02,2026-12-17,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,60.0,2010-09-22 07:00:00,2025-09-25 06:00:00
+KO,with_history,ok,100,2002-04-16,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-16 07:00:00,2026-10-27 06:00:00
+KR,with_history,ok,100,2002-03-12,2026-12-03,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-03-12 09:00:00,2026-09-11 06:00:00
+KSS,with_history,ok,100,2002-03-05,2026-11-24,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,73.0,2002-03-05 16:00:00,2020-08-18 07:00:00
+KVUE,with_history,ok,1,2027-02-04,2027-02-04,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,,,
+L,with_history,ok,84,1999-08-04,2027-02-08,83.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,79.0,1999-08-04 09:00:00,2020-02-10 06:00:00
+LB,with_history,ok,10,2024-11-07,2027-02-24,9.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+LDOS,with_history,ok,78,2006-12-12,2027-02-09,76.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,44.0,2010-03-30 16:00:00,2026-11-03 06:00:00
+LEG,with_history,ok,1,2026-10-26,2026-10-26,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_stub,,,
+LEN,with_history,ok,100,2002-06-19,2026-12-15,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,83.0,2005-12-15 05:00:00,2026-09-16 16:00:00
+LH,with_history,ok,100,2002-04-22,2027-02-23,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,88.0,2005-02-15 07:00:00,2026-10-28 06:00:00
+LHX,with_history,ok,100,2001-10-17,2027-01-28,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,29.0,2019-10-30 06:00:00,2026-10-29 06:00:00
+LIFE,with_history,ok,43,2015-06-01,2027-03-01,42.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+LII,with_history,ok,100,2002-04-23,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,8.0,2025-01-29 06:00:00,2026-10-28 06:00:00
+LIN,with_history,ok,100,2002-07-24,2027-02-04,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,33.0,2018-11-09 11:00:00,2026-10-29 05:00:00
+LITE,with_history,ok,47,2015-08-12,2027-02-02,46.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,3.0,2026-05-05 16:00:00,2026-11-02 07:00:00
+LKQ,with_history,ok,93,2004-02-26,2027-02-25,90.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,38.0,2016-07-28 07:00:00,2025-10-30 07:00:00
+LLY,with_history,ok,100,2002-04-15,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-15 07:00:00,2026-10-29 06:00:00
+LMT,with_history,ok,100,2002-04-23,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-23 08:00:00,2026-10-22 06:00:00
+LNC,with_history,ok,100,2002-04-23,2027-02-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,84.0,2002-04-23 07:00:00,2023-08-02 16:00:00
+LNT,with_history,ok,100,2002-04-22,2027-02-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,42.0,2016-08-01 18:00:00,2026-10-29 18:00:00
+LOW,with_history,ok,100,2002-05-20,2026-11-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-20 07:00:00,2026-08-19 06:00:00
+LPX,with_history,ok,100,2002-04-25,2027-02-16,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,17.0,2002-04-25 08:00:00,2006-10-24 08:00:00
+LRCX,with_history,ok,100,2002-04-17,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,58.0,2012-07-25 16:00:00,2026-10-21 16:00:00
+LU,with_history,ok,17,2020-12-01,2027-03-16,15.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+LULU,with_history,ok,78,2007-09-10,2026-12-10,77.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,12.0,2023-12-07 16:00:00,2026-09-03 16:00:00
+LUMN,with_history,ok,100,2002-04-25,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,10.0,2020-11-04 16:00:00,2023-02-07 16:00:00
+LUV,with_history,ok,100,2002-04-18,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-18 08:00:00,2026-10-21 16:00:00
+LVS,with_history,ok,89,2005-03-08,2027-01-27,88.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,29.0,2019-10-23 16:00:00,2026-10-21 16:00:00
+LW,with_history,ok,41,2017-01-10,2026-12-17,40.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,29.0,2019-01-04 08:00:00,2025-12-19 08:00:00
+LYB,with_history,ok,66,2010-10-29,2027-01-29,65.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,57.0,2012-10-26 07:00:00,2026-10-30 06:00:00
+LYV,with_history,ok,82,2006-11-07,2027-02-18,81.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,27.0,2020-02-27 16:00:00,2026-11-05 16:00:00
+M,with_history,ok,100,2002-02-26,2026-12-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,72.0,2002-02-26 08:00:00,2020-02-25 06:00:00
+MA,with_history,ok,83,2006-08-02,2027-01-28,82.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,74.0,2008-07-31 08:00:00,2026-10-29 08:00:00
+MAA,with_history,ok,88,2000-04-25,2027-02-03,85.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,40.0,2017-02-01 16:00:00,2026-10-28 16:00:00
+MAC,with_history,ok,100,2001-02-14,2027-02-18,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,25.0,2013-08-05 16:00:00,2019-10-31 06:00:00
+MAR,with_history,ok,100,2002-04-18,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 06:00:00,2026-11-02 07:00:00
+MAS,with_history,ok,100,2002-05-06,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-05-06 08:00:00,2026-10-28 07:00:00
+MAT,with_history,ok,100,2002-04-18,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,65.0,2002-04-18 06:00:00,2019-04-25 16:00:00
+MBI,with_history,ok,100,2002-05-07,2027-02-25,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,29.0,2002-05-07 08:00:00,2009-11-09 16:00:00
+MCD,with_history,ok,100,2002-04-18,2027-02-11,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,95.0,2002-04-18 08:00:00,2026-11-04 07:00:00
+MCHP,with_history,ok,100,2002-07-17,2027-02-04,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,76.0,2007-10-23 16:00:00,2026-11-05 16:00:00
+MCK,with_history,ok,100,2002-04-30,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-30 07:00:00,2026-11-04 16:00:00
+MCO,with_history,ok,100,2002-04-24,2027-02-17,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-24 08:00:00,2026-10-21 06:00:00
+MDLZ,with_history,ok,100,2002-04-16,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,79.0,2007-04-18 16:00:00,2026-10-29 16:00:00
+MDT,with_history,ok,100,2002-05-22,2026-11-24,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-05-22 16:00:00,2026-09-01 06:00:00
+MEDI,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+MET,with_history,ok,100,2002-05-07,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-07 08:00:00,2026-11-04 16:00:00
+META,with_history,ok,59,2012-07-26,2027-01-27,58.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,52.0,2014-01-29 16:00:00,2026-10-21 16:00:00
+MGM,with_history,ok,100,2002-04-17,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,36.0,2017-07-27 08:00:00,2026-10-28 16:00:00
+MHK,with_history,ok,100,2002-04-15,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,47.0,2014-02-20 16:00:00,2025-10-23 16:00:00
+MI,with_history,ok,4,2018-04-02,2018-11-19,4.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+MIR,with_history,ok,20,2022-05-04,2027-02-09,19.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+MKC,with_history,ok,100,2002-06-19,2027-01-21,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2003-03-25 08:00:00,2026-10-01 06:00:00
+MKTX,with_history,ok,89,2005-02-09,2027-01-28,79.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,25.0,2019-07-24 06:00:00,2025-08-06 07:00:00
+MLM,with_history,ok,100,2002-04-25,2027-02-10,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,50.0,2014-07-29 08:00:00,2026-11-04 06:00:00
+MMI,with_history,ok,53,2014-03-11,2027-02-12,50.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+MMM,with_history,ok,100,2002-04-22,2027-01-19,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-22 07:00:00,2026-10-20 06:00:00
+MNST,with_history,ok,100,2000-02-29,2027-02-25,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,58.0,2012-08-08 16:00:00,2026-11-05 16:00:00
+MO,with_history,ok,100,2002-04-17,2027-01-28,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-17 08:00:00,2026-10-29 07:00:00
+MOH,with_history,ok,95,2003-08-11,2027-02-04,93.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,15.0,2022-04-27 16:00:00,2025-10-22 16:00:00
+MOS,with_history,ok,61,2011-07-18,2027-02-23,60.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,57.0,2012-01-04 16:00:00,2026-08-04 16:00:00
+MPC,with_history,ok,63,2011-08-02,2027-02-02,62.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,60.0,2011-08-02 08:00:00,2026-11-03 06:00:00
+MPWR,with_history,ok,89,2005-02-03,2027-02-04,86.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,23.0,2021-05-04 16:00:00,2026-10-29 16:00:00
+MRK,with_history,ok,100,2002-04-18,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 07:00:00,2026-10-29 06:00:00
+MRNA,with_history,ok,33,2019-03-13,2027-02-12,32.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,22.0,2021-08-05 06:00:00,2026-11-06 06:00:00
+MRSH,with_history,ok,100,2002-04-23,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,4.0,2026-01-29 02:00:00,2026-10-15 07:00:00
+MRVL,with_history,ok,100,2002-02-28,2026-12-01,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,1.0,2026-08-27 16:00:00,2026-08-27 16:00:00
+MS,with_history,ok,100,2002-03-26,2027-01-14,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-03-26 08:00:00,2026-10-14 07:00:00
+MSCI,with_history,ok,76,2008-04-09,2027-01-26,74.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,35.0,2018-05-03 07:00:00,2026-10-20 06:00:00
+MSFT,with_history,ok,100,2002-04-18,2027-01-27,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-18 16:00:00,2026-10-28 16:00:00
+MSI,with_history,ok,100,2002-04-16,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-16 17:00:00,2026-11-04 16:00:00
+MTB,with_history,ok,100,2002-04-16,2027-01-19,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,91.0,2004-04-20 08:00:00,2026-10-16 05:00:00
+MTCH,with_history,ok,27,2020-08-04,2027-02-02,26.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,18.0,2021-11-02 16:00:00,2026-02-03 16:00:00
+MTD,with_history,ok,100,2002-04-24,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,41.0,2016-11-03 16:00:00,2026-11-05 16:00:00
+MTG,with_history,ok,100,2002-04-09,2027-02-08,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,27.0,2002-04-09 08:00:00,2008-10-16 21:00:00
+MTW,with_history,ok,100,2002-07-18,2027-02-09,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,7.0,2008-02-04 17:00:00,2009-07-27 17:00:00
+MU,with_history,ok,100,2002-03-21,2026-12-23,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-03-21 17:00:00,2026-09-30 16:00:00
+MUR,with_history,ok,100,2002-04-24,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,47.0,2005-10-25 16:00:00,2017-05-03 17:00:00
+NAVI,with_history,ok,52,2014-05-09,2027-02-02,51.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,17.0,2014-05-09 13:00:00,2018-04-24 16:00:00
+NBR,with_history,ok,100,2002-07-18,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,52.0,2002-07-18 06:00:00,2015-03-02 16:00:00
+NC,with_history,ok,28,1999-09-30,2027-03-03,27.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,2.0,1999-09-29 20:00:00,2000-04-19 18:00:00
+NCLH,with_history,ok,57,2013-02-11,2027-03-01,56.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,37.0,2017-11-09 07:00:00,2026-10-29 07:00:00
+NDAQ,with_history,ok,98,2002-10-28,2027-01-28,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,73.0,2008-11-06 07:00:00,2026-10-22 07:00:00
+NDSN,with_history,ok,100,2002-02-20,2026-12-15,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,19.0,2022-02-22 16:00:00,2026-08-19 16:00:00
+NE,with_history,ok,24,2021-05-05,2027-02-10,23.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+NEE,with_history,ok,100,2002-07-19,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-07-19 07:00:00,2026-10-21 07:00:00
+NEM,with_history,ok,100,2002-05-15,2027-02-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-05-15 03:00:00,2026-10-22 16:00:00
+NFLX,with_history,ok,99,2002-07-24,2027-01-19,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,64.0,2011-01-26 16:00:00,2026-10-20 16:00:00
+NFX,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+NI,with_history,ok,100,2002-04-23,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-23 08:00:00,2026-10-28 06:00:00
+NKE,with_history,ok,100,2002-03-21,2026-12-17,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-03-21 16:00:00,2026-10-01 16:00:00
+NKTR,with_history,ok,100,2002-05-02,2026-11-12,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,6.0,2018-05-10 16:00:00,2019-08-08 16:00:00
+NOC,with_history,ok,100,2002-04-17,2027-01-26,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-17 08:00:00,2026-10-20 06:00:00
+NOV,with_history,ok,100,2002-04-26,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,65.0,2005-05-06 08:00:00,2021-07-27 18:00:00
+NOW,with_history,ok,59,2012-08-01,2027-01-27,58.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,28.0,2020-01-29 16:00:00,2026-10-28 16:00:00
+NRG,with_history,ok,92,2005-01-12,2027-02-24,87.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,67.0,2010-02-23 06:00:00,2026-11-09 06:00:00
+NSC,with_history,ok,100,2002-04-24,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-24 08:00:00,2026-10-22 08:00:00
+NSI,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+NTAP,with_history,ok,100,2002-02-12,2026-12-01,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-02-12 16:00:00,2026-05-28 16:00:00
+NTRS,with_history,ok,100,2002-04-15,2027-01-21,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-15 08:00:00,2026-10-21 06:00:00
+NUE,with_history,ok,100,2002-04-18,2027-01-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 08:00:00,2026-10-26 16:00:00
+NVDA,with_history,ok,100,2002-05-22,2026-11-17,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-05-22 16:00:00,2026-08-26 16:00:00
+NVR,with_history,ok,100,2002-04-16,2027-01-27,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,29.0,2019-10-18 09:00:00,2026-10-22 09:00:00
+NWL,with_history,ok,99,2002-08-01,2027-02-05,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,85.0,2002-08-01 06:00:00,2023-07-28 07:00:00
+NWS,with_history,ok,54,2013-09-20,2027-02-04,51.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,44.0,2015-11-05 16:00:00,2026-11-04 16:00:00
+NWSA,with_history,ok,55,2013-09-20,2027-02-04,54.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,53.0,2013-09-20 17:00:00,2026-11-04 16:00:00
+NXPI,with_history,ok,66,2010-11-02,2027-02-01,64.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,23.0,2021-04-26 16:00:00,2026-10-27 16:00:00
+NYT,with_history,ok,100,2002-04-15,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,33.0,2002-04-15 08:00:00,2010-10-19 08:00:00
+O,with_history,ok,95,2000-04-27,2027-02-23,91.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,47.0,2015-04-29 16:00:00,2026-11-02 16:00:00
+ODFL,with_history,ok,100,2002-04-25,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,28.0,2020-02-06 07:00:00,2026-10-28 07:00:00
+OGN,with_history,ok,24,2021-06-21,2027-02-11,23.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,10.0,2021-06-21 08:00:00,2023-08-08 07:00:00
+OI,with_history,ok,100,2002-04-23,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_name_mismatch,32.0,2009-01-28 17:00:00,2016-10-25 16:00:00
+OKE,with_history,ok,100,2002-05-01,2027-02-22,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,67.0,2010-04-28 16:00:00,2026-10-27 16:00:00
+OMC,with_history,ok,100,2002-04-30,2027-02-17,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-30 06:00:00,2026-10-22 16:00:00
+ON,with_history,ok,100,2002-04-17,2027-02-08,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,18.0,2022-08-01 08:00:00,2026-11-02 16:00:00
+ORCL,with_history,ok,100,2002-06-18,2026-12-14,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-06-18 16:00:00,2026-09-10 16:00:00
+ORLY,with_history,ok,100,2002-07-23,2027-02-10,94.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,71.0,2009-04-29 18:00:00,2026-10-28 16:00:00
+OTIS,with_history,ok,28,2020-05-07,2027-01-27,27.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,27.0,2020-05-06 21:00:00,2026-10-28 06:00:00
+OXY,with_history,ok,100,2001-04-18,2027-02-17,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2001-04-18 07:00:00,2026-11-09 16:00:00
+PANW,with_history,ok,58,2012-09-10,2026-11-18,57.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,13.0,2023-08-18 16:00:00,2026-09-01 16:00:00
+PARA,with_history,ok,100,2000-02-16,2026-08-14,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,11.0,2022-05-03 10:00:00,2025-05-15 15:00:00
+PAYC,with_history,ok,52,2014-05-21,2027-02-10,51.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,25.0,2020-02-05 16:00:00,2026-02-11 16:00:00
+PAYX,with_history,ok,100,2002-03-19,2026-12-18,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,95.0,2002-03-19 07:00:00,2026-09-23 08:00:00
+PBI,with_history,ok,100,2002-04-18,2027-02-16,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,59.0,2002-04-18 16:00:00,2017-02-01 07:00:00
+PCAR,with_history,ok,100,2002-07-25,2027-02-02,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-25 08:00:00,2026-10-27 08:00:00
+PCG,with_history,ok,100,2002-05-01,2027-02-11,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,84.0,2002-05-01 11:00:00,2026-10-22 06:00:00
+PCL,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+PCS,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+PD,with_history,ok,31,2019-06-06,2026-11-24,30.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+PEG,with_history,ok,100,2002-04-16,2027-02-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-16 13:00:00,2026-11-02 07:00:00
+PENN,with_history,ok,100,2002-04-23,2027-02-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,6.0,2021-05-06 07:00:00,2022-08-04 07:00:00
+PEP,with_history,ok,100,2002-04-23,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-23 07:00:00,2026-10-08 06:00:00
+PFE,with_history,ok,100,2002-04-17,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-17 06:00:00,2026-11-03 06:00:00
+PFG,with_history,ok,100,2002-05-08,2027-02-08,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-08-07 08:00:00,2026-10-26 16:00:00
+PG,with_history,ok,100,2002-04-30,2027-01-21,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-30 07:00:00,2026-10-22 07:00:00
+PGR,with_history,ok,100,2002-04-17,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-17 16:00:00,2026-10-13 08:00:00
+PH,with_history,ok,100,2002-04-16,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-16 08:00:00,2026-11-05 07:00:00
+PHM,with_history,ok,100,2002-04-23,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-04-23 05:00:00,2026-10-22 06:00:00
+PKG,with_history,ok,100,2002-04-15,2027-01-26,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,38.0,2017-07-26 18:00:00,2026-10-21 17:00:00
+PLD,with_history,ok,63,2011-07-28,2027-01-20,62.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,61.0,2011-07-28 08:00:00,2026-10-15 08:00:00
+PLTR,with_history,ok,26,2020-11-12,2027-02-01,25.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,9.0,2024-11-04 16:00:00,2026-11-02 16:00:00
+PM,with_history,ok,76,2008-04-23,2027-02-04,74.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,74.0,2008-04-23 06:00:00,2026-10-21 07:00:00
+PNC,with_history,ok,100,2002-04-19,2027-01-15,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-19 07:00:00,2026-10-15 06:00:00
+PNR,with_history,ok,100,2002-07-23,2027-02-02,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,57.0,2012-11-01 07:00:00,2026-10-27 06:00:00
+PNW,with_history,ok,100,2002-04-22,2027-02-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,94.0,2002-04-22 16:00:00,2026-11-03 08:00:00
+PODD,with_history,ok,79,2007-08-14,2027-02-17,78.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,15.0,2023-05-04 16:00:00,2026-11-04 07:00:00
+POM,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+POOL,with_history,ok,100,2002-07-16,2027-02-18,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,23.0,2020-10-22 07:00:00,2026-04-23 07:00:00
+PPG,with_history,ok,100,2002-04-18,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 07:00:00,2026-10-27 16:00:00
+PPL,with_history,ok,100,2002-04-24,2027-02-19,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-24 07:00:00,2026-11-06 07:00:00
+PRGO,with_history,ok,100,2002-04-25,2027-02-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,34.0,2012-02-07 07:00:00,2021-08-11 06:00:00
+PRU,with_history,ok,100,2002-05-07,2027-02-02,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-08-06 16:00:00,2026-11-03 16:00:00
+PSA,with_history,ok,91,2000-05-01,2027-02-11,90.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,85.0,2005-10-27 17:00:00,2026-10-26 16:00:00
+PSKY,with_history,ok,100,2002-04-25,2027-02-24,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,3.0,2025-11-10 16:00:00,2026-08-04 16:00:00
+PSX,with_history,ok,60,2012-05-16,2027-02-03,59.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,58.0,2012-05-16 12:00:00,2026-10-28 06:00:00
+PTC,with_history,ok,100,2002-04-16,2027-02-09,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,41.0,2002-04-16 07:00:00,2026-11-04 16:00:00
+PVH,with_history,ok,100,2002-05-22,2026-12-02,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,39.0,2013-03-27 17:00:00,2022-08-30 16:00:00
+PWER,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+PWR,with_history,ok,100,2002-05-08,2027-02-18,92.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,70.0,2009-08-05 06:00:00,2026-10-29 06:00:00
+PYPL,with_history,ok,47,2015-07-29,2027-02-02,46.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,46.0,2015-07-29 16:00:00,2026-10-27 07:00:00
+Q,with_history,ok,6,2025-11-18,2027-02-25,5.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,5.0,2025-11-18 16:00:00,2026-11-04 06:00:00
+QCOM,with_history,ok,100,2002-04-24,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-25 16:00:00,2026-11-04 16:00:00
+QRVO,with_history,ok,1,2026-11-09,2026-11-09,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_stub,,,
+R,with_history,ok,100,2002-04-24,2027-02-10,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,60.0,2002-04-24 07:00:00,2017-04-25 07:00:00
+RAL,with_history,ok,6,2025-08-11,2027-02-25,5.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+RCL,with_history,ok,100,2002-04-24,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,48.0,2015-01-29 08:00:00,2026-10-27 06:00:00
+RDDT,with_history,ok,12,2024-05-07,2027-02-04,11.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,1.0,2026-10-29 16:00:00,2026-10-29 16:00:00
+REG,with_history,ok,99,2000-11-02,2027-02-04,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,39.0,2017-05-09 16:00:00,2026-11-05 17:00:00
+REGN,with_history,ok,100,2002-04-29,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,55.0,2013-05-03 06:00:00,2026-10-30 06:00:00
+RF,with_history,ok,100,2002-04-18,2027-01-22,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-18 09:00:00,2026-10-16 06:00:00
+RHI,with_history,ok,100,2002-04-16,2027-01-28,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,88.0,2002-04-16 16:00:00,2024-04-25 16:00:00
+RIG,with_history,ok,100,2002-04-30,2027-02-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,41.0,2002-04-30 07:00:00,2017-05-03 16:00:00
+RJF,with_history,ok,100,2002-07-16,2027-01-27,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,39.0,2017-04-26 12:00:00,2026-10-28 16:00:00
+RL,with_history,ok,100,2002-05-22,2027-02-04,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,80.0,2007-02-07 07:00:00,2026-11-05 08:00:00
+RMD,with_history,ok,100,2002-05-02,2027-01-28,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,38.0,2017-08-01 16:00:00,2026-10-29 16:00:00
+RML,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+ROK,with_history,ok,100,2002-04-23,2027-02-04,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-23 07:00:00,2026-11-05 07:00:00
+ROL,with_history,ok,95,2001-04-18,2027-02-10,80.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,33.0,2018-10-24 07:00:00,2026-10-21 16:00:00
+ROP,with_history,ok,100,2002-02-21,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,68.0,2010-02-03 07:00:00,2026-10-22 06:00:00
+ROST,with_history,ok,100,2002-03-13,2026-11-19,88.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,66.0,2010-03-18 08:00:00,2026-08-20 16:00:00
+RRC,with_history,ok,100,2002-05-06,2027-02-23,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,41.0,2008-02-26 22:00:00,2018-04-25 16:00:00
+RSG,with_history,ok,100,2002-04-29,2027-02-16,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,71.0,2009-02-27 01:00:00,2026-10-29 16:00:00
+RTX,with_history,ok,100,2002-04-17,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,27.0,2020-05-07 07:00:00,2026-10-20 06:00:00
+RVTY,with_history,ok,100,2002-04-25,2027-02-01,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,14.0,2023-08-01 06:00:00,2026-11-03 06:00:00
+S,with_history,ok,22,2021-09-08,2026-12-03,21.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+SANM,with_history,ok,100,2002-04-18,2027-02-01,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,20.0,2002-07-18 16:00:00,2007-04-24 16:00:00
+SATS,with_history,ok,1,2026-11-05,2026-11-05,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+SBAC,with_history,ok,100,2002-05-06,2027-03-01,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,37.0,2017-10-30 16:00:00,2026-11-02 16:00:00
+SBNY,with_history,ok,75,2004-07-28,2023-01-17,75.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,5.0,2022-01-18 05:00:00,2023-01-17 05:00:00
+SBUX,with_history,ok,100,2002-04-25,2027-01-27,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-25 16:00:00,2026-10-29 16:00:00
+SCHW,with_history,ok,100,2002-04-16,2027-01-21,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-16 08:00:00,2026-10-15 07:00:00
+SCI,with_history,ok,100,2002-05-08,2027-02-10,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,,,
+SDS,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+SE,with_history,ok,37,2017-11-21,2026-11-10,37.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+SEDG,with_history,ok,46,2015-05-07,2027-02-17,45.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,8.0,2022-02-15 16:00:00,2023-11-01 16:00:00
+SEG,with_history,ok,6,2025-11-10,2027-03-03,5.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+SGP,with_history,ok,3,2026-05-14,2026-11-12,2.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+SHLD,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+SHW,with_history,ok,100,2002-07-18,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-07-18 09:00:00,2026-10-27 07:00:00
+SIG,with_history,ok,90,2000-09-06,2026-12-02,88.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,11.0,2015-08-27 07:00:00,2018-03-14 06:00:00
+SII,with_history,ok,62,2011-11-09,2027-02-18,61.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,,,
+SJM,with_history,ok,100,2002-02-14,2026-11-24,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,72.0,2008-11-21 07:00:00,2026-08-26 07:00:00
+SLB,with_history,ok,100,2002-04-17,2027-01-22,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-17 18:00:00,2026-10-23 06:00:00
+SLG,with_history,ok,98,1999-03-31,2027-01-27,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,21.0,2015-04-22 17:00:00,2021-01-27 17:00:00
+SLM,with_history,ok,100,2002-07-18,2027-01-21,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,49.0,2002-07-18 08:00:00,2014-04-16 16:00:00
+SMCI,with_history,ok,77,2007-05-09,2027-02-02,75.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,11.0,2024-04-30 16:00:00,2026-11-03 16:00:00
+SNA,with_history,ok,100,2002-04-23,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-23 09:00:00,2026-10-22 06:00:00
+SNDK,with_history,ok,8,2025-05-07,2027-02-15,7.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,4.0,2026-01-29 16:00:00,2026-10-29 16:00:00
+SNPS,with_history,ok,100,2002-02-20,2026-12-08,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,38.0,2017-05-17 16:00:00,2026-08-26 16:00:00
+SO,with_history,ok,100,2002-04-18,2027-02-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 07:00:00,2026-11-05 07:00:00
+SOLS,with_history,ok,5,2026-02-11,2027-02-10,4.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,,,
+SOLV,with_history,ok,12,2024-05-09,2027-02-25,11.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,11.0,2024-05-09 06:00:00,2026-11-05 16:00:00
+SPG,with_history,ok,100,2002-02-07,2027-02-01,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-31 09:00:00,2026-11-05 16:00:00
+SPGI,with_history,ok,100,2002-04-22,2027-02-09,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-04-22 07:00:00,2026-10-27 07:00:00
+SPLS,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+SRE,with_history,ok,100,2002-07-23,2027-02-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-07-23 09:00:00,2026-11-05 07:00:00
+SSP,with_history,ok,100,2002-04-10,2027-02-24,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,10.0,2006-02-02 08:00:00,2008-04-24 07:00:00
+STE,with_history,ok,100,2002-07-23,2027-02-03,93.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,28.0,2020-02-10 16:00:00,2026-11-04 16:00:00
+STI,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+STLD,with_history,ok,100,2002-04-16,2027-01-25,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,16.0,2023-01-25 16:00:00,2026-10-19 16:00:00
+STT,with_history,ok,100,2002-04-16,2027-01-15,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-07-16 07:00:00,2026-10-14 07:00:00
+STX,with_history,ok,97,2003-01-09,2027-01-26,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,58.0,2012-07-30 16:00:00,2026-10-27 16:00:00
+STZ,with_history,ok,100,2002-04-10,2027-01-07,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,85.0,2005-10-06 16:00:00,2026-10-06 16:00:00
+SUB,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+SUN,with_history,ok,2,2026-11-03,2027-02-16,1.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_starts_late,,,
+SW,with_history,ok,11,2024-07-30,2027-02-10,10.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,10.0,2024-07-30 16:00:00,2026-10-28 06:00:00
+SWK,with_history,ok,100,2002-04-24,2027-02-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-07-17 09:00:00,2026-11-04 06:00:00
+SWKS,with_history,ok,95,2002-07-31,2027-02-02,94.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,47.0,2015-04-30 16:00:00,2026-11-03 16:00:00
+SYF,with_history,ok,50,2014-10-17,2027-01-26,49.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,44.0,2016-01-22 06:00:00,2026-10-19 20:00:00
+SYK,with_history,ok,100,2002-04-17,2027-01-28,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-17 16:00:00,2026-10-29 16:00:00
+SYY,with_history,ok,100,2002-04-24,2027-02-02,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-04-24 02:00:00,2026-11-03 08:00:00
+T,with_history,ok,100,2002-04-18,2027-01-27,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-18 07:00:00,2026-10-21 06:00:00
+TAP,with_history,ok,100,2002-04-25,2027-02-17,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-25 08:00:00,2026-11-05 06:00:00
+TDC,with_history,ok,77,2008-02-12,2027-02-09,76.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,38.0,2008-02-12 08:00:00,2017-04-27 06:00:00
+TDG,with_history,ok,83,2006-04-28,2026-11-10,83.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,42.0,2016-08-09 07:00:00,2026-11-10 06:00:00
+TDY,with_history,ok,100,2002-04-24,2027-01-20,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,26.0,2020-07-22 06:00:00,2026-10-21 06:00:00
+TE,with_history,ok,22,2021-08-12,2026-11-12,20.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+TECH,with_history,ok,100,2002-08-13,2027-02-09,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,21.0,2021-11-02 06:00:00,2026-11-06 16:00:00
+TEK,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+TEL,with_history,ok,79,2007-08-08,2027-01-20,78.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,69.0,2007-08-08 06:00:00,2026-10-28 06:00:00
+TER,with_history,ok,100,2002-04-16,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,69.0,2002-04-16 18:00:00,2026-10-27 16:00:00
+TEX,with_history,ok,100,2002-02-21,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,9.0,2007-02-14 19:00:00,2008-10-22 16:00:00
+TFC,with_history,ok,100,2002-07-11,2027-01-20,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,28.0,2020-01-30 05:00:00,2026-10-16 06:00:00
+TFX,with_history,ok,100,2002-04-17,2027-02-25,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,25.0,2019-02-21 06:00:00,2025-02-27 06:00:00
+TGT,with_history,ok,100,2002-02-28,2026-11-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-02-28 08:00:00,2026-08-19 06:00:00
+THC,with_history,ok,100,2002-04-02,2027-02-10,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,49.0,2002-04-02 08:00:00,2016-02-22 16:00:00
+TJX,with_history,ok,100,2002-05-14,2026-11-18,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-05-14 08:00:00,2026-08-19 07:00:00
+TKO,with_history,ok,14,2023-11-07,2027-02-24,13.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,7.0,2025-05-08 17:00:00,2026-11-04 16:00:00
+TKR,with_history,ok,100,2002-04-16,2027-02-03,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,,,
+TMC,with_history,ok,20,2022-03-24,2026-11-12,17.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+TMO,with_history,ok,100,2002-04-24,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-24 16:00:00,2026-10-21 06:00:00
+TMUS,with_history,ok,55,2013-08-08,2027-02-10,54.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,30.0,2019-07-25 16:00:00,2026-10-28 16:00:00
+TOS,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+TPL,with_history,ok,26,2020-01-30,2027-02-17,25.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,6.0,2025-08-06 16:00:00,2026-11-04 16:00:00
+TPR,with_history,ok,100,2002-01-23,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,87.0,2004-10-26 07:00:00,2026-11-05 06:00:00
+TRGP,with_history,ok,65,2011-02-24,2027-02-18,64.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,17.0,2022-11-03 15:00:00,2026-11-05 15:00:00
+TRIP,with_history,ok,62,2012-01-05,2027-02-11,61.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,33.0,2012-01-05 18:00:00,2019-11-06 17:00:00
+TRMB,with_history,ok,100,2002-04-24,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,24.0,2021-02-10 16:00:00,2026-11-04 07:00:00
+TROW,with_history,ok,100,2002-04-18,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 07:00:00,2026-10-29 07:00:00
+TRV,with_history,ok,100,2002-07-23,2027-01-20,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-07-23 09:00:00,2026-10-16 06:00:00
+TSCO,with_history,ok,100,2002-07-15,2027-01-28,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,52.0,2014-01-29 16:00:00,2026-10-22 06:00:00
+TSLA,with_history,ok,66,2010-11-09,2027-01-27,65.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,24.0,2021-01-27 16:00:00,2026-10-21 16:00:00
+TSN,with_history,ok,100,2002-01-28,2026-11-16,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,84.0,2005-11-14 08:00:00,2026-08-03 07:00:00
+TT,with_history,ok,100,2002-04-18,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,51.0,2002-07-18 08:00:00,2026-10-29 06:00:00
+TTD,with_history,ok,42,2016-11-10,2027-02-25,41.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,6.0,2025-08-07 16:00:00,2026-11-09 16:00:00
+TTWO,with_history,ok,100,2002-06-06,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,33.0,2018-05-16 16:00:00,2026-11-09 16:00:00
+TX,with_history,ok,84,2006-04-28,2027-02-16,83.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+TXN,with_history,ok,100,2002-04-15,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-15 16:00:00,2026-10-21 16:00:00
+TXT,with_history,ok,100,2002-04-18,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-04-18 07:00:00,2026-10-29 06:00:00
+TYL,with_history,ok,100,2002-05-08,2027-02-10,94.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,26.0,2020-07-29 16:00:00,2026-10-28 16:00:00
+UA,with_history,ok,22,2016-04-21,2027-02-04,20.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,19.0,2016-04-21 07:00:00,2021-08-03 07:00:00
+UAA,with_history,ok,84,2006-02-07,2027-02-04,81.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,29.0,2014-07-24 07:00:00,2022-02-11 06:00:00
+UAL,with_history,ok,84,2006-05-08,2027-01-26,83.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,45.0,2015-10-22 07:00:00,2026-10-20 16:00:00
+UBER,with_history,ok,32,2019-05-30,2027-02-03,31.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,11.0,2024-02-07 06:00:00,2026-11-04 06:00:00
+UCL,with_history,ok,22,2021-05-26,2026-08-18,21.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+UDR,with_history,ok,100,2002-02-04,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,40.0,2016-04-25 16:00:00,2026-11-02 16:00:00
+UHS,with_history,ok,100,2002-04-18,2027-02-24,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,49.0,2014-10-27 17:00:00,2026-10-27 16:00:00
+UIS,with_history,ok,100,2002-04-15,2027-02-23,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,25.0,2002-04-15 16:00:00,2008-10-30 07:00:00
+UK,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+ULTA,with_history,ok,76,2008-03-19,2026-12-03,75.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,42.0,2016-05-26 16:00:00,2026-08-27 16:00:00
+UN,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+UNH,with_history,ok,100,2002-04-18,2027-01-12,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-18 06:00:00,2026-10-13 05:00:00
+UNM,with_history,ok,100,2002-05-07,2027-02-02,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,78.0,2002-05-07 16:00:00,2021-08-03 16:00:00
+UNP,with_history,ok,100,2002-04-25,2027-01-26,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-25 07:00:00,2026-10-22 07:00:00
+UPC,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+UPS,with_history,ok,100,2002-04-18,2027-01-26,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,95.0,2002-10-22 08:00:00,2026-10-27 06:00:00
+URBN,with_history,ok,100,2002-03-14,2026-11-24,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,29.0,2010-03-04 06:00:00,2017-03-07 16:00:00
+URI,with_history,ok,100,2002-04-24,2027-01-27,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,49.0,2014-10-15 16:00:00,2026-10-21 16:00:00
+USB,with_history,ok,100,2002-04-16,2027-01-19,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-16 11:00:00,2026-10-15 06:00:00
+UST,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+V,with_history,ok,76,2008-04-28,2027-01-26,75.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,68.0,2010-02-03 16:00:00,2026-10-27 16:00:00
+VEEV,with_history,ok,53,2013-12-05,2026-11-25,52.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,2.0,2026-06-03 16:00:00,2026-08-26 16:00:00
+VFC,with_history,ok,100,2002-04-23,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_name_mismatch,88.0,2002-04-23 10:00:00,2024-02-06 16:00:00
+VIAV,with_history,ok,100,2002-04-25,2027-02-03,95.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,44.0,2002-04-25 16:00:00,2013-10-30 16:00:00
+VICI,with_history,ok,37,2018-03-08,2027-02-24,36.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,18.0,2022-07-27 16:00:00,2026-10-28 16:00:00
+VLO,with_history,ok,100,2002-04-30,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,89.0,2004-07-29 08:00:00,2026-10-22 06:00:00
+VLTO,with_history,ok,14,2023-10-25,2027-02-02,13.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,13.0,2023-10-25 17:00:00,2026-10-29 16:00:00
+VMC,with_history,ok,100,2002-04-22,2027-02-16,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,95.0,2002-04-22 14:00:00,2026-10-29 06:00:00
+VMRK,with_history,ok,2,2026-11-04,2027-02-11,1.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,1.0,2026-11-04 16:00:00,2026-11-04 16:00:00
+VNO,with_history,ok,97,1999-05-06,2027-02-08,93.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,67.0,2005-11-01 09:00:00,2022-10-31 16:00:00
+VNT,with_history,ok,26,2020-10-29,2027-02-11,25.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,2.0,2020-10-29 06:00:00,2021-02-11 06:00:00
+VO,with_history,empty,0,,,,,past,ticker_reused_no_overlap,,,
+VRSK,with_history,ok,70,2009-11-16,2027-02-17,69.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,45.0,2015-10-27 16:00:00,2026-11-05 07:00:00
+VRSN,with_history,ok,100,2002-04-25,2027-02-04,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,81.0,2006-04-20 16:00:00,2026-10-22 16:00:00
+VRT,with_history,ok,28,2020-05-05,2027-02-10,27.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,3.0,2026-04-22 05:00:00,2026-10-28 05:00:00
+VRTS,with_history,ok,62,2011-05-02,2027-02-05,60.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+VRTX,with_history,ok,100,2002-04-24,2027-02-11,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,53.0,2013-10-29 08:00:00,2026-11-02 16:00:00
+VST,with_history,ok,40,2017-05-18,2027-02-25,39.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,11.0,2024-05-10 06:00:00,2026-11-09 06:00:00
+VTR,with_history,ok,100,2002-05-09,2027-02-03,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,68.0,2009-05-05 08:00:00,2026-10-27 16:00:00
+VTRS,with_history,ok,100,2001-10-25,2027-02-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,24.0,2021-03-01 17:00:00,2026-11-05 06:00:00
+VZ,with_history,ok,100,2002-04-23,2027-01-28,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-23 07:00:00,2026-10-26 07:00:00
+WAB,with_history,ok,100,2002-04-17,2027-02-10,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,31.0,2019-04-25 07:00:00,2026-10-21 06:00:00
+WAT,with_history,ok,100,2002-04-23,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-23 07:00:00,2026-11-03 06:00:00
+WB,with_history,ok,51,2014-05-21,2026-11-17,50.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,ticker_reused_no_overlap,,,
+WBD,with_history,ok,1,2026-11-05,2026-11-05,0.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,,,
+WDAY,with_history,ok,57,2012-11-28,2026-11-24,56.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,7.0,2025-02-25 16:00:00,2026-08-27 16:00:00
+WDC,with_history,ok,100,2002-04-25,2027-01-28,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,70.0,2009-07-28 16:00:00,2026-10-22 16:00:00
+WEC,with_history,ok,100,2002-04-30,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,72.0,2009-02-03 07:00:00,2026-10-29 07:00:00
+WELL,with_history,ok,99,2001-10-16,2027-02-09,96.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,71.0,2009-02-24 17:00:00,2026-10-26 16:00:00
+WEN,with_history,ok,97,2002-03-27,2027-02-12,93.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today_suspect,17.0,2002-03-27 13:00:00,2007-11-09 08:00:00
+WFC,with_history,ok,100,2002-04-16,2027-01-14,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,97.0,2002-04-16 08:00:00,2026-10-13 06:00:00
+WHR,with_history,ok,100,2002-04-17,2027-01-27,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,88.0,2002-04-17 07:00:00,2024-01-29 16:00:00
+WM,with_history,ok,100,2002-05-07,2027-01-27,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-07 07:00:00,2026-10-27 16:00:00
+WMB,with_history,ok,100,2002-04-25,2027-02-09,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-25 07:00:00,2026-11-02 16:00:00
+WMT,with_history,ok,100,2002-05-14,2026-11-19,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-05-14 07:00:00,2026-08-20 06:00:00
+WOR,with_history,ok,100,2001-12-19,2026-12-15,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,13.0,2001-12-19 08:00:00,2004-12-16 08:00:00
+WRB,with_history,ok,100,2002-07-24,2027-01-25,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,28.0,2020-01-28 16:00:00,2026-10-19 16:00:00
+WSM,with_history,ok,100,2002-05-23,2026-11-18,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,6.0,2025-05-22 09:00:00,2026-08-26 08:00:00
+WST,with_history,ok,100,2002-04-18,2027-02-18,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,26.0,2020-07-23 06:00:00,2026-10-29 06:00:00
+WTW,with_history,ok,86,2005-11-02,2027-02-04,85.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,20.0,2022-02-08 06:00:00,2026-10-29 06:00:00
+WU,with_history,ok,82,2006-10-23,2027-02-18,81.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,61.0,2006-10-23 16:00:00,2021-11-02 16:00:00
+WY,with_history,ok,100,2002-04-24,2027-01-28,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,96.0,2002-04-24 08:00:00,2026-10-29 16:00:00
+WYNN,with_history,ok,94,2003-01-23,2027-02-11,93.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,69.0,2009-02-24 16:00:00,2026-11-05 16:00:00
+XEL,with_history,ok,100,2002-04-24,2027-02-04,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-24 06:00:00,2026-10-29 06:00:00
+XOM,with_history,ok,100,2002-04-23,2027-01-29,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,98.0,2002-04-23 09:00:00,2026-10-30 06:00:00
+XRAY,with_history,ok,100,2002-04-17,2027-02-25,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,60.0,2009-02-04 20:00:00,2024-02-29 06:00:00
+XRX,with_history,ok,100,2002-07-25,2027-01-28,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,72.0,2002-10-23 07:00:00,2021-01-26 06:00:00
+XYL,with_history,ok,62,2011-11-21,2027-02-09,60.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,60.0,2011-11-21 16:00:00,2026-10-27 06:00:00
+XYZ,with_history,ok,45,2016-03-10,2027-03-01,44.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,6.0,2025-08-07 16:00:00,2026-11-03 16:00:00
+YUM,with_history,ok,100,2002-04-29,2027-02-03,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-29 16:00:00,2026-11-03 12:00:00
+ZBH,with_history,ok,100,2002-04-25,2027-02-10,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,99.0,2002-04-24 21:00:00,2026-11-04 06:00:00
+ZBRA,with_history,ok,100,2002-04-19,2027-02-09,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,28.0,2020-02-13 06:00:00,2026-11-03 06:00:00
+ZION,with_history,ok,100,2002-04-18,2027-01-21,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,history_to_today,87.0,2002-04-18 16:00:00,2024-01-22 16:00:00
+ZTS,with_history,ok,57,2013-03-28,2027-02-11,56.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",current,current_member,54.0,2013-08-06 07:00:00,2026-11-05 07:00:00
+GPU,no_history_sample,empty,0,,,,,past,no_history,,,
+TIF,no_history_sample,empty,0,,,,,past,no_history,,,
+CPGX,no_history_sample,empty,0,,,,,past,no_history,,,
+RBK,no_history_sample,empty,0,,,,,past,no_history,,,
+WLP,no_history_sample,empty,0,,,,,past,no_history,,,
+WPX,no_history_sample,empty,0,,,,,past,no_history,,,
+NFB,no_history_sample,empty,0,,,,,past,no_history,,,
+WWY,no_history_sample,empty,0,,,,,past,no_history,,,
+TRW,no_history_sample,empty,0,,,,,past,no_history,,,
+JWN,no_history_sample,ok,100,2000-05-11,2025-03-04,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,no_history,79.0,2000-05-11 16:00:00,2020-05-28 16:00:00
+HES,no_history_sample,ok,100,2000-10-25,2025-07-30,99.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,no_history,97.0,2000-10-25 12:00:00,2025-04-30 07:00:00
+CTB,no_history_sample,empty,0,,,,,past,no_history,,,
+RAD,no_history_sample,empty,0,,,,,past,no_history,,,
+HM,no_history_sample,empty,0,,,,,past,no_history,,,
+DTV,no_history_sample,empty,0,,,,,past,no_history,,,
+PKI,no_history_sample,empty,0,,,,,past,no_history,,,
+PVN,no_history_sample,empty,0,,,,,past,no_history,,,
+LM,no_history_sample,empty,0,,,,,past,no_history,,,
+PLL,no_history_sample,ok,15,2022-05-06,2025-11-11,14.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,no_history,,,
+CERN,no_history_sample,empty,0,,,,,past,no_history,,,
+INCLF,no_history_sample,empty,0,,,,,past,no_history,,,
+WAMUQ,no_history_sample,empty,0,,,,,past,no_history,,,
+SBL,no_history_sample,empty,0,,,,,past,no_history,,,
+MTLQQ,no_history_sample,empty,0,,,,,past,no_history,,,
+WYE,no_history_sample,empty,0,,,,,past,no_history,,,
+LLTC,no_history_sample,empty,0,,,,,past,no_history,,,
+DO,no_history_sample,empty,0,,,,,past,no_history,,,
+USW,no_history_sample,empty,0,,,,,past,no_history,,,
+ODP,no_history_sample,ok,100,2002-02-13,2026-02-25,97.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,no_history,35.0,2002-02-13 07:00:00,2010-07-27 07:00:00
+PSFT,no_history_sample,empty,0,,,,,past,no_history,,,
+DDR,no_history_sample,empty,0,,,,,past,no_history,,,
+CIT-A,no_history_sample,empty,0,,,,,past,no_history,,,
+CMX,no_history_sample,empty,0,,,,,past,no_history,,,
+FL,no_history_sample,ok,100,2001-03-07,2025-12-03,98.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,no_history,13.0,2016-05-20 06:00:00,2019-05-24 06:00:00
+XTO,no_history_sample,empty,0,,,,,past,no_history,,,
+AW,no_history_sample,empty,0,,,,,past,no_history,,,
+BCR,no_history_sample,empty,0,,,,,past,no_history,,,
+GTW,no_history_sample,empty,0,,,,,past,no_history,,,
+NMK,no_history_sample,empty,0,,,,,past,no_history,,,
+ARC,no_history_sample,ok,65,2005-05-03,2024-11-04,59.0,"['Earnings Date', 'EPS Estimate', 'Reported EPS', 'Surprise(%)']",past,no_history,,,
