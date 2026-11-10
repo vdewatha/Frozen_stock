@@ -458,24 +458,17 @@ def attribution(states: Mapping[int, Mapping], fallback_sleeve: Optional[int] = 
 
 # ------------------------------------------------------------------ pricing
 
-FRESH_PRICE_AGE = timedelta(minutes=15)
-# The arm's T-bill ETF prints on IEX only a few times an hour; see
-# ``stock_paper_ledger.SPARSE_TBILL_MAX_MINUTE_BAR_AGE`` (kept equal).
-SPARSE_TBILL_PRICE_AGE = timedelta(minutes=120)
-
-
-def price_age_limit(symbol: str) -> timedelta:
-    if str(symbol or "").strip().upper() == settings.passive_arm_tbill_symbol.strip().upper():
-        return SPARSE_TBILL_PRICE_AGE
-    return FRESH_PRICE_AGE
+# Matches the ledger's allowance for book orders (BOOK_MAX_MINUTE_BAR_AGE):
+# SGOV prints on IEX only every 20+ minutes, and a 15-minute limit kept the
+# passive arm from ever planning a tranche. Orders are collared limits.
+FRESH_PRICE_AGE = timedelta(minutes=60)
 
 
 def latest_price(db: Session, symbol: str, *, now: Optional[datetime] = None) -> Optional[Decimal]:
     """Close of the newest execution-feed minute bar (the ledger's reference bar).
 
-    With ``now`` a bar older than ``price_age_limit(symbol)`` is no price: a
-    plan is never sized on a stale quote (the ledger re-checks the feed per
-    order).
+    With ``now`` a bar older than ``FRESH_PRICE_AGE`` is no price: a plan is
+    never sized on a stale quote (the ledger re-checks the feed per order).
     """
     from app.services.intraday_data import MARKET_DATA_PROVIDER
 
@@ -483,7 +476,7 @@ def latest_price(db: Session, symbol: str, *, now: Optional[datetime] = None) ->
         .order_by(IntradayBar.opened_at.desc()).first()
     if bar is None or not bar.close or bar.close <= 0:
         return None
-    if now is not None and _utc(bar.opened_at) < _utc(now) - price_age_limit(symbol):
+    if now is not None and _utc(bar.opened_at) < _utc(now) - FRESH_PRICE_AGE:
         return None
     return Decimal(str(bar.close))
 

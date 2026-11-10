@@ -5,6 +5,8 @@
 * The deployment monitor raised a critical "blocked: none. Readiness
   blockers: none." alert when readiness held paper runs only on an
   unexpected warning (Strategy availability).
+
+(The SGOV sparse-feed finding is fixed by #65; see test_book_sparse_feed.py.)
 """
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -100,74 +102,3 @@ def test_a_real_blocker_stays_critical_and_still_names_the_warning(db):
     assert alert.title == "Deployment monitor blocked"
     assert "Scheduler health" in alert.message and "Strategy availability" in alert.message
 
-
-# --------------------------------------------------------------------------
-# SGOV, the slow book's T-bill ETF, prints on IEX a few times an hour. On
-# 2026-11-10 its first print came at 09:51 ET, so its feed stayed
-# "incomplete" all session and the tranche was refused.
-
-from datetime import timedelta  # noqa: E402
-
-from app.models import IntradayBar  # noqa: E402
-from app.services import stock_paper_ledger, target_weight_book  # noqa: E402
-from app.services.intraday_data import MARKET_DATA_PROVIDER  # noqa: E402
-
-SPARSE = {"status": "incomplete", "execution_status": "stale", "entitlement_state": "verified"}
-
-
-def _bar(db, symbol, minutes_ago, price="100.50"):
-    at = NOW - timedelta(minutes=minutes_ago)
-    db.add(IntradayBar(symbol=symbol, timeframe="1m", provider=MARKET_DATA_PROVIDER, feed_class="iex",
-                       opened_at=at, open=Decimal(price), high=Decimal(price), low=Decimal(price),
-                       close=Decimal(price), volume=10, exchange_timestamp=at, ingested_at=NOW,
-                       last_verified_at=NOW))
-    db.commit()
-
-
-def test_the_two_sparse_limits_agree():
-    assert target_weight_book.SPARSE_TBILL_PRICE_AGE == stock_paper_ledger.SPARSE_TBILL_MAX_MINUTE_BAR_AGE
-
-
-def test_slow_book_prices_sgov_from_an_older_bar_but_not_voo(db):
-    _bar(db, "SGOV", 39)
-    _bar(db, "VOO", 39, "620.00")
-    assert target_weight_book.latest_price(db, "SGOV", now=NOW) == Decimal("100.50")
-    assert target_weight_book.latest_price(db, "VOO", now=NOW) is None
-
-
-def test_slow_book_still_refuses_a_sgov_bar_older_than_two_hours(db):
-    _bar(db, "SGOV", 125)
-    assert target_weight_book.latest_price(db, "SGOV", now=NOW) is None
-
-
-def _accepts(market, symbol="SGOV", source="target_weight_book", minutes_ago=39):
-    market = market | {"exchange_timestamp": NOW - timedelta(minutes=minutes_ago)}
-    return stock_paper_ledger._sparse_tbill_feed_acceptable(market, symbol, source, NOW)
-
-
-def test_ledger_accepts_a_sparse_verified_sgov_feed_for_slow_book_orders():
-    assert _accepts(SPARSE)
-    assert _accepts(SPARSE | {"status": "stale"})
-
-
-@pytest.mark.parametrize("kwargs", [
-    {"symbol": "VOO"},
-    {"symbol": "SPY"},
-    {"source": "scheduled_paper_signal"},
-    {"source": "cost_probe"},
-    {"source": None},
-    {"minutes_ago": 125},
-    {"minutes_ago": -5},
-])
-def test_ledger_keeps_the_strict_gate_for_everything_else(kwargs):
-    assert not _accepts(SPARSE, **kwargs)
-
-
-@pytest.mark.parametrize("market", [
-    SPARSE | {"entitlement_state": "unverified"},
-    SPARSE | {"execution_status": "unavailable"},
-    SPARSE | {"status": "unavailable"},
-    {k: v for k, v in SPARSE.items() if k != "entitlement_state"},
-])
-def test_ledger_never_accepts_an_unverified_or_unavailable_sgov_feed(market):
-    assert not _accepts(market)
