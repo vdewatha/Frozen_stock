@@ -222,6 +222,18 @@ def observe_fill(fill: StockPaperFill, order: Optional[StockPaperOrder], frame: 
     session = session_date(fill.filled_at)
     modelled = model_cost(frame, session, quantity, config)
     realised_total = round(slippage + (fee_bps or 0.0), 4) if slippage is not None else None
+    # Execution cost: the fill against the delayed-SIP minute bar it landed in
+    # (VWAP, else its open), for entries and app-side orders only.  The open
+    # benchmark above prices what the replay assumes; it also carries up to 30
+    # minutes of market drift, and on 2026-11-05 a cluster of entries filled
+    # into one morning's drop scored -120 to -170 bps against the open, which
+    # is market move, not cost.  Protective stops and take-profits are scored
+    # against their trigger level, which is gap risk, not trading cost, so they
+    # get no execution cost.
+    minute = (sip or {}).get("minute_bar") or {}
+    execution = (slippage_bps(price, _f(minute.get("vwap")) or _f(minute.get("open")), fill.side)
+                 if kind in SIP_BENCHMARK_KINDS and not tags["excluded"] else None)
+    execution_total = round(execution + (fee_bps or 0.0), 4) if execution is not None else None
     usable = slippage is not None and modelled["slippage_bps"] > 0 and not tags["excluded"]
     return {
         "fill_id": fill.id, "order_id": fill.order_id, "symbol": fill.symbol, "side": fill.side,
@@ -235,7 +247,7 @@ def observe_fill(fill: StockPaperFill, order: Optional[StockPaperOrder], frame: 
         "time_in_force": tags["time_in_force"], "paper_fill": tags["paper_fill"], "auction": tags["auction"],
         "excluded": tags["excluded"],
         "fee_bps": fee_bps, "fee_known": fee is not None,
-        "realised_total_bps": realised_total,
+        "realised_total_bps": realised_total, "execution_bps": execution_total,
         "modelled_slippage_bps": modelled["slippage_bps"], "modelled_total_bps": modelled["total_bps"],
         "modelled_sigma_bps": modelled["sigma_bps"], "history_bars": modelled["history_bars"],
         "gap_bps": round(realised_total - modelled["total_bps"], 4) if realised_total is not None else None,
@@ -298,6 +310,8 @@ def summarise(rows: Iterable[dict]) -> dict:
     realised_usable = [row["slippage_bps"] for row in usable]
     fees = [row["fee_bps"] for row in rows if row.get("fee_bps") is not None]
     totals = [row["realised_total_bps"] for row in priced]
+    executions = [row["execution_bps"] for row in rows
+                  if row.get("execution_bps") is not None and not row.get("excluded")]
     modelled_totals = [row["modelled_total_bps"] for row in usable]
     gaps = [row["gap_bps"] for row in usable if row.get("gap_bps") is not None]
     residuals = [row["residual"] for row in usable if row.get("residual") is not None]
@@ -309,6 +323,8 @@ def summarise(rows: Iterable[dict]) -> dict:
         "fee_known": sum(1 for row in rows if row.get("fee_known")),
         "realised_slippage_bps": _stats(realised),
         "realised_total_bps": _stats(totals),
+        "execution_fills": len(executions),
+        "execution_bps": _stats(executions),
         "fee_bps_mean": round(float(np.mean(fees)), 4) if fees else None,
         "modelled_slippage_bps_mean": round(float(np.mean(modelled)), 4) if modelled else None,
         "modelled_total_bps_mean": round(float(np.mean(modelled_totals)), 4) if modelled_totals else None,
@@ -432,7 +448,7 @@ def _stored_fill(row: dict) -> dict:
             "time_bucket", "quantity", "fill_price", "decision_price", "reference_price", "reference_feed",
             "slippage_bps", "decision_slippage_bps", "sip_slippage_bps", "sip_reference_kind", "time_in_force",
             "paper_fill", "auction", "excluded", "fee_bps",
-            "realised_total_bps", "modelled_slippage_bps", "modelled_total_bps", "gap_bps", "residual", "usable")
+            "realised_total_bps", "execution_bps", "modelled_slippage_bps", "modelled_total_bps", "gap_bps", "residual", "usable")
     return {key: row.get(key) for key in keys}
 
 

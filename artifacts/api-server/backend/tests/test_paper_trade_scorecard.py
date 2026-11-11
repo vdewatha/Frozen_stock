@@ -260,6 +260,64 @@ class RoundTripTests(ScorecardFixture):
         self.assertIn("Trend A", markdown)
         self.assertIn("protective_stop", markdown)
 
+    def _book_rows(self):
+        from app.services.audit import write_audit_log
+
+        for session, pnl, ret in (("2026-10-28", 12.5, 0.00125), ("2026-10-29", -2.5, -0.00025)):
+            write_audit_log(self.db, event_type="target_weight_book", entity_type="target_weight_book",
+                            action="sleeve_daily_pnl", status="recorded", message="pnl",
+                            payload={"session": session, "book": {"pnl": pnl, "return": ret, "value": 10010.0,
+                                                                   "distributions": 0.0}})
+        self.db.flush()
+
+    def test_books_split_slow_book_exploration_and_forward_experiments(self):
+        self.build_book()
+        self._book_rows()
+        card = build_scorecard(self.db, days=30, now=NOW, account_id=self.account.id)
+        books = card["books"]
+        slow = books["slow_book"]
+        self.assertEqual(slow["status"], "available")
+        self.assertEqual((slow["first_session"], slow["last_session"]), ("2026-10-28", "2026-10-29"))
+        self.assertAlmostEqual(slow["since_start"]["pnl"], 10.0)
+        self.assertAlmostEqual(slow["since_start"]["return"], 1.00125 * 0.99975 - 1, places=6)
+        explore = books["exploration"]
+        self.assertEqual(explore["closed"]["trades"], 1)                  # MSFT stop-out
+        self.assertAlmostEqual(explore["closed"]["total_pnl"], -31.0)
+        self.assertEqual(explore["open"]["positions"], 1)                 # TSLA
+        self.assertAlmostEqual(explore["open"]["unrealized_pnl"], 20.0)
+        self.assertEqual(books["forward_experiments"]["status"], "not_registered")
+        markdown = render_markdown(card)
+        self.assertIn("## Three books", markdown)
+        self.assertIn("Slow book (earns the return)", markdown)
+
+    def test_forward_experiment_trades_leave_the_exploration_line(self):
+        from app.services.audit import write_audit_log
+
+        self.build_book()
+        write_audit_log(self.db, event_type="forward_experiment", entity_type="strategy", entity_id=self.probe.id,
+                        action="register", status="registered", message="candidate 1",
+                        payload={"candidate": 1, "strategy_type": "probe_b", "strategy_id": self.probe.id,
+                                 "mechanism": "rule_row", "registered_at": at(13).isoformat(),
+                                 "sample": {"verdict_sample": 40}})
+        self.db.flush()
+        books = build_scorecard(self.db, days=30, now=NOW, account_id=self.account.id)["books"]
+        self.assertEqual(books["exploration"]["closed"]["trades"], 0)
+        self.assertEqual(books["exploration"]["open"]["positions"], 0)
+        forward = books["forward_experiments"]
+        self.assertEqual(forward["first_review_not_before"], "2027-02-10")
+        row = forward["candidates"][0]
+        self.assertEqual((row["entries"], row["closed_trades"]), (2, 1))
+        self.assertEqual((row["status"], row["verdict_sample"]), ("research", 40))
+        self.assertEqual(books["slow_book"]["status"], "not_started")
+
+    def test_a_failing_book_line_never_breaks_the_scorecard(self):
+        self.build_book()
+        with patch.object(scorecard_module, "slow_book_line", side_effect=RuntimeError("boom")):
+            card = build_scorecard(self.db, days=30, now=NOW, account_id=self.account.id)
+        self.assertEqual(card["books"]["slow_book"]["status"], "unavailable")
+        self.assertIn("boom", card["books"]["slow_book"]["reason"])
+        self.assertEqual(card["headline"]["trades"], 4)
+
     def test_scorecard_is_read_only(self):
         self.build_book()
         before = (self.db.query(StockPaperOrder).count(), self.db.query(StockPaperFill).count(),

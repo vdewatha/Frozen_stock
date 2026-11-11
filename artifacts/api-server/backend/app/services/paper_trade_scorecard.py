@@ -687,6 +687,8 @@ def build_scorecard(db: Session, *, days: int = 30, now: Optional[datetime] = No
             "note": "Marks use the last reconciled broker position price; not included in trade statistics.",
         },
         "benchmark": benchmark_comparison(db, window_start, now, bot_pnl=bot_pnl, start_equity=start_equity),
+        "books": book_lines(db, closed=closed, open_rows=open_rows, lots=rebuilt["lots"],
+                            window_start=window_start, now=now),
         "trades": closed[-RECENT_TRADES:][::-1],
         "trade_count_in_window": len(closed),
         "non_bot_trades": len(closed) - len(bot),
@@ -699,6 +701,136 @@ def build_scorecard(db: Session, *, days: int = 30, now: Optional[datetime] = No
         "paper_only": True,
         "live_authorized": False,
         "mutates_strategy_state": False,
+    }
+
+
+# ----------------------------------------------------------------- books
+#
+# The headline above mixes every bot round trip into one "is it making money"
+# number.  Since the slow book (reports/Retail bot edge feasibility.md) the bot
+# has three jobs with different yardsticks, so ``books`` reports them apart:
+#
+# * ``slow_book``: the target-weight book (VOO/SGOV passive arm and sleeves),
+#   the part meant to earn the return, from its recorded daily P&L rows;
+# * ``exploration``: learning-sized trades from candidate/research strategies,
+#   a tuition budget, with the measured execution cost those fills produce;
+# * ``forward_experiments``: the six frozen pre-registered candidates
+#   (reports/local-sweep-20261110/forward-experiments.md), the only trades
+#   that can earn a verdict, with how far each sample has come.
+#
+# Each line is read-only and fails on its own: an error becomes that line's
+# ``status`` and never breaks the scorecard.
+
+def _book_line(db: Session, build) -> dict:
+    # A savepoint per line: on PostgreSQL a failed query would otherwise abort
+    # the caller's transaction (the daily snapshot writes after this).
+    try:
+        with db.begin_nested():
+            return build()
+    except Exception as exc:  # one line must never break the scorecard
+        return {"status": "unavailable", "reason": f"{exc.__class__.__name__}: {exc}"[:200]}
+
+
+def slow_book_line(db: Session, *, window_start: datetime, now: datetime) -> dict:
+    from app.models import AuditLog
+    from app.services.target_weight_book import EVENT as BOOK_EVENT, PNL_ACTION
+
+    rows = db.query(AuditLog).filter(AuditLog.event_type == BOOK_EVENT, AuditLog.action == PNL_ACTION) \
+        .order_by(AuditLog.id).all()
+    by_session: dict[str, dict] = {}
+    for row in rows:  # a later row for the same session wins
+        payload = row.payload or {}
+        if payload.get("session") and isinstance(payload.get("book"), dict):
+            by_session[str(payload["session"])] = payload["book"]
+    if not by_session:
+        return {"status": "not_started", "reason": "the slow book has no recorded daily P&L yet"}
+    sessions = sorted(by_session)
+    start_day = window_start.astimezone(ET).date().isoformat()
+
+    def total(days: list[str]) -> dict:
+        pnl = sum(float(by_session[d].get("pnl") or 0.0) for d in days)
+        growth = 1.0
+        for d in days:
+            ret = by_session[d].get("return")
+            if ret is not None:
+                growth *= 1.0 + float(ret)
+        return {"sessions": len(days), "pnl": _r(pnl, 2), "return": _r(growth - 1.0, 6),
+                "distributions": _r(sum(float(by_session[d].get("distributions") or 0.0) for d in days), 2)}
+
+    latest = by_session[sessions[-1]]
+    return {"status": "available", "first_session": sessions[0], "last_session": sessions[-1],
+            "value": _r(float(latest.get("value") or 0.0), 2),
+            "window": total([d for d in sessions if d >= start_day]), "since_start": total(sessions),
+            "note": "The book's own daily P&L rows (target_weight_book.sleeve_daily_pnl), distributions included."}
+
+
+def _registered(db: Session) -> list[dict]:
+    from app.services.forward_experiments import registrations
+
+    return registrations(db)
+
+
+def exploration_line(db: Session, closed: list[dict], open_rows: list[dict], *, experiment_ids: set) -> dict:
+    from app.services.yardstick import MEASURED_MIN_FILLS, measured_costs
+
+    trades = [t for t in closed if t["source"] == "exploration" and t.get("strategy_id") not in experiment_ids]
+    held = [r for r in open_rows if r["source"] == "exploration" and r.get("strategy_id") not in experiment_ids]
+    marks = [r["unrealized_pnl"] for r in held if r["unrealized_pnl"] is not None]
+    try:
+        measured = measured_costs(db)
+    except Exception:
+        measured = {}
+    return {"status": "available", "closed": summarize(trades),
+            "open": {"positions": len(held), "unrealized_pnl": _r(sum(marks), 2) if marks else 0.0},
+            "measured_round_trip_bps": measured,
+            "cost_note": (f"Execution cost per round trip by symbol class, measured from paper fills once a class has "
+                          f"{MEASURED_MIN_FILLS}+ fills; empty until then (verdicts keep their 10/25 bps brackets)."),
+            "note": "Learning budget: candidate/research strategies outside the forward experiments. Never "
+                    "promotion evidence; its value is the lessons and the measured costs, not its P&L."}
+
+
+def forward_experiments_line(db: Session, registered: list[dict], lots: list) -> dict:
+    from app.services.forward_experiments import FIRST_REVIEW_NOT_BEFORE
+
+    if not registered:
+        return {"status": "not_registered", "first_review_not_before": FIRST_REVIEW_NOT_BEFORE.isoformat()}
+    out = []
+    for reg in registered:
+        strategy_id = reg.get("strategy_id")
+        since = reg.get("registered_at")
+        since_at = _utc(datetime.fromisoformat(str(since))) if since else None
+        row = db.get(Strategy, int(strategy_id)) if strategy_id is not None else None
+        # No signal counts here: strategy_signals has no strategy_id index and
+        # grows by tens of thousands of rows a day, too heavy for a dashboard
+        # read.  A shadow row's signal sample is scored by the review job.
+        mine = [lot for lot in lots if lot.strategy_id == strategy_id and lot.quantity > 0
+                and (since_at is None or (lot.entered_at is not None and _utc(lot.entered_at) >= since_at))]
+        closed = sum(1 for lot in mine if lot.closed)
+        verdict_sample = (reg.get("sample") or {}).get("verdict_sample")
+        out.append({"candidate": reg.get("candidate"), "strategy_type": reg.get("strategy_type"),
+                    "strategy_id": strategy_id, "mechanism": reg.get("mechanism"),
+                    "tag_reading": reg.get("tag_reading"), "status": row.current_status if row else None,
+                    "registered_at": since, "entries": len(mine), "closed_trades": closed, "verdict_sample": verdict_sample})
+    return {"status": "available", "candidates": out,
+            "first_review_not_before": FIRST_REVIEW_NOT_BEFORE.isoformat(),
+            "note": ("Pre-registered and frozen; judged only at a scheduled review. A trading row's sample is its "
+                     "closed trades; a shadow or tag row's is scored from its recorded signals at the review, so "
+                     "its entries here stay at zero.")}
+
+
+def book_lines(db: Session, *, closed: list[dict], open_rows: list[dict], lots: list,
+               window_start: datetime, now: datetime) -> dict:
+    registered = _book_line(db, lambda: {"rows": _registered(db)})
+    rows = registered.get("rows") or []
+    experiment_ids = {reg.get("strategy_id") for reg in rows if reg.get("mechanism") != "tag_row"}
+    return {
+        "slow_book": _book_line(db, lambda: slow_book_line(db, window_start=window_start, now=now)),
+        "exploration": _book_line(db, lambda: exploration_line(db, closed, open_rows, experiment_ids=experiment_ids)),
+        "forward_experiments": (_book_line(db, lambda: forward_experiments_line(db, rows, lots))
+                                if "rows" in registered else registered),
+        "note": ("Three jobs, three yardsticks: the slow book earns the return, exploration buys lessons and cost "
+                 "measurements, the forward experiments are the only route to a verdict. The headline above still "
+                 "pools every bot round trip."),
     }
 
 
@@ -812,6 +944,41 @@ def _table(title: str, rows: list[dict], label: str = "Key") -> list[str]:
     return lines + [""]
 
 
+def _books_markdown(books: dict) -> list[str]:
+    if not books:
+        return []
+    lines = ["## Three books", ""]
+    slow = books.get("slow_book") or {}
+    if slow.get("status") == "available":
+        since, window = slow["since_start"], slow["window"]
+        lines.append(f"- Slow book (earns the return): value {_usd(slow['value'])}; window {_usd(window['pnl'])} "
+                     f"({_pct(window['return'])}); since {slow['first_session']} {_usd(since['pnl'])} "
+                     f"({_pct(since['return'])})")
+    else:
+        lines.append(f"- Slow book: {slow.get('reason') or slow.get('status')}")
+    explore = books.get("exploration") or {}
+    if explore.get("status") == "available":
+        closed = explore["closed"]
+        measured = explore.get("measured_round_trip_bps") or {}
+        cost = ", ".join(f"{key} {value} bps" for key, value in sorted(measured.items())) or "not enough fills yet"
+        lines.append(f"- Exploration (learning budget): {closed['trades']} closed, {_usd(closed['total_pnl'])}; "
+                     f"{explore['open']['positions']} open ({_usd(explore['open']['unrealized_pnl'])}); "
+                     f"measured round-trip cost: {cost}")
+    else:
+        lines.append(f"- Exploration: {explore.get('reason') or explore.get('status')}")
+    forward = books.get("forward_experiments") or {}
+    if forward.get("status") == "available":
+        lines.append(f"- Forward experiments (the only verdicts; first review no earlier than "
+                     f"{forward['first_review_not_before']}):")
+        for row in forward["candidates"]:
+            lines.append(f"  - #{row['candidate']} {row['strategy_type']} ({row['status']}): "
+                         f"{row['entries']} entries, {row['closed_trades']} closed; "
+                         f"verdict sample {row['verdict_sample']}")
+    else:
+        lines.append(f"- Forward experiments: {forward.get('reason') or forward.get('status')}")
+    return lines + [""]
+
+
 def render_markdown(scorecard: dict) -> str:
     head = scorecard["headline"]
     goal = scorecard["goal"]
@@ -854,6 +1021,7 @@ def render_markdown(scorecard: dict) -> str:
     else:
         lines.append(f"- {bench['reason']}")
     lines += [""]
+    lines += _books_markdown(scorecard.get("books") or {})
     lines += _table("By strategy", scorecard["by_strategy"], "Strategy")
     lines += _table("By source", scorecard["by_source"], "Source")
     lines += _table("By exit reason", scorecard["by_exit_reason"], "Exit")

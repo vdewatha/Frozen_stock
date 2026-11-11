@@ -377,6 +377,12 @@ def test_calibration_prices_entries_against_sip_and_excludes_paper_auctions(db):
     assert feed["excluded_by_time_in_force"] == {"opg": 1} and feed["both_benchmarks"] == 3
     assert feed["by_order_kind"]["limit"]["difference_bps_mean"] == pytest.approx(30.03, abs=0.01)
     assert {row["time_in_force"] for row in report["tables"]["by_time_in_force"]} == {"gtc", "opg", "day"}
+    # Execution cost: each entry / app-side fill against the SIP minute it filled in, never the open or a level.
+    assert entry["execution_bps"] == pytest.approx((100.40 - 100.29) / 100.29 * 1e4, abs=1e-3)   # not the +40 vs open
+    assert exit_["execution_bps"] == pytest.approx(-(100.95 - 101.04) / 101.04 * 1e4, abs=1e-3)
+    assert stop["execution_bps"] is None and opg["execution_bps"] is None                       # level / auction
+    assert overall["execution_fills"] == 2
+    assert overall["execution_bps"]["mean"] == pytest.approx((10.9682 + 8.9074) / 2, abs=1e-3)
 
 
 def test_observe_fill_without_sip_keeps_the_decision_price():

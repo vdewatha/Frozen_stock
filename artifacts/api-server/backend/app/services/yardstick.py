@@ -653,17 +653,32 @@ def compact(score: Optional[Mapping], window: str, passive_window: Optional[str]
 # ------------------------------------------------------------ measured cost
 
 def measured_round_trip_bps(report: Optional[Mapping], *, min_fills: int = MEASURED_MIN_FILLS) -> dict:
-    """Measured round trip per symbol class: twice the realised per-side cost, when >= ``min_fills`` priced fills."""
+    """Measured round trip per symbol class: twice the mean per-side execution cost, when >= ``min_fills`` fills.
+
+    Execution cost is each entry or app-side fill against the delayed-SIP
+    minute it filled in, plus its fee (``paper_cost_calibration.observe_fill``).
+    Until 2026-11-11 this read ``realised_total_bps``, which scores entries
+    against the official open and exit legs against their stop or target level;
+    market drift and gaps through stops made it negative (-13 bps "all") on
+    150 fills whose median was -0.6 bps.  A report from before the field
+    existed yields no measured cost, so the veto keeps its 10 bps default.
+    """
     tables = (report or {}).get("tables") or {}
     out: dict = {}
+
+    def reading(row: Mapping) -> Optional[float]:
+        mean = (row.get("execution_bps") or {}).get("mean")
+        if mean is None or int(row.get("execution_fills") or 0) < min_fills:
+            return None
+        return round(2.0 * float(mean), 2)
+
     for row in tables.get("by_symbol_class") or []:
-        mean = ((row.get("realised_total_bps") or {}).get("mean"))
-        if mean is not None and int(row.get("priced") or 0) >= min_fills:
-            out[row["symbol_class"]] = round(2.0 * float(mean), 2)
-    overall = tables.get("overall") or {}
-    mean = (overall.get("realised_total_bps") or {}).get("mean")
-    if mean is not None and int(overall.get("priced") or 0) >= min_fills:
-        out["all"] = round(2.0 * float(mean), 2)
+        value = reading(row)
+        if value is not None:
+            out[row["symbol_class"]] = value
+    value = reading(tables.get("overall") or {})
+    if value is not None:
+        out["all"] = value
     return out
 
 
@@ -679,7 +694,12 @@ def realized_cost_table(report: Optional[Mapping], probes: Optional[list[dict]] 
 
     def compact(row: Mapping) -> dict:
         realised = row.get("realised_total_bps") or {}
+        execution = row.get("execution_bps") or {}
         return {"fills": row.get("fills"), "priced": row.get("priced"),
+                "execution_fills": row.get("execution_fills"),
+                "execution_per_side_bps": {k: execution.get(k) for k in ("mean", "median", "p90")},
+                "execution_round_trip_bps": (round(2 * execution["mean"], 2)
+                                             if execution.get("mean") is not None else None),
                 "realised_per_side_bps": {k: realised.get(k) for k in ("mean", "median", "p90")},
                 "realised_round_trip_bps": round(2 * realised["mean"], 2) if realised.get("mean") is not None else None,
                 "modelled_per_side_bps": row.get("modelled_total_bps_mean"), "residual": row.get("residual")}

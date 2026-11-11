@@ -548,3 +548,20 @@ def test_views_render_with_an_empty_ledger(db):  # noqa: F811
 
     board = build_learning_scoreboard(db)
     assert board["yardstick"]["dividends"]["status"] == "no_data"
+
+
+def test_measured_round_trip_reads_execution_cost_not_the_open_or_stop_levels():
+    """2026-11-11: realised_total_bps (open / stop-level benchmarks) said -13 bps; execution cost is the honest figure."""
+    from app.services.yardstick import measured_round_trip_bps
+
+    def row(**values):
+        return {"realised_total_bps": {"mean": -13.0}, "priced": 150, **values}
+
+    report = {"tables": {
+        "overall": row(execution_bps={"mean": 1.5}, execution_fills=40),
+        "by_symbol_class": [{"symbol_class": "single_stock", **row(execution_bps={"mean": 2.25}, execution_fills=25)},
+                            {"symbol_class": "index_etf", **row(execution_bps={"mean": 0.4}, execution_fills=5)}],
+    }}
+    assert measured_round_trip_bps(report) == {"single_stock": 4.5, "all": 3.0}     # index_etf has too few fills
+    legacy = {"tables": {"overall": row(), "by_symbol_class": [{"symbol_class": "single_stock", **row()}]}}
+    assert measured_round_trip_bps(legacy) == {}                                       # old reports fall back to 10 bps

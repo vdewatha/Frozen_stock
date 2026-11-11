@@ -3105,7 +3105,12 @@ def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: s
 
 
 ACTIVE_SIGNAL_STATUSES = frozenset({"paper_trading_active"})
-RESEARCH_SIGNAL_STATUSES = frozenset({"research", "paper_trading_candidate"})
+# ``shadow`` rows (reports/slow-book-20261107.md) record every signal but never
+# enter.  Until 2026-11-11 this set left them out, so each shadow strategy
+# failed signal resolution with "Unknown strategy" on every cycle: no signal
+# was recorded, and IBS's frozen forward experiment, scored from shadow
+# signals, collected nothing.  Research signals can never create an order.
+RESEARCH_SIGNAL_STATUSES = frozenset({"research", "paper_trading_candidate", "shadow"})
 
 
 def _resolve_signal_strategy(db: Session, strategy_slug: str, allowed_statuses) -> Strategy:
