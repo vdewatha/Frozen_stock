@@ -1916,11 +1916,11 @@ def missed_job_catchup_job() -> dict:
     """Weekdays after the close: queue weekly research runs deferred or missed during the day."""
     import redis
 
-    from app.tasks.catchup import queue_missed_jobs
+    from app.tasks.catchup import queue_missed_jobs_from_store
 
     client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=5)
     try:
-        queued = queue_missed_jobs(client, celery_app.conf.beat_schedule, celery_app.send_task)
+        queued = queue_missed_jobs_from_store(client, celery_app.conf.beat_schedule, celery_app.send_task)
     finally:
         client.close()
     return {"status": "complete", "job": "missed_job_catchup_job", "queued": [item["entry"] for item in queued]}
