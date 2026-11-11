@@ -10,11 +10,35 @@ from app.services.stock_recovery import run_stock_watchdog
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s stock-watchdog %(message)s")
 
 
+DEADLOCK_RETRIES = 1
+
+
+def _is_deadlock(exc: BaseException) -> bool:
+    orig = getattr(exc, "orig", None)
+    return getattr(orig, "sqlstate", None) == "40P01" or type(orig).__name__ == "DeadlockDetected"
+
+
 def run_once() -> dict:
-    """Evaluate one watchdog cycle and keep exceptions fail-closed."""
+    """Evaluate one watchdog cycle and keep exceptions fail-closed.
+
+    A deadlock victim retries at once (the evaluation is idempotent): on
+    2026-11-10 the watchdog was chosen as the victim of other jobs' lock
+    cycle twice and skipped those cycles.
+    """
     db = SessionLocal()
+    attempt = 0
     try:
-        result = run_stock_watchdog(db)
+        while True:
+            try:
+                result = run_stock_watchdog(db)
+                break
+            except Exception as exc:
+                if not _is_deadlock(exc) or attempt >= DEADLOCK_RETRIES:
+                    raise
+                attempt += 1
+                db.rollback()
+                logging.warning("watchdog was a deadlock victim; retrying (attempt %s)", attempt)
+                time.sleep(0.25)
         logging.info("watchdog status=%s reasons=%s", result["status"], result["reasons"])
         return result
     except Exception:

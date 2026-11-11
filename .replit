@@ -123,3 +123,7 @@ DEV_PAPER_SHORTS_AUTOMATION_ENABLED = "true"
 SHORT_PILOT_AUTO_AUTHORIZE = "true"
 CLERK_ROLE_MAPPINGS = "{\"user_3KQ4j0KxYM5iVpPz4Y0pnYC4mIR\":\"admin\",\"user_3KQ9CGy7ikGFcIHnxjKO2Vk89PD\":\"admin\"}"
 PAPER_ALLOW_MARKET_HOURS_DEPLOY = "true"
+# Strategy discovery replays today's execution list on the deployed worker.
+# The point-in-time universe (~485 symbols since 2000) was killed by the
+# memory guard here on 2026-11-10; that research runs locally instead.
+STRATEGY_DISCOVERY_POINT_IN_TIME = "false"

@@ -470,12 +470,16 @@ celery_app.conf.beat_schedule = {
         "options": {"expires": 3 * 60 * 60},
     },
     # Slow book: the tranche whose week it is rebalances mid-morning, clear of
-    # the opening and closing auctions (10:30 ET); the 11:30 and 13:00 runs that
-    # day send what is still missing once sale proceeds have reconciled.  Every
-    # weekday runs so a holiday on the tranche weekday moves to the next session.
+    # the opening and closing auctions (10:30 ET); the later runs that day send
+    # what is still missing once sale proceeds have reconciled.  Every weekday
+    # runs so a holiday on the tranche weekday moves to the next session.  The
+    # runs repeat hourly to 14:30 because a thin IEX tape can leave a book
+    # symbol without a fresh bar for an hour or more: on 2026-11-10 SGOV had
+    # none at 10:30 and the tranche only went out at the 13:00 top-up.  A
+    # tranche is planned once per day and later runs only send what is missing.
     "target-weight-rebalance": {
         "task": "app.tasks.jobs.target_weight_rebalance_job",
-        "schedule": crontab(minute="30", hour="10,11", day_of_week="mon-fri"),
+        "schedule": crontab(minute="30", hour="10-14", day_of_week="mon-fri"),
         "options": {"expires": 25 * 60},
     },
     "target-weight-rebalance-topup": {

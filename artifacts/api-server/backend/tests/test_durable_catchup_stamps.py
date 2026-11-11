@@ -158,3 +158,40 @@ def test_the_store_wrapper_reads_through_one_session(db):
         db.close = monkey_close
     assert [item["entry"] for item in queued if not item.get("one_off")] == []
     assert closed == [True]
+
+
+# ------------------------------------------------- startup research refresh
+
+IMPORT_TASK = SCHEDULE[catchup.STARTUP_REFRESH_ENTRY]["task"]
+NOON_BOOT = datetime(2026, 11, 10, 12, 9, tzinfo=ET).astimezone(timezone.utc)
+
+
+def test_a_mid_session_boot_skips_the_refresh_when_the_morning_import_ran(db):
+    catchup.record_durable_success(db, IMPORT_TASK, {"status": "complete"},
+                                   now=datetime(2026, 11, 10, 8, 20, tzinfo=ET))
+    assert not catchup.startup_refresh_due(FakeRedis(), SCHEDULE, now=NOON_BOOT, durable_last_success=_lookup(db))
+
+
+def test_a_boot_after_a_missed_morning_import_refreshes(db):
+    catchup.record_durable_success(db, IMPORT_TASK, {"status": "complete"},
+                                   now=datetime(2026, 11, 9, 17, 20, tzinfo=ET))
+    assert catchup.startup_refresh_due(FakeRedis(), SCHEDULE, now=NOON_BOOT, durable_last_success=_lookup(db))
+
+
+def test_a_first_boot_with_no_stamp_refreshes(db):
+    assert catchup.startup_refresh_due(FakeRedis(), SCHEDULE, now=NOON_BOOT, durable_last_success=_lookup(db))
+
+
+def test_the_import_gets_a_durable_stamp():
+    assert IMPORT_TASK in catchup.catchup_task_names(SCHEDULE)
+
+
+def test_the_launcher_refreshes_when_the_check_fails(monkeypatch):
+    import scripts.run_beat_with_lease as launcher
+    from app.tasks import catchup as module
+
+    def broken(*_a, **_k):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(module, "startup_refresh_due_from_store", broken)
+    assert launcher._startup_refresh_due(FakeRedis()) is True

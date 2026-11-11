@@ -5,7 +5,7 @@ import hmac
 import re
 from decimal import Decimal
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -512,6 +512,12 @@ class Settings(BaseSettings):
     # scripts/run_survivorship_check.py (coverage since 2010 80.9% >= 70%,
     # worst-case engine run 2 min of 30; reports/survivorship-20261106.md).
     replay_point_in_time_universe: bool = True
+    # Discovery's own switch (None follows replay_point_in_time_universe). The
+    # point-in-time universe takes discovery from the execution list to ~485
+    # symbols of history since 2000; on the compact deployed worker the memory
+    # guard killed that run on 2026-11-10, so production turns it off and the
+    # full-history research runs locally (scripts/local_sweep.py).
+    strategy_discovery_point_in_time: Optional[bool] = None
     experiment_verdict_min_trades: int = Field(default=20, ge=5, le=500)
     experiment_verdict_max_trades: int = Field(default=60, ge=5, le=1000)
     # Which forward judge acts on an adopted change (verdict_stats.py):

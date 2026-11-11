@@ -977,6 +977,28 @@ def _needs_breadth(planned: Iterable[Mapping], strategies: Mapping[str, Any]) ->
     return False
 
 
+def release_read_transaction(db: Session, *, strict: bool = False) -> None:
+    """End the session's open transaction before minutes of computation.
+
+    A session that only read stays "idle in transaction" while the replays run
+    and the server terminates it; committing (not rolling back) keeps any
+    writes made so far. Loaded rows are not expired, so reading a strategy's
+    parameters during a replay does not open a new transaction. ``strict``
+    re-raises a failed commit (the per-experiment ledger write).
+    """
+    previous = db.expire_on_commit
+    db.expire_on_commit = False
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        if strict:
+            raise
+        logger.warning("experiment engine: could not release the read transaction: %s", exc)
+    finally:
+        db.expire_on_commit = previous
+
+
 def _active_rules(db: Session) -> dict:
     """The active risk rule's values (book-level protections read them); empty when unreadable."""
     try:
@@ -1017,6 +1039,13 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
         from app.services.strategy_discovery import load_frames
 
         simulate = simulate or gate_replay.simulate
+        # Read what the replays need from the database, then end the read
+        # transaction before the long history load and replays. On 2026-11-10
+        # the session stayed "idle in transaction" for 15 minutes, Postgres
+        # terminated it, and the risk-rule read after the replays failed, so
+        # the book experiments ran with no risk rules at all.
+        rules = _active_rules(db) if any(TEMPLATE_BY_NAME[i["template"]].kind == "book" for i in plan["planned"]) else {}
+        release_read_transaction(db)
         symbols = sorted({s.upper() for s in settings.paper_execution_symbols})
         universe, universe_summary = None, {"mode": "today", "symbols": len(symbols)}
         if settings.replay_point_in_time_universe:
@@ -1047,9 +1076,9 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
             except Exception as exc:  # the breadth gate fails open live; replay the same way
                 logger.warning("experiment engine: breadth history unavailable: %s", exc)
                 breadth = None
-        rules = _active_rules(db) if any(TEMPLATE_BY_NAME[i["template"]].kind == "book" for i in plan["planned"]) else {}
         yardstick_context = _yardstick_context(db, download=not injected)
         family_extra = _family_extra(db)
+        release_read_transaction(db)
         for item in plan["planned"]:
             template = TEMPLATE_BY_NAME[item["template"]]
             book = template.kind == "book"
@@ -1106,7 +1135,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                 payload=_clean(experiment),
             )
             experiments.append(experiment)
-            db.commit()
+            release_read_transaction(db, strict=True)
     summary = {"status": "complete", "ran_at": _iso(now), "lessons": len(lessons), "planned": len(plan["planned"]),
                "gate_cost_lessons": [{k: lesson.get(k) for k in ("strategy_type", "cause", "gate", "count",
                                                                    "mean_net_bps")} for lesson in gate_lessons],

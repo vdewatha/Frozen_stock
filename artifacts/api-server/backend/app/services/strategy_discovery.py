@@ -840,6 +840,9 @@ def evolution_step(db: Session, result: dict, frames: Mapping[str, pd.DataFrame]
     if stale >= MUTATION_STALE_RUNS:
         return {"status": "skipped", "reason": f"no child better than its parent for {stale} runs", "stale_runs": 0}
     seen = set(seen_hashes)
+    from app.services.experiment_engine import release_read_transaction
+
+    release_read_transaction(db)  # the search runs for its whole time budget
     seed = int(hashlib.sha256(f"{result['data_end']}:{len(seen)}".encode()).hexdigest()[:8], 16)
     step = evolve_library(result, frames, seen_hashes=seen, seed=seed, groups=groups, universe=universe,
                           caches=caches, budget_seconds=float(settings.strategy_discovery_mutation_budget_seconds),
@@ -862,7 +865,10 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
     symbols = sorted({s.upper() for s in settings.paper_execution_symbols})
     tradeable = set(symbols)
     universe, universe_summary = None, {"mode": "today", "symbols": len(symbols)}
-    if settings.replay_point_in_time_universe:
+    point_in_time = settings.strategy_discovery_point_in_time
+    if point_in_time is None:
+        point_in_time = settings.replay_point_in_time_universe
+    if point_in_time:
         from app.services import point_in_time_universe
 
         try:  # a missing membership file falls back to today's list, never stops the run
@@ -889,9 +895,13 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
                             "hypothesis": f"Retained child of {spec['lineage']['parent_id']}"})
     caches: dict = {}
     from app.services import yardstick
+    from app.services.experiment_engine import release_read_transaction
 
     family_extra = yardstick.external_family_trials(db, exclude="discovery")
     context = discovery_context(frames, db, download=not injected)
+    # The replays and the mutation search run for minutes: do not hold the
+    # read transaction open through them (see release_read_transaction).
+    release_read_transaction(db)
     result = run_discovery(frames, frames.keys(), universe=universe, library=library, caches=caches,
                            trials=len(trials["hashes"] | known), context=context, family_extra=family_extra)
     mutation = evolution_step(db, result, frames, groups=groups, universe=universe, caches=caches,
