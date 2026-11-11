@@ -13,7 +13,7 @@ from app.models import Notification
 from app.services.audit import write_audit_log
 from app.services.broker import broker_status
 from app.services.notifications import create_notification
-from app.services.readiness import readiness_snapshot
+from app.services.readiness import monitor_readiness, readiness_snapshot  # noqa: F401  (readiness_snapshot: patched by tests)
 from app.tasks.celery_app import (
     GENERAL_WORKER_QUEUES,
     INTRADAY_MARKET_DATA_QUEUE,
@@ -392,7 +392,9 @@ def _check_live_trading_safety() -> dict:
 
 
 def deployment_monitor_snapshot(db: Session) -> dict:
-    readiness = readiness_snapshot(db)
+    # The API's shared snapshot when it is fresh, so the worker does not build
+    # a second one (readiness.monitor_readiness).
+    readiness, readiness_source = monitor_readiness(db)
     checks = [
         _check_database(db),
         _check_redis(),
@@ -429,6 +431,7 @@ def deployment_monitor_snapshot(db: Session) -> dict:
         "readiness_status": readiness["overall_status"],
         "readiness_blockers": readiness_blockers,
         "readiness_warnings": readiness_warnings,
+        "readiness_source": readiness_source,
         "readiness": readiness,
     }
 

@@ -6,7 +6,7 @@ import socket
 
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import heartbeat_sent, task_success, worker_ready
+from celery.signals import heartbeat_sent, task_postrun, task_prerun, task_success, worker_ready
 from kombu import Exchange, Queue
 import redis
 
@@ -121,6 +121,39 @@ def _record_durable_task_success(task_name: str, result) -> None:
 
 
 task_success.connect(_record_task_success, weak=False)
+
+
+# Hand a long task's memory back to the kernel when it ends.  The workers are
+# thread pools, so there is no child process to recycle: on 2026-11-11 their
+# resting memory grew from about 0.35 GiB at boot to 1.6-1.9 GiB, which left
+# too little room for the next heavy job and the VM ran out of memory.
+TRIM_AFTER_SECONDS = 5.0
+_task_started: dict[str, float] = {}
+
+
+def _note_task_start(*, task_id=None, **kwargs) -> None:
+    import time
+
+    if task_id:
+        _task_started[str(task_id)] = time.monotonic()
+
+
+def _trim_after_long_task(*, task_id=None, **kwargs) -> None:
+    import time
+
+    started = _task_started.pop(str(task_id), None) if task_id else None
+    if started is None or time.monotonic() - started < TRIM_AFTER_SECONDS:
+        return
+    try:
+        from app.core.memory import trim_memory
+
+        trim_memory()
+    except Exception:  # memory hygiene must never fail a task
+        pass
+
+
+task_prerun.connect(_note_task_start, weak=False)
+task_postrun.connect(_trim_after_long_task, weak=False)
 celery_app.conf.task_queues = (
     Queue("default", Exchange("default"), routing_key="default"),
     Queue("market_data", Exchange("market_data"), routing_key="market_data"),
