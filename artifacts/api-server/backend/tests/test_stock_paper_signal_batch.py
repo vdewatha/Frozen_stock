@@ -236,6 +236,23 @@ class SignalBatchTests(unittest.TestCase):
         self.assertIsInstance(outcomes[("AAPL", "channel_breakout")], RuntimeError)
         self.assertEqual(stats["signals_persisted"], 7)
 
+    def test_shadow_strategy_records_research_signals(self):
+        """A shadow row resolves like a research row: its signal is recorded and can never order.
+
+        Live on 2026-11-11 every shadow strategy failed with "Unknown strategy" (316 blocked per cycle).
+        """
+        with Session(self.engine) as db:
+            row = db.query(Strategy).filter_by(strategy_type="channel_breakout").one()
+            row.current_status = "shadow"
+            db.commit()
+        symbols = ["AAPL", "SPY"]
+        outcomes, stats, _commits = self._run(_DataDouble(symbols), symbols)
+        for symbol in symbols:
+            outcome = outcomes[(symbol, "channel_breakout")]
+            self.assertIsInstance(outcome, dict, msg=str(outcome))
+            self.assertTrue(outcome["research_only"])
+        self.assertEqual(stats["signals_persisted"], 16)
+
 
 if __name__ == "__main__":
     unittest.main()
