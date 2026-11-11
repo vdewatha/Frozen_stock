@@ -49,7 +49,7 @@ yfinance serves no delisted ticker, so every stock in the first sample is still 
 * **It loses to the slow book's own benchmark.** Against SPY the excess is −0.40% a hold.
 * **The average is a few big winners.** Without the top 1% of trades the excess is −1.09% a hold (t = −1.85). The median trade loses 1.6% to IWM.
 * **No liquidity group stands out.** The thirds by dollar volume range from −0.06% to +0.82%, none significant.
-* **Year by year it has no pattern**: five positive years and six negative, with the last two negative.
+* **Year by year it has no pattern**: six positive years and five negative, with the last two negative.
 
 Raw returns look good (+4.1% a hold on average), because clusters of insider buying follow sell-offs and the whole market tends to recover. The index earned almost all of it.
 
