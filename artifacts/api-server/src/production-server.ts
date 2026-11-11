@@ -189,6 +189,12 @@ const runtimeEnv = {
     process.env.PAPER_WORKER_QUEUE_MODE ??
     (process.env.PAPER_COMPACT_WORKER === "true" ? "compact" : "dedicated"),
   PYTHONPATH: ".",
+  // glibc gives every thread its own malloc arena (up to 8 per core), and
+  // freed memory in one arena is not reused by another. The Python workers
+  // run thread pools doing pandas work, so their resting memory crept from
+  // about 0.35 GiB at boot to 1.6-1.9 GiB (2026-11-11). Two arenas keep the
+  // heap compact; the workers also trim it after long tasks.
+  MALLOC_ARENA_MAX: process.env.MALLOC_ARENA_MAX ?? "2",
   PAPER_BUILD_ID: buildId,
   PAPER_BOOT_ID: bootId,
   PAPER_BOOT_AT: bootAt,
