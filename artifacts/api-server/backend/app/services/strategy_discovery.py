@@ -736,7 +736,8 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
 # ---------------------------------------------------------------- scheduled run
 
 def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optional[str] = None,
-                earnings_loader=None, news_loader=None, sector_close: bool = True) -> tuple[dict, list]:
+                earnings_loader=None, news_loader=None, sector_close: bool = True,
+                reasons: Optional[dict] = None) -> tuple[dict, list]:
     """Adjusted daily bars per symbol (shared cache with the meta-label retrainer).
 
     Single stocks also get the ``earn_surprise`` column and the
@@ -746,7 +747,9 @@ def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optiona
     ``sector_close`` column of the sector-relative features
     (``sector_relative.attach_sector_closes``: the static map for today's
     names, the statistical one for past members), when the sector ETFs are
-    among ``symbols``.
+    among ``symbols``.  ``reasons`` (a dict the caller passes) is filled
+    with why each missing symbol was dropped: the load error, or how few bars
+    it has since ``start`` (that case used to be silent).
     """
     from app.services.meta_label_learning import history_dir
     from app.services.strategy_scorecard import load_daily_history, normalize_prices
@@ -760,6 +763,8 @@ def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optiona
         except Exception as exc:  # one bad symbol must not stop the run
             logger.warning("discovery history unavailable for %s: %s", symbol, exc)
             missing.append(symbol)
+            if reasons is not None:
+                reasons[symbol] = f"{exc.__class__.__name__}: {exc}"[:160]
             continue
         if symbol not in ETF_SYMBOLS:
             try:
@@ -779,6 +784,8 @@ def load_frames(symbols: Iterable[str], *, loader=None, start: str, end: Optiona
             frames[symbol] = frame
         else:
             missing.append(symbol)
+            if reasons is not None:
+                reasons[symbol] = f"only {len(frame)} bars since {start} (needs more than {rules.MAX_RULE_LOOKBACK})"
     if sector_close:
         from app.services.sector_relative import attach_sector_closes
 

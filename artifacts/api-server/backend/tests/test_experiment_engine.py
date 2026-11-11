@@ -141,6 +141,24 @@ def test_plan_maps_lessons_to_experiments_dedups_and_budgets():
     assert ("rsi2_pullback", "market_gate") in {(p["strategy_type"], p["template"]) for p in plan["planned"]}
 
 
+def test_plan_tests_shadow_strategies_on_gates_only_and_never_a_frozen_row():
+    """2026-11-11: with only active rows eligible, every lesson was skipped and nothing was ever tested."""
+    strategies = {"channel_breakout": object(), "rsi2_pullback": object()}          # the learning set
+    lessons = [
+        _lesson("channel_breakout", "missed_market_move", 6, {"held_too_long": 4}),  # market gate + time stop
+        _lesson("rule_abc123", "missed_market_move", 5),                             # a frozen forward experiment
+        _lesson("model_predictive_long", "missed_market_move", 4),                   # paused, outside the set
+    ]
+    plan = engine.plan_experiments(lessons, strategies, now=NOW, history=[], cooldown_days=28, max_experiments=5,
+                                   frozen={"rule_abc123"}, shadow={"channel_breakout"},
+                                   statuses={"model_predictive_long": "paused"})
+    assert [(p["strategy_type"], p["template"]) for p in plan["planned"]] == [("channel_breakout", "market_gate")]
+    reasons = {(s["strategy_type"], s["template"]): s["reason"] for s in plan["skipped"]}
+    assert reasons[("channel_breakout", "time_stop")] == engine.SHADOW_GATES_ONLY_REASON
+    assert reasons[("rule_abc123", "market_gate")] == engine.FROZEN_REASON
+    assert reasons[("model_predictive_long", "market_gate")] == "not an active strategy (paused)"
+
+
 # ------------------------------------------------------------- engine runs
 
 @pytest.fixture()
@@ -246,6 +264,95 @@ def test_lessons_without_a_template_are_reported_not_acted_on(db, monkeypatch, s
                                           **small_universe)
     assert result["planned"] == 0
     assert result["untemplated"][0]["cause"] == "signal_wrong" and result["untemplated"][0]["proposal"]
+
+
+def test_run_tests_a_shadow_strategy_and_never_touches_a_frozen_forward_experiment(db, monkeypatch, small_universe):  # noqa: F811
+    from app.services.forward_experiments import PARAMETER_KEY
+
+    shadow = _strategy(db, "channel_breakout", status="shadow")
+    frozen_parameters = {"rule": {"all": []}, PARAMETER_KEY: {"candidate": 1}}
+    frozen = _strategy(db, "rule_abc123", dict(frozen_parameters), status="paper_trading_candidate")
+    paused = _strategy(db, "bollinger_mean_reversion", status="paused")
+    _repeat_market_losses(db, "channel_breakout")
+    _repeat_market_losses(db, "rule_abc123")
+    _repeat_market_losses(db, "bollinger_mean_reversion")
+    simulate = _fake_replay(monkeypatch, {"baseline": (5.0, 0.20, 200), "sma20": (12.0, 0.15, 150)})
+    result = engine.run_experiment_engine(db, now=NOW, simulate=simulate, **small_universe)
+    assert result["errors"] == []
+    assert [(e["strategy_type"], e["adopted"]) for e in result["experiments"]] == [("channel_breakout", "sma20")]
+    assert result["learning_set"] == {"active": [], "shadow": ["channel_breakout"], "frozen": ["rule_abc123"]}
+    assert result["history"]["loaded"] == 2 and result["history"]["benchmark_loaded"]
+    for row in (shadow, frozen, paused):
+        db.refresh(row)
+    assert shadow.parameters["market_gate_sma"] == 20 and shadow.current_status == "shadow"   # still places no orders
+    assert frozen.parameters == frozen_parameters and paused.parameters == {}
+    reasons = {s["strategy_type"]: s["reason"] for s in result["skipped"]}
+    assert reasons["rule_abc123"] == engine.FROZEN_REASON
+    assert reasons["bollinger_mean_reversion"] == "not an active strategy (paused)"
+
+
+def test_a_shadow_strategys_change_is_judged_on_shadow_decisions_not_on_trades(db, monkeypatch, small_universe):  # noqa: F811
+    from app.services import verdict_stats as vs
+
+    monkeypatch.setattr(settings, "experiment_verdict_min_trades", 2)
+    row = _strategy(db, "channel_breakout", status="shadow")
+    change = _adopt(db, row, monkeypatch, small_universe)
+    assert settings.experiment_verdict_method == vs.METHOD_FIXED
+    # A shadow strategy closes no trades: the 20-trade rule would wait forever, so the always-valid judge acts.
+    review = engine.review_changes(db, now=NOW + timedelta(days=30))
+    assert review["reviewed"] == []
+    pending = review["pending"][0]
+    assert pending["change_id"] == change["change_id"] and pending["shadow_strategy"] is True
+    assert pending["verdict_method"] == vs.METHOD_E_PROCESS and pending["trades"] == 0
+    # The same change on a trading strategy keeps the acting 20-trade rule.
+    row.current_status = "paper_trading_active"
+    db.flush()
+    pending = engine.review_changes(db, now=NOW + timedelta(days=30))["pending"][0]
+    assert pending["verdict_method"] == vs.METHOD_FIXED and "shadow_strategy" not in pending
+
+
+def test_a_failed_history_load_says_what_was_loaded_and_why(db, monkeypatch, small_universe):  # noqa: F811
+    """Three production runs ended in a bare "no price history to replay" with nothing recorded about the load."""
+    _strategy(db, "channel_breakout")
+    _repeat_market_losses(db, "channel_breakout")
+    good = small_universe["loader"]
+
+    def loader(symbol):
+        if symbol == "SPY":
+            raise ValueError("the download returned no bars for SPY")
+        return good(symbol)
+
+    result = engine.run_experiment_engine(db, now=NOW, simulate=_fake_replay(monkeypatch, {"baseline": (1, 0.1)}),
+                                          **{**small_universe, "loader": loader})
+    assert result["experiments"] == []
+    error = result["errors"][0]["error"]
+    assert "1 of 2 symbols loaded" in error and "SPY" in error and "returned no bars" in error
+    assert result["history"] == {"requested": 2, "loaded": 1, "missing": 1, "benchmark_loaded": False,
+                                 "benchmark": "ValueError: the download returned no bars for SPY",
+                                 "dropped": {"SPY": "ValueError: the download returned no bars for SPY"}}
+
+
+def test_a_lost_benchmark_is_retried_with_a_fresh_download(monkeypatch):
+    from app.services import strategy_discovery
+
+    spy, aapl = _walk(rows=400, seed=3, start="2024-01-02"), _walk(rows=400, seed=4, start="2024-01-02")
+    calls = []
+
+    def load_frames(symbols, **kwargs):
+        calls.append((list(symbols), kwargs.get("loader")))
+        return {"SPY": spy}, []
+
+    monkeypatch.setattr(strategy_discovery, "load_frames", load_frames)
+    reasons = {"SPY": "only 12 bars since 2000-01-01 (needs more than 252)"}
+    frames = engine._recover_benchmark({"AAPL": aapl}, reasons)
+    assert set(frames) == {"AAPL", "SPY"} and calls == [(["SPY"], None)]       # no loader: a real download
+    assert reasons["SPY"].startswith("recovered by a fresh download after: only 12 bars")
+    # Still unavailable: the frames are returned as they were and the reason carries both failures.
+    monkeypatch.setattr(strategy_discovery, "load_frames",
+                        lambda symbols, **kwargs: (kwargs["reasons"].update(SPY="ValueError: no bars") or ({}, ["SPY"])))
+    reasons = {"SPY": "FileNotFoundError: gone"}
+    assert set(engine._recover_benchmark({"AAPL": aapl}, reasons)) == {"AAPL"}
+    assert reasons["SPY"] == "FileNotFoundError: gone; a fresh download also failed: ValueError: no bars"
 
 
 def test_engine_can_be_disabled(db, monkeypatch):  # noqa: F811

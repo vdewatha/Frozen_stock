@@ -81,6 +81,29 @@ applied the result.  This module lets the bot run that loop itself.
    against the passive arm acts instead (``sleeve_guardrail.py``), and the
    e-process stays in shadow either way.
 
+7. **What it learns on** (``LEARNING_STATUSES``).  Until 2026-11-11 the
+   engine tested only actively trading strategies.  After the slow book
+   (reports/slow-book-20261107.md) every hand-written strategy is in
+   ``shadow`` and the only trading rows are the frozen forward experiments,
+   so each run skipped every lesson and no experiment was ever recorded.  The
+   engine now also tests **shadow** strategies: they place no orders, so an
+   adopted change only alters the signals they record.  Two limits keep that
+   honest:
+
+   * a shadow strategy is tested on **entry gates only**.  A gate change has
+     forward evidence without trades, the paired setup-shadow decisions
+     (``setup_shadow.py``), and the always-valid e-process judge acts on
+     them (``review_changes``); an exit or scope change could never be
+     judged, so it is not tested;
+   * a row bound to a **frozen forward experiment**
+     (``forward_experiments.is_registered_row``) is never tested or changed:
+     its rule, exits and gate are pre-registered and judged only at its
+     scheduled review.
+
+   A book template replays the same learning set: the strategies whose
+   trades taught the lesson.  Moving a shadow strategy back to trading stays
+   a governed decision outside this module.
+
 Paper only.  Nothing here places, sizes or blocks an order directly; it only
 changes the entry-gate parameters the autotrader already honours.
 """
@@ -115,6 +138,13 @@ GOVERNANCE_EVENT = "strategy_governance"
 EXIT_POLICY_ACTION = "exit_policy_update"
 SCOPE_ACTION = "scope_update"
 ACTIVE_STATUSES = ("paper_trading_active", "paper_trading_candidate")
+SHADOW_STATUS = "shadow"
+# The rows the engine tests lessons on (module docstring, point 7).
+LEARNING_STATUSES = (*ACTIVE_STATUSES, SHADOW_STATUS)
+FROZEN_REASON = ("frozen forward experiment: its rule, exits and gate are pre-registered and judged only at its "
+                 "scheduled review")
+SHADOW_GATES_ONLY_REASON = ("shadow strategy: it has no trades to judge an exit or scope change, so only entry "
+                            "gates are tested")
 SOURCES = ("scheduled_round_trip", "exploration_round_trip")
 WINDOWS = ("all", "2015+", "2020+")
 MIN_TRADES_PER_WINDOW = 30
@@ -460,14 +490,23 @@ def _parse(value: Optional[str]) -> Optional[datetime]:
 
 
 def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, now: datetime,
-                     history: Iterable[dict], cooldown_days: int, max_experiments: int) -> dict:
+                     history: Iterable[dict], cooldown_days: int, max_experiments: int,
+                     frozen: Iterable[str] = (), shadow: Iterable[str] = (),
+                     statuses: Optional[Mapping[str, str]] = None) -> dict:
     """Which (strategy, template) experiments the repeating failures call for.
 
     ``history`` is earlier experiment payloads (``experiment_history``).  A
     pair run within ``cooldown_days`` is skipped unless the lesson has grown
     by at least 3 losses since, so a run does not repeat itself weekly on the
     same evidence.
+
+    ``strategies`` is the learning set (active and shadow rows).  ``frozen``
+    names the forward-experiment rows, which are never tested; ``shadow``
+    the shadow strategies, tested on entry gates only; ``statuses`` (every
+    strategy's status) only words the reason a strategy outside the learning
+    set is skipped.
     """
+    frozen, shadow, statuses = frozenset(frozen), frozenset(shadow), dict(statuses or {})
     from app.services.gate_replay import replayable
 
     latest: dict[tuple[str, str], dict] = {}
@@ -506,12 +545,21 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
                         wanted[key] = candidate
                     acted = True
                     continue
+                if target in frozen:
+                    skipped.append({"strategy_type": target, "template": template.name, "reason": FROZEN_REASON})
+                    continue
                 if target not in strategies:
-                    skipped.append({"strategy_type": target, "template": template.name, "reason": "not an active strategy"})
+                    status = statuses.get(target)
+                    skipped.append({"strategy_type": target, "template": template.name,
+                                    "reason": "not an active strategy" + (f" ({status})" if status else "")})
                     continue
                 if not replayable(target):
                     skipped.append({"strategy_type": target, "template": template.name,
                                     "reason": "strategy cannot be replayed over daily history"})
+                    continue
+                if target in shadow and template.kind != "gate":
+                    skipped.append({"strategy_type": target, "template": template.name,
+                                    "reason": SHADOW_GATES_ONLY_REASON})
                     continue
                 if template.dynamic is not None and not template.candidates_for(target, strategies[target]):
                     # A dynamic template without candidates (no signal autopsy row, or one with nothing that
@@ -999,6 +1047,57 @@ def release_read_transaction(db: Session, *, strict: bool = False) -> None:
         db.expire_on_commit = previous
 
 
+def learning_set(db: Session) -> dict:
+    """The rows the engine may test, and why the others are left alone (module docstring, point 7)."""
+    from app.services.forward_experiments import is_registered_row
+
+    rows = db.query(Strategy).order_by(Strategy.id).all()
+    learning = [row for row in rows if row.current_status in LEARNING_STATUSES]
+    frozen = frozenset(row.strategy_type for row in learning if is_registered_row(row.parameters))
+    strategies = {row.strategy_type: row for row in learning if row.strategy_type not in frozen}
+    return {"strategies": strategies, "frozen": frozen,
+            "shadow": frozenset(name for name, row in strategies.items() if row.current_status == SHADOW_STATUS),
+            "statuses": {row.strategy_type: row.current_status for row in rows}}
+
+
+def _recover_benchmark(frames: dict, reasons: dict) -> dict:
+    """Retry SPY with a fresh download when the load lost it: every replay needs the benchmark."""
+    from app.services.sector_relative import attach_sector_closes
+    from app.services.strategy_discovery import load_frames
+
+    first = reasons.get("SPY") or "not loaded"
+    retry: dict = {}
+    recovered, _missing = load_frames(["SPY"], start=settings.experiment_engine_history_start, sector_close=False,
+                                      reasons=retry)
+    if "SPY" not in recovered:
+        reasons["SPY"] = f"{first}; a fresh download also failed: {retry.get('SPY') or 'no bars'}"
+        return frames
+    logger.warning("experiment engine: SPY history recovered by a fresh download (%s)", first)
+    reasons["SPY"] = f"recovered by a fresh download after: {first}"
+    merged, _method = attach_sector_closes({**frames, "SPY": recovered["SPY"]})
+    return merged
+
+
+def history_summary(symbols: Iterable[str], frames: Mapping, reasons: Mapping) -> dict:
+    """What the history load produced, for the run row: counts, the benchmark, and why symbols were dropped."""
+    symbols = list(symbols)
+    dropped = {symbol: reason for symbol, reason in reasons.items() if symbol not in frames}
+    return {"requested": len(symbols), "loaded": len(frames), "missing": len(symbols) - len(frames),
+            "benchmark_loaded": "SPY" in frames, "benchmark": reasons.get("SPY") or ("loaded" if "SPY" in frames
+                                                                                    else "not requested"),
+            "dropped": dict(sorted(dropped.items())[:20])}
+
+
+def _history_problem(history: Mapping) -> str:
+    text = f"{history['loaded']} of {history['requested']} symbols loaded"
+    if not history["benchmark_loaded"]:
+        text += f"; SPY (the benchmark every replay needs): {history['benchmark']}"
+    elif history["dropped"]:
+        symbol, reason = next(iter(history["dropped"].items()))
+        text += f"; first dropped symbol {symbol}: {reason}"
+    return text
+
+
 def _active_rules(db: Session) -> dict:
     """The active risk rule's values (book-level protections read them); empty when unreadable."""
     try:
@@ -1024,12 +1123,14 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
     gate_lessons = _costly_gate_lessons(db)
     shadow = _shadow_lessons(db)
     lessons = [*lessons, *gate_lessons, *shadow]
-    strategies = {row.strategy_type: row for row in db.query(Strategy).filter(
-        Strategy.current_status.in_(ACTIVE_STATUSES)).order_by(Strategy.id).all()}
+    learning = learning_set(db)
+    strategies = learning["strategies"]
     plan = plan_experiments(lessons, strategies, now=now, history=experiment_history(db),
                             cooldown_days=settings.experiment_engine_cooldown_days,
-                            max_experiments=settings.experiment_engine_max_experiments)
+                            max_experiments=settings.experiment_engine_max_experiments,
+                            frozen=learning["frozen"], shadow=learning["shadow"], statuses=learning["statuses"])
     experiments, adopted, errors = [], [], []
+    history = None
     calibration = _calibration_factor(db)
     prior = prior_trials_by_strategy(experiment_history(db))
     injected = loader is not None   # a caller-supplied loader means no network for the T-bill history either
@@ -1060,9 +1161,17 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
             except Exception as exc:
                 logger.warning("experiment engine: point-in-time universe unavailable, using today's list: %s", exc)
                 universe_summary["fallback"] = f"{exc.__class__.__name__}: {exc}"
+        reasons: dict = {}
         frames, missing = load_frames(symbols, loader=loader, start=settings.experiment_engine_history_start,
-                                      earnings_loader=earnings_loader)
+                                      earnings_loader=earnings_loader, reasons=reasons)
+        if "SPY" not in frames and not injected:
+            frames = _recover_benchmark(frames, reasons)
+            missing = [symbol for symbol in missing if symbol not in frames]
         spy = frames.get("SPY")
+        # Three production runs (2026-11-10/11) ended in a bare "no price
+        # history to replay" with nothing recorded about the load; the run row
+        # now says what was loaded and why the rest was dropped.
+        history = history_summary(symbols, frames, reasons)
         try:
             vix = (vix_loader or _load_vix)(settings.experiment_engine_history_start)
         except Exception as exc:  # the VIX gate fails open live; replay the same way
@@ -1085,7 +1194,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
             strategy = None if book else strategies[item["strategy_type"]]
             try:
                 if not frames or spy is None:
-                    raise RuntimeError("no price history to replay")
+                    raise RuntimeError("no price history to replay: " + _history_problem(history))
                 if book:
                     experiment = run_book_experiment(strategies, template, frames=frames, spy=spy, vix=vix,
                                                      replays=replays, simulate=simulate, rules=rules,
@@ -1146,6 +1255,9 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                                for e in experiments],
                "adopted": [c["change_id"] for c in adopted], "errors": errors, "deferred": plan["deferred"],
                "skipped": plan["skipped"], "untemplated": plan["untemplated"],
+               "learning_set": {"active": sorted(name for name in strategies if name not in learning["shadow"]),
+                                "shadow": sorted(learning["shadow"]), "frozen": sorted(learning["frozen"])},
+               "history": history,
                "adoption_enabled": settings.experiment_engine_adoption_enabled,
                "calibration_factor": calibration}
     write_audit_log(db, event_type=EVENT, entity_type="experiment_engine", action=ACTION_RUN, status="complete",
@@ -1356,6 +1468,14 @@ def _e_process_safe(db: Session, change: Mapping, **kwargs) -> dict:
                 "error": f"{exc.__class__.__name__}: {exc}"}
 
 
+def _is_shadow_change(db: Session, change: Mapping) -> bool:
+    """Whether the changed strategy is in shadow today (no orders, so no closed trades to judge it on)."""
+    if change.get("strategy_type") == BOOK or change.get("strategy_id") is None:
+        return False
+    row = db.get(Strategy, int(change["strategy_id"]))
+    return row is not None and row.current_status == SHADOW_STATUS
+
+
 def _fixed_verdict(change: Mapping, after: Mapping, beaten_by: Optional[Mapping], *, min_trades: int,
                    max_trades: int) -> dict:
     """The fixed 20-trade rule (with the shadow early revert): verdict and reason, or ``watching`` with what it needs."""
@@ -1540,8 +1660,16 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
         e_compact = _compact_e(e_verdict)
         bracket = _forward_bracket_safe(db, change, rows, max_trades=max_trades)
         acting = method
+        shadow_strategy = sleeve is None and _is_shadow_change(db, change)
         if sleeve is not None:
             acting = SLEEVE_GUARDRAIL
+        elif shadow_strategy:
+            # A shadow strategy closes no trades, so the 20-trade rule could
+            # never judge it.  Its gate change is judged on the paired
+            # setup-shadow decisions by the always-valid judge, which confirms,
+            # reverts or closes at its trade cap; while that judge cannot read
+            # its data the change keeps watching.
+            acting = vs.METHOD_E_PROCESS
         elif method == vs.METHOD_E_PROCESS and e_verdict.get("status") == "unavailable":
             acting = vs.METHOD_FIXED
         if acting == vs.METHOD_E_PROCESS:
@@ -1564,6 +1692,8 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
                      "cost_bracket": bracket}
             if sleeve is not None:
                 entry["sleeve_guardrail"] = fixed.get("guardrail")
+            if shadow_strategy:
+                entry["shadow_strategy"] = True
             if fixed.get("so_far") and acting == vs.METHOD_FIXED:
                 entry["so_far"] = fixed["so_far"]
             pending.append(entry)
@@ -1588,6 +1718,7 @@ def review_changes(db: Session, *, now: Optional[datetime] = None) -> dict:
                    "verdict_fixed_20": fixed_label, "verdict_e_process": e_compact,
                    "cost_bracket": bracket,
                    **({"sleeve_guardrail": fixed.get("guardrail")} if sleeve is not None else {}),
+                   **({"shadow_strategy": True} if shadow_strategy else {}),
                    "paper_only": True}
         if acting in (vs.METHOD_E_PROCESS, SLEEVE_GUARDRAIL):
             message = f"{change['strategy_type']}: {change['description']} -> {verdict} ({reason})"

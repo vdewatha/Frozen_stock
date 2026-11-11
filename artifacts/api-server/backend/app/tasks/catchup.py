@@ -79,6 +79,12 @@ SESSION_DEFERRED_ENTRIES = frozenset({"strategy-discovery", "experiment-engine"}
 ONE_OFF_CATCHUPS: tuple[tuple[str, str, datetime, datetime], ...] = (
     ("experiment-engine", "20261110-deferral-recorded-as-run",
      datetime(2026, 11, 10, 14, 0, tzinfo=timezone.utc), datetime(2026, 11, 15, 17, 0, tzinfo=timezone.utc)),
+    # Until 2026-11-11 every engine run skipped all its lessons (only active
+    # rows were tested, and every hand-written strategy is in shadow), so no
+    # experiment was ever recorded. One run on the widened learning set this
+    # week, instead of waiting for Sunday 11-15.
+    ("experiment-engine", "20261111-learning-set",
+     datetime(2026, 11, 12, 0, 0, tzinfo=timezone.utc), datetime(2026, 11, 15, 17, 0, tzinfo=timezone.utc)),
 )
 ONE_OFF_MARKER_PREFIX = "celery:catchup:oneoff:"
 ONE_OFF_MARKER_TTL_SECONDS = 60 * 24 * 60 * 60

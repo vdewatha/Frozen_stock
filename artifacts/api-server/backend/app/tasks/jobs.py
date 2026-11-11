@@ -1906,6 +1906,13 @@ def experiment_engine_job() -> dict:
 
         result = run_experiment_engine(db, now=now)
         db.commit()
+        if result.get("planned") and not result.get("experiments") and result.get("errors"):
+            # Every planned experiment failed before it could run (2026-11-10/11:
+            # three runs ended in "no price history to replay" and each was
+            # recorded as a completed weekly run). "deferred" is not a run, so
+            # the weekday after-close catch-up tries it once more.
+            return {"job": "experiment_engine_job", **result, "status": "deferred",
+                    "reason": "no planned experiment could run: " + str(result["errors"][0].get("error"))}
         return {"job": "experiment_engine_job", **result}
 
     return _run_job("experiment_engine_job", work)

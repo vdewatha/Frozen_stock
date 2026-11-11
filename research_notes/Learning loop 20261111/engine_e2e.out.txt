@@ -1,0 +1,34 @@
+took 228 s; peak RSS 1615 MB
+learning_set {'active': [], 'shadow': ['bollinger_mean_reversion', 'channel_breakout', 'ensemble', 'rsi2_pullback', 'rsi_mean_reversion', 'trend_pullback'], 'frozen': ['rule_abc123']}
+history {"requested": 630, "loaded": 628, "missing": 2, "benchmark_loaded": true, "benchmark": "loaded", "dropped": {"FDXF": "only 117 bars since 2000-01-01 (needs more than 252)", "HONA": "only 104 bars since 2000-01-01 (needs more than 252)"}}
+planned 4 deferred 3 skipped 0
+errors []
+experiment {'strategy_type': 'bollinger_mean_reversion', 'template': 'market_gate', 'trigger': 'missed_market_move', 'adopted': None, 'adopted_description': None, 'applied': False}
+experiment {'strategy_type': 'book', 'template': 'entry_cluster_cap', 'trigger': 'clustered_stops', 'adopted': None, 'adopted_description': None, 'applied': False}
+experiment {'strategy_type': 'channel_breakout', 'template': 'market_gate', 'trigger': 'missed_market_move', 'adopted': None, 'adopted_description': None, 'applied': False}
+experiment {'strategy_type': 'ensemble', 'template': 'market_gate', 'trigger': 'missed_market_move', 'adopted': None, 'adopted_description': None, 'applied': False}
+ensemble market_gate universe point_in_time symbols 628
+    baseline trades 111000 exp_bps -22.1 dd 0.3563 | 2015+ -14.28 | 2020+ -18.95
+    sma10 trades 69389 exp_bps -33.27 dd 0.3366 | 2015+ -22.68 | 2020+ -28.09
+    sma20 trades 71174 exp_bps -30.45 dd 0.3174 | 2015+ -25.52 | 2020+ -29.67
+    sma50 trades 82549 exp_bps -23.52 dd 0.2858 | 2015+ -19.82 | 2020+ -22.85
+    adopted: None | failed: {"sma10": "all: expectancy -33.3 < -22.1 bps", "sma20": "all: expectancy -30.4 < -22.1 bps", "sma50": "all: expectancy -23.5 < -22.1 bps"} | hurdle: None
+channel_breakout market_gate universe point_in_time symbols 628
+    baseline trades 52832 exp_bps -20.68 dd 0.1681 | 2015+ -20.61 | 2020+ -26.94
+    sma10 trades 45116 exp_bps -18.75 dd 0.1333 | 2015+ -16.84 | 2020+ -21.27
+    sma20 trades 45437 exp_bps -16.0 dd 0.1192 | 2015+ -15.69 | 2020+ -18.02
+    sma50 trades 46672 exp_bps -19.32 dd 0.1369 | 2015+ -21.68 | 2020+ -27.0
+    adopted: None | failed: {"sma50": "2015+: expectancy -21.7 < -20.6 bps", "sma10": "short-hold veto: median hold 5 sessions; out-of-sample gross -14.3 bps a trade < 30.0 required", "sma20": "short-hold veto: median hold 5 sessions; out-of-sample gross +1.6 bps a trade < 30.0 required"} | hurdle: None
+book entry_cluster_cap universe point_in_time symbols 628
+    baseline trades 20754 exp_bps -26.56 dd 0.9412 | 2015+ -17.68 | 2020+ -19.72
+    cap2 trades 12680 exp_bps -8.08 dd 0.6021 | 2015+ 2.38 | 2020+ -1.5
+    cap4 trades 17890 exp_bps -15.79 dd 0.7744 | 2015+ -7.76 | 2020+ -12.04
+    adopted: None | failed: {"cap2": "short-hold veto: median hold 4 sessions; out-of-sample gross +14.7 bps a trade < 30.0 required", "cap4": "short-hold veto: median hold 4 sessions; out-of-sample gross +3.6 bps a trade < 30.0 required"} | hurdle: None
+    book strategies: ['bollinger_mean_reversion', 'channel_breakout', 'ensemble', 'rsi2_pullback', 'rsi_mean_reversion', 'trend_pullback'] candidate trades 300853
+bollinger_mean_reversion market_gate universe point_in_time symbols 628
+    baseline trades 19549 exp_bps -11.59 dd 0.0757 | 2015+ 1.78 | 2020+ -2.19
+    sma10 trades 4985 exp_bps -24.68 dd 0.0215 | 2015+ -19.79 | 2020+ -24.34
+    sma20 trades 5929 exp_bps -9.81 dd 0.0103 | 2015+ -2.28 | 2020+ -9.84
+    sma50 trades 9025 exp_bps -9.8 dd 0.0182 | 2015+ -7.96 | 2020+ -14.53
+    adopted: None | failed: {"sma10": "all: expectancy -24.7 < -11.6 bps", "sma20": "2015+: expectancy -2.3 < +1.8 bps", "sma50": "2015+: expectancy -8.0 < +1.8 bps"} | hurdle: None
+changes []
