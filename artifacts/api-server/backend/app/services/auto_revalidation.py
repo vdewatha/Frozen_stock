@@ -165,12 +165,17 @@ def run_auto_revalidation(db: Session, *, now: datetime | None = None) -> dict:
     clear, reason = _fresh_monitoring_is_clear(db, now)
     if not clear:
         return {"status": "waiting", "reason": reason}
+    from app.services.stock_recovery import RecoveryAccountBusy
+
     try:
         status = resume_stock_paper_after_revalidation(
             db,
             actor=AUTO_REVALIDATION_ACTOR,
             reason=f"Automatic revalidation after system pause: {(pause.reason or '')[:200]}",
+            wait_for_account=False,
         )
+    except RecoveryAccountBusy as exc:
+        return {"status": "busy", "reason": str(exc)}
     except StockPaperError as exc:
         db.rollback()
         return {"status": "blocked", "reason": str(exc)}

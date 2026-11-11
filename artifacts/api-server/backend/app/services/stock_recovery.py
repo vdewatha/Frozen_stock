@@ -145,6 +145,41 @@ def _state(db: Session, *, for_update: bool = True) -> StockPaperRecoveryState:
     return row
 
 
+class RecoveryAccountBusy(StockPaperError):
+    """The account row is locked (usually by a 40-85 s broker reconciliation)."""
+
+
+ACCOUNT_BUSY_REASON = ("Broker reconciliation holds the account; the automatic resume check "
+                       "will run again on its next tick")
+
+
+def _account_after_state(db: Session, *, wait: bool = True) -> StockPaperAccount | None:
+    """The account row lock, taken after the recovery row's (the order every recovery path uses).
+
+    ``wait=False`` is for the scheduled automatic resume paths. Reconciliation
+    holds the account for the whole broker sync and updates the recovery row
+    at its end. A resume check that held the recovery row while queued behind
+    it closed a deadlock cycle, and the watchdog, queued on the recovery row
+    in between, was the victim twice on 2026-11-10 ("watchdog evaluation
+    failed"). Without waiting, the check gives way and runs again next tick.
+    """
+    if wait:
+        return active_paper_account(db, for_update=True)
+    from sqlalchemy.exc import DBAPIError
+
+    from app.services.stock_paper_ledger import active_paper_broker_name
+
+    query = db.query(StockPaperAccount).filter_by(broker=active_paper_broker_name(), archived_at=None)
+    try:
+        return query.with_for_update(nowait=True).one_or_none()
+    except DBAPIError as exc:
+        orig = getattr(exc, "orig", None)
+        if getattr(orig, "sqlstate", None) == "55P03" or type(orig).__name__ == "LockNotAvailable":
+            db.rollback()
+            raise RecoveryAccountBusy(ACCOUNT_BUSY_REASON) from exc
+        raise
+
+
 def _event(
     db: Session,
     *,
@@ -591,7 +626,10 @@ def attempt_explained_halt_auto_resume(db: Session, *, now: datetime | None = No
     if not settings.paper_auto_resume_enabled:
         return {"status": "disabled"}
     state = _state(db)
-    account = active_paper_account(db, for_update=True)
+    try:
+        account = _account_after_state(db, wait=False)
+    except RecoveryAccountBusy as exc:
+        return {"status": "busy", "reason": str(exc)}
     classification = classify_recovery_halt(db, state=state, account=account, now=now)
     if not classification["halted"]:
         return {"status": "not_halted"}
@@ -1036,7 +1074,9 @@ def resume_stock_paper_after_revalidation(
     *,
     actor: str,
     reason: str,
+    wait_for_account: bool = True,
 ) -> dict:
+    """Resume after revalidation; ``wait_for_account=False`` raises ``RecoveryAccountBusy`` instead of queueing."""
     now = _now()
     actor = actor.strip()
     reason = reason.strip()
@@ -1051,7 +1091,7 @@ def resume_stock_paper_after_revalidation(
         raise StockPaperError(f"Recovery state {state.status} is not waiting for revalidation")
     if state.cooldown_until and _utc(state.cooldown_until) > now:
         raise StockPaperError(f"Recovery cooldown remains active until {_utc(state.cooldown_until).isoformat()}")
-    account = active_paper_account(db, for_update=True)
+    account = _account_after_state(db, wait=wait_for_account)
     reconciliation_issue = _heartbeat_issue(
         account.last_reconciled_at if account else None,
         now,
