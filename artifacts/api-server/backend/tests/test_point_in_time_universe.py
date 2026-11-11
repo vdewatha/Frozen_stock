@@ -396,3 +396,22 @@ def test_discovered_scope_is_trimmed_to_the_tradeable_list():
            "gate": {}, "discovery": {}, "post_period": {"expectancy_bps": 1.0}, "holdout": {}}
     params = sd.strategy_parameters(row, now=NOW)
     assert params["symbol_scope"] == ["AAPL"] and params["discovery"]["evaluated_symbols"] == 700
+
+
+def test_discovery_can_turn_the_point_in_time_universe_off_on_its_own(db, monkeypatch):  # noqa: F811
+    """Production: the engine keeps the point-in-time universe, discovery uses today's list (2026-11-10)."""
+    m = _membership()
+    histories = {"SPY": _walk(400, 3, "2024-01-02"), "AAPL": _walk(400, 4, "2024-01-02"), "AMD": _walk(400, 8, "2024-01-02")}
+    monkeypatch.setattr(settings, "paper_execution_symbols", ["SPY", "AAPL"])
+    monkeypatch.setattr(settings, "replay_point_in_time_universe", True)
+    monkeypatch.setattr(settings, "strategy_discovery_point_in_time", False)
+    monkeypatch.setattr(pit, "load_membership", lambda **kwargs: m)
+    requested = []
+
+    def loader(symbol):
+        requested.append(symbol)
+        return histories[symbol]
+
+    discovery = sd.run_strategy_discovery(db, now=NOW, loader=loader, earnings_loader=lambda symbol: pd.DataFrame())
+    assert discovery["universe"] == {"mode": "today", "symbols": 2}
+    assert "AMD" not in requested  # no past member's history is loaded

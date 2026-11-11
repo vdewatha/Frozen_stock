@@ -865,7 +865,10 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
     symbols = sorted({s.upper() for s in settings.paper_execution_symbols})
     tradeable = set(symbols)
     universe, universe_summary = None, {"mode": "today", "symbols": len(symbols)}
-    if settings.replay_point_in_time_universe:
+    point_in_time = settings.strategy_discovery_point_in_time
+    if point_in_time is None:
+        point_in_time = settings.replay_point_in_time_universe
+    if point_in_time:
         from app.services import point_in_time_universe
 
         try:  # a missing membership file falls back to today's list, never stops the run

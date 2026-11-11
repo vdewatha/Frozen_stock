@@ -113,6 +113,17 @@ def _queue_startup_refresh(client: redis.Redis) -> None:
         )
 
 
+def _startup_refresh_due(client: redis.Redis) -> bool:
+    """A restart re-runs the import (and its full learning batch) only when the import missed its slot."""
+    try:
+        from app.tasks.catchup import startup_refresh_due_from_store
+
+        return startup_refresh_due_from_store(client, celery_app.conf.beat_schedule)
+    except Exception as exc:
+        print(f"Startup refresh check unavailable ({exc.__class__.__name__}); refreshing.", flush=True)
+        return True
+
+
 def _queue_startup_learning_recovery(client: redis.Redis) -> None:
     """Give aged paper-learning failures one bounded recovery attempt at boot.
 
@@ -207,7 +218,10 @@ def main() -> int:
     _acquire_lease(client, owner)
 
     if _startup_refresh_enabled():
-        _queue_startup_refresh(client)
+        if _startup_refresh_due(client):
+            _queue_startup_refresh(client)
+        else:
+            print("Skipped startup research refresh: the daily import already ran since its last slot.", flush=True)
     else:
         print("Skipped startup market-data refresh; scheduled jobs remain enabled.", flush=True)
     _queue_startup_learning_recovery(client)

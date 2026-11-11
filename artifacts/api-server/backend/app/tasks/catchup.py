@@ -139,9 +139,15 @@ def _last_success(client, task_name: str) -> Optional[datetime]:
         return None
 
 
+# The import the boot's startup research refresh repeats (``PAPER_STARTUP_REFRESH``).
+# Each import queues a full strategy-learning batch, so the 2026-11-10 boots
+# (09:01, 12:09 ET) each added ~200 learning runs to the trading session.
+STARTUP_REFRESH_ENTRY = "daily-market-data-import"
+
+
 def catchup_task_names(beat_schedule: dict) -> frozenset[str]:
-    """Celery task names of the catch-up entries (and the one-offs) present in this schedule."""
-    names = set(CATCHUP_ENTRIES) | {name for name, *_ in ONE_OFF_CATCHUPS}
+    """Celery task names with a durable stamp: the catch-up entries, the one-offs and the startup import."""
+    names = set(CATCHUP_ENTRIES) | {name for name, *_ in ONE_OFF_CATCHUPS} | {STARTUP_REFRESH_ENTRY}
     return frozenset(beat_schedule[name]["task"] for name in names if name in beat_schedule)
 
 
@@ -320,5 +326,38 @@ def queue_missed_jobs_from_store(client, beat_schedule: dict, send_task: Callabl
     try:
         return queue_missed_jobs(client, beat_schedule, send_task, now=now,
                                  durable_last_success=lambda task: durable_last_success(db, task))
+    finally:
+        db.close()
+
+
+def startup_refresh_due(client, beat_schedule: dict, *, now: Optional[datetime] = None,
+                        durable_last_success: Optional[Callable[[str], Optional[datetime]]] = None) -> bool:
+    """Whether the boot's startup refresh has work to do: the daily import missed its latest slot.
+
+    With no stamp at all (a first boot) the refresh runs, as it always did.
+    """
+    entry = beat_schedule.get(STARTUP_REFRESH_ENTRY)
+    if not entry:
+        return True
+    now = _utc(now or datetime.now(timezone.utc))
+    task = entry["task"]
+    last = _newest(_last_success(client, task), _durable(durable_last_success, task))
+    if last is None:
+        return True
+    return missed_firing(entry["schedule"], last, now) is not None
+
+
+def startup_refresh_due_from_store(client, beat_schedule: dict, *, now: Optional[datetime] = None,
+                                   session_factory=None) -> bool:
+    """``startup_refresh_due`` with the durable stamp read through one database session."""
+    if session_factory is None:
+        from app.db.session import SessionLocal as session_factory
+    try:
+        db = session_factory()
+    except Exception:
+        return True
+    try:
+        return startup_refresh_due(client, beat_schedule, now=now,
+                                   durable_last_success=lambda task: durable_last_success(db, task))
     finally:
         db.close()
