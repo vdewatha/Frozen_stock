@@ -1,0 +1,166 @@
+{
+ "source": "alpaca sip daily bars (delisted included)",
+ "events": 5799,
+ "status": {
+  "traded": 3497,
+  "ineligible": 1400,
+  "unpriced": 754,
+  "identity_mismatch": 104,
+  "open": 43,
+  "ended_before_entry": 1
+ },
+ "primary_2016_03": {
+  "net_50_iwm": {
+   "events": 3444,
+   "months": 126,
+   "monthly_mean": 0.00199,
+   "t": 0.31,
+   "event_mean": 0.00809,
+   "event_median": -0.01645,
+   "share_positive": 0.4611
+  },
+  "gross_iwm": {
+   "events": 3444,
+   "months": 126,
+   "monthly_mean": 0.00699,
+   "t": 1.09,
+   "event_mean": 0.01309,
+   "event_median": -0.01145,
+   "share_positive": 0.4736
+  },
+  "net_100_iwm": {
+   "events": 3444,
+   "months": 126,
+   "monthly_mean": -0.00301,
+   "t": -0.47,
+   "event_mean": 0.00309,
+   "event_median": -0.02145,
+   "share_positive": 0.4506
+  },
+  "net_50_spy": {
+   "events": 3444,
+   "months": 126,
+   "monthly_mean": -0.00404,
+   "t": -0.38,
+   "event_mean": 0.00886,
+   "event_median": -0.01972,
+   "share_positive": 0.4553
+  },
+  "net_50_iwm_126": {
+   "events": 3371,
+   "months": 123,
+   "monthly_mean": 0.00417,
+   "t": 0.33,
+   "event_mean": 0.00647,
+   "event_median": -0.0375,
+   "share_positive": 0.4414
+  },
+  "net_50_iwm_without_top_1pct": {
+   "events": 3409,
+   "months": 126,
+   "monthly_mean": -0.01091,
+   "t": -1.85,
+   "event_mean": -0.0078,
+   "event_median": -0.01878,
+   "share_positive": 0.4556
+  },
+  "raw_return_gross": {
+   "events": 3444,
+   "months": 126,
+   "monthly_mean": 0.04094,
+   "t": 2.61,
+   "event_mean": 0.07038,
+   "event_median": 0.038,
+   "share_positive": 0.5743
+  }
+ },
+ "recent_2020": {
+  "net_50_iwm": {
+   "events": 2217,
+   "months": 80,
+   "monthly_mean": 0.00455,
+   "t": 0.54,
+   "event_mean": 0.01208,
+   "event_median": -0.02098,
+   "share_positive": 0.4547
+  },
+  "net_50_spy": {
+   "events": 2217,
+   "months": 80,
+   "monthly_mean": -0.00127,
+   "t": -0.09,
+   "event_mean": 0.01528,
+   "event_median": -0.02429,
+   "share_positive": 0.4533
+  }
+ },
+ "stopped_trading_during_hold": {
+  "events": 6,
+  "share": 0.0017,
+  "mean_return": -0.0392,
+  "median_return": -0.0713
+ },
+ "liquidity_terciles": {
+  "low": {
+   "events": 1148,
+   "months": 123,
+   "monthly_mean": -0.00055,
+   "t": -0.05,
+   "event_mean": 0.00188,
+   "event_median": -0.02305,
+   "share_positive": 0.4408,
+   "median_dollar_volume": 1443918
+  },
+  "mid": {
+   "events": 1148,
+   "months": 121,
+   "monthly_mean": 0.0082,
+   "t": 0.66,
+   "event_mean": 0.01201,
+   "event_median": -0.01834,
+   "share_positive": 0.4582,
+   "median_dollar_volume": 7641333
+  },
+  "high": {
+   "events": 1148,
+   "months": 125,
+   "monthly_mean": 0.00516,
+   "t": 0.63,
+   "event_mean": 0.01037,
+   "event_median": -0.0056,
+   "share_positive": 0.4843,
+   "median_dollar_volume": 59571040
+  }
+ },
+ "rule": {
+  "primary_mean_positive_t_ge_2": false,
+  "recent_2020_mean_positive": true,
+  "verdict": "closed"
+ }
+}
+      events  mean_vs_iwm  median_vs_iwm  mean_vs_spy stopped
+year                                                         
+2016     287       0.0165        -0.0036       0.0464       2
+2017     276      -0.0134        -0.0189      -0.0209       0
+2018     378       0.0286         0.0133       0.0315       0
+2019     339      -0.0238        -0.0218      -0.0534       0
+2020     542       0.0486        -0.0313       0.0850       1
+2021     284      -0.0314        -0.0376      -0.0702       1
+2022     360       0.0209        -0.0078       0.0261       1
+2023     302       0.0112        -0.0015      -0.0117       1
+2024     221       0.0275        -0.0027       0.0102       0
+2025     316      -0.0160        -0.0447      -0.0006       0
+2026     192      -0.0133        -0.0353      -0.0008       0
+status  ended_before_entry  identity_mismatch  ineligible  open  traded  unpriced
+year                                                                             
+2016                     0                  5         134     0     287       105
+2017                     0                  8         130     0     276        79
+2018                     0                  4         115     0     378        86
+2019                     0                  9         154     0     339        77
+2020                     0                 14         156     0     542        87
+2021                     0                 14         107     0     284       117
+2022                     1                  8         166     0     360        38
+2023                     0                 13         165     0     302        26
+2024                     0                  5         102     0     221        47
+2025                     0                  8          99     0     316        49
+2026                     0                 16          72    43     192        43
