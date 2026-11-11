@@ -86,13 +86,29 @@ jobs:
       # These tests start a disposable redis-server on a free port and refuse
       # to skip without the binary. apt also starts a system service on 6379;
       # stop it so the tests see no broker other than their own (as on a dev
-      # machine).
+      # machine). When the runner cannot reach Ubuntu's mirror (2026-11-11:
+      # "Temporary failure resolving 'azure.archive.ubuntu.com'" on every
+      # retry), build a pinned release from source, checked against the
+      # hash published in github.com/redis/redis-hashes.
       - name: Install redis-server
+        env:
+          REDIS_VERSION: "7.2.17"
+          REDIS_SHA256: "07c679c013fd82513299733bddf91999bbbc830351ec9ea985a533b09a595d76"
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q redis-server
-          sudo systemctl stop redis-server
-          sudo systemctl disable redis-server
+          APT="-o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+          if sudo apt-get $APT update -q && sudo apt-get $APT install -y -q redis-server; then
+            sudo systemctl stop redis-server
+            sudo systemctl disable redis-server
+          else
+            echo "apt install failed; building redis $REDIS_VERSION from source"
+            cd "$RUNNER_TEMP"
+            curl -fsSL --retry 3 -o redis.tar.gz "https://download.redis.io/releases/redis-$REDIS_VERSION.tar.gz"
+            echo "$REDIS_SHA256  redis.tar.gz" | sha256sum -c -
+            tar xzf redis.tar.gz
+            make -C "redis-$REDIS_VERSION" -j"$(nproc)" BUILD_TLS=no MALLOC=libc redis-server >/dev/null
+            sudo install "redis-$REDIS_VERSION/src/redis-server" /usr/local/bin/redis-server
+          fi
+          redis-server --version
       - name: Run tests
         run: PYTHONPATH=. python -m pytest -v -p no:warnings --timeout=300 --durations=20 ${{ matrix.files }}
 
