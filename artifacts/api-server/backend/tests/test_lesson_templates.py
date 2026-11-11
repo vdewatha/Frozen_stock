@@ -519,6 +519,25 @@ def test_run_adopts_the_entry_cap_on_the_risk_rule_and_judges_the_book(db, monke
     assert seed.apply_entry_cap(db) is False
 
 
+def test_the_book_experiment_replays_the_shadow_strategies_that_taught_the_lesson(db, monkeypatch, universe):  # noqa: F811
+    """After the slow book no replayable strategy is active; a book replay of active rows alone would be empty."""
+    from app.services.forward_experiments import PARAMETER_KEY
+
+    _strategy(db, "channel_breakout", status="shadow")
+    _strategy(db, "rsi2_pullback", status="shadow")
+    _strategy(db, "rule_abc123", {"rule": {"all": []}, PARAMETER_KEY: {"candidate": 1}}, status="paper_trading_candidate")
+    _repeat(db, "channel_breakout", "signal_wrong", contributing=["clustered_stops"])
+    _book_rows_by_count(monkeypatch, {5: (5.0, 0.20, 200), 4: (12.0, 0.15, 150), 2: (20.0, 0.10, 40)})
+    simulate = _fake_strategy_replay(monkeypatch, "market_gate_sma", {"baseline": (1.0, 0.1, 100)})
+    result = engine.run_experiment_engine(db, now=SUNDAY, simulate=simulate, book_candidates=_six_same_day_candidates,
+                                          **universe)
+    assert result["errors"] == []
+    payload = db.scalar(select(AuditLog).where(AuditLog.action == engine.ACTION_EXPERIMENT,
+                                               AuditLog.entity_type == "risk_rule")).payload
+    assert payload["book"]["strategies"] == ["channel_breakout", "rsi2_pullback"]      # never the frozen row
+    assert payload["adopted"] == "cap4"
+
+
 def test_real_replays_run_end_to_end_for_the_three_templates(db, monkeypatch, universe):  # noqa: F811
     monkeypatch.setattr(settings, "experiment_verdict_min_trades", 4)
     _strategy(db, "channel_breakout")
