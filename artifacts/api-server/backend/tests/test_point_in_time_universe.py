@@ -415,3 +415,21 @@ def test_discovery_can_turn_the_point_in_time_universe_off_on_its_own(db, monkey
     discovery = sd.run_strategy_discovery(db, now=NOW, loader=loader, earnings_loader=lambda symbol: pd.DataFrame())
     assert discovery["universe"] == {"mode": "today", "symbols": 2}
     assert "AMD" not in requested  # no past member's history is loaded
+
+
+def test_cache_first_loader_refetches_a_history_file_with_no_bars(tmp_path, monkeypatch):
+    """A header-only CSV is "fresh" by its age; trusting it for a week silently drops the symbol from every replay."""
+    from datetime import datetime, timezone
+
+    from app.core.config import settings
+    from app.services import strategy_scorecard
+
+    monkeypatch.setattr(settings, "meta_label_history_dir", str(tmp_path))
+    (tmp_path / "SPY.csv").write_text("date,open,high,low,close,volume\n")
+    dates = pd.bdate_range("2024-01-02", periods=300).strftime("%Y-%m-%d")
+    bars = pd.DataFrame({"date": dates, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1e6})
+    calls = []
+    monkeypatch.setattr(strategy_scorecard, "download_daily_history", lambda symbol: calls.append(symbol) or bars)
+    load = pit.cache_first_loader(now=datetime.now(timezone.utc))
+    assert len(load("SPY")) == 300 and calls == ["SPY"]
+    assert len(load("SPY")) == 300 and calls == ["SPY"]            # now a real, fresh file: read from the cache

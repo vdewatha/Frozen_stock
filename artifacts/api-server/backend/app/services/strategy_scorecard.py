@@ -31,7 +31,9 @@ Pure computation only: no database, broker or order code is imported.
 """
 from __future__ import annotations
 
+import logging
 import math
+import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import date
@@ -44,6 +46,8 @@ import pandas as pd
 
 from app.services.backtest_statistics import deflated_sharpe_ratio, return_moments
 from app.services.backtester import BacktestConfig, _buy_and_hold_values, run_backtest
+
+logger = logging.getLogger(__name__)
 
 # Bars the backtester skips before its first decision (``min_history + 1``).
 FIRST_EVALUATED_INDEX = 61
@@ -278,11 +282,35 @@ def download_daily_history(symbol: str, *, start: str = "1990-01-01") -> pd.Data
     import yfinance as yf  # research-only dependency
 
     frame = yf.download(symbol, start=start, auto_adjust=True, progress=False, threads=False)
+    if frame is None or len(frame) == 0:
+        # yfinance logs a failed download (rate limit, delisted symbol, no
+        # network) and returns an empty frame; say so instead of the
+        # ``KeyError: 'date'`` the normaliser would raise.
+        raise ValueError(f"the download returned no bars for {symbol}")
     if isinstance(frame.columns, pd.MultiIndex):
         frame.columns = frame.columns.get_level_values(0)
     frame = frame.reset_index()
     frame.columns = [str(column).lower() for column in frame.columns]
-    return normalize_prices(frame)
+    bars = normalize_prices(frame)
+    if bars.empty:  # rows came back but none has usable prices: never cache a header-only file
+        raise ValueError(f"the download returned no usable bars for {symbol}")
+    return bars
+
+
+def _write_history(frame: pd.DataFrame, path: Path) -> None:
+    """Replace ``path`` in one step, so a concurrent reader never sees a half-written file.
+
+    Several worker processes share this cache.  On 2026-11-10 six histories
+    were read while another process was rewriting them and failed with
+    ``time data "3162" doesn't match format "%Y-%m-%d"``; a partial read that
+    happens to parse is worse, because it silently drops the later years.
+    """
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        frame.to_csv(temporary, index=False)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def load_daily_history(symbol: str, data_dir: Path, *, download: bool = False,
@@ -298,7 +326,14 @@ def load_daily_history(symbol: str, data_dir: Path, *, download: bool = False,
         if not download:
             raise FileNotFoundError(f"No cached history for {symbol} at {path}; pass download=True.")
         data_dir.mkdir(parents=True, exist_ok=True)
-        download_daily_history(symbol).to_csv(path, index=False)
+        try:
+            _write_history(download_daily_history(symbol), path)
+        except Exception as exc:
+            # A refresh that fails keeps the bars already cached: an older
+            # history is usable, no history stops the whole replay.
+            if not path.exists():
+                raise
+            logger.warning("history refresh failed for %s, using the cached file: %s", symbol, exc)
     return normalize_prices(pd.read_csv(path), end=end or date.today().isoformat())
 
 

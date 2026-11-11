@@ -349,3 +349,42 @@ def test_default_variants_cover_all_existing_strategies_and_candidate_grids():
     model = default_variants(include_model_predictive=True)[-1]
     assert model.strategy == "model_predictive_long" and model.windows == ("post2020",)
     assert math.isclose(variants[-1].config().stop_loss_pct, 0.10)
+
+
+# ------------------------------------------------------- shared history cache
+
+def _bars(rows=300, start="2024-01-02"):
+    dates = pd.bdate_range(start, periods=rows)
+    close = np.linspace(100.0, 130.0, rows)
+    return pd.DataFrame({"date": dates.strftime("%Y-%m-%d"), "open": close, "high": close + 1, "low": close - 1,
+                         "close": close, "volume": 1_000_000})
+
+
+def test_history_cache_is_replaced_in_one_step_and_survives_a_failed_refresh(tmp_path, monkeypatch):
+    from app.services import strategy_scorecard as scorecard
+
+    monkeypatch.setattr(scorecard, "download_daily_history", lambda symbol: _bars())
+    first = scorecard.load_daily_history("SPY", tmp_path, download=True, end="2030-01-01")
+    assert len(first) == 300 and [p.name for p in tmp_path.iterdir()] == ["SPY.csv"]   # no temporary file left
+
+    def failing(symbol):
+        raise ValueError(f"the download returned no bars for {symbol}")
+
+    # A refresh that fails (rate limit, no network) keeps the bars already cached.
+    monkeypatch.setattr(scorecard, "download_daily_history", failing)
+    again = scorecard.load_daily_history("SPY", tmp_path, download=True, end="2030-01-01")
+    assert len(again) == 300 and [p.name for p in tmp_path.iterdir()] == ["SPY.csv"]
+    # With nothing cached the failure is raised, and no empty file is left to be trusted later.
+    with pytest.raises(ValueError, match="returned no bars for QQQ"):
+        scorecard.load_daily_history("QQQ", tmp_path, download=True)
+    assert not (tmp_path / "QQQ.csv").exists()
+
+
+def test_an_empty_download_is_a_clear_error(monkeypatch):
+    import yfinance
+
+    from app.services import strategy_scorecard as scorecard
+
+    monkeypatch.setattr(yfinance, "download", lambda *args, **kwargs: pd.DataFrame())
+    with pytest.raises(ValueError, match="returned no bars for SPY"):
+        scorecard.download_daily_history("SPY")

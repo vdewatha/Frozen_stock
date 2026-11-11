@@ -147,6 +147,9 @@ ALWAYS_MEMBERS = frozenset(ETF_SYMBOLS)
 # run (one yfinance call each); the rest fill over the following weekly runs.
 EARNINGS_DOWNLOADS_PER_RUN = 60
 
+# One daily bar is about 90 bytes of CSV; a file smaller than a few bars holds no usable history.
+MIN_HISTORY_FILE_BYTES = 512
+
 UniverseMask = Callable[[str, pd.DatetimeIndex], np.ndarray]
 
 
@@ -369,7 +372,10 @@ def cache_first_loader(max_age: timedelta = HISTORY_FRESH_FOR, now: Optional[dat
     def load(ticker: str) -> pd.DataFrame:
         directory = history_dir()
         symbol = yahoo_symbol(ticker)
-        return load_daily_history(symbol, directory, download=_stale(directory / f"{symbol}.csv", now, max_age))
+        path = directory / f"{symbol}.csv"
+        # A cached file with no bars (a header only) is not a history: fetch it again rather than trust it for a week.
+        empty = path.exists() and path.stat().st_size < MIN_HISTORY_FILE_BYTES
+        return load_daily_history(symbol, directory, download=empty or _stale(path, now, max_age))
 
     return load
 
