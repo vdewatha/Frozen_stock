@@ -156,9 +156,9 @@ def _queue_missed_job_catchup(client: redis.Redis) -> None:
         print("Skipped missed-job catch-up (PAPER_BEAT_CATCHUP=false).", flush=True)
         return
     try:
-        from app.tasks.catchup import queue_missed_jobs
+        from app.tasks.catchup import queue_missed_jobs_from_store
 
-        queued = queue_missed_jobs(client, celery_app.conf.beat_schedule, celery_app.send_task)
+        queued = queue_missed_jobs_from_store(client, celery_app.conf.beat_schedule, celery_app.send_task)
     except Exception as exc:
         print(f"Skipped missed-job catch-up: {exc.__class__.__name__}.", flush=True)
         return

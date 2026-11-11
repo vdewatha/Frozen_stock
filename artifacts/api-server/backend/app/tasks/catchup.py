@@ -27,6 +27,17 @@ Only report, research and bookkeeping jobs are listed. Trading jobs (the
 target-weight rebalance, the paper cycle) must never run outside their
 window, and the heavy retraining/promotion runs simply wait for their next
 slot.
+
+The deployed Redis runs without persistence (``--save ""``, ``--appendonly
+no``), so every restart began with an empty stamp hash and every entry looked
+missed: the 2026-11-10 boots at 09:01, 12:09 and 16:47 ET re-queued 24, 24
+and 18 jobs that had already run, keeping the host busy for about 40 minutes
+after each boot (strategy discovery's delisted-ticker downloads among them).
+Each catch-up entry's success is now also written to the audit log
+(``record_durable_success``), and the boot pass reads the newer of the two
+stamps, so a restart only re-runs what really missed its slot. A catch-up is
+queued once per missed firing (not every six hours), so a job that keeps
+failing waits for its next slot instead of being re-queued each afternoon.
 """
 from __future__ import annotations
 
@@ -39,9 +50,12 @@ logger = logging.getLogger(__name__)
 
 LAST_SUCCESS_KEY = "celery:task:last-success"
 CATCHUP_MARKER_PREFIX = "celery:catchup:queued:"
-CATCHUP_MARKER_TTL_SECONDS = 6 * 60 * 60
 # A missed run older than this is not caught up (the next run supersedes it).
 MAX_MISSED_AGE = timedelta(days=8)
+# Markers are per missed firing and outlive the firing's catch-up window.
+CATCHUP_MARKER_TTL_SECONDS = int(MAX_MISSED_AGE.total_seconds())
+# Audit-log event type of the durable last-success stamp.
+DURABLE_EVENT_TYPE = "scheduled_task_success"
 # If the next scheduled run is this close, let it run on schedule instead.
 NEXT_RUN_GRACE = timedelta(hours=3)
 STAGGER_SECONDS = 120
@@ -125,6 +139,59 @@ def _last_success(client, task_name: str) -> Optional[datetime]:
         return None
 
 
+def catchup_task_names(beat_schedule: dict) -> frozenset[str]:
+    """Celery task names of the catch-up entries (and the one-offs) present in this schedule."""
+    names = set(CATCHUP_ENTRIES) | {name for name, *_ in ONE_OFF_CATCHUPS}
+    return frozenset(beat_schedule[name]["task"] for name in names if name in beat_schedule)
+
+
+def record_durable_success(db, task_name: str, result: Any, now: Optional[datetime] = None) -> bool:
+    """Write the task's completion to the audit log unless its result is a failure or deferral."""
+    from app.services.audit import write_audit_log
+
+    status = str(result.get("status", "")).lower() if isinstance(result, dict) else ""
+    if status in NOT_A_RUN_STATUSES:
+        return False
+    stamp = _utc(now or datetime.now(timezone.utc)).isoformat()
+    write_audit_log(db, event_type=DURABLE_EVENT_TYPE, entity_type="scheduled_task", action=task_name[:128],
+                    status="complete", message=f"Scheduled task completed: {task_name}",
+                    payload={"task": task_name, "completed_at": stamp, "result_status": status or None})
+    db.commit()
+    return True
+
+
+def durable_last_success(db, task_name: str) -> Optional[datetime]:
+    """The newest audit-log completion stamp of ``task_name``, if any."""
+    from sqlalchemy import select
+
+    from app.models.models import AuditLog
+
+    row = db.scalar(select(AuditLog).where(AuditLog.event_type == DURABLE_EVENT_TYPE,
+                                           AuditLog.action == task_name[:128])
+                    .order_by(AuditLog.id.desc()).limit(1))
+    if row is None:
+        return None
+    try:
+        return _utc(datetime.fromisoformat(str((row.payload or {})["completed_at"])))
+    except (KeyError, ValueError):
+        return _utc(row.created_at) if row.created_at else None
+
+
+def _newest(*stamps: Optional[datetime]) -> Optional[datetime]:
+    known = [stamp for stamp in stamps if stamp is not None]
+    return max(known) if known else None
+
+
+def _durable(lookup: Optional[Callable[[str], Optional[datetime]]], task_name: str) -> Optional[datetime]:
+    if lookup is None:
+        return None
+    try:
+        return lookup(task_name)
+    except Exception as exc:  # the durable stamp is advisory: fall back to Redis alone
+        logger.warning("durable last-success unavailable for %s: %s", task_name, exc.__class__.__name__)
+        return None
+
+
 def next_firing(schedule, after: datetime, tz: ZoneInfo = SCHEDULE_TZ) -> datetime:
     """The crontab's first firing strictly after ``after`` (UTC), in ``tz`` wall-clock time."""
     local_after = _utc(after).astimezone(tz)
@@ -172,8 +239,13 @@ def queue_missed_jobs(
     send_task: Callable[..., Any],
     *,
     now: Optional[datetime] = None,
+    durable_last_success: Optional[Callable[[str], Optional[datetime]]] = None,
 ) -> list[dict]:
-    """Queue each allowlisted entry with a missed firing once; return what was queued."""
+    """Queue each allowlisted entry with a missed firing once; return what was queued.
+
+    ``durable_last_success(task)`` reads the stamp that survives a restart
+    (the audit log); the newer of it and the Redis stamp counts.
+    """
     now = _utc(now or datetime.now(timezone.utc))
     queued: list[dict] = []
     for name in CATCHUP_ENTRIES:
@@ -184,15 +256,17 @@ def queue_missed_jobs(
         if not all(hasattr(schedule, field) for field in ("hour", "minute", "day_of_week", "day_of_month", "month_of_year")):
             continue
         task = entry["task"]
-        missed = missed_firing(schedule, _last_success(client, task), now)
+        last = _newest(_last_success(client, task), _durable(durable_last_success, task))
+        missed = missed_firing(schedule, last, now)
         if missed is None:
             continue
         if next_firing(schedule, now) - now <= NEXT_RUN_GRACE:
             continue
         if name in SESSION_DEFERRED_ENTRIES and in_session_deferral_window(now):
             continue  # it would only defer itself; the after-close pass queues it
-        # One catch-up per entry per window, even if beat restarts repeatedly.
-        if not client.set(f"{CATCHUP_MARKER_PREFIX}{name}", missed.isoformat(), nx=True, ex=CATCHUP_MARKER_TTL_SECONDS):
+        # One catch-up per missed firing, even if beat restarts or the run fails again.
+        if not client.set(f"{CATCHUP_MARKER_PREFIX}{name}:{missed.isoformat()}", now.isoformat(), nx=True,
+                          ex=CATCHUP_MARKER_TTL_SECONDS):
             continue
         countdown = len(queued) * STAGGER_SECONDS
         options = dict(entry.get("options") or {})
@@ -214,6 +288,11 @@ def queue_missed_jobs(
             continue
         if name in SESSION_DEFERRED_ENTRIES and in_session_deferral_window(now):
             continue  # keep the one-off for the after-close pass
+        # Only the durable stamp counts here: the Redis stamp is what the
+        # one-off distrusts, while the audit log records real runs only.
+        durable = _durable(durable_last_success, entry["task"])
+        if durable is not None and durable >= not_before:
+            continue  # the run it replaces has happened since the window opened
         if not client.set(f"{ONE_OFF_MARKER_PREFIX}{name}:{tag}", now.isoformat(), nx=True,
                           ex=ONE_OFF_MARKER_TTL_SECONDS):
             continue
@@ -230,3 +309,16 @@ def queue_missed_jobs(
         )
         queued.append({"entry": name, "task": entry["task"], "missed": None, "one_off": tag, "countdown": countdown})
     return queued
+
+
+def queue_missed_jobs_from_store(client, beat_schedule: dict, send_task: Callable[..., Any], *,
+                                 now: Optional[datetime] = None, session_factory=None) -> list[dict]:
+    """``queue_missed_jobs`` with the durable audit-log stamps read through one database session."""
+    if session_factory is None:
+        from app.db.session import SessionLocal as session_factory
+    db = session_factory()
+    try:
+        return queue_missed_jobs(client, beat_schedule, send_task, now=now,
+                                 durable_last_success=lambda task: durable_last_success(db, task))
+    finally:
+        db.close()

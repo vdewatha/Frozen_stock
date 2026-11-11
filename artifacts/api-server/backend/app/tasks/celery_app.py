@@ -86,10 +86,38 @@ def _record_task_success(*, sender=None, result=None, **kwargs) -> None:
         record_task_success(client, task_name, result)
     except Exception:
         # Advisory evidence; never fail a task over it.
-        return
+        pass
     finally:
         if client is not None:
             client.close()
+    _record_durable_task_success(task_name, result)
+
+
+def _record_durable_task_success(task_name: str, result) -> None:
+    """Catch-up entries only: the audit-log copy of the stamp, which survives a restart."""
+    db = None
+    try:
+        from app.tasks.catchup import catchup_task_names, record_durable_success
+
+        if task_name not in catchup_task_names(celery_app.conf.beat_schedule):
+            return
+        from app.db.session import SessionLocal
+
+        db = SessionLocal()
+        record_durable_success(db, task_name, result)
+    except Exception:
+        # Advisory evidence; never fail a task over it.
+        if db is not None:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 task_success.connect(_record_task_success, weak=False)
