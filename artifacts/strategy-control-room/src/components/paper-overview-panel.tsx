@@ -7,7 +7,7 @@ import {
   ChevronRight, CircleHelp, Clock3, FlaskConical, RefreshCw, ShieldCheck, Wallet,
 } from "lucide-react";
 import { getErrorMessage } from "@/lib/api";
-import { getPaperOverview, type AttributionIssueCode, type OverviewPosition, type PaperOverview } from "@/lib/paper-overview-api";
+import { getPaperOverview, type AttributionIssueCode, type OverviewPosition, type OverviewStrategy, type PaperOverview } from "@/lib/paper-overview-api";
 
 const numberFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const moneyFormat = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -49,15 +49,53 @@ function timeOnly(value: string | null): string {
   });
 }
 
+function holdsProbeShare(position: OverviewPosition): boolean {
+  return (decimal(position.attribution_evidence?.probe_quantity ?? null) ?? 0) > 0;
+}
+
 function positionOwner(position: OverviewPosition, overview: PaperOverview): string {
   if (position.attribution === "unknown") return "Unattributed";
+  if (position.attribution === "cost_probe") return "Cost probe";
   if (position.attribution === "multiple") {
     const names = position.strategy_ids
       .map(id => overview.strategies.find(strategy => strategy.id === id)?.name)
       .filter((name): name is string => Boolean(name));
+    if (holdsProbeShare(position)) names.push("Cost probe");
     return names.length ? `Multiple strategies: ${names.join(", ")}` : "Multiple strategies";
   }
   return position.strategy || "Unknown";
+}
+
+/** Fee-verified P/L when the account has it, else the broker's own mark labelled "before fees". */
+function positionPnl(position: OverviewPosition): { value: number | null; text: string; detail: string } {
+  const signed = (amount: number, raw: string | null) => `${amount >= 0 ? "+" : ""}${money(raw)}`;
+  const verified = decimal(position.unrealized_pl);
+  if (verified !== null) return { value: verified, text: signed(verified, position.unrealized_pl), detail: percentage(position.unrealized_pl_pct) };
+  const broker = decimal(position.broker_unrealized_pl ?? null);
+  if (broker !== null) {
+    const pct = position.broker_unrealized_pl_pct ?? null;
+    return { value: broker, text: signed(broker, position.broker_unrealized_pl ?? null), detail: `${pct === null ? "" : `${percentage(pct)} · `}before fees` };
+  }
+  return { value: null, text: "Unverified", detail: "No broker mark" };
+}
+
+function horizonLabel(position: OverviewPosition, compact = false): string {
+  const held = position.sessions_held;
+  const horizon = position.horizon_sessions;
+  if (position.horizon_source === "target_weight") return `${held === null ? "" : `${held} held · `}no time stop`;
+  if (position.horizon_source === "cost_probe") return "Probe round trip";
+  if (held === null) return "Unknown";
+  if (horizon === null) return compact ? `${held} held · Unknown horizon` : `${held} held · horizon Unknown`;
+  return `${held} / ${horizon} sessions${position.horizon_source === "strategy_time_stop" ? " · time stop" : ""}`;
+}
+
+function entryStatus(signal: OverviewStrategy["last_signal"]): { text: string; tone: string } {
+  if (!signal) return { text: "No signal yet", tone: "" };
+  if (signal.withheld === true) return { text: "BUY withheld · entry window", tone: "ov-withheld" };
+  if (signal.withheld === false) return { text: "Not withheld", tone: "ov-clear" };
+  // Entry timing is recorded only for entry decisions; a HOLD or SELL wanted no entry.
+  if (signal.action !== "BUY") return { text: `No entry · ${signal.action}`, tone: "" };
+  return { text: "Not recorded", tone: "ov-unknown" };
 }
 
 function quantity(value: string): string {
@@ -85,13 +123,13 @@ export function AttributionEvidenceBlock({ position, overview }: { position: Ove
   const unexplained = decimal(evidence.unexplained_quantity);
   return <div className="ov-attribution-evidence" data-testid={`attribution-evidence-${position.symbol}`}>
     <span>Attribution: <b>{attributionHeadline(position, overview)}</b></span>
-    <span>Evidence: {evidence.fill_count} same-account {evidence.fill_count === 1 ? "fill" : "fills"} · strategy fills net {quantity(evidence.strategy_net_quantity)} of {quantity(evidence.broker_quantity)} broker shares{unexplained !== null && unexplained !== 0 ? ` · ${quantity(evidence.unexplained_quantity)} not covered by fill history` : ""}</span>
+    <span>Evidence: {evidence.fill_count} same-account {evidence.fill_count === 1 ? "fill" : "fills"} in the current holding{evidence.earlier_fill_count ? ` (${evidence.earlier_fill_count} earlier, before it was last flat)` : ""}{holdsProbeShare(position) ? ` · cost probe holds ${quantity(evidence.probe_quantity ?? "0")}` : ""} · strategy fills net {quantity(evidence.strategy_net_quantity)} of {quantity(evidence.broker_quantity)} broker shares{unexplained !== null && unexplained !== 0 ? ` · ${quantity(evidence.unexplained_quantity)} not covered by fill history` : ""}</span>
     {evidence.issues.length > 0 && <ul className="ov-attribution-issues">{evidence.issues.map(issue => <li key={issue.code}>
       <b>{ISSUE_LABELS[issue.code] ?? issue.code}</b>{issue.fills > 0 ? ` (${issue.fills} ${issue.fills === 1 ? "fill" : "fills"})` : ""}: {issue.detail}
       <em>Proposed review (not performed): {issue.proposed_review}</em>
     </li>)}</ul>}
     {evidence.issues.length === 0 && <span>{evidence.summary}</span>}
-    <small>No owner is inferred from signals or assigned automatically; P/L masking is unchanged.</small>
+    <small>No owner is inferred from signals or assigned automatically.</small>
   </div>;
 }
 
@@ -115,15 +153,13 @@ function StatusStrip({ overview }: { overview: PaperOverview }) {
   const minutesToClose = session.closes_at ? Math.ceil((new Date(session.closes_at).getTime() - new Date(overview.generated_at).getTime()) / 60_000) : null;
   const countdown = minutesToClose !== null && minutesToClose > 0 ? ` · ${Math.floor(minutesToClose / 60)}h ${minutesToClose % 60}m to close` : "";
   const state = session.state === "open" ? `Open${countdown}` : "Closed";
-  const activeMandate = bot.mandate_status ? `Mandate: ${bot.mandate_status}` : "Mandate status unknown";
+  const activeMandate = bot.mandate_status ? `Mandate: ${bot.mandate_status}` : "No mandate";
   const switchState = bot.kill_switch === null ? "Kill switch state unknown" : bot.kill_switch ? "Kill switch on" : "Kill switch off";
   const boundsSummary = bounds.starts_at ? `${bounds.max_positions ?? "Unknown"} positions · ${money(bounds.max_gross)} gross` : "No current session approval";
-  const stopFraction = decimal(bounds.stop_fraction);
-  const boundsDetails = `Per symbol ${money(bounds.per_symbol)} · Stop ${stopFraction === null ? "Unknown" : `${(stopFraction * 100).toFixed(2)}%`}`;
   return <section className={`ov-status-strip${account.stale ? " is-stale" : ""}`} aria-label="Paper operating status">
     <div className="ov-state-cell"><span className="ov-state-icon session"><Clock3 size={16} /></span><div><small>MARKET SESSION</small><strong>{state}</strong><span>NYSE · {dateOnly(overview.generated_at)}</span><span>Entry {timeOnly(session.entry_start)} – {timeOnly(session.entry_end)} ET</span></div></div>
     <div className="ov-state-cell"><span className="ov-state-icon bot"><Activity size={16} /></span><div><small>PAPER BOT</small><strong>{bot.state || "Unknown"}</strong><span>{switchState} · {activeMandate}</span><span>{bot.reason || "Runtime health unknown"}</span></div></div>
-    <div className="ov-state-cell"><span className="ov-state-icon bounds"><ShieldCheck size={16} /></span><div><small>APPROVED BOUNDS</small><strong>{boundsSummary}</strong><span>{boundsDetails}</span><span title={`${dateTime(bounds.starts_at)} – ${dateTime(bounds.ends_at)}`}>{timeOnly(bounds.starts_at)} – {timeOnly(bounds.ends_at)} ET</span></div></div>
+    <div className="ov-state-cell"><span className="ov-state-icon bounds"><ShieldCheck size={16} /></span><div><small>APPROVED BOUNDS</small><strong>{boundsSummary}</strong>{bounds.starts_at && <><span>Per symbol {money(bounds.per_symbol)}</span><span title={`${dateTime(bounds.starts_at)} – ${dateTime(bounds.ends_at)}`}>{timeOnly(bounds.starts_at)} – {timeOnly(bounds.ends_at)} ET</span></>}</div></div>
     <div className="ov-state-cell reconcile"><span className="ov-state-icon time"><Clock3 size={16} /></span><div><small>LAST RECONCILIATION</small><strong>{timeOnly(account.last_reconciled_at)} ET</strong><span>{account.stale ? "Last known snapshot · values may have changed" : `Account status: ${account.status}`}</span><span>{dateOnly(account.last_reconciled_at)} · paper only</span></div></div>
   </section>;
 }
@@ -138,18 +174,19 @@ function PositionsPanel({ overview }: { overview: PaperOverview }) {
   const filtered = overview.positions.filter(position => {
     if (filter === "All strategies") return true;
     if (filter === "Unattributed") return position.attribution === "unknown";
+    if (filter === "Cost probe") return position.attribution === "cost_probe" || holdsProbeShare(position);
     if (filter === "Multiple strategies") return position.attribution === "multiple";
     const strategy = overview.strategies.find(item => item.name === filter);
     return position.strategy === filter || Boolean(strategy && position.strategy_ids.includes(strategy.id));
   });
 
   return <section className="ov-positions">
-    <div className="ov-section-head"><div><div className="ov-kicker">CURRENT PAPER BOOK</div><h2>Open positions <span>{overview.positions.length}</span></h2></div><div className="ov-filter-wrap"><label htmlFor="strategy-filter">Strategy</label><select id="strategy-filter" value={filter} onChange={event => { setFilter(event.target.value); setExpanded(null); }}><option>All strategies</option>{filters.map(name => <option key={name}>{name}</option>)}<option>Unattributed</option><option>Multiple strategies</option></select></div></div>
+    <div className="ov-section-head"><div><div className="ov-kicker">CURRENT PAPER BOOK</div><h2>Open positions <span>{overview.positions.length}</span></h2></div><div className="ov-filter-wrap"><label htmlFor="strategy-filter">Strategy</label><select id="strategy-filter" value={filter} onChange={event => { setFilter(event.target.value); setExpanded(null); }}><option>All strategies</option>{filters.map(name => <option key={name}>{name}</option>)}<option>Cost probe</option><option>Unattributed</option><option>Multiple strategies</option></select></div></div>
     {overview.account.stale && <div className="ov-stale-note"><Clock3 size={14} />Showing last known holdings. Reconciliation is stale; values may have changed.</div>}
     {filtered.length === 0 ? <div className="ov-empty"><div className="ov-empty-mark"><Wallet size={22} /></div><div><strong>{overview.positions.length ? "No positions match this strategy" : overview.account.last_reconciled_at ? "No open positions" : "Positions unavailable"}</strong><p>{overview.positions.length ? "Choose another strategy filter to see holdings." : overview.account.last_reconciled_at ? `Broker snapshot ${dateTime(overview.account.last_reconciled_at)}.` : "No broker snapshot has been imported yet."}</p></div></div> :
       <>
         <div className="ov-table-wrap"><table className="ov-table"><thead><tr><th>POSITION</th><th>OWNER / ENTRY</th><th className="numeric">QTY</th><th className="numeric">MARK</th><th className="numeric">UNREALIZED P/L</th><th>HORIZON</th><th>EXIT INTENT</th><th aria-label="Details" /></tr></thead><tbody>{filtered.map(position => {
-          const pnl = decimal(position.unrealized_pl);
+          const pnl = positionPnl(position);
           const held = position.sessions_held;
           const horizon = position.horizon_sessions;
           const progress = held !== null && horizon !== null && horizon > 0 ? Math.min(100, Math.max(0, held / horizon * 100)) : null;
@@ -161,8 +198,8 @@ function PositionsPanel({ overview }: { overview: PaperOverview }) {
                <td><strong className={unknownAttribution ? "ov-unattributed" : "ov-owner"} title={unknownAttribution ? position.attribution_evidence?.summary || "Ownership not confirmed: fills do not explain the broker quantity" : undefined}>{unknownAttribution && <CircleHelp size={13} />}{positionOwner(position, overview)}</strong><small className="ov-sub">{position.entry_at ? dateOnly(position.entry_at) : "Date unknown"} · {money(position.entry_price)} entry</small></td>
               <td className="numeric ov-number">{quantity(position.quantity)}</td>
               <td className="numeric ov-number">{money(position.current_price)}</td>
-              <td className="numeric"><strong className={pnl === null ? "ov-unknown" : pnl >= 0 ? "ov-positive" : "ov-negative"}>{pnl === null ? "Unverified" : `${pnl >= 0 ? "+" : ""}${money(position.unrealized_pl)}`}</strong><small className={`ov-sub ${pnl === null ? "ov-unknown" : pnl >= 0 ? "ov-positive" : "ov-negative"}`}>{percentage(position.unrealized_pl_pct)}</small></td>
-              <td><strong className="ov-horizon">{held === null ? "Unknown" : horizon === null ? `${held} held · horizon Unknown` : `${held} / ${horizon} sessions${position.horizon_source === "strategy_time_stop" ? " · time stop" : ""}`}</strong>{progress !== null && <div className="ov-progress"><i style={{ width: `${progress}%` }} /></div>}</td>
+              <td className="numeric"><strong className={pnl.value === null ? "ov-unknown" : pnl.value >= 0 ? "ov-positive" : "ov-negative"}>{pnl.text}</strong><small className={`ov-sub ${pnl.value === null ? "ov-unknown" : pnl.value >= 0 ? "ov-positive" : "ov-negative"}`}>{pnl.detail}</small></td>
+              <td><strong className="ov-horizon">{horizonLabel(position)}</strong>{progress !== null && <div className="ov-progress"><i style={{ width: `${progress}%` }} /></div>}</td>
               <td><span className={`ov-intent ${position.exit_intent ? "" : "unknown"}`}>{position.exit_intent || "Unknown"}</span></td>
               <td><button className="ov-row-toggle" aria-label={`${isExpanded ? "Hide" : "Show"} ${position.symbol} details`} aria-expanded={isExpanded} onClick={() => setExpanded(isExpanded ? null : position.symbol)}><ChevronRight size={16} /></button></td>
             </tr>
@@ -170,19 +207,19 @@ function PositionsPanel({ overview }: { overview: PaperOverview }) {
           </Fragment>;
         })}</tbody></table></div>
         <div className="ov-mobile-positions">{filtered.map(position => {
-          const pnl = decimal(position.unrealized_pl);
+          const pnl = positionPnl(position);
           const held = position.sessions_held;
           const horizon = position.horizon_sessions;
           const progress = held !== null && horizon !== null && horizon > 0 ? Math.min(100, Math.max(0, held / horizon * 100)) : null;
            const unknownAttribution = position.attribution === "unknown";
           const isExpanded = expanded === position.symbol;
           return <article className="ov-mobile-card" key={position.symbol}>
-            <button className="ov-mobile-card-head" onClick={() => setExpanded(isExpanded ? null : position.symbol)} aria-expanded={isExpanded}><span><strong>{position.symbol}</strong></span><span className={pnl === null ? "ov-unknown" : pnl >= 0 ? "ov-positive" : "ov-negative"}>{pnl === null ? "Unverified" : `${pnl >= 0 ? "+" : ""}${money(position.unrealized_pl)}`}<small>{percentage(position.unrealized_pl_pct)}</small></span><ChevronRight size={16} /></button>
+            <button className="ov-mobile-card-head" onClick={() => setExpanded(isExpanded ? null : position.symbol)} aria-expanded={isExpanded}><span><strong>{position.symbol}</strong></span><span className={pnl.value === null ? "ov-unknown" : pnl.value >= 0 ? "ov-positive" : "ov-negative"}>{pnl.text}<small>{pnl.detail}</small></span><ChevronRight size={16} /></button>
             <div className="ov-mobile-owner">{unknownAttribution ? <span className="ov-unattributed"><CircleHelp size={13} />{positionOwner(position, overview)}</span> : positionOwner(position, overview)}<span>{quantity(position.quantity)} shares</span></div>
             <div className="ov-mobile-grid">
               <div><small>ENTRY</small><strong>{money(position.entry_price)}</strong><em>{position.entry_at ? dateOnly(position.entry_at) : "Unknown"}</em></div>
               <div><small>MARK</small><strong>{money(position.current_price)}</strong><em>Current paper price</em></div>
-              <div><small>HORIZON</small><strong>{held === null ? "Unknown" : horizon === null ? `${held} held · Unknown horizon` : `${held} / ${horizon} sessions${position.horizon_source === "strategy_time_stop" ? " · time stop" : ""}`}</strong>{progress !== null && <div className="ov-progress"><i style={{ width: `${progress}%` }} /></div>}</div>
+              <div><small>HORIZON</small><strong>{horizonLabel(position, true)}</strong>{progress !== null && <div className="ov-progress"><i style={{ width: `${progress}%` }} /></div>}</div>
               <div><small>EXIT INTENT</small><strong className="ov-card-intent">{position.exit_intent || "Unknown"}</strong></div>
             </div>
             {isExpanded && <div className="ov-detail"><span>Latest strategy signal <b>{overview.strategies.filter(strategy => position.strategy_ids.includes(strategy.id) && strategy.last_signal).map(strategy => `${strategy.last_signal?.action} ${strategy.last_signal?.symbol}`).join(", ") || "Unknown"}</b></span><span>Risk / stop <b>{money(position.stop_price)}</b></span><span>Observed <b>{dateTime(position.observed_at)}</b></span><AttributionEvidenceBlock position={position} overview={overview} /></div>}
@@ -194,18 +231,17 @@ function PositionsPanel({ overview }: { overview: PaperOverview }) {
 }
 
 function StrategiesPanel({ overview }: { overview: PaperOverview }) {
-  const nextEvaluation = overview.strategies.map(strategy => strategy.next_evaluation_at).filter((value): value is string => value !== null).sort()[0] ?? null;
   return <section className="ov-strategies">
-    <div className="ov-section-head compact"><div><div className="ov-kicker">PAPER STRATEGIES</div><h2>Strategies today <span>{overview.strategies.length}</span></h2></div><span className="ov-next-eval">Next eval · {nextEvaluation ? dateTime(nextEvaluation) : "Unknown"}</span></div>
+    <div className="ov-section-head compact"><div><div className="ov-kicker">PAPER STRATEGIES</div><h2>Strategies today <span>{overview.strategies.length}</span></h2></div></div>
     {overview.strategies.length === 0 ? <p className="ov-empty-inline">No strategy data available.</p> : <div className="ov-strategy-list">{overview.strategies.map(strategy => {
       const signal = strategy.last_signal;
+      const entry = entryStatus(signal);
        const tone = strategy.status === "paper_trading_active" ? "active" : strategy.status === "paper_trading_candidate" ? "candidate" : "paused";
       return <article className="ov-strategy-row" key={strategy.id}>
         <div className="ov-strategy-name"><span className={`ov-strategy-dot ${tone}`} /><div><strong>{strategy.name}</strong><small>{strategy.open_positions} attributed / {strategy.position_limit ?? "Unknown"} max</small></div><span className={`ov-status-tag ${tone}`}>{({paper_trading_active: "Active", paper_trading_candidate: "Candidate", paused: "Paused", shadow: "Shadow", research: "Research", retired: "Retired", target_weight_active: "Target weight", target_weight_shadow: "Target weight shadow"} as Record<string, string>)[strategy.status] || strategy.status.replaceAll("_", " ")}</span></div>
         <div className="ov-strategy-meta">
-          <span><small>LAST SIGNAL</small><b>{signal ? `${signal.action} · ${signal.symbol}` : "Unknown"}</b><em>{signal ? dateTime(signal.at) : "No signal recorded"}</em></span>
-          <span><small>ENTRY STATUS</small><b className={signal?.withheld === true ? "ov-withheld" : signal?.withheld === false ? "ov-clear" : "ov-unknown"} title={signal?.reason ?? undefined}>{signal?.withheld === true ? "BUY withheld · entry window" : signal?.withheld === false ? "Not withheld" : "Unknown"}</b></span>
-          <span><small>NEXT EVALUATION</small><b title="Only a persisted next-run timestamp is shown. Cadence does not guarantee dispatch.">{strategy.next_evaluation_at ? dateTime(strategy.next_evaluation_at) : "Unknown"}</b></span>
+          <span><small>LAST SIGNAL</small><b>{signal ? `${signal.action} · ${signal.symbol}` : "None yet"}</b><em>{signal ? dateTime(signal.at) : "No signal recorded"}</em></span>
+          <span><small>ENTRY STATUS</small><b className={entry.tone || undefined} title={signal?.reason ?? undefined}>{entry.text}</b></span>
         </div>
       </article>;
     })}</div>}
@@ -215,6 +251,7 @@ function StrategiesPanel({ overview }: { overview: PaperOverview }) {
 
 function AccountPanel({ overview }: { overview: PaperOverview }) {
   const { account } = overview;
+  const openPl = decimal(account.broker_unrealized_pl ?? null);
   return <section className="ov-account">
     <div className="ov-section-head compact"><div><div className="ov-kicker">ACCOUNT SNAPSHOT</div><h2>Paper account</h2></div></div>
     {account.stale && <p className="ov-account-warning">Stale account values shown as last known; they may have changed.</p>}
@@ -222,7 +259,7 @@ function AccountPanel({ overview }: { overview: PaperOverview }) {
       <div><small>ACCOUNT EQUITY</small><strong>{money(account.equity)}</strong></div>
       <div><small>CASH AVAILABLE</small><strong>{money(account.cash)}</strong></div>
       <div><small>GROSS EXPOSURE</small><strong>{money(account.exposure)}</strong><em>{account.exposure_pct === null ? "Unknown % of equity" : `${account.exposure_pct.toFixed(1)}% of equity`}</em></div>
-      <div><small>REALIZED P/L</small><strong className="ov-unverified">{account.pnl_verified && account.realized_pl !== null ? money(account.realized_pl) : "Unverified"}</strong><em>{account.pnl_verified && account.realized_pl !== null ? "Reported verified value" : "P/L verification unavailable"}</em></div>
+      <div><small>OPEN P/L</small><strong className={account.pnl_verified ? undefined : "ov-unverified"}>{openPl === null ? "Unknown" : `${openPl >= 0 ? "+" : ""}${money(account.broker_unrealized_pl ?? null)}`}</strong><em>{openPl === null ? "No broker marks" : account.pnl_verified ? "Broker marks · fees verified" : "Broker marks · before fees"}</em></div>
     </div>
     <Link href="/portfolio/ledger" className="ov-ledger-link">Account ledger <ArrowRight size={14} /></Link>
   </section>;
