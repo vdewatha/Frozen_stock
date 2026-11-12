@@ -752,6 +752,9 @@ class ReadinessResponse(BaseModel):
     checks: list[ReadinessCheck]
     paper_trading_allowed: bool
     live_safety: Optional[dict] = None
+    # Seconds and process growth per check from the build that produced this
+    # snapshot (readiness._TimedChecks); absent on the placeholder snapshot.
+    timing: Optional[dict] = None
 
 
 class LiveSafetyTransitionRequest(BaseModel):
@@ -863,6 +866,9 @@ class DeploymentMonitorResponse(BaseModel):
     readiness_status: str
     readiness_blockers: list[str]
     readiness_warnings: list[str]
+    # "shared" when the API's snapshot was reused, "computed" when this
+    # process built its own (readiness.monitor_readiness).
+    readiness_source: Optional[str] = None
     readiness: dict
 
 
