@@ -1,0 +1,689 @@
+{
+ "info": {
+  "first_session": "2016-01-04",
+  "last_session": "2024-04-30",
+  "sessions": 2095,
+  "early_closes": 15,
+  "thin_sessions": [],
+  "unlisted_sessions_short_of_afternoon_bars": [
+   "2019-08-12",
+   "2020-03-18"
+  ],
+  "regular_minutes_without_bar": 0.0001277092159390758,
+  "first_session_with_sigma": "2016-01-25"
+ },
+ "R1": {
+  "months": 99,
+  "correlation": 0.9928768193824912,
+  "mean_abs_diff_pp": 0.31873792845483884,
+  "years_same_sign": 7,
+  "same_sign": {
+   "2017": true,
+   "2018": true,
+   "2019": true,
+   "2020": true,
+   "2021": true,
+   "2022": true,
+   "2023": true
+  },
+  "my_yearly_pct": {
+   "2017": -8.893852600094931,
+   "2018": 54.53544864206887,
+   "2019": 5.720438623763235,
+   "2020": 24.64086847186504,
+   "2021": 29.71350982746117,
+   "2022": 24.733496690925683,
+   "2023": 39.197486907415694
+  },
+  "paper_yearly_pct": {
+   "2017": -6.9,
+   "2018": 61.1,
+   "2019": 6.9,
+   "2020": 26.8,
+   "2021": 34.8,
+   "2022": 24.4,
+   "2023": 37.2
+  },
+  "paper_sum_pct": 162.6,
+  "my_sum_pct": 148.92053133718696,
+  "pass": true
+ },
+ "R2": {
+  "checks": {
+   "2022-01-20 (a): long from 10:00, day -1.9% to -2.5%": true,
+   "2022-01-20 (a2): long closed at 13:00, day within 0.4% of zero": false,
+   "2022-01-31 (a): first position long at 10:30": true,
+   "2022-04-29 (a): first position short at 10:30": true
+  },
+  "held": 3,
+  "pass": true,
+  "detail": {
+   "2022-01-20 a": {
+    "positions": {
+     "10:00": 1,
+     "10:30": 1,
+     "11:00": 1,
+     "11:30": 1,
+     "12:00": 1,
+     "12:30": 1,
+     "13:00": 1,
+     "13:30": 1,
+     "14:00": 1,
+     "14:30": 1,
+     "15:00": 1,
+     "15:30": 1
+    },
+    "first_entry": "10:00",
+    "first_dir": 1,
+    "gross": -0.021885126567416504,
+    "sides": 2,
+    "net": -0.021904961265910412
+   },
+   "2022-01-20 a2": {
+    "positions": {
+     "10:00": 1,
+     "10:30": 1,
+     "11:00": 1,
+     "11:30": 1,
+     "12:00": 1,
+     "12:30": 1,
+     "13:00": 1,
+     "13:30": 0,
+     "14:00": 0,
+     "14:30": 0,
+     "15:00": 0,
+     "15:30": 0
+    },
+    "first_entry": "10:00",
+    "first_dir": 1,
+    "gross": -0.002254261964025688,
+    "sides": 2,
+    "net": -0.002274096662519596
+   },
+   "2022-01-31 a": {
+    "positions": {
+     "10:00": 0,
+     "10:30": 1,
+     "11:00": 1,
+     "11:30": 1,
+     "12:00": 1,
+     "12:30": 1,
+     "13:00": 1,
+     "13:30": 1,
+     "14:00": 1,
+     "14:30": 1,
+     "15:00": 1,
+     "15:30": 1
+    },
+    "first_entry": "10:30",
+    "first_dir": 1,
+    "gross": 0.012291123345890019,
+    "sides": 2
+   },
+   "2022-04-29 a": {
+    "positions": {
+     "10:00": 0,
+     "10:30": -1,
+     "11:00": -1,
+     "11:30": -1,
+     "12:00": -1,
+     "12:30": -1,
+     "13:00": -1,
+     "13:30": -1,
+     "14:00": -1,
+     "14:30": -1,
+     "15:00": -1,
+     "15:30": -1
+    },
+    "first_entry": "10:30",
+    "first_dir": -1,
+    "gross": 0.02156523483537693,
+    "sides": 2
+   }
+  }
+ },
+ "R3": {
+  "a": {
+   "sessions": 2081,
+   "total_return": 0.5335676106317786,
+   "annual_return": 0.053144132506463215,
+   "annual_vol": 0.08885346466027474,
+   "sharpe": 0.6272489378955749,
+   "sharpe_se": 0.3806804872136974,
+   "t_mean": 1.8025017885419594,
+   "max_drawdown": 0.13476460049826955,
+   "corr_spy": -0.02833288888594756,
+   "beta_spy": -0.014130507807600022,
+   "alpha_annual": 0.05784690212497351,
+   "best_day": 0.03225669224316355,
+   "worst_day": -0.03560938751958018,
+   "share_days_traded": 0.6045170591061989,
+   "round_trips": 1320,
+   "round_trips_per_day": 0.6343104276790005,
+   "win_rate_days_traded": 0.5445151033386327,
+   "win_rate_round_trips": 0.5386363636363637,
+   "gross_bps_per_side": 1.8883800856196769
+  },
+  "a2": {
+   "sessions": 2081,
+   "total_return": 0.7329797340124198,
+   "annual_return": 0.06885020947416565,
+   "annual_vol": 0.06772832739216911,
+   "sharpe": 1.0169939070564475,
+   "sharpe_se": 0.4286243276608617,
+   "t_mean": 2.9224973143130364,
+   "max_drawdown": 0.11610138618085886,
+   "corr_spy": -0.03207475485392684,
+   "beta_spy": -0.012193439850243754,
+   "alpha_annual": 0.07070320779274494,
+   "best_day": 0.03225669224316355,
+   "worst_day": -0.04802777304373465,
+   "share_days_traded": 0.6040365209034119,
+   "round_trips": 1849,
+   "round_trips_per_day": 0.8885151369533878,
+   "win_rate_days_traded": 0.43914081145584727,
+   "win_rate_round_trips": 0.39372633856138456,
+   "gross_bps_per_side": 1.6838986561774782
+  },
+  "a_vol_in_range": true,
+  "a_beta_in_range": true
+ },
+ "trusted": true,
+ "monthly": [
+  {
+   "month": "2016-02",
+   "paper_pct": -1.9,
+   "mine_pct": -1.87
+  },
+  {
+   "month": "2016-03",
+   "paper_pct": 1.3,
+   "mine_pct": 1.12
+  },
+  {
+   "month": "2016-04",
+   "paper_pct": -1.4,
+   "mine_pct": -1.88
+  },
+  {
+   "month": "2016-05",
+   "paper_pct": 0.4,
+   "mine_pct": 0.43
+  },
+  {
+   "month": "2016-06",
+   "paper_pct": -7.3,
+   "mine_pct": -6.97
+  },
+  {
+   "month": "2016-07",
+   "paper_pct": -3.1,
+   "mine_pct": -3.21
+  },
+  {
+   "month": "2016-08",
+   "paper_pct": -5.2,
+   "mine_pct": -5.33
+  },
+  {
+   "month": "2016-09",
+   "paper_pct": 8.4,
+   "mine_pct": 7.97
+  },
+  {
+   "month": "2016-10",
+   "paper_pct": -5.0,
+   "mine_pct": -5.22
+  },
+  {
+   "month": "2016-11",
+   "paper_pct": 1.4,
+   "mine_pct": 1.78
+  },
+  {
+   "month": "2016-12",
+   "paper_pct": 0.7,
+   "mine_pct": -0.7
+  },
+  {
+   "month": "2017-01",
+   "paper_pct": -3.3,
+   "mine_pct": -3.4
+  },
+  {
+   "month": "2017-02",
+   "paper_pct": 0.9,
+   "mine_pct": 0.92
+  },
+  {
+   "month": "2017-03",
+   "paper_pct": 1.7,
+   "mine_pct": 1.37
+  },
+  {
+   "month": "2017-04",
+   "paper_pct": -3.3,
+   "mine_pct": -3.1
+  },
+  {
+   "month": "2017-05",
+   "paper_pct": -2.4,
+   "mine_pct": -2.42
+  },
+  {
+   "month": "2017-06",
+   "paper_pct": 0.4,
+   "mine_pct": 0.3
+  },
+  {
+   "month": "2017-07",
+   "paper_pct": -1.8,
+   "mine_pct": -2.68
+  },
+  {
+   "month": "2017-08",
+   "paper_pct": 3.6,
+   "mine_pct": 3.61
+  },
+  {
+   "month": "2017-09",
+   "paper_pct": -1.1,
+   "mine_pct": -1.4
+  },
+  {
+   "month": "2017-10",
+   "paper_pct": 2.9,
+   "mine_pct": 3.29
+  },
+  {
+   "month": "2017-11",
+   "paper_pct": -2.2,
+   "mine_pct": -2.34
+  },
+  {
+   "month": "2017-12",
+   "paper_pct": -2.3,
+   "mine_pct": -3.08
+  },
+  {
+   "month": "2018-01",
+   "paper_pct": 3.5,
+   "mine_pct": 3.39
+  },
+  {
+   "month": "2018-02",
+   "paper_pct": 8.9,
+   "mine_pct": 8.23
+  },
+  {
+   "month": "2018-03",
+   "paper_pct": 7.2,
+   "mine_pct": 7.4
+  },
+  {
+   "month": "2018-04",
+   "paper_pct": 3.5,
+   "mine_pct": 3.47
+  },
+  {
+   "month": "2018-05",
+   "paper_pct": -4.7,
+   "mine_pct": -4.92
+  },
+  {
+   "month": "2018-06",
+   "paper_pct": 2.0,
+   "mine_pct": 1.9
+  },
+  {
+   "month": "2018-07",
+   "paper_pct": 6.2,
+   "mine_pct": 4.83
+  },
+  {
+   "month": "2018-08",
+   "paper_pct": -1.7,
+   "mine_pct": -1.96
+  },
+  {
+   "month": "2018-09",
+   "paper_pct": -3.5,
+   "mine_pct": -3.25
+  },
+  {
+   "month": "2018-10",
+   "paper_pct": 13.4,
+   "mine_pct": 13.31
+  },
+  {
+   "month": "2018-11",
+   "paper_pct": 3.0,
+   "mine_pct": 2.7
+  },
+  {
+   "month": "2018-12",
+   "paper_pct": 12.5,
+   "mine_pct": 10.85
+  },
+  {
+   "month": "2019-01",
+   "paper_pct": 0.9,
+   "mine_pct": 0.82
+  },
+  {
+   "month": "2019-02",
+   "paper_pct": -0.7,
+   "mine_pct": -0.62
+  },
+  {
+   "month": "2019-03",
+   "paper_pct": 2.9,
+   "mine_pct": 2.88
+  },
+  {
+   "month": "2019-04",
+   "paper_pct": 0.9,
+   "mine_pct": 0.9
+  },
+  {
+   "month": "2019-05",
+   "paper_pct": -5.1,
+   "mine_pct": -5.66
+  },
+  {
+   "month": "2019-06",
+   "paper_pct": -0.5,
+   "mine_pct": 0.44
+  },
+  {
+   "month": "2019-07",
+   "paper_pct": 1.4,
+   "mine_pct": 1.4
+  },
+  {
+   "month": "2019-08",
+   "paper_pct": 6.8,
+   "mine_pct": 6.62
+  },
+  {
+   "month": "2019-09",
+   "paper_pct": -1.4,
+   "mine_pct": -1.48
+  },
+  {
+   "month": "2019-10",
+   "paper_pct": 2.6,
+   "mine_pct": 2.69
+  },
+  {
+   "month": "2019-11",
+   "paper_pct": -1.7,
+   "mine_pct": -1.76
+  },
+  {
+   "month": "2019-12",
+   "paper_pct": 1.0,
+   "mine_pct": -0.17
+  },
+  {
+   "month": "2020-01",
+   "paper_pct": 5.3,
+   "mine_pct": 4.14
+  },
+  {
+   "month": "2020-02",
+   "paper_pct": 1.9,
+   "mine_pct": 1.28
+  },
+  {
+   "month": "2020-03",
+   "paper_pct": -0.5,
+   "mine_pct": -0.5
+  },
+  {
+   "month": "2020-04",
+   "paper_pct": -1.8,
+   "mine_pct": -1.89
+  },
+  {
+   "month": "2020-05",
+   "paper_pct": -0.2,
+   "mine_pct": -0.02
+  },
+  {
+   "month": "2020-06",
+   "paper_pct": 8.0,
+   "mine_pct": 8.02
+  },
+  {
+   "month": "2020-07",
+   "paper_pct": 0.1,
+   "mine_pct": -0.23
+  },
+  {
+   "month": "2020-08",
+   "paper_pct": -1.8,
+   "mine_pct": -1.75
+  },
+  {
+   "month": "2020-09",
+   "paper_pct": 14.3,
+   "mine_pct": 14.63
+  },
+  {
+   "month": "2020-10",
+   "paper_pct": 2.8,
+   "mine_pct": 2.93
+  },
+  {
+   "month": "2020-11",
+   "paper_pct": -1.1,
+   "mine_pct": -1.12
+  },
+  {
+   "month": "2020-12",
+   "paper_pct": -1.9,
+   "mine_pct": -1.99
+  },
+  {
+   "month": "2021-01",
+   "paper_pct": 7.8,
+   "mine_pct": 6.81
+  },
+  {
+   "month": "2021-02",
+   "paper_pct": 3.1,
+   "mine_pct": 2.24
+  },
+  {
+   "month": "2021-03",
+   "paper_pct": 0.7,
+   "mine_pct": 0.87
+  },
+  {
+   "month": "2021-04",
+   "paper_pct": 6.1,
+   "mine_pct": 5.91
+  },
+  {
+   "month": "2021-05",
+   "paper_pct": 2.6,
+   "mine_pct": 2.12
+  },
+  {
+   "month": "2021-06",
+   "paper_pct": -1.0,
+   "mine_pct": -0.71
+  },
+  {
+   "month": "2021-07",
+   "paper_pct": 2.8,
+   "mine_pct": 2.92
+  },
+  {
+   "month": "2021-08",
+   "paper_pct": 1.7,
+   "mine_pct": 1.46
+  },
+  {
+   "month": "2021-09",
+   "paper_pct": 2.8,
+   "mine_pct": 2.59
+  },
+  {
+   "month": "2021-10",
+   "paper_pct": 3.3,
+   "mine_pct": 3.26
+  },
+  {
+   "month": "2021-11",
+   "paper_pct": -3.2,
+   "mine_pct": -4.92
+  },
+  {
+   "month": "2021-12",
+   "paper_pct": 4.1,
+   "mine_pct": 4.28
+  },
+  {
+   "month": "2022-01",
+   "paper_pct": -5.5,
+   "mine_pct": -6.36
+  },
+  {
+   "month": "2022-02",
+   "paper_pct": 2.8,
+   "mine_pct": 2.91
+  },
+  {
+   "month": "2022-03",
+   "paper_pct": 0.2,
+   "mine_pct": 0.34
+  },
+  {
+   "month": "2022-04",
+   "paper_pct": 9.0,
+   "mine_pct": 8.96
+  },
+  {
+   "month": "2022-05",
+   "paper_pct": 2.1,
+   "mine_pct": 2.06
+  },
+  {
+   "month": "2022-06",
+   "paper_pct": 0.5,
+   "mine_pct": 0.65
+  },
+  {
+   "month": "2022-07",
+   "paper_pct": 0.2,
+   "mine_pct": 0.03
+  },
+  {
+   "month": "2022-08",
+   "paper_pct": 6.3,
+   "mine_pct": 6.19
+  },
+  {
+   "month": "2022-09",
+   "paper_pct": -1.0,
+   "mine_pct": -0.94
+  },
+  {
+   "month": "2022-10",
+   "paper_pct": 5.8,
+   "mine_pct": 5.82
+  },
+  {
+   "month": "2022-11",
+   "paper_pct": 1.6,
+   "mine_pct": 1.26
+  },
+  {
+   "month": "2022-12",
+   "paper_pct": 0.7,
+   "mine_pct": 2.24
+  },
+  {
+   "month": "2023-01",
+   "paper_pct": 2.9,
+   "mine_pct": 2.83
+  },
+  {
+   "month": "2023-02",
+   "paper_pct": -1.3,
+   "mine_pct": -1.36
+  },
+  {
+   "month": "2023-03",
+   "paper_pct": 7.8,
+   "mine_pct": 7.93
+  },
+  {
+   "month": "2023-04",
+   "paper_pct": 1.8,
+   "mine_pct": 2.19
+  },
+  {
+   "month": "2023-05",
+   "paper_pct": 2.9,
+   "mine_pct": 3.59
+  },
+  {
+   "month": "2023-06",
+   "paper_pct": 4.1,
+   "mine_pct": 4.07
+  },
+  {
+   "month": "2023-07",
+   "paper_pct": 2.2,
+   "mine_pct": 1.45
+  },
+  {
+   "month": "2023-08",
+   "paper_pct": 6.0,
+   "mine_pct": 6.1
+  },
+  {
+   "month": "2023-09",
+   "paper_pct": 2.9,
+   "mine_pct": 3.77
+  },
+  {
+   "month": "2023-10",
+   "paper_pct": -1.1,
+   "mine_pct": -1.0
+  },
+  {
+   "month": "2023-11",
+   "paper_pct": 0.5,
+   "mine_pct": 0.53
+  },
+  {
+   "month": "2023-12",
+   "paper_pct": 3.8,
+   "mine_pct": 3.81
+  },
+  {
+   "month": "2024-01",
+   "paper_pct": 8.8,
+   "mine_pct": 8.63
+  },
+  {
+   "month": "2024-02",
+   "paper_pct": -1.5,
+   "mine_pct": -1.32
+  },
+  {
+   "month": "2024-03",
+   "paper_pct": -0.4,
+   "mine_pct": -0.72
+  },
+  {
+   "month": "2024-04",
+   "paper_pct": 5.8,
+   "mine_pct": 5.74
+  }
+ ]
+}
