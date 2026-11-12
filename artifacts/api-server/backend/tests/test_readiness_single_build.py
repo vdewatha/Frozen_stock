@@ -151,3 +151,25 @@ def test_memory_is_trimmed_after_long_tasks_only_and_never_raises(monkeypatch):
     assert trimmed == [True] and celery_module._task_started == {}
     celery_module._trim_after_long_task(task_id="never-started")         # unknown task: nothing to do
     assert memory.resident_mb() is None or memory.resident_mb() > 0
+
+
+def test_the_api_responses_carry_the_timing_and_the_readiness_source():
+    """2026-11-12: after the publish the timing was only in the log line.
+
+    Both routes declare a response model, and a field the model does not name
+    is dropped, so the evidence the build records never reached a reader.
+    """
+    from app.schemas.trading import DeploymentMonitorResponse, ReadinessResponse
+
+    timing = {"Market data": {"seconds": 41.2, "rss_delta_mb": 310.5}}
+    body = ReadinessResponse.model_validate({**_snapshot(), "timing": timing}).model_dump()
+    assert body["timing"] == timing
+    assert ReadinessResponse.model_validate(_snapshot()).timing is None   # the placeholder has none
+
+    monitor = DeploymentMonitorResponse.model_validate({
+        "generated_at": datetime.utcnow(), "environment": "production", "deployable": True, "status": "ready",
+        "paper_trading_allowed": True, "live_trading_allowed": False, "message": "ok", "checks": [],
+        "blockers": [], "warnings": [], "readiness_status": "warning", "readiness_blockers": [],
+        "readiness_warnings": [], "readiness_source": "shared", "readiness": _snapshot(),
+    })
+    assert monitor.model_dump()["readiness_source"] == "shared"
