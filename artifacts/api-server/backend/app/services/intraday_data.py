@@ -875,6 +875,19 @@ def ingest_intraday(
     # every minute) is fetched for all symbols with multi-symbol requests;
     # repair/backfill windows are per symbol and share one bounded budget.
     latest_window = _latest_completed_window(observed_at)
+    # Outside today's session the newest bars belong to the previous session,
+    # and feed_status judges entitlement by that session's newest stored bar.
+    # Re-read its final hour for every symbol each cycle, ahead of any repair
+    # slice: a symbol with an unrepairable gap (IEX no-trade runs) otherwise
+    # re-fetched only the gap, its newest bar aged out of the entitlement
+    # window at midnight, and 10 of 45 symbols tipped the broad-outage check
+    # into an hourly pause/auto-resume loop until the open (2026-11-12).
+    verify_window = None
+    if latest_window is None:
+        previous_bounds = session_bounds(_previous_session(local_now.date()))
+        assert previous_bounds is not None
+        verify_window = (previous_bounds[1] - INTRADAY_BACKFILL_WINDOW, previous_bounds[1])
+        latest_window = verify_window
     prefetched: dict[str, tuple[list[dict], int, bool]] = {}
     prefetch_rate_limited: Exception | None = None
     if latest_window and len(selected) > 1:
@@ -931,6 +944,8 @@ def ingest_intraday(
                         )
                         if backfill_window:
                             windows.append(backfill_window)
+            if verify_window is not None:
+                windows.append(verify_window)
             repair_day = local_now.date()
             repair_bounds = None
             for _ in range(repair_sessions):
@@ -942,7 +957,7 @@ def ingest_intraday(
                     backfill_window = _bounded_missing_window(
                         db, symbol, repair_bounds[0], repair_bounds[1], index=index
                     )
-                    if backfill_window:
+                    if backfill_window and backfill_window not in windows:
                         windows.append(backfill_window)
             assert repair_bounds is not None
             if not windows:

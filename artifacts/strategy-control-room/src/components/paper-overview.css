@@ -112,7 +112,7 @@
 .ov-status-tag { border-radius: 3px; padding: 3px 6px; color: #387153; background: #edf5ef; font: 500 8px "DM Mono", monospace; text-transform: uppercase; }
 .ov-status-tag.candidate { color: #967435; background: #f6f1e4; }
 .ov-status-tag.paused { color: #77817b; background: #eff1ef; }
-.ov-strategy-meta { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 9px 0 0 15px; }
+.ov-strategy-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 9px 0 0 15px; }
 .ov-strategy-meta > span { display: grid; gap: 3px; min-width: 0; }
 .ov-strategy-meta small { color: #a0aaa3; font: 8px "DM Mono", monospace; }
 .ov-strategy-meta b { color: #53645a; font-size: 9px; font-weight: 600; overflow-wrap: anywhere; }
@@ -220,7 +220,7 @@
   .ov-section-head.compact { padding: 11px; }
   .ov-strategy-row { padding: 10px; }
   .ov-strategy-name > div { display: grid; gap: 2px; }
-  .ov-strategy-meta { margin-left: 15px; grid-template-columns: 1fr 1fr .85fr; gap: 4px; }
+  .ov-strategy-meta { margin-left: 15px; grid-template-columns: 1fr 1fr; gap: 4px; }
   .ov-strategy-meta b { font-size: 8px; }
   .ov-strategy-meta small { font-size: 7px; }
   .ov-next-eval { font-size: 8px; text-align: right; }

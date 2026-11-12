@@ -20,7 +20,7 @@ from app.models import (
 )
 from app.services.exchange_sessions import session_bounds
 from app.services.paper_mandate import current_mandate, mandate_state
-from app.services.stock_paper_ledger import active_paper_account
+from app.services.stock_paper_ledger import PROBE_SOURCE, active_paper_account
 from app.services.strategy_execution_policy import daily_bar_entry_window, exit_policy_for, sessions_held
 
 ET = ZoneInfo("America/New_York")
@@ -32,6 +32,8 @@ ZERO = Decimal("0")
 STALE_SECONDS = 420
 # Orders reconciliation imported from the broker because no app order claimed them.
 EXTERNAL_ORDER_SOURCE = "broker_import"
+# Slow-book (passive arm) rows hold to a target weight, with no time stop.
+TARGET_WEIGHT_STATUSES = frozenset({"target_weight_active", "target_weight_shadow"})
 # Nothing in this module assigns an owner. Each diagnostic names the evidence
 # that is missing and the explicit, reviewed step that could supply it.
 ATTRIBUTION_PROPOSALS = {
@@ -74,7 +76,31 @@ def _plural(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
 
-def _attribution_evidence(row, fills, orders, strategies, net, known) -> dict:
+def _is_probe(order, symbol) -> bool:
+    """A cost-probe order (one share, own source); it has no strategy by design."""
+    return (
+        order is not None and order.symbol == symbol and order.strategy_id is None
+        and order.source == PROBE_SOURCE
+    )
+
+
+def _current_episode(fills):
+    """Fills of the current holding episode: those after the symbol was last flat.
+
+    Same rule as the autotrader's ``_strategy_lots``: once the net quantity
+    returns to zero nothing from earlier survives, so an old closed-out round
+    trip (a QA order, a broker import) cannot leave today's holding
+    unattributed. Returns (episode fills, number of earlier fills).
+    """
+    running, start = ZERO, 0
+    for index, fill in enumerate(fills):  # already ordered by filled_at, id
+        running += _signed(fill)
+        if running <= 0:
+            start = index + 1
+    return fills[start:], start
+
+
+def _attribution_evidence(row, fills, orders, strategies, net, known, probe=ZERO, earlier=0) -> dict:
     """Explain, from persisted evidence only, why ownership is or is not established.
 
     Diagnostics are descriptive. They never choose an owner, never read strategy
@@ -86,6 +112,8 @@ def _attribution_evidence(row, fills, orders, strategies, net, known) -> dict:
         order = orders.get(fill.order_id)
         if order is None or order.symbol != row.symbol:
             unlinked.append(fill)  # No persisted order describes this fill for this symbol.
+        elif _is_probe(order, row.symbol):
+            continue  # The cost probe's own share: owned by the probe, not unowned.
         elif order.strategy_id is None and order.source == EXTERNAL_ORDER_SOURCE:
             external.append(fill)
         elif order.strategy_id not in strategies:
@@ -126,9 +154,14 @@ def _attribution_evidence(row, fills, orders, strategies, net, known) -> dict:
         issue("no_fill_history", [],
               "No same-account fills are persisted for this symbol; the holding predates or falls "
               "outside the imported activity history.")
-    if known:
+    if known and probe > 0 and strategy_net == 0:
+        summary = (f"The {_qty(probe)}-share holding is the cost probe's own; it is sold by the probe, "
+                   "not by a strategy.")
+    elif known:
         summary = (f"{_plural(len(fills), 'fill')} from strategy orders net exactly to the broker "
                    f"quantity of {_qty(row.quantity)}.")
+        if probe > 0:
+            summary += f" {_qty(probe)} of those shares belong to the cost probe."
     elif issues:
         summary = " ".join(i["detail"] for i in issues)
     else:
@@ -136,6 +169,8 @@ def _attribution_evidence(row, fills, orders, strategies, net, known) -> dict:
     return {
         "broker_quantity": str(row.quantity),
         "fill_count": len(fills),
+        "earlier_fill_count": earlier,
+        "probe_quantity": str(probe),
         "strategy_net_quantity": str(strategy_net),
         "fill_net_quantity": str(total_net),
         "unexplained_quantity": str(residual),
@@ -185,22 +220,34 @@ def _working_stop(pending_exits):
 
 
 def _position(row, fills, orders, strategies, lots, now, verified):
-    # Same fail-closed attribution rule as execution's position-count gate:
-    # any unowned fill or mismatched aggregate leaves the symbol unattributed.
+    # Same fail-closed attribution rule as execution's position-count gate
+    # (stock_paper_autotrader._strategy_lots): within the current holding
+    # episode, any unowned fill or mismatched aggregate leaves the symbol
+    # unattributed. The cost probe's own share is owned by the probe.
+    all_fills = fills
+    fills, earlier = _current_episode(all_fills)
     net = defaultdict(lambda: ZERO)
+    probe = ZERO
     unknown = False
     for fill in fills:
         order = orders.get(fill.order_id)
+        if _is_probe(order, row.symbol):
+            probe += _signed(fill)
+            continue
         if order is None or order.strategy_id not in strategies or order.symbol != row.symbol:
             unknown = True
             continue
         net[order.strategy_id] += _signed(fill)
     owners = [sid for sid, qty in net.items() if qty > 0]
     known = (
-        not unknown and bool(owners) and all(qty >= 0 for qty in net.values())
-        and sum(net.values(), ZERO) == row.quantity
+        not unknown and (bool(owners) or probe > 0) and probe >= 0
+        and all(qty >= 0 for qty in net.values())
+        and sum(net.values(), ZERO) + probe == row.quantity
     )
-    evidence = _attribution_evidence(row, fills, orders, strategies, net, known)
+    evidence = _attribution_evidence(row, fills, orders, strategies, net, known, probe, earlier)
+    target_weight = bool(owners) and all(
+        strategies[sid].current_status in TARGET_WEIGHT_STATUSES for sid in owners
+    )
     owner_lots = [
         lot for lot in lots
         if lot.symbol == row.symbol
@@ -253,17 +300,43 @@ def _position(row, fills, orders, strategies, lots, now, verified):
             held = sessions_held(_utc(entry_at).astimezone(ET).date(), now.astimezone(ET).date())
         horizon, horizon_source = _fallback_horizon(owner_lots, owners, strategies)
         stop = _working_stop(pending_exits)
+    if known and horizon is None:
+        # Neither has a session count to show: the slow book holds to its
+        # target weight and the probe sells within the session or at the
+        # next probe tick. Say which, instead of "Unknown".
+        if probe > 0 and not owners:
+            horizon_source = "cost_probe"
+            intent = intent or "Probe sell at the next probe tick"
+        elif target_weight:
+            horizon_source = "target_weight"
+            intent = intent or "Held at target weight · rebalanced by the slow book"
     pnl = row.unrealized_pl if verified else None
     cost = row.cost_basis
+    names = [strategies[sid].name for sid in sorted(owners)] + (["Cost probe"] if probe > 0 else [])
+    if not known:
+        attribution = "unknown"
+    elif probe > 0 and not owners:
+        attribution = "cost_probe"
+    elif len(names) == 1:
+        attribution = "attributed"
+    else:
+        attribution = "multiple"
     return {
         "symbol": row.symbol, "quantity": str(row.quantity),
         "entry_price": _money(row.average_entry_price),
         "current_price": _money(row.current_price), "market_value": _money(row.market_value),
         "unrealized_pl": _money(pnl),
         "unrealized_pl_pct": float(pnl / cost * 100) if pnl is not None and cost and cost > 0 else None,
+        # The broker's own mark-to-market, before any fee. Shown labelled as
+        # such while the all-in (fee-verified) value above stays masked.
+        "broker_unrealized_pl": _money(row.unrealized_pl),
+        "broker_unrealized_pl_pct": (
+            float(row.unrealized_pl / cost * 100)
+            if row.unrealized_pl is not None and cost and cost > 0 else None
+        ),
         "observed_at": _iso(row.observed_at),
-        "attribution": ("attributed" if len(owners) == 1 else "multiple") if known else "unknown",
-        "strategy": " / ".join(strategies[sid].name for sid in sorted(owners)) if known else None,
+        "attribution": attribution,
+        "strategy": " / ".join(names) if known else None,
         "strategy_ids": sorted(owners) if known else [],
         "attribution_evidence": evidence,
         "entry_at": _iso(entry_at), "sessions_held": held,
@@ -378,8 +451,6 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
                 # The frozen forward experiments' readings at decision time (forward_gate_readings.py).
                 "gate_readings": (signal.features or {}).get("gate_readings"),
             } if signal else None),
-            # Cadence is not a durable per-strategy next-run timestamp.
-            "next_evaluation_at": None,
         })
     activity = []
     recent_fills = db.scalars(select(StockPaperFill).where(
@@ -392,9 +463,15 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
     for fill in recent_fills:
         order = activity_orders.get(fill.order_id)
         strategy = strategies.get(order.strategy_id) if order else None
+        owner = (
+            strategy.name if strategy
+            else "Cost probe" if order is not None and order.source == PROBE_SOURCE
+            else "Outside order" if order is not None and order.source == EXTERNAL_ORDER_SOURCE
+            else None
+        )
         activity.append({
             "id": f"fill-{fill.id}", "kind": fill.side, "symbol": fill.symbol,
-            "strategy": strategy.name if strategy else None, "at": _iso(fill.filled_at),
+            "strategy": owner, "at": _iso(fill.filled_at),
             "detail": f"{fill.quantity} @ ${fill.price}",
         })
     withheld = db.scalars(select(StrategySignal).where(
@@ -417,6 +494,10 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
         for observed_at, equity in (equity_curve_points(db, account.id, now=now) if account else [])
     ]
     exposure = sum((r.market_value for r in rows), ZERO) if account and all(r.market_value is not None for r in rows) else None
+    broker_open_pl = (
+        sum((r.unrealized_pl for r in rows), ZERO)
+        if account and all(r.unrealized_pl is not None for r in rows) else None
+    )
     equity = account.equity if account else None
     return {
         "generated_at": now.isoformat(), "mode": "paper",
@@ -433,7 +514,6 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
             "max_positions": exposure_limits.get("max_positions"),
             "max_gross": _money(exposure_limits.get("max_aggregate_notional")),
             "per_symbol": _money(exposure_limits.get("max_symbol_notional")),
-            "stop_fraction": None,
         },
         "account": {
             "status": account.status if account else "uninitialized",
@@ -441,7 +521,9 @@ def paper_overview(db: Session, *, now: datetime | None = None) -> dict:
             "equity": _money(equity), "cash": _money(account.cash) if account else None,
             "exposure": _money(exposure),
             "exposure_pct": float(exposure / equity * 100) if exposure is not None and equity and equity > 0 else None,
-            "pnl_verified": verified, "realized_pl": None,
+            "pnl_verified": verified,
+            # Sum of the broker's unrealized P/L over open positions, before fees.
+            "broker_unrealized_pl": _money(broker_open_pl),
         },
         "equity_curve": equity_curve,
         "positions": positions, "strategies": admitted,

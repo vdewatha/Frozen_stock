@@ -12,6 +12,10 @@ export type AttributionIssue = {
 export type AttributionEvidence = {
   broker_quantity: string;
   fill_count: number;
+  /** Fills before the symbol was last flat; they do not bear on the current holding. */
+  earlier_fill_count?: number;
+  /** Shares held by the cost probe (owned by the probe, not a strategy). */
+  probe_quantity?: string;
   strategy_net_quantity: string;
   fill_net_quantity: string;
   unexplained_quantity: string;
@@ -27,16 +31,22 @@ export type OverviewPosition = {
   market_value: string | null;
   unrealized_pl: string | null;
   unrealized_pl_pct: number | null;
+  /** The broker's own mark-to-market before fees; shown when the fee-verified value is masked. */
+  broker_unrealized_pl?: string | null;
+  broker_unrealized_pl_pct?: number | null;
   observed_at: string | null;
-  attribution: "attributed" | "multiple" | "unknown";
+  attribution: "attributed" | "multiple" | "cost_probe" | "unknown";
   strategy: string | null;
   strategy_ids: number[];
   attribution_evidence: AttributionEvidence;
   entry_at: string | null;
   sessions_held: number | null;
   horizon_sessions: number | null;
-  /** "lot" (this holding's lot), "lots" (shared by its lots) or "strategy_time_stop" (owner strategy policy). */
-  horizon_source?: "lot" | "lots" | "strategy_time_stop" | null;
+  /**
+   * "lot" (this holding's lot), "lots" (shared by its lots), "strategy_time_stop" (owner strategy policy),
+   * "target_weight" (slow book: held to target, no time stop) or "cost_probe" (sold by the probe).
+   */
+  horizon_source?: "lot" | "lots" | "strategy_time_stop" | "target_weight" | "cost_probe" | null;
   exit_intent: string | null;
   stop_price: string | null;
 };
@@ -44,15 +54,14 @@ export type OverviewStrategy = {
   id: number; name: string; status: string;
   open_positions: number; position_limit: number | null;
   last_signal: { action: string; symbol: string; at: string | null; withheld: boolean | null; reason: string | null } | null;
-  next_evaluation_at: string | null;
 };
 export type PaperOverview = {
   generated_at: string;
   mode: "paper";
   session: { state: "open" | "closed"; opens_at: string | null; closes_at: string | null; entry_start: string | null; entry_end: string | null };
   bot: { state: string; reason: string | null; kill_switch: boolean | null; mandate_status: string | null };
-  bounds: { starts_at: string | null; ends_at: string | null; max_positions: number | null; max_gross: string | null; per_symbol: string | null; stop_fraction: string | null };
-  account: { status: string; last_reconciled_at: string | null; stale: boolean; equity: string | null; cash: string | null; exposure: string | null; exposure_pct: number | null; pnl_verified: boolean; realized_pl: string | null };
+  bounds: { starts_at: string | null; ends_at: string | null; max_positions: number | null; max_gross: string | null; per_symbol: string | null };
+  account: { status: string; last_reconciled_at: string | null; stale: boolean; equity: string | null; cash: string | null; exposure: string | null; exposure_pct: number | null; pnl_verified: boolean; broker_unrealized_pl?: string | null };
   equity_curve: { observed_at: string | null; equity: string | null }[];
   positions: OverviewPosition[];
   strategies: OverviewStrategy[];

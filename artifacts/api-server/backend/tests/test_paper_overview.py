@@ -11,6 +11,7 @@ import app.models  # noqa: F401
 from app.db.base import Base
 from app.models import Strategy, StrategySignal, StockPaperAccount, StockPaperFill, StockPaperOrder, StockPaperPosition
 from app.services.paper_overview import paper_overview
+from app.services.target_weight_book import PASSIVE_ARM_TYPE
 
 NOW = datetime(2026, 10, 30, 17, 0, tzinfo=timezone.utc)
 
@@ -250,8 +251,12 @@ def test_unverified_account_still_shows_holdings_but_never_invents_pl(book):
     assert len(result["positions"]) == 1
     assert result["positions"][0]["unrealized_pl"] is None
     assert result["positions"][0]["unrealized_pl_pct"] is None
+    # The broker's own mark stays visible, labelled before fees.
+    assert Decimal(result["positions"][0]["broker_unrealized_pl"]) == 100
+    assert result["positions"][0]["broker_unrealized_pl_pct"] == 10
+    assert Decimal(result["account"]["broker_unrealized_pl"]) == 100
+    assert result["account"]["pnl_verified"] is False
     assert result["account"]["stale"] is True
-    assert result["account"]["realized_pl"] is None
     assert result["bot"]["state"] == "Blocked"
 
 
@@ -277,9 +282,92 @@ def test_persisted_entry_withholding_and_unknown_schedule_are_explicit(book):
     db.commit()
     result = paper_overview(db, now=NOW)
     assert result["strategies"][0]["last_signal"]["withheld"] is True
-    assert result["strategies"][0]["next_evaluation_at"] is None
+    # No per-strategy next-run time exists, so none is sent (it only ever read "Unknown").
+    assert "next_evaluation_at" not in result["strategies"][0]
+    assert "stop_fraction" not in result["bounds"]
     assert result["activity"][0]["kind"] == "withheld"
     assert result["bounds"]["starts_at"] is None
+
+
+def _later(minutes):
+    return NOW + timedelta(minutes=minutes)
+
+
+def test_closed_out_external_round_trip_does_not_unattribute_the_current_holding(book):
+    """AAPL on 2026-11-12: a QA buy/sell on 09-30 kept a 11-06 strategy holding unattributed."""
+    db, account, strategy = book
+    position, order = add_holding(db, account, strategy, shares=2)
+    qa_buy = StockPaperOrder(account_id=account.id, strategy_id=None, client_order_id="qa-buy",
+                             symbol="SPY", side="buy", quantity=Decimal("0.03"), status="filled",
+                             source="broker_import")
+    qa_sell = StockPaperOrder(account_id=account.id, strategy_id=None, client_order_id="qa-sell",
+                              symbol="SPY", side="sell", quantity=Decimal("0.03"), status="filled",
+                              source="broker_import")
+    db.add_all([qa_buy, qa_sell])
+    db.flush()
+    for activity, side, order_id, minutes in [("qa-b", "buy", qa_buy.id, -600), ("qa-s", "sell", qa_sell.id, -599)]:
+        db.add(StockPaperFill(account_id=account.id, order_id=order_id, broker_activity_id=activity,
+                              symbol="SPY", side=side, quantity=Decimal("0.03"), price=Decimal("100"),
+                              fee=Decimal("0"), cost_known=True, filled_at=_later(minutes), raw_payload={}))
+    db.commit()
+    row = paper_overview(db, now=NOW)["positions"][0]
+    assert row["attribution"] == "attributed" and row["strategy"] == "RSI(2)"
+    assert row["attribution_evidence"]["earlier_fill_count"] == 2
+    assert row["attribution_evidence"]["issues"] == []
+
+
+def test_external_round_trip_inside_the_current_holding_still_fails_closed(book):
+    db, account, strategy = book
+    add_holding(db, account, strategy, shares=2)
+    outside = StockPaperOrder(account_id=account.id, strategy_id=None, client_order_id="outside",
+                              symbol="SPY", side="buy", quantity=1, status="filled", source="broker_import")
+    db.add(outside)
+    db.flush()
+    add_fill(db, account, order_id=outside.id, shares=1, activity="outside-buy")
+    add_fill(db, account, order_id=outside.id, shares=1, side="sell", activity="outside-sell")
+    row = paper_overview(db, now=NOW)["positions"][0]
+    assert row["attribution"] == "unknown"
+    assert evidence_codes({"positions": [row]}) == ["external_orders"]
+
+
+def test_cost_probe_share_is_owned_by_the_probe(book):
+    db, account, strategy = book
+    position, order = add_holding(db, account, strategy, shares=1, unknown=True, source="cost_probe")
+    row = paper_overview(db, now=NOW)["positions"][0]
+    assert row["attribution"] == "cost_probe"
+    assert row["strategy"] == "Cost probe" and row["strategy_ids"] == []
+    assert row["attribution_evidence"]["issues"] == []
+    assert Decimal(row["attribution_evidence"]["probe_quantity"]) == 1
+    assert row["horizon_source"] == "cost_probe"
+    assert row["exit_intent"] == "Probe sell at the next probe tick"
+    assert row["entry_at"] == NOW.isoformat()
+
+
+def test_probe_share_next_to_a_strategy_holding_is_multiple(book):
+    db, account, strategy = book
+    position, _ = add_holding(db, account, strategy, shares=3, fill_shares=2)
+    probe = StockPaperOrder(account_id=account.id, strategy_id=None, client_order_id="sp-probe-x",
+                            symbol="SPY", side="buy", quantity=1, status="filled", source="cost_probe")
+    db.add(probe)
+    db.flush()
+    add_fill(db, account, order_id=probe.id, shares=1, activity="probe-fill")
+    row = paper_overview(db, now=NOW)["positions"][0]
+    assert row["attribution"] == "multiple"
+    assert row["strategy"] == "RSI(2) / Cost probe"
+    assert row["strategy_ids"] == [strategy.id]
+
+
+def test_target_weight_holding_says_it_holds_to_target(book):
+    db, account, strategy = book
+    strategy.name, strategy.current_status = "Passive Arm", "target_weight_active"
+    strategy.strategy_type = PASSIVE_ARM_TYPE
+    db.commit()
+    add_holding(db, account, strategy, shares=6)
+    row = paper_overview(db, now=NOW)["positions"][0]
+    assert row["attribution"] == "attributed"
+    assert row["horizon_sessions"] is None
+    assert row["horizon_source"] == "target_weight"
+    assert row["exit_intent"] == "Held at target weight · rebalanced by the slow book"
 
 
 def test_read_issues_no_mutating_sql_or_broker_calls(book):
