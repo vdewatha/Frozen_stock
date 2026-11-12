@@ -37,7 +37,7 @@ import logging
 import math
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -263,9 +263,16 @@ def _eligible(db: Session, account, symbol: str) -> tuple[bool, str, Optional[De
     return True, "", price
 
 
+def _sell_awaits_dispatch(probe: Mapping) -> bool:
+    """The probe's sell was reserved but never reached the broker (it waits for exit legs to cancel)."""
+    sell = probe.get("sell")
+    return sell is not None and str(sell.status) == "reserved" and not sell.broker_order_id
+
+
 def _close_probe(db: Session, account, probe: dict, now: datetime) -> Optional[dict]:
-    from app.services.stock_paper_ledger import (PROBE_SOURCE, StockPaperError, dispatch_reserved_order,
-                                                 reserve_stock_paper_order)
+    from app.services.stock_paper_ledger import (PROBE_SOURCE, StockPaperError, cancel_broker_exit_orders,
+                                                 dispatch_reserved_order, live_exit_orders,
+                                                 release_unsubmitted_reservation, reserve_stock_paper_order)
 
     buy_fill = _fills(db, probe["buy"].id if probe["buy"] else None)
     if buy_fill["quantity"] <= 0:
@@ -286,10 +293,34 @@ def _close_probe(db: Session, account, probe: dict, now: datetime) -> Optional[d
     price = _latest_close(db, symbol)
     if price is None:
         return {"symbol": symbol, "status": "blocked", "reason": "no 1-minute reference bar"}
+    # Exit legs resting on the probe's own share commit it, and the probe's
+    # sell was then refused as a short on every tick: 51 times on 2026-11-11
+    # for the QQQ probe of 11-10, whose share got an OCO from the exit re-arm
+    # before the re-arm learned to skip probes.  When the whole position is the
+    # probe's share, those legs are replaced the way the trading cycle replaces
+    # them for an app-side exit.  A larger position belongs partly to a
+    # strategy, whose protective legs are never touched here.
+    exit_orders = live_exit_orders(db, account.id, symbol) if held == buy_fill["quantity"] else []
+    extra = {"replacing_exit_order_ids": {row.id for row in exit_orders}} if exit_orders else {}
     try:
         order = reserve_stock_paper_order(db, symbol=symbol, side="sell", quantity=buy_fill["quantity"],
                                           reference_price=price, idempotency_key=probe["sell_key"],
-                                          source=PROBE_SOURCE)
+                                          source=PROBE_SOURCE, **extra)
+        if exit_orders:
+            cancel = cancel_broker_exit_orders(db, exit_orders)
+            if cancel["leg_filled"]:
+                release_unsubmitted_reservation(
+                    db, order.id, "Broker-side exit leg already filled; the probe's sell is not needed")
+                _audit(db, ACTION_CLOSED_ELSEWHERE,
+                       {"buy_key": probe["buy_key"], "buy_order_id": probe["buy_order_id"], "symbol": symbol,
+                        "held": str(held), "closed_by": "exit_leg"},
+                       f"cost probe {symbol}: a resting exit leg sold the probe share; no round trip recorded")
+                db.commit()
+                return {"symbol": symbol, "status": "closed_elsewhere"}
+            if not cancel["clear"]:
+                # The sell stays reserved; the next tick dispatches it once the broker confirms the cancel.
+                return {"symbol": symbol, "status": "waiting_for_exit_cancel",
+                        "cancelled_exit_order_ids": cancel["cancelled_order_ids"]}
         submitted = dispatch_reserved_order(db, order.id)
     except StockPaperError as exc:
         return {"symbol": symbol, "status": "blocked", "reason": str(exc)}
@@ -388,7 +419,7 @@ def run_probe_cycle(db: Session, *, now: Optional[datetime] = None) -> dict:
         return base | {"status": "skipped", "reason": "paper account is not reconciled"}
     history = probes(db, since=now - timedelta(days=LOOKBACK_DAYS))
     recorded = [r for r in (_record(db, p) for p in history if not p["recorded"] and not p["closed_elsewhere"]) if r]
-    open_probes = [p for p in history if p["sell"] is None and not p["closed_elsewhere"]
+    open_probes = [p for p in history if (p["sell"] is None or _sell_awaits_dispatch(p)) and not p["closed_elsewhere"]
                    and p["buy"] is not None and p["buy"].status not in {"cancelled", "rejected", "expired"}]
     if open_probes:
         result = _close_probe(db, account, open_probes[0], now) or {"status": "waiting_for_buy_fill",

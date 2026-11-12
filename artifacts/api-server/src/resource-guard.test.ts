@@ -70,20 +70,38 @@ function sample(availableMiB: number, full10: number | null = 0): Sample {
 test("the guard stops only the research worker, after consecutive low samples", () => {
   const config = defaultGuardConfig({});
   const state: GuardState = { strikes: 0, lastKillAt: null };
-  const first = assess(sample(400), state, config, 0);
+  // 600 MiB of 8 GiB is under the 8% line and above the 7% emergency floor.
+  const first = assess(sample(600), state, config, 0);
   assert.equal(first.action, "none");
   assert.equal(first.critical, true);
-  const second = assess(sample(400), state, config, 10_000);
+  const second = assess(sample(600), state, config, 10_000);
   assert.equal(second.action, "kill");
   // The API and the trading lane are larger but never chosen.
   assert.equal(second.action === "kill" && second.victim.label, "paper-core");
   // Cooldown: no second stop within five minutes.
-  assert.equal(assess(sample(400), state, config, 20_000).action, "none");
-  const cooling = assess(sample(400), state, config, 30_000);
+  assert.equal(assess(sample(600), state, config, 20_000).action, "none");
+  const cooling = assess(sample(600), state, config, 30_000);
   assert.equal(cooling.action, "none");
   assert.match(cooling.reason, /cooldown/);
   // Still critical once the cooldown ends: it acts at once.
-  assert.equal(assess(sample(400), state, config, 320_000).action, "kill");
+  assert.equal(assess(sample(600), state, config, 320_000).action, "kill");
+});
+
+test("below the emergency floor the guard acts on the first sample", () => {
+  // 2026-11-11: 529 MiB and 184 MiB available were each "sample 1/2"; the VM froze before a second sample.
+  const config = defaultGuardConfig({});
+  for (const available of [529, 184]) {
+    const state: GuardState = { strikes: 0, lastKillAt: null };
+    const decision = assess(sample(available), state, config, 0);
+    assert.equal(decision.action, "kill");
+    assert.equal(decision.action === "kill" && decision.victim.label, "paper-core");
+    assert.match(decision.reason, /emergency floor/);
+    // The cooldown still applies afterwards.
+    assert.equal(assess(sample(available), state, config, 5_000).action, "none");
+  }
+  // The floor can be moved or switched off by configuration.
+  const relaxed = defaultGuardConfig({ MEMORY_GUARD_EMERGENCY_FRACTION: "0" });
+  assert.equal(assess(sample(184), { strikes: 0, lastKillAt: null }, relaxed, 0).action, "none");
 });
 
 test("thrashing pressure alone also counts; healthy samples reset the count", () => {

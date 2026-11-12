@@ -43,6 +43,7 @@ export type Sample = {
 
 export type GuardConfig = {
   minAvailableFraction: number;
+  emergencyAvailableFraction: number;
   maxFullPressure10: number;
   consecutiveSamples: number;
   cooldownMs: number;
@@ -52,6 +53,12 @@ export type GuardConfig = {
 export const defaultGuardConfig = (env: NodeJS.ProcessEnv = process.env): GuardConfig => ({
   // About 650 MiB on the 8 GiB VM.
   minAvailableFraction: Number(env.MEMORY_GUARD_MIN_AVAILABLE_FRACTION ?? 0.08),
+  // About 560 MiB: below this the guard acts on the first sample. On
+  // 2026-11-11 the VM froze three times; memory fell from 1.3 GiB available to
+  // nothing inside one sample interval, and the readings just before two of
+  // the freezes (529 MiB and 184 MiB) were each "sample 1/2", so the guard
+  // was still waiting for its second sample when the VM stalled.
+  emergencyAvailableFraction: Number(env.MEMORY_GUARD_EMERGENCY_FRACTION ?? 0.07),
   // Share of the last 10 s in which every task was stalled on memory.
   maxFullPressure10: Number(env.MEMORY_GUARD_MAX_FULL_PRESSURE ?? 25),
   consecutiveSamples: Math.max(1, Number(env.MEMORY_GUARD_CONSECUTIVE_SAMPLES ?? 2)),
@@ -134,6 +141,8 @@ export function assess(sample: Sample, state: GuardState, config: GuardConfig, n
   const memory = sample.memory;
   const lowMemory = memory !== null && memory.totalBytes > 0
     && memory.availableBytes / memory.totalBytes < config.minAvailableFraction;
+  const emergency = memory !== null && memory.totalBytes > 0
+    && memory.availableBytes / memory.totalBytes < config.emergencyAvailableFraction;
   const full = sample.memoryPressure.full10;
   const thrashing = full !== null && full >= config.maxFullPressure10;
   if (!lowMemory && !thrashing) {
@@ -144,8 +153,10 @@ export function assess(sample: Sample, state: GuardState, config: GuardConfig, n
   const reason = [
     lowMemory && memory ? `available ${mib(memory.availableBytes)} of ${mib(memory.totalBytes)}` : null,
     thrashing ? `memory full pressure ${full}%` : null,
+    emergency ? "below the emergency floor" : null,
   ].filter(Boolean).join(", ");
-  if (state.strikes < config.consecutiveSamples) {
+  // Below the emergency floor there is no time for a second sample.
+  if (!emergency && state.strikes < config.consecutiveSamples) {
     return { action: "none", critical: true, reason: `${reason} (sample ${state.strikes}/${config.consecutiveSamples})` };
   }
   if (state.lastKillAt !== null && nowMs - state.lastKillAt < config.cooldownMs) {
@@ -240,7 +251,8 @@ export function startResourceGuard(options: {
   const warn = options.warn ?? ((line) => console.error(line));
   const kill = options.kill ?? ((pid) => process.kill(pid, "SIGKILL"));
   const config = defaultGuardConfig(env);
-  const sampleMs = Math.max(5_000, Number(env.RESOURCE_SAMPLE_SECONDS ?? 10) * 1000);
+  // Every 5 s: on 2026-11-11 a 10 s interval missed the whole fall before the 11:40 ET freeze.
+  const sampleMs = Math.max(5_000, Number(env.RESOURCE_SAMPLE_SECONDS ?? 5) * 1000);
   const logEvery = Math.max(1, Math.round(60_000 / sampleMs));
   const state: GuardState = { strikes: 0, lastKillAt: null };
   let tick = 0;

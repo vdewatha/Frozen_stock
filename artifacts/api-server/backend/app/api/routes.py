@@ -128,7 +128,8 @@ from app.services.risk_actions import evaluate_portfolio_risk_actions
 from app.services.portfolio_risk import portfolio_risk_snapshot
 from app.services.probabilistic_model import predict_probabilities
 from app.services.reactivation import reactivation_queue, review_strategy_reactivation
-from app.services.readiness import readiness_snapshot
+from app.core.memory import trim_memory
+from app.services.readiness import publish_shared_snapshot, readiness_snapshot, timing_summary
 from app.services.live_operations import live_operations_evidence, live_operations_snapshot
 from app.services.risk import PortfolioState, StrategyState, approve_trade
 from app.services.risk_settings import get_active_risk_rule, update_risk_settings
@@ -360,8 +361,12 @@ def _refresh_readiness_snapshot(generation: int | None = None) -> None:
             if current():
                 _readiness_cache = snapshot
                 _readiness_refresh_error = None
+        # Shared with the worker's deployment monitor, so it does not build a
+        # second snapshot of its own.
+        shared = publish_shared_snapshot(snapshot)
         print(
-            f"readiness refresh: {snapshot.get('overall_status')} in {time.monotonic() - started:.1f}s",
+            f"readiness refresh: {snapshot.get('overall_status')} in {time.monotonic() - started:.1f}s"
+            f"{timing_summary(snapshot)}{'' if shared else '; not shared (Redis unavailable)'}",
             flush=True,
         )
     except Exception as exc:  # readiness remains explicitly blocked
@@ -378,6 +383,8 @@ def _refresh_readiness_snapshot(generation: int | None = None) -> None:
         with _readiness_cache_lock:
             if current():
                 _readiness_refresh_active = False
+        # The build's memory goes back to the kernel instead of staying in this process.
+        trim_memory()
 
 
 @router.get("/system/live-safety", response_model=LiveSafetyResponse)

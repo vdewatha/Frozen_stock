@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Asset, MarketPrice, ModelPrediction, Notification, RiskRule, Strategy
 from app.core.config import settings
+from app.core.memory import resident_mb
 from app.services.broker import stock_paper_broker_status
 from app.services.intraday_data import (
     feed_status,
@@ -27,6 +28,18 @@ from app.services.trading_universe import (
 )
 from app.tasks.celery_app import celery_app
 from app.services.trusted_data import trusted_history, validate_intraday_readiness, UntrustedMarketData, TRUSTED_SOURCES
+
+# The snapshot the API process last built, shared through Redis so the
+# deployment monitor does not build a second one.  On 2026-11-11 the snapshot
+# was built in two places (the API every five minutes, the worker's
+# deployment monitor every fifteen), each build took about 100 seconds and
+# grew its process by 0.4 to 1.4 GiB, and the monitor's build was running at
+# all three out-of-memory freezes that day.
+SHARED_SNAPSHOT_KEY = "readiness:snapshot:v1"
+SHARED_SNAPSHOT_TTL_SECONDS = 900
+# The API rebuilds every 300 s and a build takes about 100 s, so a healthy
+# API always has a snapshot younger than this.
+SHARED_SNAPSHOT_MAX_AGE_SECONDS = 480
 
 SCHEDULER_PROBE_ATTEMPTS = 2
 SCHEDULER_PROBE_TIMEOUT_SECONDS = 0.75
@@ -62,6 +75,108 @@ def _bounded_worker_ping(timeout_seconds: float = SCHEDULER_PROBE_TIMEOUT_SECOND
 
 def _check(name: str, status: str, message: str, details: Optional[dict] = None) -> dict:
     return {"name": name, "status": status, "message": message, "details": details or {}}
+
+
+class _TimedChecks(list):
+    """The checks list; each append records how long that check took and how much the process grew.
+
+    The build is one long function, so the time and memory between two
+    appended checks is that check's cost.  The snapshot carries it as
+    ``timing`` and the refresh log line names the slowest and largest.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.timing: dict[str, dict] = {}
+        self._at = time.monotonic()
+        self._rss = resident_mb()
+
+    def mark(self, name: str) -> None:
+        now, rss = time.monotonic(), resident_mb()
+        self.timing[name] = {
+            "seconds": round(now - self._at, 2),
+            "rss_delta_mb": None if rss is None or self._rss is None else round(rss - self._rss, 1),
+        }
+        self._at, self._rss = now, rss
+
+    def append(self, check: dict) -> None:
+        super().append(check)
+        self.mark(str(check.get("name")))
+
+
+def timing_summary(snapshot: dict) -> str:
+    """The slowest check and the one that grew the process most, for the refresh log line."""
+    timing = snapshot.get("timing") or {}
+    if not timing:
+        return ""
+    slowest = max(timing, key=lambda name: timing[name].get("seconds") or 0.0)
+    parts = [f"slowest {slowest} {timing[slowest].get('seconds')}s"]
+    grown = {name: row["rss_delta_mb"] for name, row in timing.items() if row.get("rss_delta_mb") is not None}
+    if grown:
+        largest = max(grown, key=grown.get)
+        parts.append(f"largest growth {largest} {grown[largest]:+.0f}MiB")
+    return "; " + ", ".join(parts)
+
+
+def publish_shared_snapshot(snapshot: dict) -> bool:
+    """Store the snapshot for the other processes; never raises (False when Redis is unavailable)."""
+    from fastapi.encoders import jsonable_encoder
+
+    try:
+        client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=5)
+        try:
+            client.set(SHARED_SNAPSHOT_KEY, json.dumps(jsonable_encoder(snapshot)), ex=SHARED_SNAPSHOT_TTL_SECONDS)
+        finally:
+            client.close()
+        return True
+    except Exception:
+        return False
+
+
+def shared_snapshot(*, max_age_seconds: float = SHARED_SNAPSHOT_MAX_AGE_SECONDS,
+                    now: Optional[datetime] = None) -> Optional[dict]:
+    """The API's last snapshot when it is young enough, else None; never raises."""
+    try:
+        client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=5)
+        try:
+            raw = client.get(SHARED_SNAPSHOT_KEY)
+        finally:
+            client.close()
+        if not raw:
+            return None
+        snapshot = json.loads(raw)
+        generated_at = datetime.fromisoformat(str(snapshot["generated_at"]))
+        age = ((now or datetime.utcnow()) - generated_at).total_seconds()
+        if not isinstance(snapshot.get("checks"), list) or not 0 <= age <= max_age_seconds:
+            return None
+        snapshot["generated_at"] = generated_at
+        snapshot["shared_age_seconds"] = round(age, 1)
+        return snapshot
+    except Exception:
+        return None
+
+
+def monitor_readiness(db: Session, *, now: Optional[datetime] = None) -> tuple[dict, str]:
+    """The snapshot the deployment monitor judges, and where it came from (``shared`` or ``computed``).
+
+    The API's shared snapshot is used when it is young enough.  One case
+    still builds a fresh one: the shared snapshot is blocked while the regular
+    session is open.  A block then holds real orders and raises a critical
+    alert, so it must be current evidence, not a boot-time snapshot a few
+    minutes old.  Outside the session a blocked snapshot is the normal state
+    (the feed is closed) and trades nothing.
+    """
+    from app.services.exchange_sessions import session_bounds
+    from zoneinfo import ZoneInfo
+
+    shared = shared_snapshot(now=now)
+    if shared is not None:
+        moment = (now or datetime.utcnow()).replace(tzinfo=ZoneInfo("UTC"))
+        bounds = session_bounds(moment.astimezone(ZoneInfo("America/New_York")).date())
+        in_session = bounds is not None and bounds[0] <= moment < bounds[1]
+        if shared.get("overall_status") != "blocked" or not in_session:
+            return shared, "shared"
+    return readiness_snapshot(db), "computed"
 
 
 def _status_from_count(failing: int, warning: int = 0) -> str:
@@ -181,7 +296,7 @@ def _scheduler_health() -> dict:
 
 
 def readiness_snapshot(db: Session) -> dict:
-    checks: list[dict] = []
+    checks = _TimedChecks()
     today = date.today()
 
     active_assets = db.query(Asset).filter(Asset.is_active.is_(True)).order_by(Asset.symbol).all()
@@ -554,11 +669,13 @@ def readiness_snapshot(db: Session) -> dict:
 
     from app.services.live_safety import evaluate_live_safety
     live_safety = evaluate_live_safety(db)
+    checks.mark("Live safety")
     return {
         "generated_at": datetime.utcnow(),
         "overall_status": overall_status,
         "summary": summary,
-        "checks": checks,
+        "checks": list(checks),
+        "timing": checks.timing,
         "paper_trading_allowed": paper_trading_allowed,
         "paper_trading_warning_exceptions": sorted(allowed_paper_warnings),
         "paper_trading_unexpected_warnings": unexpected_warnings,
