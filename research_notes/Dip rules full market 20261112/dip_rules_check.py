@@ -715,6 +715,52 @@ def stage_tables(work: Path, out: Path) -> None:
     print(f"wrote {out / 'tables.md'}")
 
 
+BOT_SINGLE_STOCKS = ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "JPM", "V", "MA", "UNH", "XOM",
+                     "LLY", "COST", "HD", "PG", "JNJ", "ABBV", "MRK", "PEP", "KO", "BAC", "WMT", "NFLX", "AMD", "CRM",
+                     "ORCL", "ADBE")
+
+
+def stage_subsets(work: Path, out: Path) -> None:
+    """Added after the run, reported only: the same trades on (a) the bot's 29 single stocks, which checks that this
+    pipeline reproduces the sweep's survivor-only record, and (b) each year's 500 most liquid stocks."""
+    trades = pd.read_csv(work / "trades.csv.gz", dtype={"cik": str})
+    trades = trades[trades["cost_bps"] == ACTING_COST_BPS]
+    identity = pd.read_csv(work / "identity.csv.gz", dtype=str)
+    kept = set(identity.loc[identity["kept"] == "True", "series"])
+    bars, _series = load_series(work)
+    rows = []
+    for name in kept:
+        frame = bars[name]
+        dollar = frame["raw_close"] * frame["raw_volume"]
+        for year, value in dollar.groupby(frame["date"].str[:4]).median().items():
+            rows.append((name, year, float(value)))
+    dv = pd.DataFrame(rows, columns=["series", "year", "dv"])
+    top = {str(y): set(dv[dv["year"] == str(y - 1)].nlargest(TOP_N, "dv")["series"]) for y in range(2017, 2027)}
+    in_top = np.array([s in top.get(d[:4], set()) for s, d in zip(trades["series"], trades["decision_date"])])
+    out_rows = {}
+    for vid, part in trades.groupby("variant", sort=False):
+        t_req = T_REQUIRED_BREAKOUT if vid.startswith("HB") else T_REQUIRED
+        mask = in_top[trades["variant"].to_numpy() == vid]
+        out_rows[vid] = {"bot_29": summarize(part[part["ticker"].isin(BOT_SINGLE_STOCKS)], t_req),
+                         "top500": summarize(part[mask], t_req),
+                         "top500_survivors": summarize(part[mask & ~part["delisted_since"].to_numpy(bool)], t_req)}
+    (work / "subsets.json").write_text(json.dumps(out_rows, indent=1, default=str))
+    lines = ["# Subsets (added after the run; reported, not decisive)", "",
+             "Same trades as tables.md, 25 bps a side. Bot's 29 = today's paper single stocks (survivors by "
+             "construction); top 500 = each year's 500 stocks with the highest median dollar volume the year before.", "",
+             "| Variant | Subset | Trades | Net bps | t (net) | vs SPY bps | t (vs SPY) | Years + / counted | Pass |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    for vid, subsets in out_rows.items():
+        for label, s in subsets.items():
+            if not s.get("trades"):
+                continue
+            lines.append(f"| {vid} | {label} | {s['trades']:,} | {_f(s['net_bps'])} | {_f(s['net_t'], 2)} | "
+                         f"{_f(s['excess_spy_bps'])} | {_f(s['excess_spy_t'], 2)} | {s['years_positive_vs_spy']} / "
+                         f"{s['years_counted']} | {'pass' if s['passes'] else 'fail'} |")
+    (out / "subsets.md").write_text("\n".join(lines) + "\n")
+    print("\n".join(lines))
+
+
 def main() -> None:
     stage, work = sys.argv[1], Path(sys.argv[2]).expanduser()
     work.mkdir(parents=True, exist_ok=True)
@@ -731,6 +777,8 @@ def main() -> None:
         stage_evaluate(work, workers)
     elif stage == "tables":
         stage_tables(work, Path(sys.argv[3]).expanduser())
+    elif stage == "subsets":
+        stage_subsets(work, Path(sys.argv[3]).expanduser())
     else:
         raise SystemExit(f"unknown stage {stage}")
 
