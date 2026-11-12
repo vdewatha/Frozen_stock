@@ -1,9 +1,11 @@
 """Post-earnings drift with delisted stocks: the check pre-registered in PREREGISTRATION.md (same folder).
 
-Four stages, each cached under <work_dir> so a rerun repeats nothing:
+Five stages, each cached under <work_dir> so a rerun repeats nothing:
 
     python -I earnings_drift_check.py tickers  <work_dir>   # insider zips -> dated CIK-to-ticker map, insider prices
-    python -I earnings_drift_check.py events   <work_dir>   # sec/submissions.zip -> 8-K Item 2.02 events, bankruptcies
+    python -I earnings_drift_check.py filings  <work_dir>   # sec/submissions.zip -> Item 2.02 filings, bankruptcies
+    SEC_USER_AGENT=... python -I sec_fetch.py submissions <work_dir>      # acceptance times from the live API
+    python -I earnings_drift_check.py events   <work_dir>   # filings + times + ticker map -> events_raw.csv
     ALPACA_KEY=... ALPACA_SECRET=... python -I earnings_drift_check.py fetch <work_dir>   # bars per acceptance month
     python -I earnings_drift_check.py evaluate <work_dir>   # events.csv.gz, trades.csv.gz, results.json
 
@@ -11,7 +13,8 @@ Inputs the caller downloads (with a declared User-Agent; the SEC refuses undecla
     <work_dir>/insider_zips/*_form345.zip   the SEC's Insider Transactions Data Sets, 2015 Q1 onward
     <work_dir>/sec/submissions.zip          https://www.sec.gov/Archives/edgar/daily-index/bulkdata/submissions.zip
 
-This script never contacts sec.gov or the deployed app. The fetch stage reads market data only
+This script never contacts sec.gov or the deployed app (sec_fetch.py, beside it, is the only code that
+talks to sec.gov). The fetch stage reads market data only
 (GET https://data.alpaca.markets/v2/stocks/bars); it never touches an account or an order. The keys are
 read from the environment and never written anywhere. Local research only.
 
@@ -35,7 +38,7 @@ import zipfile
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -152,7 +155,41 @@ def stage_tickers(work: Path) -> None:
 
 # ------------------------------------------------------------------ events
 
+def stage_filings(work: Path) -> None:
+    """The bulk file -> every Item 2.02 8-K of an issuer in the ticker map, and every Item 1.03 8-K."""
+    issuers = set(pd.read_parquet(work / "ticker_map.parquet")["cik"])
+    archive = zipfile.ZipFile(work / "sec" / "submissions.zip")
+    filings, bankruptcies = set(), set()
+    for name in archive.namelist():
+        cik = name[3:13]
+        if not name.startswith("CIK") or cik not in issuers:
+            continue
+        with archive.open(name) as handle:
+            body = json.load(handle)
+        block = body["filings"]["recent"] if "filings" in body else body
+        for form, items, accession, filed in zip(block["form"], block["items"], block["accessionNumber"],
+                                                 block["filingDate"]):
+            if form != "8-K":
+                continue
+            listed = {item.strip() for item in (items or "").split(",")}
+            if "1.03" in listed:
+                bankruptcies.add((cik, filed))
+            if "2.02" in listed and filed >= "2015-12-25":      # the filing date can trail acceptance by a few days
+                filings.add((cik, accession, filed))
+    pd.DataFrame(sorted(filings), columns=["cik", "accession", "filed"]).to_csv(work / "filings.csv", index=False)
+    pd.DataFrame(sorted(bankruptcies), columns=["cik", "filed"]).to_csv(work / "bankruptcies.csv", index=False)
+    print(f"{len(filings)} Item 2.02 filings from {len({f[0] for f in filings})} issuers; "
+          f"{len(bankruptcies)} Item 1.03 filings")
+
+
 def stage_events(work: Path) -> None:
+    """Acceptance time (Eastern) and the ticker on that date for each filing.
+
+    The bulk file's acceptance times cannot be used: the SEC moved the field from Eastern time to UTC in 2026
+    and a filer's entry is rewritten only when it files again, so the bulk file mixes Eastern, UTC and a batch
+    shifted twice. The live API serves UTC for every filer. ``sec_fetch.py submissions`` saves those times to
+    <work_dir>/sec/acceptance.csv and ``sec_fetch.py check`` compares a sample with EDGAR's filing pages.
+    """
     table = pd.read_parquet(work / "ticker_map.parquet")
     by_cik: dict[str, tuple[list, list]] = {}
     for cik, part in table.groupby("cik", sort=False):
@@ -170,44 +207,33 @@ def stage_events(work: Path) -> None:
                 best = later
         return best
 
-    archive = zipfile.ZipFile(work / "sec" / "submissions.zip")
-    events, bankruptcies = [], []
-    filers = no_ticker = 0
-    seen: set = set()
-    for name in archive.namelist():
-        cik = name[3:13]
-        if not name.startswith("CIK") or cik not in by_cik:
+    accepted = pd.read_csv(work / "sec" / "acceptance.csv", dtype=str).drop_duplicates("accession")
+    stamp = dict(zip(accepted["accession"], accepted["accepted_utc"]))
+    events = []
+    no_time = no_ticker = 0
+    for filing in pd.read_csv(work / "filings.csv", dtype=str).to_dict("records"):
+        utc = stamp.get(filing["accession"])
+        if utc is None:
+            no_time += 1
             continue
-        with archive.open(name) as handle:
-            body = json.load(handle)
-        block = body["filings"]["recent"] if "filings" in body else body
-        hit = False
-        for form, items, accepted, accession, filed in zip(block["form"], block["items"], block["acceptanceDateTime"],
-                                                           block["accessionNumber"], block["filingDate"]):
-            if form != "8-K":
-                continue
-            listed = {item.strip() for item in (items or "").split(",")}
-            if "1.03" in listed:
-                bankruptcies.append((cik, filed))
-            if "2.02" not in listed or (cik, accession) in seen:
-                continue
-            # The field is UTC (checked against filing index pages); the rule reads Eastern time.
-            local = datetime.strptime(accepted[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).astimezone(EASTERN)
-            if local.date().isoformat() < FIRST_ACCEPTED:
-                continue
-            seen.add((cik, accession))
-            match = ticker_on(cik, local.date().toordinal())
-            if match is None:
-                no_ticker += 1
-                continue
-            hit = True
-            events.append({"cik": cik, "accession": accession, "accepted": local.strftime("%Y-%m-%dT%H:%M:%S"),
-                           "ticker": match[2], "map_gap_days": match[0] * (1 if match[1] else -1)})
-        filers += hit
-    pd.DataFrame(events).sort_values(["accepted", "cik"]).to_csv(work / "events_raw.csv", index=False)
-    pd.DataFrame(sorted(set(bankruptcies)), columns=["cik", "filed"]).to_csv(work / "bankruptcies.csv", index=False)
-    print(f"{len(events)} Item 2.02 filings with a ticker from {filers} filers; {no_ticker} more with no ticker in "
-          f"{MAP_WINDOW_DAYS} days; {len(set(bankruptcies))} Item 1.03 filings")
+        local = datetime.strptime(utc[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).astimezone(EASTERN)
+        if local.date().isoformat() < FIRST_ACCEPTED:
+            continue
+        match = ticker_on(filing["cik"], local.date().toordinal())
+        if match is None:
+            no_ticker += 1
+            continue
+        events.append({"cik": filing["cik"], "accession": filing["accession"],
+                       "accepted": local.strftime("%Y-%m-%dT%H:%M:%S"), "ticker": match[2],
+                       "map_gap_days": match[0] * (1 if match[1] else -1), "filed": filing["filed"]})
+    table = pd.DataFrame(events).sort_values(["accepted", "cik"])
+    table.to_csv(work / "events_raw.csv", index=False)
+    clock = table["accepted"].str[11:]
+    print(f"{len(table)} Item 2.02 filings with a ticker from {table['cik'].nunique()} issuers; {no_ticker} more with "
+          f"no ticker in {MAP_WINDOW_DAYS} days; {no_time} with no acceptance time from the live API")
+    print(f"accepted before 09:30: {(clock < '09:30:00').mean():.3f}, 09:30 to 16:00: "
+          f"{((clock >= '09:30:00') & (clock < '16:00:00')).mean():.3f}, later: {(clock >= '16:00:00').mean():.3f}; "
+          f"outside EDGAR's 06:00-22:00 hours: {((clock < '06:00:00') | (clock > '22:05:00')).sum()}")
 
 
 # ------------------------------------------------------------------ sessions
@@ -266,12 +292,16 @@ def _get(params: dict, key: str, secret: str) -> dict:
     raise RuntimeError("Alpaca bars request kept failing")
 
 
-def fetch_bars(symbols: list[str], start: str, end: str, asof: str, adjustment: str, key: str, secret: str) -> dict:
+def fetch_bars(symbols: list[str], start: str, end: str | None, asof: str, adjustment: str, key: str,
+               secret: str) -> dict:
+    """Daily bars from `start` to `end` (both days included; None = the latest bar the free plan serves)."""
     out: dict[str, list] = {}
     token = None
     while True:
-        params = {"symbols": ",".join(symbols), "timeframe": "1Day", "start": start, "end": end, "asof": asof,
+        params = {"symbols": ",".join(symbols), "timeframe": "1Day", "start": start, "asof": asof,
                   "adjustment": adjustment, "feed": "sip", "limit": 10000}
+        if end:
+            params["end"] = end
         if token:
             params["page_token"] = token
         body = _get(params, key, secret)
@@ -302,18 +332,12 @@ def fetch_many(symbols: list[str], *args) -> dict:
     return out
 
 
-def _day_after(day: pd.Timestamp) -> str:
-    """A date-only `end` is midnight UTC, before that day's bar: ask for the next day to include it."""
-    return (day + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-
-
 def stage_fetch(work: Path) -> None:
     key, secret = os.environ["ALPACA_KEY"], os.environ["ALPACA_SECRET"]
     today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=1)   # SIP history is delayed
     calendar_path = work / "spy_calendar.csv"
     if not calendar_path.exists():
-        bars = fetch_bars([BENCHMARK], "2015-12-01", _day_after(today), today.strftime("%Y-%m-%d"), "all",
-                          key, secret)[BENCHMARK]
+        bars = fetch_bars([BENCHMARK], "2015-12-01", None, today.strftime("%Y-%m-%d"), "all", key, secret)[BENCHMARK]
         pd.DataFrame({"date": sorted({row["t"][:10] for row in bars})}).to_csv(calendar_path, index=False)
     calendar = pd.read_csv(calendar_path)["date"].tolist()
     data_end = calendar[-1]
@@ -331,18 +355,19 @@ def stage_fetch(work: Path) -> None:
         first = pd.Timestamp(month + "-01")
         last = first + pd.offsets.MonthEnd(0)
         start = (first - pd.Timedelta(days=DAYS_BEFORE)).strftime("%Y-%m-%d")
-        end = _day_after(min(last + pd.Timedelta(days=DAYS_AFTER), pd.Timestamp(data_end)))
+        end = (last + pd.Timedelta(days=DAYS_AFTER)).strftime("%Y-%m-%d")
+        end = end if end < data_end else None                   # asking for the newest day by date is refused
         asof = min(first + pd.Timedelta(days=14), pd.Timestamp(data_end)).strftime("%Y-%m-%d")
         symbols = sorted(set(group["ticker"]) | {BENCHMARK})
         raw = fetch_many(symbols, start, end, asof, "raw", key, secret)
         total = fetch_many(symbols, start, end, asof, "all", key, secret)
-        alive = fetch_many(symbols, calendar[-ALIVE_SESSIONS], _day_after(pd.Timestamp(data_end)), asof, "raw", key, secret)
+        alive = fetch_many(symbols, calendar[-ALIVE_SESSIONS], None, asof, "raw", key, secret)
         records = []
         for symbol, rows in raw.items():
             adjusted = {row["t"][:10]: row["c"] for row in total.get(symbol) or []}
             for row in rows:
                 day = row["t"][:10]
-                if row["c"] > 0 and adjusted.get(day, 0) > 0:
+                if row["c"] > 0 and adjusted.get(day, 0) > 0 and day <= data_end:
                     records.append((symbol, day, row["c"], row["v"], adjusted[day]))
         frame = pd.DataFrame(records, columns=["symbol", "date", "close", "volume", "adj_close"])
         frame = frame.drop_duplicates(["symbol", "date"]).sort_values(["symbol", "date"])
@@ -584,4 +609,5 @@ def stage_evaluate(work: Path) -> dict:
 
 if __name__ == "__main__":
     stage, work_dir = sys.argv[1], Path(sys.argv[2])
-    {"tickers": stage_tickers, "events": stage_events, "fetch": stage_fetch, "evaluate": stage_evaluate}[stage](work_dir)
+    {"tickers": stage_tickers, "filings": stage_filings, "events": stage_events, "fetch": stage_fetch,
+     "evaluate": stage_evaluate}[stage](work_dir)
