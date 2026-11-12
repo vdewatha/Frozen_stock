@@ -1,0 +1,11 @@
+14449 series requested, 11628 with bars (6 s)
+{'verified': 9058, 'unverified': 1256, 'unverified_thin': 946, 'identity_mismatch': 368} duplicates dropped 1595, kept 8719
+1000/8719 series replayed (25 s)
+2000/8719 series replayed (29 s)
+3000/8719 series replayed (33 s)
+4000/8719 series replayed (37 s)
+5000/8719 series replayed (41 s)
+6000/8719 series replayed (44 s)
+7000/8719 series replayed (47 s)
+8000/8719 series replayed (50 s)
+{"H2": false, "H5": false, "HB": false} (74 s)
