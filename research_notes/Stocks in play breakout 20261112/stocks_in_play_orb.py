@@ -23,6 +23,10 @@ The test pre-registered in PREREGISTRATION.md (same folder). Stages, each cached
 The fetch stages accept ``--from D --until D --reverse --interval S`` so several processes can share a download
 while together staying under the plan's 200 requests a minute.
 
+``simulate`` and ``tables`` accept ``--early-closes``: a sensitivity run added after the registered run, which ends
+the 21 exchange early-close sessions at 13:00 ET (the registered detector found one of them). It writes
+``results_early_closes.json`` beside the registered ``results.json`` and never replaces it.
+
 Market data only (GET https://data.alpaca.markets/v2/stocks/bars, feed=sip); never an account or an order
 endpoint, never the deployed app. The keys come from the environment and are never written or printed.
 """
@@ -499,6 +503,11 @@ def stage_rank(work: Path) -> None:
 # ------------------------------------------------------------------ simulation
 
 OPEN_MINUTE, ENTRY_MINUTE, CLOSE_MINUTE, HALF_DAY_MINUTE = 570, 575, 960, 780
+# NYSE 13:00 ET closes, 2016-01 to 2026-11. Used only by ``simulate --early-closes`` (a labelled sensitivity run):
+# the registered detector below found 1 of these 21, because SPY keeps trading after an early close.
+EARLY_CLOSES = frozenset("""2016-11-25 2017-07-03 2017-11-24 2018-07-03 2018-11-23 2018-12-24 2019-07-03 2019-11-29
+2019-12-24 2020-11-27 2020-12-24 2021-11-26 2022-11-25 2023-07-03 2023-11-24 2024-07-03 2024-11-29 2024-12-24
+2025-07-03 2025-11-28 2025-12-24""".split())
 
 
 def session_end(spy: np.ndarray | None) -> int:
@@ -550,14 +559,18 @@ def _load_minutes(path: Path) -> dict:
         return pickle.load(handle)
 
 
-def stage_simulate(work: Path) -> None:
+def stage_simulate(work: Path, early_closes: bool = False, suffix: str = "") -> None:
+    """``early_closes`` replaces the registered half-day detector by the exchange's list (sensitivity run only)."""
     started = time.time()
     meta = _load_meta(work)
     orders = pd.read_pickle(work / "orders.pkl")
     ends, rows, missing = {}, [], defaultdict(int)
     for day, part in orders.groupby("date", sort=True):
         top = _load_minutes(work / "minutes_top" / f"{day}.pkl.gz")
-        end = ends[day] = session_end(top.get("SPY"))
+        end = session_end(top.get("SPY"))
+        if early_closes:
+            end = HALF_DAY_MINUTE if day in EARLY_CLOSES else CLOSE_MINUTE
+        ends[day] = end
         base = _load_minutes(work / "minutes_base" / f"{day}.pkl.gz") if part["base_sample"].any() else {}
         for order in part.itertuples(index=False):
             if order.side == 0:
@@ -581,8 +594,8 @@ def stage_simulate(work: Path) -> None:
     trades = pd.DataFrame(rows, columns=["group", "mode", "date", "series", "ticker", "side", "rank", "rv", "atr",
                                          "or_open", "level", "entry_minute", "entry", "exit_minute", "exit",
                                          "reason", "same_bar", "delisted_since"])
-    trades.to_pickle(work / "trades.pkl")
-    with open(work / "sessions.json", "w") as handle:
+    trades.to_pickle(work / f"trades{suffix}.pkl")
+    with open(work / f"sessions{suffix}.json", "w") as handle:
         json.dump({"session_end": ends, "orders_without_minute_bars": dict(missing),
                    "half_days": sorted(d for d, e in ends.items() if e == HALF_DAY_MINUTE)}, handle)
     print(f"{len(trades)} simulated trades; orders without minute bars {dict(missing)}; "
@@ -723,16 +736,16 @@ def bucket_table(trades: pd.DataFrame, column: str, edges: list[float], labels: 
     return out
 
 
-def stage_tables(work: Path, folder: Path) -> None:
+def stage_tables(work: Path, folder: Path, suffix: str = "") -> None:
     meta = _load_meta(work)
     calendar = meta["calendar"]
     spy_frame = pd.read_pickle(work / "spy_daily.pkl")
     spy = spy_returns(spy_frame)
-    trades = pd.read_pickle(work / "trades.pkl")
+    trades = pd.read_pickle(work / f"trades{suffix}.pkl")
     orders = pd.read_pickle(work / "orders.pkl")
     with open(work / "coverage.json") as handle:
         coverage = json.load(handle)
-    with open(work / "sessions.json") as handle:
+    with open(work / f"sessions{suffix}.json") as handle:
         sessions = json.load(handle)
     period_days = {name: [d for d in calendar if a <= d <= b] for name, (a, b) in PERIODS.items()}
     sample = base_sample_days(calendar)
@@ -781,8 +794,9 @@ def stage_tables(work: Path, folder: Path) -> None:
         "top20_in_bracket": bool(a_worst - 10 <= 41.6 <= a_opt + 10),
         "paper_base": 3.2, "base_worst": b_worst, "base_optimistic": b_opt,
         "base_in_bracket": bool(b_worst - 10 <= 3.2 <= b_opt + 10),
-        "top20_above_base": bool(base_table["worst|0c|top20_same_sessions"]["annual_return"] * 100 > b_worst
-                                 and base_table["optimistic|0c|top20_same_sessions"]["annual_return"] * 100 > b_opt)}
+        "top20_above_base": bool(a_worst > b_worst and a_opt > b_opt),
+        "top20_same_sessions_worst": base_table["worst|0c|top20_same_sessions"]["annual_return"] * 100,
+        "top20_same_sessions_optimistic": base_table["optimistic|0c|top20_same_sessions"]["annual_return"] * 100}
     results["replication_check"]["reproduced"] = bool(
         results["replication_check"]["top20_in_bracket"] and results["replication_check"]["base_in_bracket"]
         and results["replication_check"]["top20_above_base"])
@@ -840,12 +854,13 @@ def stage_tables(work: Path, folder: Path) -> None:
         "median_stop_cents": float((STOP_ATR * top_orders["atr"]).median() * 100),
         "median_price": float(top_orders["or_open"].median()),
         "delisted_share_orders": float(top_orders["delisted_since"].mean())}
-    with open(folder / "results.json", "w") as handle:
+    with open(folder / f"results{suffix}.json", "w") as handle:
         json.dump(results, handle, indent=1, default=float)
     columns = ["mode", "date", "series", "ticker", "side", "rank", "rv", "atr", "or_open", "level", "entry_minute",
                "entry", "exit_minute", "exit", "reason", "same_bar", "delisted_since"]
-    top[columns].round(6).to_csv(folder / "trades_top20.csv.gz", index=False)
-    write_tables(results, folder / "tables.md")
+    if not suffix:                                   # the sensitivity run writes its statistics only
+        top[columns].round(6).to_csv(folder / "trades_top20.csv.gz", index=False)
+    write_tables(results, folder / f"tables{suffix}.md")
     print(json.dumps(results["replication_check"], indent=1))
     print(json.dumps(results["verdict"], indent=1))
     print(json.dumps(results["break_even"], indent=1))
@@ -936,10 +951,11 @@ def main() -> None:
         stage_rank(work)
     elif stage == "fetch_top":
         stage_fetch_top(work, sys.argv)
-    elif stage == "simulate":
-        stage_simulate(work)
+    elif stage == "simulate":                        # ``--early-closes``: sensitivity run, written beside the registered one
+        early = "--early-closes" in sys.argv
+        stage_simulate(work, early, "_early_closes" if early else "")
     elif stage == "tables":
-        stage_tables(work, Path(sys.argv[3]).expanduser())
+        stage_tables(work, Path(sys.argv[3]).expanduser(), "_early_closes" if "--early-closes" in sys.argv else "")
     else:
         raise SystemExit(f"unknown stage {stage}")
 
