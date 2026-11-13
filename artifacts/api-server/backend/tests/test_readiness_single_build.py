@@ -85,13 +85,23 @@ def test_the_monitor_reuses_the_api_snapshot_and_builds_nothing():
         assert source == "shared" and snapshot["overall_status"] == status and build.call_count == 0
 
 
-def test_a_block_during_the_session_is_confirmed_with_a_fresh_build():
-    """A block in market hours holds orders and raises a critical alert: it must be current evidence."""
-    midday = datetime(2026, 11, 11, 19, 33)
-    with _fresh_redis(), patch.object(readiness, "readiness_snapshot", return_value=_snapshot("ready")) as build:
-        readiness.publish_shared_snapshot(_snapshot("blocked", generated_at=midday - timedelta(seconds=200)))
-        snapshot, source = readiness.monitor_readiness(object(), now=midday)
-    assert source == "computed" and snapshot["overall_status"] == "ready" and build.call_count == 1
+def test_a_block_during_the_session_is_reused_not_rebuilt_in_the_worker():
+    """2026-11-12: rebuilding a blocked snapshot at 09:31 and 09:46 ET kept 1.2 GiB in paper-fast all day."""
+    open_ = datetime(2026, 11, 12, 14, 31, 6)     # 09:31 ET, the first rebuild
+    with _fresh_redis(), patch.object(readiness, "readiness_snapshot") as build:
+        readiness.publish_shared_snapshot(_snapshot("blocked", generated_at=open_ - timedelta(seconds=290)))
+        snapshot, source = readiness.monitor_readiness(object(), now=open_)
+    assert source == "shared" and snapshot["overall_status"] == "blocked" and build.call_count == 0
+
+
+def test_a_monitor_block_never_blocks_paper_trading():
+    """Why the rebuild was unnecessary: monitor alerts are outside the trading block."""
+    from sqlalchemy.dialects import sqlite
+    from app.services.notifications import trading_blocking_critical_filter
+
+    sql = str(trading_blocking_critical_filter().compile(dialect=sqlite.dialect(),
+                                                           compile_kwargs={"literal_binds": True}))
+    assert "category != 'deployment_monitor'" in sql
 
 
 def test_the_deployment_monitor_reports_where_its_readiness_came_from():

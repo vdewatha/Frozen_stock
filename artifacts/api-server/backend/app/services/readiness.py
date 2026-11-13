@@ -159,23 +159,22 @@ def shared_snapshot(*, max_age_seconds: float = SHARED_SNAPSHOT_MAX_AGE_SECONDS,
 def monitor_readiness(db: Session, *, now: Optional[datetime] = None) -> tuple[dict, str]:
     """The snapshot the deployment monitor judges, and where it came from (``shared`` or ``computed``).
 
-    The API's shared snapshot is used when it is young enough.  One case
-    still builds a fresh one: the shared snapshot is blocked while the regular
-    session is open.  A block then holds real orders and raises a critical
-    alert, so it must be current evidence, not a boot-time snapshot a few
-    minutes old.  Outside the session a blocked snapshot is the normal state
-    (the feed is closed) and trades nothing.
-    """
-    from app.services.exchange_sessions import session_bounds
-    from zoneinfo import ZoneInfo
+    The API's shared snapshot is used whenever it is young enough, blocked or
+    not; the worker builds its own only when there is none (API or Redis down).
 
+    Until 2026-11-12 a snapshot blocked during the session was rebuilt here,
+    on the theory that a monitor block holds orders.  It does not: monitor
+    alerts are excluded from the trading block
+    (notifications.trading_blocking_critical_filter), and paper orders are
+    gated by the API's own readiness.  That rebuild ran at 09:31 and 09:46 ET
+    on 2026-11-12, grew paper-fast from 0.26 to 1.5 GiB, and the memory was
+    never handed back (trimming after the task did not release it).  With
+    1.2 GiB gone for the day, ordinary spikes in paper-core crossed the
+    guard's emergency floor nine times.
+    """
     shared = shared_snapshot(now=now)
     if shared is not None:
-        moment = (now or datetime.utcnow()).replace(tzinfo=ZoneInfo("UTC"))
-        bounds = session_bounds(moment.astimezone(ZoneInfo("America/New_York")).date())
-        in_session = bounds is not None and bounds[0] <= moment < bounds[1]
-        if shared.get("overall_status") != "blocked" or not in_session:
-            return shared, "shared"
+        return shared, "shared"
     return readiness_snapshot(db), "computed"
 
 
