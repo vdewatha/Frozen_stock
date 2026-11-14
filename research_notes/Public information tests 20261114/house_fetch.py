@@ -125,22 +125,28 @@ def pdfs(work: Path) -> None:
 
 # ------------------------------------------------------------------ parsing
 
-# PDFKit returns the form's small-capital labels as a capital followed by NUL characters: "FILING STATUS: New"
-# arrives as "F S: New" once the NULs are dropped, "SUBHOLDING OF:" as "S O:", "DESCRIPTION:" as "D:",
-# "COMMENTS:" as "C:" and "LOCATION:" as "L:". Those lines belong to a row but carry no ticker.
+# Two layouts, both read from PDFKit's text.
+#
+# * Reports since about 2019: the form's small-capital labels arrive as a capital followed by NUL characters
+#   ("FILING STATUS: New" is "F S: New" once the NULs are dropped, "SUBHOLDING OF:" is "S O:", and so on), and
+#   every asset carries a type code in brackets ([ST] = stock).
+# * Older reports: the labels are spelled out, there is no type code, days are not zero-padded, and some
+#   capital letters come out lower-case ("Apple Inc. (AAPL)" reads "apple Inc. (aaPL)", a sale's "S" can read
+#   "s"). Tickers and types are therefore matched without regard to case and upper-cased.
 #
 # One transaction ends with: type, trade date, notification date, amount. The asset text (with the ticker in
-# parentheses and the asset type code, [ST] = stock) comes before it, except that a long asset name pushes
+# parentheses and, in the newer layout, the type code) comes before it, except that a long asset name pushes
 # the type code, or the whole type-date-amount line, below the row's label lines. So the rows are anchored on
 # the type-date-amount pattern and the text between two anchors is read for the ticker and the type code; a
 # type code at the very start of that text belongs to the row before when that row has none.
-ROW = re.compile(r"(?<![A-Za-z0-9(\[])(P|S \(partial\)|S|E)\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})\s+"
-                 r"(\$[\d,]+(?:\s*-\s*\$[\d,]+)?|Over\s+\$[\d,]+|Spouse/DC\s+Over\s+\$[\d,]+)")
-TICKER = re.compile(r"\(([A-Z][A-Z0-9]{0,4}(?:[./][A-Z]{1,2})?)\)")
+ROW = re.compile(r"(?<![A-Za-z0-9(\[])(P|S \(partial\)|S|E)\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}/\d{1,2}/\d{4})\s+"
+                 r"(\$[\d,]+(?:\s*-\s*\$[\d,]+)?|Over\s+\$[\d,]+|Spouse/DC\s+Over\s+\$[\d,]+)", re.IGNORECASE)
+TICKER = re.compile(r"\(([A-Za-z][A-Za-z0-9]{0,4}(?:[./][A-Za-z]{1,2})?)\)")
 ASSET_TYPE = re.compile(r"\[([A-Z]{2})\]")
 LEADING_TYPE = re.compile(r"\s*\[([A-Z]{2})\]")
-LABEL_LINE = re.compile(r"^(?:F S|S O|D|C|L): .*$", re.MULTILINE)
-OWNER = re.compile(r"(?:^|\n)\s*(SP|JT|DC)\s")
+LABEL_LINE = re.compile(r"^(?:F S|S O|D|C|L|FILING STATUS|SUBHOLDING OF|DESCRIPTION|COMMENTS?|LOCATION): .*$",
+                        re.MULTILINE | re.IGNORECASE)
+OWNER = re.compile(r"(?:^|\n)\s*(SP|JT|DC)\s", re.IGNORECASE)
 
 
 def _date(text: str) -> str | None:
@@ -151,30 +157,42 @@ def _date(text: str) -> str | None:
 
 
 def parse_text(text: str) -> list[dict]:
-    """The transaction rows of one report's text, in order."""
+    """The transaction rows of one report's text, in order. ``layout`` is ``coded`` when the report uses type codes."""
     text = text.replace("\x00", "")
-    start = text.find("$200?")                      # the end of the first table header
-    text = text[start + 5:] if start >= 0 else text
+    layout = "coded" if ASSET_TYPE.search(text) else "old"
     rows, cursor = [], 0
-    matches = list(ROW.finditer(text))
-    for number, match in enumerate(matches):
+    for match in ROW.finditer(text):
         segment = LABEL_LINE.sub("", text[cursor:match.start()])
         lead = LEADING_TYPE.match(segment)
         if lead and rows and not rows[-1]["asset_type"]:
             rows[-1]["asset_type"] = lead.group(1)
             segment = segment[lead.end():]
         tickers, kinds, owner = TICKER.findall(segment), ASSET_TYPE.findall(segment), OWNER.search(segment)
-        rows.append({"owner": owner.group(1) if owner else "", "asset": " ".join(segment.split())[-120:],
-                     "ticker": tickers[-1].replace("/", ".") if tickers else "",
-                     "asset_type": kinds[-1] if kinds else "", "type": match.group(1),
+        kind = " ".join(match.group(1).upper().split())
+        rows.append({"layout": layout, "owner": owner.group(1).upper() if owner else "",
+                     "asset": " ".join(segment.split())[-120:],
+                     "ticker": tickers[-1].upper().replace("/", ".") if tickers else "",
+                     "asset_type": kinds[-1] if kinds else "", "type": "S (partial)" if kind.startswith("S (") else kind,
                      "trade_date": _date(match.group(2)) or "", "notified": _date(match.group(3)) or "",
                      "amount": " ".join(match.group(4).split())})
         cursor = match.end()
-    if rows and not rows[-1]["asset_type"]:           # the last row's type code, wrapped below its amount
+    if rows and layout == "coded" and not rows[-1]["asset_type"]:    # the last row's code, wrapped below its amount
         lead = LEADING_TYPE.match(LABEL_LINE.sub("", text[cursor:cursor + 80]))
         if lead:
             rows[-1]["asset_type"] = lead.group(1)
     return rows
+
+
+NOT_A_STOCK = re.compile(r"\b(options?|calls?|puts?|bonds?|notes?|warrants?|treasur\w*)\b", re.IGNORECASE)
+
+
+def is_stock_row(row: dict) -> bool:
+    """A stock with a ticker: type code ST, or, in the older layout without codes, no option or bond wording."""
+    if not row["ticker"]:
+        return False
+    if row["layout"] == "coded":
+        return row["asset_type"] == "ST"
+    return not NOT_A_STOCK.search(row["asset"])
 
 
 def parse(work: Path) -> None:
@@ -202,9 +220,10 @@ def parse(work: Path) -> None:
         writer = csv.DictWriter(out, fieldnames=list(out_rows[0]))
         writer.writeheader()
         writer.writerows(out_rows)
-    stocks = [r for r in out_rows if r["asset_type"] == "ST" and r["ticker"]]
+    stocks = [r for r in out_rows if is_stock_row(r)]
+    layouts = {name: sum(r["layout"] == name for r in out_rows) for name in ("coded", "old")}
     print(f"{len(reports)} electronic reports: {missing} without text, {unreadable} unreadable, {no_rows} with no "
-          f"row found; {len(out_rows)} rows, {len(stocks)} stock rows with a ticker "
+          f"row found; {len(out_rows)} rows ({layouts}), {len(stocks)} stock rows with a ticker "
           f"({sum(r['type'] == 'P' for r in stocks)} purchases)")
 
 

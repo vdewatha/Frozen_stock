@@ -60,10 +60,13 @@ def amount_floor(text: str) -> int:
 def house_rows(work: Path) -> list[dict]:
     import csv
 
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from house_fetch import is_stock_row
+
     out = []
     with (work / "house" / "transactions.csv").open() as handle:
         for row in csv.DictReader(handle):
-            if row["asset_type"] != "ST" or not row["ticker"] or row["type"] not in ("P", "S", "S (partial)"):
+            if not is_stock_row(row) or row["type"] not in ("P", "S", "S (partial)"):
                 continue
             out.append({"chamber": "house", "report": row["doc_id"], "member": row["member"],
                         "public_date": row["filing_date"], "trade_date": row["trade_date"],
