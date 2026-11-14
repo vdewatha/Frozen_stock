@@ -1,0 +1,52 @@
+{
+ "counts": {
+  "rows": {
+   "house_buy": 20316,
+   "house_sell": 20853,
+   "senate_buy": 2725,
+   "senate_sell": 2733
+  },
+  "status": {
+   "house_buy_event": 15786,
+   "house_buy_no_series": 3632,
+   "house_buy_not_eligible": 869,
+   "house_buy_outside_data": 10,
+   "house_buy_trade_after_filing": 19,
+   "house_sell_event": 16343,
+   "house_sell_no_series": 3809,
+   "house_sell_not_eligible": 669,
+   "house_sell_outside_data": 11,
+   "house_sell_trade_after_filing": 21,
+   "senate_buy_event": 2057,
+   "senate_buy_no_series": 311,
+   "senate_buy_not_eligible": 58,
+   "senate_buy_trade_after_filing": 1,
+   "senate_sell_event": 2027,
+   "senate_sell_no_series": 316,
+   "senate_sell_not_eligible": 52,
+   "senate_sell_trade_after_filing": 1
+  }
+ },
+ "events": {
+  "house_buy": 12584,
+  "house_sell": 13581,
+  "senate_buy": 1393,
+  "senate_sell": 1438
+ }
+}
+PRIMARY {"trades": 7391, "stocks": 1570, "net_bps": 292.06112246925625, "net_t": 3.387816480918447, "excess_bps": -91.02203143911223, "excess_t": -2.2554526047736543, "years_positive": 2, "years_counted": 11, "trimmed_net_bps": 202.50797907033558, "trimmed_excess_bps": -175.92469532423382, "criteria": {"1_net_positive_t": true, "2_beats_spy_t": false, "3_most_years": false, "4_without_top_1pct": false}, "passes": false}
+lenient_cost_12.5bps {"trades": 7391, "stocks": 1570, "net_bps": 317.82353179184804, "net_t": 3.6774471272964946, "excess_bps": -65.25962211652043, "excess_t": -1.6123599311749572, "years_positive": 3, "years_counted": 11}
+hold_20 {"trades": 9833, "stocks": 1579, "net_bps": 58.056591037912014, "net_t": 1.1764979723255855, "excess_bps": -57.065566644735625, "excess_t": -3.103116747464307, "years_positive": 2, "years_counted": 11}
+hold_120 {"trades": 5611, "stocks": 1555, "net_bps": 614.2261177646649, "net_t": 5.3443775001073135, "excess_bps": -184.84789420312927, "excess_t": -3.2989669216666035, "years_positive": 2, "years_counted": 11}
+entry_one_session_later {"trades": 7332, "stocks": 1569, "net_bps": 291.6015575670897, "net_t": 3.4298209611687174, "excess_bps": -95.72329339725214, "excess_t": -2.5336406674821834, "years_positive": 3, "years_counted": 11}
+before_copy_fund {"trades": 4819, "stocks": 1294, "net_bps": 245.87877782753182, "net_t": 2.0484460445650416, "excess_bps": -64.64799967110324, "excess_t": -1.3117817721006035, "years_positive": 2, "years_counted": 8}
+since_copy_fund {"trades": 2596, "stocks": 906, "net_bps": 375.43234982181957, "net_t": 3.5471479298829243, "excess_bps": -143.14600988683625, "excess_t": -2.1091720858670615, "years_positive": 0, "years_counted": 4}
+delay_15_days_or_less {"trades": 2101, "stocks": 784, "net_bps": 385.03690880290213, "net_t": 3.7071370304327886, "excess_bps": 15.683386913220057, "excess_t": 0.2613518408045079, "years_positive": 5, "years_counted": 11}
+delay_longer {"trades": 6349, "stocks": 1492, "net_bps": 290.0208625517073, "net_t": 3.3830663275226915, "excess_bps": -108.57020329384886, "excess_t": -2.639273630112888, "years_positive": 3, "years_counted": 11}
+amount_50001_or_more {"trades": 590, "stocks": 328, "net_bps": 481.429104077614, "net_t": 5.107822697049414, "excess_bps": 72.11984357512685, "excess_t": 1.1353382903811962, "years_positive": 5, "years_counted": 9}
+several_members_same_day {"trades": 130, "stocks": 83, "net_bps": 690.5769522373494, "net_t": 2.9384957414229036, "excess_bps": 80.2859582869419, "excess_t": 0.41858009615288144, "years_positive": 1, "years_counted": 2}
+house_sales_mirror {"trades": 8017, "stocks": 1714, "net_bps": 355.73963186933287, "net_t": 3.9677939078251163, "excess_bps": -74.05278428543745, "excess_t": -1.971883195572319, "years_positive": 3, "years_counted": 11}
+senate_buys_2016_to_2021_03 {"trades": 958, "stocks": 380, "net_bps": 474.0779851572997, "net_t": 3.5395942142657164, "excess_bps": -23.616275094132728, "excess_t": -0.3822098343722562, "years_positive": 2, "years_counted": 5}
+senate_sales_2016_to_2021_03 {"trades": 1055, "stocks": 438, "net_bps": 414.3301779624975, "net_t": 2.7570417468153083, "excess_bps": -102.88726907453056, "excess_t": -2.092775074280615, "years_positive": 1, "years_counted": 5}
+both_chambers_buys_2016_to_2021_03 {"trades": 4087, "stocks": 1211, "net_bps": 400.0191286603658, "net_t": 2.744743930824523, "excess_bps": -21.29601230736063, "excess_t": -0.387419823110623, "years_positive": 2, "years_counted": 6}
+verdict: closed

@@ -1,0 +1,4077 @@
+{
+ "counts": {
+  "filings": 685204,
+  "with_item_202": 188173,
+  "no_time": 0,
+  "before_2016": 443,
+  "no_session": 83,
+  "no_series": 90257,
+  "no_bar_at_p": 421,
+  "not_eligible": 217225,
+  "no_listed_item": 2377,
+  "events": 186225
+ },
+ "accepted_clock": {
+  "before_0930": 0.25432675526916365,
+  "session": 0.10416431735803464,
+  "after_1600": 0.6415089273728017
+ },
+ "candidates": {
+  "1.01:any": {
+   "trades": 15723,
+   "stocks": 3148,
+   "net_bps": 43.44524245737376,
+   "net_t": 0.7130803634544769,
+   "median_net_bps": 19.245147705078125,
+   "win_rate": 0.5121796094892832,
+   "excess_bps": -102.25734509451078,
+   "excess_t": -2.8773377270121867,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": -27.479432120231895,
+   "trimmed_excess_bps": -170.7626407569424,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 2270,
+     "net_bps": 218.45686593244778,
+     "excess_bps": 50.407125287768444
+    },
+    "2017": {
+     "trades": 2566,
+     "net_bps": 65.07010080808786,
+     "excess_bps": -115.33084696678058
+    },
+    "2018": {
+     "trades": 2524,
+     "net_bps": -154.53035168337937,
+     "excess_bps": -122.23306581636987
+    },
+    "2019": {
+     "trades": 2334,
+     "net_bps": 44.13168529414069,
+     "excess_bps": -163.2267442083465
+    },
+    "2020": {
+     "trades": 2679,
+     "net_bps": 209.4062269512688,
+     "excess_bps": 28.7150904438802
+    },
+    "2021": {
+     "trades": 3350,
+     "net_bps": -75.74490895911829,
+     "excess_bps": -242.9008078220375
+    }
+   },
+   "gross_bps": 93.788877058475,
+   "share_delisted_since": 0.3101189340456656,
+   "stopped": 36,
+   "bankruptcy_tagged": 0,
+   "signals": 19341,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.01:up": {
+   "trades": 1295,
+   "stocks": 981,
+   "net_bps": 9.238246785167561,
+   "net_t": 0.07341707431244292,
+   "median_net_bps": -73.53842258453369,
+   "win_rate": 0.4494208494208494,
+   "excess_bps": -195.04973719916464,
+   "excess_t": -2.055026440255751,
+   "years_counted": 6,
+   "years_positive": 3,
+   "trimmed_net_bps": -115.58493690758317,
+   "trimmed_excess_bps": -317.3572786895794,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 171,
+     "net_bps": 287.06901254709703,
+     "excess_bps": 95.75976876933379
+    },
+    "2017": {
+     "trades": 138,
+     "net_bps": -135.83824254464412,
+     "excess_bps": -326.938842532117
+    },
+    "2018": {
+     "trades": 161,
+     "net_bps": -278.84762849866974,
+     "excess_bps": -249.43963525048287
+    },
+    "2019": {
+     "trades": 140,
+     "net_bps": 190.99226593971252,
+     "excess_bps": 0.7860907589668191
+    },
+    "2020": {
+     "trades": 360,
+     "net_bps": 395.14724082416956,
+     "excess_bps": 40.71479535238303
+    },
+    "2021": {
+     "trades": 325,
+     "net_bps": -438.3909225463867,
+     "excess_bps": -610.6288234487001
+    }
+   },
+   "gross_bps": 59.41044041548916,
+   "share_delisted_since": 0.4386100386100386,
+   "stopped": 2,
+   "bankruptcy_tagged": 0,
+   "signals": 1334,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.01:down": {
+   "trades": 897,
+   "stocks": 709,
+   "net_bps": 63.546531176487335,
+   "net_t": 0.45261651732973834,
+   "median_net_bps": -99.50637817382812,
+   "win_rate": 0.45707915273132665,
+   "excess_bps": -154.22557939299423,
+   "excess_t": -1.305889454852229,
+   "years_counted": 6,
+   "years_positive": 3,
+   "trimmed_net_bps": -35.261379049921196,
+   "trimmed_excess_bps": -249.81655106437992,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 90,
+     "net_bps": 423.06511269675366,
+     "excess_bps": 216.33123297039893
+    },
+    "2017": {
+     "trades": 91,
+     "net_bps": 191.22090968456897,
+     "excess_bps": 35.7458774065961
+    },
+    "2018": {
+     "trades": 118,
+     "net_bps": -223.96816540572604,
+     "excess_bps": -182.67825958574332
+    },
+    "2019": {
+     "trades": 93,
+     "net_bps": -78.82339980012627,
+     "excess_bps": -292.6421289338283
+    },
+    "2020": {
+     "trades": 249,
+     "net_bps": 468.55361107362796,
+     "excess_bps": 102.18250045123634
+    },
+    "2021": {
+     "trades": 256,
+     "net_bps": -317.91700748726726,
+     "excess_bps": -538.0262520204927
+    }
+   },
+   "gross_bps": 113.99092017740442,
+   "share_delisted_since": 0.33444816053511706,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 925,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.02:any": {
+   "trades": 1759,
+   "stocks": 1121,
+   "net_bps": 20.491625857393874,
+   "net_t": 0.362347691953264,
+   "median_net_bps": 7.661581039428711,
+   "win_rate": 0.503695281409892,
+   "excess_bps": -122.62916895330935,
+   "excess_t": -3.177667624366204,
+   "years_counted": 6,
+   "years_positive": 1,
+   "trimmed_net_bps": -42.72357707182384,
+   "trimmed_excess_bps": -184.6798706086135,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 260,
+     "net_bps": 137.42660329892084,
+     "excess_bps": -19.047600861812363
+    },
+    "2017": {
+     "trades": 275,
+     "net_bps": 190.37703600796786,
+     "excess_bps": 11.303121096846095
+    },
+    "2018": {
+     "trades": 313,
+     "net_bps": -74.61727808077876,
+     "excess_bps": -115.58242462875448
+    },
+    "2019": {
+     "trades": 242,
+     "net_bps": 174.46449719184687,
+     "excess_bps": -37.589219852627814
+    },
+    "2020": {
+     "trades": 287,
+     "net_bps": -70.44385742227375,
+     "excess_bps": -208.7235342847777
+    },
+    "2021": {
+     "trades": 382,
+     "net_bps": -132.6901703604853,
+     "excess_bps": -284.5108529150924
+    }
+   },
+   "gross_bps": 70.72019231393976,
+   "share_delisted_since": 0.274587833996589,
+   "stopped": 8,
+   "bankruptcy_tagged": 0,
+   "signals": 1830,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.02:up": {
+   "trades": 94,
+   "stocks": 89,
+   "net_bps": 319.6698300381924,
+   "net_t": 1.3850450600147926,
+   "median_net_bps": 13.300776481628418,
+   "win_rate": 0.5,
+   "excess_bps": 12.717409019783181,
+   "excess_t": 0.056787443407067005,
+   "years_counted": 2,
+   "years_positive": 1,
+   "trimmed_net_bps": 319.6698300381924,
+   "trimmed_excess_bps": 12.717409019783148,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 8,
+     "net_bps": -99.83070194721222,
+     "excess_bps": -210.86179679310425
+    },
+    "2017": {
+     "trades": 8,
+     "net_bps": 143.84791254997253,
+     "excess_bps": -91.0818410661554
+    },
+    "2018": {
+     "trades": 14,
+     "net_bps": 361.56807626996726,
+     "excess_bps": 285.6691867572837
+    },
+    "2019": {
+     "trades": 9,
+     "net_bps": 1217.3240714603,
+     "excess_bps": 899.8034880641516
+    },
+    "2020": {
+     "trades": 29,
+     "net_bps": 1061.8783482189835,
+     "excess_bps": 329.7975699150342
+    },
+    "2021": {
+     "trades": 26,
+     "net_bps": -658.2890565578754,
+     "excess_bps": -694.2593839992936
+    }
+   },
+   "gross_bps": 371.398038052498,
+   "share_delisted_since": 0.3404255319148936,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 94,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.02:down": {
+   "trades": 82,
+   "stocks": 79,
+   "net_bps": -145.9454109029072,
+   "net_t": -0.4784596018238618,
+   "median_net_bps": -480.6813597679138,
+   "win_rate": 0.36585365853658536,
+   "excess_bps": -319.9811948202331,
+   "excess_t": -1.0882573300873215,
+   "years_counted": 2,
+   "years_positive": 0,
+   "trimmed_net_bps": -145.9454109029072,
+   "trimmed_excess_bps": -319.98119482023304,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 12,
+     "net_bps": -47.464321057001754,
+     "excess_bps": -154.11248086404595
+    },
+    "2017": {
+     "trades": 10,
+     "net_bps": 1807.492434978485,
+     "excess_bps": 1687.2789287356454
+    },
+    "2018": {
+     "trades": 8,
+     "net_bps": -246.71994149684906,
+     "excess_bps": -16.25251722588983
+    },
+    "2019": {
+     "trades": 6,
+     "net_bps": -196.4562137921651,
+     "excess_bps": -482.1071648277797
+    },
+    "2020": {
+     "trades": 26,
+     "net_bps": -155.62607691838193,
+     "excess_bps": -503.68794542774464
+    },
+    "2021": {
+     "trades": 20,
+     "net_bps": -1113.7050688266754,
+     "excess_bps": -1257.1673892175927
+    }
+   },
+   "gross_bps": -96.55111446613219,
+   "share_delisted_since": 0.34146341463414637,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 85,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.03:any": {
+   "trades": 9,
+   "stocks": 6,
+   "net_bps": 1883.0935822592842,
+   "net_t": null,
+   "median_net_bps": 33.21528434753418,
+   "win_rate": 0.5555555555555556,
+   "excess_bps": 1663.4454970589134,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 1883.0935822592842,
+   "trimmed_excess_bps": 1663.4454970589134,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 2,
+     "net_bps": 1350.1721620559692,
+     "excess_bps": 1314.2334856243021
+    },
+    "2017": {
+     "trades": 3,
+     "net_bps": 474.05123710632324,
+     "excess_bps": 133.24918319557992
+    },
+    "2018": {
+     "trades": 1,
+     "net_bps": 33.21528434753418,
+     "excess_bps": -140.50563581015751
+    },
+    "2019": {
+     "trades": 2,
+     "net_bps": 6563.847064971924,
+     "excess_bps": 6530.497614114052
+    },
+    "2020": {
+     "trades": 1,
+     "net_bps": -335.5652093887329,
+     "excess_bps": -977.6946397230723
+    }
+   },
+   "gross_bps": 1942.6584243774414,
+   "share_delisted_since": 0.3333333333333333,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 10,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.03:up": {
+   "trades": 1,
+   "stocks": 1,
+   "net_bps": 2514.8844718933105,
+   "net_t": null,
+   "median_net_bps": 2514.8844718933105,
+   "win_rate": 1.0,
+   "excess_bps": 1983.4957591475911,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 2514.8844718933105,
+   "trimmed_excess_bps": 1983.4957591475911,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2019": {
+     "trades": 1,
+     "net_bps": 2514.8844718933105,
+     "excess_bps": 1983.4957591475911
+    }
+   },
+   "gross_bps": 2577.6171684265137,
+   "share_delisted_since": 0.0,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 1,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.03:down": {
+   "trades": 2,
+   "stocks": 2,
+   "net_bps": 7921.256422996521,
+   "net_t": null,
+   "median_net_bps": 7921.256422996521,
+   "win_rate": 1.0,
+   "excess_bps": 7576.553745200661,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 7921.256422996521,
+   "trimmed_excess_bps": 7576.553745200661,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 1,
+     "net_bps": 1400.2025127410889,
+     "excess_bps": 1340.6328521854482
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": 14442.310333251953,
+     "excess_bps": 13812.474638215876
+    }
+   },
+   "gross_bps": 8011.087775230408,
+   "share_delisted_since": 0.5,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 2,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.04:any": {
+   "trades": 48,
+   "stocks": 25,
+   "net_bps": -25.357616444428764,
+   "net_t": -0.17959221071115866,
+   "median_net_bps": 43.73371601104736,
+   "win_rate": 0.5208333333333334,
+   "excess_bps": -136.32080426151356,
+   "excess_t": -1.0414162941569258,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -25.357616444428764,
+   "trimmed_excess_bps": -136.32080426151356,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 5,
+     "net_bps": 214.8984670639038,
+     "excess_bps": 111.22587473859524
+    },
+    "2017": {
+     "trades": 12,
+     "net_bps": -545.0983345508575,
+     "excess_bps": -598.8020383323155
+    },
+    "2018": {
+     "trades": 6,
+     "net_bps": 37.39943106969198,
+     "excess_bps": 324.11649390781895
+    },
+    "2019": {
+     "trades": 11,
+     "net_bps": -438.21762908588755,
+     "excess_bps": -679.2236584020159
+    },
+    "2020": {
+     "trades": 6,
+     "net_bps": 626.1315941810608,
+     "excess_bps": 313.8789828120828
+    },
+    "2021": {
+     "trades": 8,
+     "net_bps": 636.0912322998047,
+     "excess_bps": 466.1979829806154
+    }
+   },
+   "gross_bps": 24.6410941084226,
+   "share_delisted_since": 0.16666666666666666,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 49,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.04:up": {
+   "trades": 2,
+   "stocks": 1,
+   "net_bps": -947.1991658210754,
+   "net_t": null,
+   "median_net_bps": -947.1991658210754,
+   "win_rate": 0.5,
+   "excess_bps": -875.3102482040481,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -947.1991658210754,
+   "trimmed_excess_bps": -875.3102482040481,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2019": {
+     "trades": 1,
+     "net_bps": -2546.3980436325073,
+     "excess_bps": -2252.017027290444
+    },
+    "2021": {
+     "trades": 1,
+     "net_bps": 651.9997119903564,
+     "excess_bps": 501.3965308823476
+    }
+   },
+   "gross_bps": -901.8212556838989,
+   "share_delisted_since": 1.0,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 2,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.04:down": {
+   "trades": 5,
+   "stocks": 5,
+   "net_bps": 749.991774559021,
+   "net_t": null,
+   "median_net_bps": 793.7026023864746,
+   "win_rate": 0.6,
+   "excess_bps": 563.2115800698576,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 749.991774559021,
+   "trimmed_excess_bps": 563.2115800698576,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2018": {
+     "trades": 1,
+     "net_bps": 793.7026023864746,
+     "excess_bps": 949.7382676814003
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": -1348.3667373657227,
+     "excess_bps": -1451.0668157912376
+    },
+    "2020": {
+     "trades": 1,
+     "net_bps": 1857.4118614196777,
+     "excess_bps": 1095.8645907745579
+    },
+    "2021": {
+     "trades": 2,
+     "net_bps": 1223.6055731773376,
+     "excess_bps": 1110.7609288422836
+    }
+   },
+   "gross_bps": 803.8767576217651,
+   "share_delisted_since": 0.2,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 5,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.05:any": {
+   "trades": 0,
+   "passes": false,
+   "signals": 0,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.05:up": {
+   "trades": 0,
+   "passes": false,
+   "signals": 0,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "1.05:down": {
+   "trades": 0,
+   "passes": false,
+   "signals": 0,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.01:any": {
+   "trades": 2280,
+   "stocks": 1392,
+   "net_bps": -10.377766008962666,
+   "net_t": -0.15371110146389594,
+   "median_net_bps": -9.207427501678467,
+   "win_rate": 0.49473684210526314,
+   "excess_bps": -147.61964833929454,
+   "excess_t": -3.0465108576615454,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": -74.42722735519004,
+   "trimmed_excess_bps": -209.8538198662814,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 356,
+     "net_bps": 190.2715459968267,
+     "excess_bps": 15.110344469449243
+    },
+    "2017": {
+     "trades": 394,
+     "net_bps": 5.903281838760764,
+     "excess_bps": -161.99527483550233
+    },
+    "2018": {
+     "trades": 407,
+     "net_bps": -228.73171424397088,
+     "excess_bps": -187.2779842780795
+    },
+    "2019": {
+     "trades": 356,
+     "net_bps": 94.80565953790472,
+     "excess_bps": -146.4033523817482
+    },
+    "2020": {
+     "trades": 290,
+     "net_bps": 276.66468866940204,
+     "excess_bps": 135.34688259627433
+    },
+    "2021": {
+     "trades": 477,
+     "net_bps": -240.28016086394433,
+     "excess_bps": -396.2993825227807
+    }
+   },
+   "gross_bps": 39.69606678736837,
+   "share_delisted_since": 0.33464912280701753,
+   "stopped": 4,
+   "bankruptcy_tagged": 0,
+   "signals": 2366,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.01:up": {
+   "trades": 146,
+   "stocks": 140,
+   "net_bps": 92.75286573253265,
+   "net_t": 0.383907383561535,
+   "median_net_bps": -110.91351509094238,
+   "win_rate": 0.4383561643835616,
+   "excess_bps": -160.78387460670248,
+   "excess_t": -0.7127310200716269,
+   "years_counted": 3,
+   "years_positive": 1,
+   "trimmed_net_bps": -1.309407168421252,
+   "trimmed_excess_bps": -253.81341489209797,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 19,
+     "net_bps": 173.88732809769482,
+     "excess_bps": 57.83849132649376
+    },
+    "2017": {
+     "trades": 8,
+     "net_bps": -301.56686902046204,
+     "excess_bps": -415.0419416412915
+    },
+    "2018": {
+     "trades": 22,
+     "net_bps": -251.84116580269554,
+     "excess_bps": -343.94213348688504
+    },
+    "2019": {
+     "trades": 19,
+     "net_bps": 744.1894631636769,
+     "excess_bps": 407.2808433902318
+    },
+    "2020": {
+     "trades": 31,
+     "net_bps": 1184.2907436432376,
+     "excess_bps": 580.9251135769609
+    },
+    "2021": {
+     "trades": 47,
+     "net_bps": -694.9258104283759,
+     "excess_bps": -839.007002196603
+    }
+   },
+   "gross_bps": 143.3436388838781,
+   "share_delisted_since": 0.3424657534246575,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 147,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.01:down": {
+   "trades": 116,
+   "stocks": 111,
+   "net_bps": 82.47433551426592,
+   "net_t": 0.3340113384095847,
+   "median_net_bps": -315.3848648071289,
+   "win_rate": 0.3879310344827586,
+   "excess_bps": -135.73200035138763,
+   "excess_t": -0.5984015950858066,
+   "years_counted": 2,
+   "years_positive": 1,
+   "trimmed_net_bps": 3.757989924886952,
+   "trimmed_excess_bps": -209.7353032782033,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 10,
+     "net_bps": 492.5278425216675,
+     "excess_bps": 128.35965045025512
+    },
+    "2017": {
+     "trades": 7,
+     "net_bps": -37.71313599177769,
+     "excess_bps": -297.36959963706033
+    },
+    "2018": {
+     "trades": 18,
+     "net_bps": 474.9973283873664,
+     "excess_bps": 544.8594116948819
+    },
+    "2019": {
+     "trades": 10,
+     "net_bps": -337.2809886932373,
+     "excess_bps": -543.7068158877227
+    },
+    "2020": {
+     "trades": 30,
+     "net_bps": 531.059722105662,
+     "excess_bps": 240.51696585205892
+    },
+    "2021": {
+     "trades": 41,
+     "net_bps": -395.19993270315774,
+     "excess_bps": -647.1422335365002
+    }
+   },
+   "gross_bps": 133.01365334412148,
+   "share_delisted_since": 0.39655172413793105,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 117,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.03:any": {
+   "trades": 8474,
+   "stocks": 2296,
+   "net_bps": 90.24253671169843,
+   "net_t": 1.43282931280028,
+   "median_net_bps": 63.63868713378906,
+   "win_rate": 0.5355204153882464,
+   "excess_bps": -79.84542042846482,
+   "excess_t": -2.746535158623208,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": 34.59609513913633,
+   "trimmed_excess_bps": -131.76935081132248,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 1163,
+     "net_bps": 205.8441220740255,
+     "excess_bps": 49.973383995628744
+    },
+    "2017": {
+     "trades": 1351,
+     "net_bps": 79.89846054136444,
+     "excess_bps": -101.61503702156931
+    },
+    "2018": {
+     "trades": 1330,
+     "net_bps": -183.23806533239838,
+     "excess_bps": -148.14526332805968
+    },
+    "2019": {
+     "trades": 1276,
+     "net_bps": 81.52311031347531,
+     "excess_bps": -122.95257596184013
+    },
+    "2020": {
+     "trades": 1596,
+     "net_bps": 325.16298586862126,
+     "excess_bps": 14.619001961151271
+    },
+    "2021": {
+     "trades": 1758,
+     "net_bps": 21.67163516338639,
+     "excess_bps": -151.79662301362734
+    }
+   },
+   "gross_bps": 140.82074517035556,
+   "share_delisted_since": 0.2486429077177248,
+   "stopped": 10,
+   "bankruptcy_tagged": 0,
+   "signals": 9643,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.03:up": {
+   "trades": 387,
+   "stocks": 338,
+   "net_bps": 261.2133081569228,
+   "net_t": 1.2008460684436209,
+   "median_net_bps": 0.7271766662597656,
+   "win_rate": 0.5012919896640827,
+   "excess_bps": -124.1052509015224,
+   "excess_t": -1.0420030634318467,
+   "years_counted": 6,
+   "years_positive": 3,
+   "trimmed_net_bps": 185.53307590385276,
+   "trimmed_excess_bps": -200.02177892457397,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 33,
+     "net_bps": 963.5980201489998,
+     "excess_bps": 770.9228039678915
+    },
+    "2017": {
+     "trades": 30,
+     "net_bps": -575.8772095044454,
+     "excess_bps": -729.8326719946932
+    },
+    "2018": {
+     "trades": 41,
+     "net_bps": -651.3979812947715,
+     "excess_bps": -708.1915978693679
+    },
+    "2019": {
+     "trades": 38,
+     "net_bps": 328.09756304088387,
+     "excess_bps": 155.66220703327554
+    },
+    "2020": {
+     "trades": 177,
+     "net_bps": 741.7807437605776,
+     "excess_bps": 77.07684829764918
+    },
+    "2021": {
+     "trades": 68,
+     "net_bps": -448.35955781095174,
+     "excess_bps": -619.0605143131337
+    }
+   },
+   "gross_bps": 312.64854648008514,
+   "share_delisted_since": 0.2868217054263566,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 391,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.03:down": {
+   "trades": 309,
+   "stocks": 279,
+   "net_bps": 480.32071598139396,
+   "net_t": 1.6018368966515972,
+   "median_net_bps": 198.34041595458984,
+   "win_rate": 0.5436893203883495,
+   "excess_bps": 34.50026643251242,
+   "excess_t": 0.22993684271336778,
+   "years_counted": 6,
+   "years_positive": 1,
+   "trimmed_net_bps": 398.81681305131104,
+   "trimmed_excess_bps": -44.73253898184593,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 30,
+     "net_bps": 141.36052131652832,
+     "excess_bps": -101.16117018973839
+    },
+    "2017": {
+     "trades": 21,
+     "net_bps": 63.4295315969558,
+     "excess_bps": -113.99241349197459
+    },
+    "2018": {
+     "trades": 35,
+     "net_bps": -268.2585205350603,
+     "excess_bps": -66.63519579122291
+    },
+    "2019": {
+     "trades": 22,
+     "net_bps": -442.5503178076311,
+     "excess_bps": -539.6192179524248
+    },
+    "2020": {
+     "trades": 135,
+     "net_bps": 1245.6330016807274,
+     "excess_bps": 384.45562792545866
+    },
+    "2021": {
+     "trades": 66,
+     "net_bps": -93.77325123006648,
+     "excess_bps": -327.3999546306184
+    }
+   },
+   "gross_bps": 532.85423605959,
+   "share_delisted_since": 0.3042071197411003,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 314,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.04:any": {
+   "trades": 149,
+   "stocks": 98,
+   "net_bps": -19.039567684967245,
+   "net_t": -0.1937421471469937,
+   "median_net_bps": 33.12110900878906,
+   "win_rate": 0.5100671140939598,
+   "excess_bps": -122.90091636213867,
+   "excess_t": -1.6540409489704035,
+   "years_counted": 5,
+   "years_positive": 0,
+   "trimmed_net_bps": -42.193962915523635,
+   "trimmed_excess_bps": -145.94103627711513,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 15,
+     "net_bps": 289.5096143086751,
+     "excess_bps": 149.18399948563209
+    },
+    "2017": {
+     "trades": 26,
+     "net_bps": -1.2105244856614332,
+     "excess_bps": -107.02529224798836
+    },
+    "2018": {
+     "trades": 29,
+     "net_bps": -175.46680466882114,
+     "excess_bps": -101.73558370661533
+    },
+    "2019": {
+     "trades": 23,
+     "net_bps": 197.3258930703868,
+     "excess_bps": -71.28407544835964
+    },
+    "2020": {
+     "trades": 24,
+     "net_bps": -141.17891589800516,
+     "excess_bps": -255.33509514016043
+    },
+    "2021": {
+     "trades": 32,
+     "net_bps": -100.30407458543777,
+     "excess_bps": -220.29471830085885
+    }
+   },
+   "gross_bps": 30.99084700514006,
+   "share_delisted_since": 0.2751677852348993,
+   "stopped": 3,
+   "bankruptcy_tagged": 0,
+   "signals": 156,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.04:up": {
+   "trades": 7,
+   "stocks": 6,
+   "net_bps": 146.92034040178572,
+   "net_t": null,
+   "median_net_bps": -144.4077491760254,
+   "win_rate": 0.42857142857142855,
+   "excess_bps": -136.00810033511007,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 146.92034040178572,
+   "trimmed_excess_bps": -136.00810033511007,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2017": {
+     "trades": 1,
+     "net_bps": -1320.7721710205078,
+     "excess_bps": -1496.4471962888326
+    },
+    "2018": {
+     "trades": 1,
+     "net_bps": -1127.2650957107544,
+     "excess_bps": -1272.1093778493619
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": 2514.8844718933105,
+     "excess_bps": 1983.4957591475911
+    },
+    "2020": {
+     "trades": 3,
+     "net_bps": 707.4888547261555,
+     "excess_bps": 264.1847217846623
+    },
+    "2021": {
+     "trades": 1,
+     "net_bps": -1160.8713865280151,
+     "excess_bps": -959.5500527091539
+    }
+   },
+   "gross_bps": 197.78294222695484,
+   "share_delisted_since": 0.14285714285714285,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 7,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.04:down": {
+   "trades": 6,
+   "stocks": 6,
+   "net_bps": -417.29847590128577,
+   "net_t": null,
+   "median_net_bps": -665.3618812561035,
+   "win_rate": 0.3333333333333333,
+   "excess_bps": -701.6912179779694,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -417.29847590128577,
+   "trimmed_excess_bps": -701.6912179779694,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 1,
+     "net_bps": 1400.2025127410889,
+     "excess_bps": 1340.6328521854482
+    },
+    "2017": {
+     "trades": 1,
+     "net_bps": -355.3563356399536,
+     "excess_bps": -259.41195557042886
+    },
+    "2020": {
+     "trades": 1,
+     "net_bps": -975.3674268722534,
+     "excess_bps": -1201.874415563584
+    },
+    "2021": {
+     "trades": 3,
+     "net_bps": -857.756535212199,
+     "excess_bps": -1363.1645963064173
+    }
+   },
+   "gross_bps": -369.2643841107687,
+   "share_delisted_since": 0.5,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 6,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.05:any": {
+   "trades": 443,
+   "stocks": 298,
+   "net_bps": 94.54487946986076,
+   "net_t": 0.8706697714144694,
+   "median_net_bps": 70.91879844665527,
+   "win_rate": 0.5395033860045146,
+   "excess_bps": -42.74878714436554,
+   "excess_t": -0.5375952771513097,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": 42.66230283402636,
+   "trimmed_excess_bps": -93.73241866784257,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 69,
+     "net_bps": 362.95188509899634,
+     "excess_bps": 203.34783649012152
+    },
+    "2017": {
+     "trades": 81,
+     "net_bps": 70.98144955105252,
+     "excess_bps": -97.0947964927445
+    },
+    "2018": {
+     "trades": 70,
+     "net_bps": -224.16167599814278,
+     "excess_bps": -199.1697845229841
+    },
+    "2019": {
+     "trades": 73,
+     "net_bps": 78.29724109336121,
+     "excess_bps": -148.9547384416237
+    },
+    "2020": {
+     "trades": 104,
+     "net_bps": 107.64597127070793,
+     "excess_bps": -13.844343326253606
+    },
+    "2021": {
+     "trades": 46,
+     "net_bps": 214.57917016485462,
+     "excess_bps": 25.029513519951692
+    }
+   },
+   "gross_bps": 145.144675170864,
+   "share_delisted_since": 0.327313769751693,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 450,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.05:up": {
+   "trades": 37,
+   "stocks": 34,
+   "net_bps": 215.9485945830474,
+   "net_t": 0.6761381889574981,
+   "median_net_bps": 296.2160110473633,
+   "win_rate": 0.6216216216216216,
+   "excess_bps": 24.350590073961502,
+   "excess_t": 0.09991326816104917,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 215.9485945830474,
+   "trimmed_excess_bps": 24.350590073961502,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 4,
+     "net_bps": 136.11063361167908,
+     "excess_bps": 83.58255585047658
+    },
+    "2017": {
+     "trades": 3,
+     "net_bps": 134.38781102498373,
+     "excess_bps": 40.881569625375775
+    },
+    "2018": {
+     "trades": 7,
+     "net_bps": -728.6699329103742,
+     "excess_bps": -506.37323388659576
+    },
+    "2019": {
+     "trades": 4,
+     "net_bps": 133.50889086723328,
+     "excess_bps": -13.216153863118974
+    },
+    "2020": {
+     "trades": 13,
+     "net_bps": 384.5428044979389,
+     "excess_bps": -41.30414775866697
+    },
+    "2021": {
+     "trades": 6,
+     "net_bps": 1101.6815900802612,
+     "excess_bps": 763.0713456633098
+    }
+   },
+   "gross_bps": 267.1569263612902,
+   "share_delisted_since": 0.40540540540540543,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 37,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.05:down": {
+   "trades": 37,
+   "stocks": 36,
+   "net_bps": 203.61247900370006,
+   "net_t": 0.6045053389662928,
+   "median_net_bps": 323.0881690979004,
+   "win_rate": 0.5675675675675675,
+   "excess_bps": 96.34381055236717,
+   "excess_t": 0.33584259072872447,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 203.61247900370006,
+   "trimmed_excess_bps": 96.34381055236717,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 8,
+     "net_bps": 1199.5956301689148,
+     "excess_bps": 742.9714531265372
+    },
+    "2017": {
+     "trades": 2,
+     "net_bps": -990.806519985199,
+     "excess_bps": -1034.1845290953422
+    },
+    "2018": {
+     "trades": 8,
+     "net_bps": -379.59985435009,
+     "excess_bps": -219.29368976684626
+    },
+    "2019": {
+     "trades": 4,
+     "net_bps": 40.859729051589966,
+     "excess_bps": -349.9177702541007
+    },
+    "2020": {
+     "trades": 12,
+     "net_bps": -258.3853403727214,
+     "excess_bps": -203.07481932931222
+    },
+    "2021": {
+     "trades": 3,
+     "net_bps": 1964.1645749409995,
+     "excess_bps": 1760.078951572964
+    }
+   },
+   "gross_bps": 254.75885417010332,
+   "share_delisted_since": 0.32432432432432434,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 37,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.06:any": {
+   "trades": 212,
+   "stocks": 168,
+   "net_bps": 1.5305854239553773,
+   "net_t": 0.019144147842405392,
+   "median_net_bps": 7.097721099853516,
+   "win_rate": 0.5047169811320755,
+   "excess_bps": -160.51969173978244,
+   "excess_t": -2.223110641984952,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": -38.99043514615013,
+   "trimmed_excess_bps": -200.23464873066607,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 36,
+     "net_bps": 169.79859934912787,
+     "excess_bps": 13.682080065757619
+    },
+    "2017": {
+     "trades": 40,
+     "net_bps": -254.98512387275696,
+     "excess_bps": -455.43624126583524
+    },
+    "2018": {
+     "trades": 29,
+     "net_bps": -91.89772194829482,
+     "excess_bps": -170.16930785471425
+    },
+    "2019": {
+     "trades": 46,
+     "net_bps": -52.29118077651314,
+     "excess_bps": -228.8783195773964
+    },
+    "2020": {
+     "trades": 36,
+     "net_bps": 335.98466051949396,
+     "excess_bps": 151.1441373229361
+    },
+    "2021": {
+     "trades": 25,
+     "net_bps": -104.55520153045654,
+     "excess_bps": -251.32624783385964
+    }
+   },
+   "gross_bps": 51.66413649073186,
+   "share_delisted_since": 0.2358490566037736,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 214,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.06:up": {
+   "trades": 14,
+   "stocks": 14,
+   "net_bps": -170.3963109425136,
+   "net_t": -0.60857959477584,
+   "median_net_bps": -166.3491129875183,
+   "win_rate": 0.42857142857142855,
+   "excess_bps": -383.39055449047567,
+   "excess_t": -1.3860889989975447,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -170.3963109425136,
+   "trimmed_excess_bps": -383.39055449047567,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 3,
+     "net_bps": -645.9498405456543,
+     "excess_bps": -765.6795968025036
+    },
+    "2017": {
+     "trades": 2,
+     "net_bps": -59.641897678375244,
+     "excess_bps": -134.91790816876014
+    },
+    "2018": {
+     "trades": 1,
+     "net_bps": 1938.706636428833,
+     "excess_bps": 921.8289992980311
+    },
+    "2019": {
+     "trades": 2,
+     "net_bps": 145.44129371643066,
+     "excess_bps": 275.27374618923017
+    },
+    "2020": {
+     "trades": 4,
+     "net_bps": -688.9772415161133,
+     "excess_bps": -861.7910874283102
+    },
+    "2021": {
+     "trades": 2,
+     "net_bps": 98.95235300064087,
+     "excess_bps": -412.90264904243924
+    }
+   },
+   "gross_bps": -121.12451451165336,
+   "share_delisted_since": 0.42857142857142855,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 14,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "2.06:down": {
+   "trades": 12,
+   "stocks": 12,
+   "net_bps": -309.7964823246002,
+   "net_t": -0.5769631074978491,
+   "median_net_bps": -250.0280737876892,
+   "win_rate": 0.5,
+   "excess_bps": -610.6778487574536,
+   "excess_t": -1.2090618415528571,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -309.7964823246002,
+   "trimmed_excess_bps": -610.6778487574536,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 3,
+     "net_bps": 969.5319334665935,
+     "excess_bps": 635.7636685239484
+    },
+    "2017": {
+     "trades": 2,
+     "net_bps": -2068.4832334518433,
+     "excess_bps": -2181.0729622153135
+    },
+    "2018": {
+     "trades": 2,
+     "net_bps": -363.9271855354309,
+     "excess_bps": -212.5082636647252
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": -1617.608666419983,
+     "excess_bps": -1988.652021436881
+    },
+    "2020": {
+     "trades": 3,
+     "net_bps": 977.8811534245808,
+     "excess_bps": 398.24067057761835
+    },
+    "2021": {
+     "trades": 1,
+     "net_bps": -3077.3675441741943,
+     "excess_bps": -3654.332729197185
+    }
+   },
+   "gross_bps": -261.22356454531354,
+   "share_delisted_since": 0.16666666666666666,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 12,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "3.01:any": {
+   "trades": 308,
+   "stocks": 255,
+   "net_bps": 223.295067424898,
+   "net_t": 1.6017942218887946,
+   "median_net_bps": 71.16317749023438,
+   "win_rate": 0.5227272727272727,
+   "excess_bps": 36.135075059992964,
+   "excess_t": 0.28443768072777686,
+   "years_counted": 6,
+   "years_positive": 3,
+   "trimmed_net_bps": 92.45068714266918,
+   "trimmed_excess_bps": -90.9774063062776,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 55,
+     "net_bps": 253.1478838487105,
+     "excess_bps": 69.44119260937545
+    },
+    "2017": {
+     "trades": 49,
+     "net_bps": -81.20123220949756,
+     "excess_bps": -277.7061590834261
+    },
+    "2018": {
+     "trades": 50,
+     "net_bps": -258.4265351295471,
+     "excess_bps": -187.26680876407804
+    },
+    "2019": {
+     "trades": 38,
+     "net_bps": -20.07962841736643,
+     "excess_bps": -295.36749841803913
+    },
+    "2020": {
+     "trades": 37,
+     "net_bps": 702.6994228363037,
+     "excess_bps": 322.05769266023566
+    },
+    "2021": {
+     "trades": 79,
+     "net_bps": 588.7985003145435,
+     "excess_bps": 374.54569708494597
+    }
+   },
+   "gross_bps": 274.54022269744377,
+   "share_delisted_since": 0.37012987012987014,
+   "stopped": 9,
+   "bankruptcy_tagged": 0,
+   "signals": 334,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "3.01:up": {
+   "trades": 20,
+   "stocks": 20,
+   "net_bps": 477.51620411872864,
+   "net_t": 0.7976869598211976,
+   "median_net_bps": 1034.4523191452026,
+   "win_rate": 0.7,
+   "excess_bps": 36.017891368902156,
+   "excess_t": 0.0625237599567216,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 477.51620411872864,
+   "trimmed_excess_bps": 36.017891368902156,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 2,
+     "net_bps": -2641.6170597076416,
+     "excess_bps": -2706.4390418729718
+    },
+    "2017": {
+     "trades": 1,
+     "net_bps": 1831.5708637237549,
+     "excess_bps": 1626.4186388993985
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": -2330.7663202285767,
+     "excess_bps": -2734.0492898238012
+    },
+    "2020": {
+     "trades": 5,
+     "net_bps": 516.161322593689,
+     "excess_bps": -355.5086215325258
+    },
+    "2021": {
+     "trades": 11,
+     "net_bps": 1159.2679132114756,
+     "excess_bps": 819.8554245191834
+    }
+   },
+   "gross_bps": 530.0356447696686,
+   "share_delisted_since": 0.35,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 20,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "3.01:down": {
+   "trades": 18,
+   "stocks": 17,
+   "net_bps": 2.899799082014296,
+   "net_t": 0.006598126199547027,
+   "median_net_bps": -136.39867305755615,
+   "win_rate": 0.3888888888888889,
+   "excess_bps": -176.96721794645,
+   "excess_t": -0.4506894646977113,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 2.899799082014296,
+   "trimmed_excess_bps": -176.96721794645,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 3,
+     "net_bps": 1218.9948558807373,
+     "excess_bps": 946.0381784623369
+    },
+    "2017": {
+     "trades": 1,
+     "net_bps": -222.9219675064087,
+     "excess_bps": -434.4216928314415
+    },
+    "2018": {
+     "trades": 3,
+     "net_bps": -1870.7778056462607,
+     "excess_bps": -1640.4211829260166
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": 919.8307991027832,
+     "excess_bps": 628.6769376298862
+    },
+    "2020": {
+     "trades": 3,
+     "net_bps": 2538.4267171223955,
+     "excess_bps": 2093.4785092866446
+    },
+    "2021": {
+     "trades": 7,
+     "net_bps": -900.6633928843908,
+     "excess_bps": -1082.4216689004913
+    }
+   },
+   "gross_bps": 53.040385246276855,
+   "share_delisted_since": 0.4444444444444444,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 18,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "3.02:any": {
+   "trades": 1977,
+   "stocks": 1026,
+   "net_bps": -64.94466017519035,
+   "net_t": -0.6042126223433842,
+   "median_net_bps": -56.035518646240234,
+   "win_rate": 0.4744562468386444,
+   "excess_bps": -207.90141815376765,
+   "excess_t": -2.3452703282454967,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": -150.3770179719311,
+   "trimmed_excess_bps": -291.23978797870785,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 214,
+     "net_bps": 297.01677716781046,
+     "excess_bps": 152.69505705762185
+    },
+    "2017": {
+     "trades": 255,
+     "net_bps": 47.17767706104353,
+     "excess_bps": -119.68774214300434
+    },
+    "2018": {
+     "trades": 253,
+     "net_bps": -159.96891754889205,
+     "excess_bps": -102.31997523306836
+    },
+    "2019": {
+     "trades": 253,
+     "net_bps": -136.81732383170146,
+     "excess_bps": -331.6940255099097
+    },
+    "2020": {
+     "trades": 405,
+     "net_bps": 302.465718469502,
+     "excess_bps": 136.17115228026327
+    },
+    "2021": {
+     "trades": 597,
+     "net_bps": -421.1041675740151,
+     "excess_bps": -600.5381007360079
+    }
+   },
+   "gross_bps": -15.144360505636135,
+   "share_delisted_since": 0.3601416287303996,
+   "stopped": 3,
+   "bankruptcy_tagged": 0,
+   "signals": 2260,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "3.02:up": {
+   "trades": 264,
+   "stocks": 231,
+   "net_bps": -93.34582496773113,
+   "net_t": -0.4136082415722637,
+   "median_net_bps": -59.525370597839355,
+   "win_rate": 0.4696969696969697,
+   "excess_bps": -316.14320463820746,
+   "excess_t": -1.4913750173775155,
+   "years_counted": 5,
+   "years_positive": 1,
+   "trimmed_net_bps": -212.69331679089376,
+   "trimmed_excess_bps": -435.2318598893044,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 18,
+     "net_bps": 1379.6447051895989,
+     "excess_bps": 1268.0730145994175
+    },
+    "2017": {
+     "trades": 21,
+     "net_bps": 35.11133648100353,
+     "excess_bps": -178.1705646011075
+    },
+    "2018": {
+     "trades": 28,
+     "net_bps": 194.7943014757974,
+     "excess_bps": 178.569614953453
+    },
+    "2019": {
+     "trades": 26,
+     "net_bps": -6.650594564584585,
+     "excess_bps": -220.7546452604651
+    },
+    "2020": {
+     "trades": 78,
+     "net_bps": 231.56064443099194,
+     "excess_bps": -99.78455508625008
+    },
+    "2021": {
+     "trades": 93,
+     "net_bps": -790.9386645081223,
+     "excess_bps": -1010.9964685575278
+    }
+   },
+   "gross_bps": -43.68785430084576,
+   "share_delisted_since": 0.38257575757575757,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 269,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "3.02:down": {
+   "trades": 182,
+   "stocks": 165,
+   "net_bps": -494.0041113685775,
+   "net_t": -2.464069433384528,
+   "median_net_bps": -496.2000250816345,
+   "win_rate": 0.3021978021978022,
+   "excess_bps": -700.7634479845186,
+   "excess_t": -3.916973528100391,
+   "years_counted": 2,
+   "years_positive": 0,
+   "trimmed_net_bps": -547.2022229136684,
+   "trimmed_excess_bps": -750.9038418199713,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 15,
+     "net_bps": 22.42100238800049,
+     "excess_bps": -172.72275513569755
+    },
+    "2017": {
+     "trades": 17,
+     "net_bps": -372.7126472136554,
+     "excess_bps": -584.3345414650346
+    },
+    "2018": {
+     "trades": 17,
+     "net_bps": -363.53377734913545,
+     "excess_bps": -371.50925208607833
+    },
+    "2019": {
+     "trades": 13,
+     "net_bps": -474.23426921551044,
+     "excess_bps": -677.832335292188
+    },
+    "2020": {
+     "trades": 40,
+     "net_bps": -294.0242886543274,
+     "excess_bps": -575.2406200892748
+    },
+    "2021": {
+     "trades": 80,
+     "net_bps": -747.5357130169868,
+     "excess_bps": -960.9664569176072
+    }
+   },
+   "gross_bps": -446.35455031971355,
+   "share_delisted_since": 0.3956043956043956,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 190,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "3.03:any": {
+   "trades": 1141,
+   "stocks": 695,
+   "net_bps": 86.27257150688473,
+   "net_t": 0.88972429958707,
+   "median_net_bps": 4.361867904663086,
+   "win_rate": 0.5021910604732691,
+   "excess_bps": -81.98404584723411,
+   "excess_t": -1.0928627850427237,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": -0.5736023978849427,
+   "trimmed_excess_bps": -167.912166501671,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 152,
+     "net_bps": 117.22515680288015,
+     "excess_bps": -52.25971540657724
+    },
+    "2017": {
+     "trades": 175,
+     "net_bps": 192.34192030770438,
+     "excess_bps": 21.029967347954848
+    },
+    "2018": {
+     "trades": 162,
+     "net_bps": -96.93744741840126,
+     "excess_bps": -100.05506446181934
+    },
+    "2019": {
+     "trades": 167,
+     "net_bps": 98.98474830353332,
+     "excess_bps": -120.91931408011997
+    },
+    "2020": {
+     "trades": 226,
+     "net_bps": 348.88403605570835,
+     "excess_bps": 111.49978123054079
+    },
+    "2021": {
+     "trades": 259,
+     "net_bps": -126.31441865648543,
+     "excess_bps": -301.45586301040134
+    }
+   },
+   "gross_bps": 136.83089762795504,
+   "share_delisted_since": 0.287467134092901,
+   "stopped": 8,
+   "bankruptcy_tagged": 0,
+   "signals": 1191,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "3.03:up": {
+   "trades": 90,
+   "stocks": 83,
+   "net_bps": 234.0698904461331,
+   "net_t": 0.5488932421671472,
+   "median_net_bps": -145.52146196365356,
+   "win_rate": 0.4777777777777778,
+   "excess_bps": -123.66657539466293,
+   "excess_t": -0.38084610904075206,
+   "years_counted": 2,
+   "years_positive": 1,
+   "trimmed_net_bps": 234.0698904461331,
+   "trimmed_excess_bps": -123.66657539466293,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 5,
+     "net_bps": 167.49119758605957,
+     "excess_bps": 106.80941948223176
+    },
+    "2017": {
+     "trades": 8,
+     "net_bps": -291.6271239519119,
+     "excess_bps": -509.7623086441086
+    },
+    "2018": {
+     "trades": 10,
+     "net_bps": -329.2122483253479,
+     "excess_bps": -309.19007335662997
+    },
+    "2019": {
+     "trades": 10,
+     "net_bps": 240.35078287124634,
+     "excess_bps": -82.27724693145001
+    },
+    "2020": {
+     "trades": 37,
+     "net_bps": 946.8103421700968,
+     "excess_bps": 331.0724437108087
+    },
+    "2021": {
+     "trades": 20,
+     "net_bps": -579.0758430957794,
+     "excess_bps": -796.0473814098539
+    }
+   },
+   "gross_bps": 285.3691511683994,
+   "share_delisted_since": 0.36666666666666664,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 90,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "3.03:down": {
+   "trades": 66,
+   "stocks": 65,
+   "net_bps": 326.28325801907164,
+   "net_t": 0.7429330658332571,
+   "median_net_bps": -226.28575563430786,
+   "win_rate": 0.45454545454545453,
+   "excess_bps": 65.70486061390974,
+   "excess_t": 0.15530903886035635,
+   "years_counted": 2,
+   "years_positive": 1,
+   "trimmed_net_bps": 326.28325801907164,
+   "trimmed_excess_bps": 65.70486061390986,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 3,
+     "net_bps": -315.2803579966227,
+     "excess_bps": -374.7872783848612
+    },
+    "2017": {
+     "trades": 5,
+     "net_bps": 871.9054460525513,
+     "excess_bps": 726.440257300267
+    },
+    "2018": {
+     "trades": 4,
+     "net_bps": -347.57018089294434,
+     "excess_bps": -360.3746293790566
+    },
+    "2019": {
+     "trades": 6,
+     "net_bps": 292.0163671175639,
+     "excess_bps": 246.2507979596649
+    },
+    "2020": {
+     "trades": 24,
+     "net_bps": 699.6367126703262,
+     "excess_bps": 340.0395034633699
+    },
+    "2021": {
+     "trades": 24,
+     "net_bps": 40.329595406850174,
+     "excess_bps": -265.3447085079727
+    }
+   },
+   "gross_bps": 378.04455468148893,
+   "share_delisted_since": 0.3181818181818182,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 66,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "4.01:any": {
+   "trades": 386,
+   "stocks": 362,
+   "net_bps": -64.20049488235631,
+   "net_t": -0.4339226329659538,
+   "median_net_bps": -92.10824966430664,
+   "win_rate": 0.47150259067357514,
+   "excess_bps": -207.54028537596,
+   "excess_t": -1.4533758735539966,
+   "years_counted": 6,
+   "years_positive": 1,
+   "trimmed_net_bps": -132.3832684335136,
+   "trimmed_excess_bps": -271.3487019767252,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 45,
+     "net_bps": 115.94223976135254,
+     "excess_bps": -36.35679053269344
+    },
+    "2017": {
+     "trades": 49,
+     "net_bps": 108.24100095398572,
+     "excess_bps": -3.7244312238900488
+    },
+    "2018": {
+     "trades": 46,
+     "net_bps": -37.66841214636098,
+     "excess_bps": -7.660185005121956
+    },
+    "2019": {
+     "trades": 50,
+     "net_bps": 50.27351379394532,
+     "excess_bps": -147.37871656233045
+    },
+    "2020": {
+     "trades": 65,
+     "net_bps": 321.8914178701548,
+     "excess_bps": 214.90626303058002
+    },
+    "2021": {
+     "trades": 131,
+     "net_bps": -435.16390651236964,
+     "excess_bps": -645.3404596169032
+    }
+   },
+   "gross_bps": -14.396425664733728,
+   "share_delisted_since": 0.36787564766839376,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 393,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "4.01:up": {
+   "trades": 34,
+   "stocks": 34,
+   "net_bps": -66.55105773140401,
+   "net_t": -0.11091768571491158,
+   "median_net_bps": -387.4802589416504,
+   "win_rate": 0.4411764705882353,
+   "excess_bps": -323.67499428491493,
+   "excess_t": -0.5600049278548688,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -66.55105773140401,
+   "trimmed_excess_bps": -323.6749942849149,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 2,
+     "net_bps": 947.6840496063232,
+     "excess_bps": 758.8054579074377
+    },
+    "2017": {
+     "trades": 1,
+     "net_bps": -362.54048347473145,
+     "excess_bps": -523.2893842359255
+    },
+    "2018": {
+     "trades": 3,
+     "net_bps": 1874.9773502349854,
+     "excess_bps": 1695.697112286558
+    },
+    "2020": {
+     "trades": 10,
+     "net_bps": 774.1068005561829,
+     "excess_bps": 385.3764388411698
+    },
+    "2021": {
+     "trades": 18,
+     "net_bps": -953.4202019373577,
+     "excess_bps": -1163.3403923631904
+    }
+   },
+   "gross_bps": -16.758704886716956,
+   "share_delisted_since": 0.4411764705882353,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 34,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "4.01:down": {
+   "trades": 39,
+   "stocks": 38,
+   "net_bps": 66.26615157494179,
+   "net_t": 0.1229503560880541,
+   "median_net_bps": -622.3952770233154,
+   "win_rate": 0.358974358974359,
+   "excess_bps": -189.75847543421568,
+   "excess_t": -0.3700942148998823,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 66.26615157494179,
+   "trimmed_excess_bps": -189.75847543421563,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 6,
+     "net_bps": -36.921799182891846,
+     "excess_bps": -220.0940745099045
+    },
+    "2017": {
+     "trades": 1,
+     "net_bps": 608.4656715393066,
+     "excess_bps": 383.0813240593334
+    },
+    "2018": {
+     "trades": 4,
+     "net_bps": 390.26349782943726,
+     "excess_bps": 581.9622572681604
+    },
+    "2019": {
+     "trades": 3,
+     "net_bps": -953.8376331329346,
+     "excess_bps": -1190.3272348517391
+    },
+    "2020": {
+     "trades": 6,
+     "net_bps": 495.72090307871497,
+     "excess_bps": 4.9082657531492515
+    },
+    "2021": {
+     "trades": 19,
+     "net_bps": 27.556764452080976,
+     "excess_bps": -276.28496515634936
+    }
+   },
+   "gross_bps": 116.72400511228122,
+   "share_delisted_since": 0.358974358974359,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 39,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "4.02:any": {
+   "trades": 130,
+   "stocks": 119,
+   "net_bps": 259.6963689877437,
+   "net_t": 0.5218799075060782,
+   "median_net_bps": -108.72960090637207,
+   "win_rate": 0.47692307692307695,
+   "excess_bps": 103.50145371786984,
+   "excess_t": 0.21456155468854624,
+   "years_counted": 1,
+   "years_positive": 1,
+   "trimmed_net_bps": 179.1239108226096,
+   "trimmed_excess_bps": 21.375992974068584,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": true,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 12,
+     "net_bps": 593.8877662022909,
+     "excess_bps": 379.52505434582866
+    },
+    "2017": {
+     "trades": 7,
+     "net_bps": 284.21521186828613,
+     "excess_bps": 99.30421408227133
+    },
+    "2018": {
+     "trades": 9,
+     "net_bps": -1422.6904180314807,
+     "excess_bps": -1320.8117616953841
+    },
+    "2019": {
+     "trades": 2,
+     "net_bps": -102.1537184715271,
+     "excess_bps": 81.11314931740499
+    },
+    "2020": {
+     "trades": 9,
+     "net_bps": 1365.953485171,
+     "excess_bps": 816.1429948424868
+    },
+    "2021": {
+     "trades": 91,
+     "net_bps": 278.67371564383035,
+     "excess_bps": 138.30276302899446
+    }
+   },
+   "gross_bps": 311.1238983961252,
+   "share_delisted_since": 0.43846153846153846,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 130,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "4.02:up": {
+   "trades": 13,
+   "stocks": 13,
+   "net_bps": -148.29145028040958,
+   "net_t": -0.23373965662086488,
+   "median_net_bps": -341.913104057312,
+   "win_rate": 0.38461538461538464,
+   "excess_bps": -351.3959472157324,
+   "excess_t": -0.6521918693350801,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -148.29145028040958,
+   "trimmed_excess_bps": -351.3959472157324,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 2,
+     "net_bps": -654.8485159873962,
+     "excess_bps": -875.5613006138607
+    },
+    "2017": {
+     "trades": 1,
+     "net_bps": -572.4996328353882,
+     "excess_bps": -850.9631462154621
+    },
+    "2018": {
+     "trades": 1,
+     "net_bps": -2982.6605319976807,
+     "excess_bps": -2659.588046729622
+    },
+    "2020": {
+     "trades": 2,
+     "net_bps": 2729.673981666565,
+     "excess_bps": 1898.8433934787486
+    },
+    "2021": {
+     "trades": 7,
+     "net_bps": -360.32566002437045,
+     "excess_bps": -443.45147236988754
+    }
+   },
+   "gross_bps": -98.90895623427171,
+   "share_delisted_since": 0.3076923076923077,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 13,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "4.02:down": {
+   "trades": 23,
+   "stocks": 22,
+   "net_bps": 191.29050814587134,
+   "net_t": 0.1932890110846567,
+   "median_net_bps": -515.7512426376343,
+   "win_rate": 0.4782608695652174,
+   "excess_bps": -46.319157153037565,
+   "excess_t": -0.04689585299324569,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 191.29050814587134,
+   "trimmed_excess_bps": -46.319157153037665,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 3,
+     "net_bps": 356.8633397420248,
+     "excess_bps": 212.09147573345132
+    },
+    "2017": {
+     "trades": 1,
+     "net_bps": 4303.302764892578,
+     "excess_bps": 4182.528669509573
+    },
+    "2018": {
+     "trades": 3,
+     "net_bps": -1768.9557870229087,
+     "excess_bps": -1779.0111554388159
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": 269.1996097564697,
+     "excess_bps": 39.78760535567227
+    },
+    "2020": {
+     "trades": 3,
+     "net_bps": -448.80807399749756,
+     "excess_bps": -1208.8018277775948
+    },
+    "2021": {
+     "trades": 12,
+     "net_bps": 450.8234063784281,
+     "excess_bps": 253.292302755314
+    }
+   },
+   "gross_bps": 242.37503176150116,
+   "share_delisted_since": 0.4782608695652174,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 23,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.01:any": {
+   "trades": 210,
+   "stocks": 199,
+   "net_bps": -151.86205080577304,
+   "net_t": -0.7566507521582077,
+   "median_net_bps": -232.6035499572754,
+   "win_rate": 0.4,
+   "excess_bps": -325.89262021820565,
+   "excess_t": -1.6589132380217357,
+   "years_counted": 5,
+   "years_positive": 2,
+   "trimmed_net_bps": -245.06920518783423,
+   "trimmed_excess_bps": -417.250839613483,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 15,
+     "net_bps": -141.49880409240723,
+     "excess_bps": -240.8744472860967
+    },
+    "2017": {
+     "trades": 23,
+     "net_bps": -20.373722781305727,
+     "excess_bps": -183.46906341500335
+    },
+    "2018": {
+     "trades": 30,
+     "net_bps": 73.94633690516154,
+     "excess_bps": 6.12424674086276
+    },
+    "2019": {
+     "trades": 23,
+     "net_bps": -471.87209129333496,
+     "excess_bps": -753.3691717123522
+    },
+    "2020": {
+     "trades": 35,
+     "net_bps": 396.94494860512873,
+     "excess_bps": 147.01568102135846
+    },
+    "2021": {
+     "trades": 84,
+     "net_bps": -411.40902610052194,
+     "excess_bps": -578.6467900782857
+    }
+   },
+   "gross_bps": -102.49738750003634,
+   "share_delisted_since": 0.3904761904761905,
+   "stopped": 3,
+   "bankruptcy_tagged": 0,
+   "signals": 217,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.01:up": {
+   "trades": 28,
+   "stocks": 28,
+   "net_bps": -250.94917842320035,
+   "net_t": -0.32503481855390554,
+   "median_net_bps": -716.4493203163147,
+   "win_rate": 0.39285714285714285,
+   "excess_bps": -424.8543540404171,
+   "excess_t": -0.572845992725426,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -250.94917842320035,
+   "trimmed_excess_bps": -424.85435404041704,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2017": {
+     "trades": 3,
+     "net_bps": -530.1360289255778,
+     "excess_bps": -669.0691232048773
+    },
+    "2018": {
+     "trades": 3,
+     "net_bps": -203.90232404073078,
+     "excess_bps": -282.6780886073306
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": -1120.8021640777588,
+     "excess_bps": -1349.1766119933036
+    },
+    "2020": {
+     "trades": 7,
+     "net_bps": 996.9455003738403,
+     "excess_bps": 743.6327592997309
+    },
+    "2021": {
+     "trades": 14,
+     "net_bps": -763.0198768207006,
+     "excess_bps": -921.209498628562
+    }
+   },
+   "gross_bps": -202.08092672484264,
+   "share_delisted_since": 0.35714285714285715,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 28,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.01:down": {
+   "trades": 22,
+   "stocks": 22,
+   "net_bps": -775.9479230100458,
+   "net_t": -1.5309603621618202,
+   "median_net_bps": -1230.8204174041748,
+   "win_rate": 0.18181818181818182,
+   "excess_bps": -999.1586330319374,
+   "excess_t": -2.087413858477409,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -775.9479230100458,
+   "trimmed_excess_bps": -999.1586330319371,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2018": {
+     "trades": 1,
+     "net_bps": 1991.6713237762451,
+     "excess_bps": 1665.78757122696
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": -3486.2136840820312,
+     "excess_bps": -3834.445207048556
+    },
+    "2020": {
+     "trades": 6,
+     "net_bps": -1838.9184276262918,
+     "excess_bps": -1972.255324389185
+    },
+    "2021": {
+     "trades": 14,
+     "net_bps": -324.4858128683908,
+     "excess_bps": -569.9500246104222
+    }
+   },
+   "gross_bps": -729.711651802063,
+   "share_delisted_since": 0.3181818181818182,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 22,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.02:any": {
+   "trades": 23065,
+   "stocks": 3242,
+   "net_bps": 33.865910379586346,
+   "net_t": 0.493269374451365,
+   "median_net_bps": 44.53897476196289,
+   "win_rate": 0.5236071970518101,
+   "excess_bps": -94.61934541361761,
+   "excess_t": -2.8086890266028504,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": -23.777473539290188,
+   "trimmed_excess_bps": -150.0877676925022,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 3349,
+     "net_bps": 223.86291127448368,
+     "excess_bps": 29.981978811408663
+    },
+    "2017": {
+     "trades": 3643,
+     "net_bps": 77.0890367512123,
+     "excess_bps": -98.83525657887833
+    },
+    "2018": {
+     "trades": 3875,
+     "net_bps": -133.17925207076533,
+     "excess_bps": -92.72159072626886
+    },
+    "2019": {
+     "trades": 3739,
+     "net_bps": 80.98059078052293,
+     "excess_bps": -130.9241733324858
+    },
+    "2020": {
+     "trades": 3859,
+     "net_bps": 74.60793549299673,
+     "excess_bps": 4.402242249080165
+    },
+    "2021": {
+     "trades": 4600,
+     "net_bps": -70.44866914334504,
+     "excess_bps": -237.15535086356266
+    }
+   },
+   "gross_bps": 84.16152928156163,
+   "share_delisted_since": 0.28779536093648383,
+   "stopped": 50,
+   "bankruptcy_tagged": 0,
+   "signals": 27496,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.02:up": {
+   "trades": 1087,
+   "stocks": 833,
+   "net_bps": 77.8863988234126,
+   "net_t": 0.5174536724425223,
+   "median_net_bps": 4.478693008422852,
+   "win_rate": 0.5013799448022079,
+   "excess_bps": -134.25815273655408,
+   "excess_t": -1.1723661638282026,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": -38.235327548856745,
+   "trimmed_excess_bps": -250.18264325640877,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 124,
+     "net_bps": 267.18311252132537,
+     "excess_bps": 27.02110872194242
+    },
+    "2017": {
+     "trades": 101,
+     "net_bps": 192.17926086765706,
+     "excess_bps": 15.940070935985728
+    },
+    "2018": {
+     "trades": 135,
+     "net_bps": -301.2106639367563,
+     "excess_bps": -305.6581585929742
+    },
+    "2019": {
+     "trades": 133,
+     "net_bps": 6.0264150002845245,
+     "excess_bps": -208.39630508305382
+    },
+    "2020": {
+     "trades": 325,
+     "net_bps": 323.37142137380744,
+     "excess_bps": -5.567264698434081
+    },
+    "2021": {
+     "trades": 269,
+     "net_bps": -123.09323899364826,
+     "excess_bps": -297.80392437769865
+    }
+   },
+   "gross_bps": 128.4026798021936,
+   "share_delisted_since": 0.38178472861085555,
+   "stopped": 3,
+   "bankruptcy_tagged": 0,
+   "signals": 1108,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.02:down": {
+   "trades": 1149,
+   "stocks": 875,
+   "net_bps": 187.75205076830196,
+   "net_t": 1.4075521428714584,
+   "median_net_bps": 58.710575103759766,
+   "win_rate": 0.5221932114882507,
+   "excess_bps": -35.16358293280843,
+   "excess_t": -0.3843921672850074,
+   "years_counted": 6,
+   "years_positive": 3,
+   "trimmed_net_bps": 88.583935962201,
+   "trimmed_excess_bps": -131.7648584635848,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 121,
+     "net_bps": 737.5516773255403,
+     "excess_bps": 471.50697950546066
+    },
+    "2017": {
+     "trades": 102,
+     "net_bps": 160.8250713815876,
+     "excess_bps": 27.565966935222473
+    },
+    "2018": {
+     "trades": 142,
+     "net_bps": -106.0167542645629,
+     "excess_bps": -28.04999036231458
+    },
+    "2019": {
+     "trades": 129,
+     "net_bps": 43.52922125380169,
+     "excess_bps": -172.47030937689462
+    },
+    "2020": {
+     "trades": 342,
+     "net_bps": 567.1218020177026,
+     "excess_bps": 227.5419810628241
+    },
+    "2021": {
+     "trades": 313,
+     "net_bps": -237.81901159987282,
+     "excess_bps": -485.1585269002175
+    }
+   },
+   "gross_bps": 238.8190196014882,
+   "share_delisted_since": 0.3568320278503046,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 1179,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.03:any": {
+   "trades": 4181,
+   "stocks": 1929,
+   "net_bps": 88.45172382319154,
+   "net_t": 1.3705314353688014,
+   "median_net_bps": 53.86233329772949,
+   "win_rate": 0.5362353503946424,
+   "excess_bps": -74.39836604110496,
+   "excess_t": -2.1938044782224875,
+   "years_counted": 6,
+   "years_positive": 1,
+   "trimmed_net_bps": 28.966763745183528,
+   "trimmed_excess_bps": -131.83828757494356,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 765,
+     "net_bps": 214.74264416040157,
+     "excess_bps": 12.20581017156785
+    },
+    "2017": {
+     "trades": 694,
+     "net_bps": 134.16868723091542,
+     "excess_bps": -35.43542027425035
+    },
+    "2018": {
+     "trades": 611,
+     "net_bps": -140.1606294800529,
+     "excess_bps": -100.94760116013178
+    },
+    "2019": {
+     "trades": 599,
+     "net_bps": 41.954760161385515,
+     "excess_bps": -149.67821054064862
+    },
+    "2020": {
+     "trades": 796,
+     "net_bps": 238.4725287931049,
+     "excess_bps": -9.857483691505932
+    },
+    "2021": {
+     "trades": 716,
+     "net_bps": -23.591374385290308,
+     "excess_bps": -190.8129079436477
+    }
+   },
+   "gross_bps": 139.0209405566482,
+   "share_delisted_since": 0.2812724228653432,
+   "stopped": 5,
+   "bankruptcy_tagged": 0,
+   "signals": 4332,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.03:up": {
+   "trades": 242,
+   "stocks": 227,
+   "net_bps": 256.41720157024287,
+   "net_t": 1.277779999841334,
+   "median_net_bps": 5.0956010818481445,
+   "win_rate": 0.5041322314049587,
+   "excess_bps": -36.662678038331435,
+   "excess_t": -0.23826246142176208,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": 155.77970941861471,
+   "trimmed_excess_bps": -135.86406020406076,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 44,
+     "net_bps": 602.0632928067988,
+     "excess_bps": 411.80777898094846
+    },
+    "2017": {
+     "trades": 23,
+     "net_bps": 118.543091027633,
+     "excess_bps": -77.97668147289878
+    },
+    "2018": {
+     "trades": 27,
+     "net_bps": -329.4253570062143,
+     "excess_bps": -259.7664449168351
+    },
+    "2019": {
+     "trades": 29,
+     "net_bps": -61.30717951675941,
+     "excess_bps": -263.2841505279286
+    },
+    "2020": {
+     "trades": 82,
+     "net_bps": 682.5424476367671,
+     "excess_bps": 123.56307991114043
+    },
+    "2021": {
+     "trades": 37,
+     "net_bps": -336.76759616748706,
+     "excess_bps": -558.9644557083866
+    }
+   },
+   "gross_bps": 307.8284194646788,
+   "share_delisted_since": 0.5330578512396694,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 244,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.03:down": {
+   "trades": 152,
+   "stocks": 146,
+   "net_bps": 74.14150394891438,
+   "net_t": 0.3062697549237155,
+   "median_net_bps": -33.803582191467285,
+   "win_rate": 0.4934210526315789,
+   "excess_bps": -235.98498407255514,
+   "excess_t": -1.1333020823757447,
+   "years_counted": 3,
+   "years_positive": 1,
+   "trimmed_net_bps": 14.136784913524098,
+   "trimmed_excess_bps": -293.00904248517105,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 12,
+     "net_bps": 293.84498794873554,
+     "excess_bps": 43.9952939171968
+    },
+    "2017": {
+     "trades": 13,
+     "net_bps": 9.413407399104193,
+     "excess_bps": -160.2540545992833
+    },
+    "2018": {
+     "trades": 21,
+     "net_bps": -629.7105834597633,
+     "excess_bps": -644.1230001402934
+    },
+    "2019": {
+     "trades": 14,
+     "net_bps": 475.0488059861319,
+     "excess_bps": 383.5065033285278
+    },
+    "2020": {
+     "trades": 56,
+     "net_bps": 563.5175215346472,
+     "excess_bps": 36.16562021467147
+    },
+    "2021": {
+     "trades": 36,
+     "net_bps": -482.2985496785906,
+     "excess_bps": -782.8372547755247
+    }
+   },
+   "gross_bps": 124.63897858795366,
+   "share_delisted_since": 0.32894736842105265,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 153,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.04:any": {
+   "trades": 161,
+   "stocks": 129,
+   "net_bps": -108.74004097458739,
+   "net_t": -0.7631580686401117,
+   "median_net_bps": 44.62122917175293,
+   "win_rate": 0.5217391304347826,
+   "excess_bps": -254.01705495345178,
+   "excess_t": -2.0813816760663784,
+   "years_counted": 6,
+   "years_positive": 1,
+   "trimmed_net_bps": -124.52942132949829,
+   "trimmed_excess_bps": -272.62265351873856,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 31,
+     "net_bps": -60.788181520277455,
+     "excess_bps": -238.40061188540602
+    },
+    "2017": {
+     "trades": 29,
+     "net_bps": -265.5947002871283,
+     "excess_bps": -450.73685500528615
+    },
+    "2018": {
+     "trades": 34,
+     "net_bps": -298.6501770861008,
+     "excess_bps": -340.2731910342222
+    },
+    "2019": {
+     "trades": 23,
+     "net_bps": -49.944364506265394,
+     "excess_bps": -194.39004171919547
+    },
+    "2020": {
+     "trades": 23,
+     "net_bps": 126.43402037413223,
+     "excess_bps": 2.2182388035074663
+    },
+    "2021": {
+     "trades": 21,
+     "net_bps": 22.589394024440217,
+     "excess_bps": -211.7008629371657
+    }
+   },
+   "gross_bps": -59.15927220575558,
+   "share_delisted_since": 0.2981366459627329,
+   "stopped": 16,
+   "bankruptcy_tagged": 0,
+   "signals": 170,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.04:up": {
+   "trades": 0,
+   "passes": false,
+   "signals": 0,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.04:down": {
+   "trades": 8,
+   "stocks": 8,
+   "net_bps": 978.4478694200516,
+   "net_t": null,
+   "median_net_bps": 711.2592458724976,
+   "win_rate": 0.625,
+   "excess_bps": 500.7751491190125,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 978.4478694200516,
+   "trimmed_excess_bps": 500.7751491190125,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 3,
+     "net_bps": -191.28084182739258,
+     "excess_bps": -493.45427251601325
+    },
+    "2018": {
+     "trades": 3,
+     "net_bps": -1587.5055392583213,
+     "excess_bps": -1689.7022952299465
+    },
+    "2020": {
+     "trades": 2,
+     "net_bps": 6581.971049308777,
+     "excess_bps": 5277.835448094989
+    }
+   },
+   "gross_bps": 1033.4783047437668,
+   "share_delisted_since": 0.125,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 9,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.05:any": {
+   "trades": 161,
+   "stocks": 136,
+   "net_bps": 99.06585172096395,
+   "net_t": 0.601884921216138,
+   "median_net_bps": 80.7344913482666,
+   "win_rate": 0.5527950310559007,
+   "excess_bps": -3.9486119677811793,
+   "excess_t": -0.0291232173013381,
+   "years_counted": 6,
+   "years_positive": 3,
+   "trimmed_net_bps": 14.295578002929688,
+   "trimmed_excess_bps": -87.08220664949224,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 22,
+     "net_bps": 466.7223312638023,
+     "excess_bps": 319.979276157722
+    },
+    "2017": {
+     "trades": 22,
+     "net_bps": 58.15145644274625,
+     "excess_bps": -170.2518718371018
+    },
+    "2018": {
+     "trades": 32,
+     "net_bps": 202.983096241951,
+     "excess_bps": 206.6705767009098
+    },
+    "2019": {
+     "trades": 20,
+     "net_bps": 905.2528440952301,
+     "excess_bps": 650.3338386192294
+    },
+    "2020": {
+     "trades": 30,
+     "net_bps": -385.05438963572186,
+     "excess_bps": -333.6420267096275
+    },
+    "2021": {
+     "trades": 35,
+     "net_bps": -247.04301357269287,
+     "excess_bps": -386.8743956397513
+    }
+   },
+   "gross_bps": 149.6883393814845,
+   "share_delisted_since": 0.32298136645962733,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 161,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.05:up": {
+   "trades": 9,
+   "stocks": 8,
+   "net_bps": 527.3203717337714,
+   "net_t": null,
+   "median_net_bps": 629.2867660522461,
+   "win_rate": 0.6666666666666666,
+   "excess_bps": 485.2178274109444,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": 527.3203717337714,
+   "trimmed_excess_bps": 485.2178274109444,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": true
+   },
+   "passes": false,
+   "by_year": {
+    "2018": {
+     "trades": 3,
+     "net_bps": -296.7311938603719,
+     "excess_bps": -158.50077658081366
+    },
+    "2020": {
+     "trades": 3,
+     "net_bps": 1861.2507979075112,
+     "excess_bps": 1704.8063433045068
+    },
+    "2021": {
+     "trades": 3,
+     "net_bps": 17.441511154174805,
+     "excess_bps": -90.65208449086019
+    }
+   },
+   "gross_bps": 580.0895558463202,
+   "share_delisted_since": 0.6666666666666666,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 9,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.05:down": {
+   "trades": 9,
+   "stocks": 9,
+   "net_bps": -1455.0922314325967,
+   "net_t": null,
+   "median_net_bps": -1165.49551486969,
+   "win_rate": 0.3333333333333333,
+   "excess_bps": -1337.8779664912097,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -1455.0922314325967,
+   "trimmed_excess_bps": -1337.8779664912097,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2017": {
+     "trades": 1,
+     "net_bps": -1165.49551486969,
+     "excess_bps": -1156.2169252153165
+    },
+    "2018": {
+     "trades": 1,
+     "net_bps": 364.5646572113037,
+     "excess_bps": 224.69889618883744
+    },
+    "2019": {
+     "trades": 1,
+     "net_bps": 687.9091262817383,
+     "excess_bps": 228.9844810688657
+    },
+    "2020": {
+     "trades": 4,
+     "net_bps": -2440.4123425483704,
+     "excess_bps": -1923.9060273023117
+    },
+    "2021": {
+     "trades": 2,
+     "net_bps": -1610.579490661621,
+     "excess_bps": -1821.3720206270134
+    }
+   },
+   "gross_bps": -1412.2597376505532,
+   "share_delisted_since": 0.5555555555555556,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 9,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.06:any": {
+   "trades": 81,
+   "stocks": 81,
+   "net_bps": -355.9089074900121,
+   "net_t": -0.8053409226628483,
+   "median_net_bps": -1203.5983800888062,
+   "win_rate": 0.2962962962962963,
+   "excess_bps": -500.56989849915095,
+   "excess_t": -1.183947294979845,
+   "years_counted": 2,
+   "years_positive": 1,
+   "trimmed_net_bps": -355.9089074900121,
+   "trimmed_excess_bps": -500.56989849915095,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 1,
+     "net_bps": -692.5028562545776,
+     "excess_bps": -891.414884387991
+    },
+    "2018": {
+     "trades": 2,
+     "net_bps": -418.3465242385864,
+     "excess_bps": -492.11010202841743
+    },
+    "2019": {
+     "trades": 2,
+     "net_bps": -1818.6813592910767,
+     "excess_bps": -1908.79149572808
+    },
+    "2020": {
+     "trades": 20,
+     "net_bps": 605.5677533149719,
+     "excess_bps": 518.1479075297156
+    },
+    "2021": {
+     "trades": 56,
+     "net_bps": -638.811034815652,
+     "excess_bps": -807.4268187343671
+    }
+   },
+   "gross_bps": -307.5670607296037,
+   "share_delisted_since": 0.37037037037037035,
+   "stopped": 1,
+   "bankruptcy_tagged": 0,
+   "signals": 81,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.06:up": {
+   "trades": 14,
+   "stocks": 14,
+   "net_bps": -493.3752332414899,
+   "net_t": -0.3342040228801571,
+   "median_net_bps": -2188.5189414024353,
+   "win_rate": 0.2857142857142857,
+   "excess_bps": -653.9841202819192,
+   "excess_t": -0.4587498639883275,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -493.3752332414899,
+   "trimmed_excess_bps": -653.9841202819192,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2020": {
+     "trades": 5,
+     "net_bps": 973.6366271972656,
+     "excess_bps": 767.2660836922455
+    },
+    "2021": {
+     "trades": 9,
+     "net_bps": -1308.381822374132,
+     "excess_bps": -1443.5675669342331
+    }
+   },
+   "gross_bps": -445.72212866374423,
+   "share_delisted_since": 0.42857142857142855,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 14,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.06:down": {
+   "trades": 13,
+   "stocks": 13,
+   "net_bps": -346.2471870275644,
+   "net_t": -0.37476362698869886,
+   "median_net_bps": -1290.9895181655884,
+   "win_rate": 0.15384615384615385,
+   "excess_bps": -621.2490869041044,
+   "excess_t": -0.6943581896978773,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -346.2471870275644,
+   "trimmed_excess_bps": -621.2490869041044,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2019": {
+     "trades": 1,
+     "net_bps": -3486.2136840820312,
+     "excess_bps": -3834.445207048556
+    },
+    "2020": {
+     "trades": 2,
+     "net_bps": -1927.2038340568542,
+     "excess_bps": -2328.91685082377
+    },
+    "2021": {
+     "trades": 10,
+     "net_bps": 283.94079208374023,
+     "excess_bps": 41.60407789427389
+    }
+   },
+   "gross_bps": -297.8569269180298,
+   "share_delisted_since": 0.15384615384615385,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 13,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.07:any": {
+   "trades": 11979,
+   "stocks": 3053,
+   "net_bps": 123.9373393544013,
+   "net_t": 1.789725149522416,
+   "median_net_bps": 79.50901985168457,
+   "win_rate": 0.5454545454545454,
+   "excess_bps": -58.104647541053694,
+   "excess_t": -1.2087845697192865,
+   "years_counted": 6,
+   "years_positive": 3,
+   "trimmed_net_bps": 65.59779209793116,
+   "trimmed_excess_bps": -114.78373431061193,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 1787,
+     "net_bps": 178.09381382253227,
+     "excess_bps": 25.71137972390386
+    },
+    "2017": {
+     "trades": 1916,
+     "net_bps": 41.58988563899954,
+     "excess_bps": -99.66806904288667
+    },
+    "2018": {
+     "trades": 1964,
+     "net_bps": 98.57714388618159,
+     "excess_bps": 15.682764032408562
+    },
+    "2019": {
+     "trades": 1952,
+     "net_bps": 11.586171926045028,
+     "excess_bps": -169.2909213330597
+    },
+    "2020": {
+     "trades": 1982,
+     "net_bps": 439.5863007825511,
+     "excess_bps": 96.91325456473457
+    },
+    "2021": {
+     "trades": 2378,
+     "net_bps": -0.3264274188106656,
+     "excess_bps": -186.47810296028146
+    }
+   },
+   "gross_bps": 174.68444970068265,
+   "share_delisted_since": 0.2866683362551131,
+   "stopped": 150,
+   "bankruptcy_tagged": 0,
+   "signals": 12098,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.07:up": {
+   "trades": 441,
+   "stocks": 411,
+   "net_bps": 293.2718389428932,
+   "net_t": 1.1688253463200773,
+   "median_net_bps": -32.808780670166016,
+   "win_rate": 0.4875283446712018,
+   "excess_bps": 15.662294627402934,
+   "excess_t": 0.07558612641432923,
+   "years_counted": 6,
+   "years_positive": 3,
+   "trimmed_net_bps": 202.16164108817583,
+   "trimmed_excess_bps": -72.90640812091459,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 37,
+     "net_bps": 565.8030832136,
+     "excess_bps": 375.01505138428604
+    },
+    "2017": {
+     "trades": 37,
+     "net_bps": 102.07883409551671,
+     "excess_bps": -53.48362640393584
+    },
+    "2018": {
+     "trades": 38,
+     "net_bps": 92.1933745083056,
+     "excess_bps": 1.5674404891836167
+    },
+    "2019": {
+     "trades": 37,
+     "net_bps": -167.66246911641713,
+     "excess_bps": -356.61185261925954
+    },
+    "2020": {
+     "trades": 194,
+     "net_bps": 622.456528476833,
+     "excess_bps": 223.4843486822982
+    },
+    "2021": {
+     "trades": 98,
+     "net_bps": -137.09340168505298,
+     "excess_bps": -359.2905982615356
+    }
+   },
+   "gross_bps": 344.86775090094324,
+   "share_delisted_since": 0.3197278911564626,
+   "stopped": 2,
+   "bankruptcy_tagged": 0,
+   "signals": 445,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.07:down": {
+   "trades": 307,
+   "stocks": 291,
+   "net_bps": 70.20619870785393,
+   "net_t": 0.24579714854057777,
+   "median_net_bps": -86.16507053375244,
+   "win_rate": 0.48534201954397393,
+   "excess_bps": -161.0642899362062,
+   "excess_t": -0.6577428320899633,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": -27.752565710168135,
+   "trimmed_excess_bps": -255.15308260981644,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 32,
+     "net_bps": 662.2422486543655,
+     "excess_bps": 409.1391120669563
+    },
+    "2017": {
+     "trades": 34,
+     "net_bps": -396.6420888900757,
+     "excess_bps": -508.05270313329964
+    },
+    "2018": {
+     "trades": 23,
+     "net_bps": -566.9555456741997,
+     "excess_bps": -451.3633191921682
+    },
+    "2019": {
+     "trades": 38,
+     "net_bps": -446.7068847857023,
+     "excess_bps": -595.7986599136243
+    },
+    "2020": {
+     "trades": 104,
+     "net_bps": 510.8055988183388,
+     "excess_bps": 131.53939292051462
+    },
+    "2021": {
+     "trades": 76,
+     "net_bps": -121.86264521197268,
+     "excess_bps": -341.10247546870585
+    }
+   },
+   "gross_bps": 120.6839317607569,
+   "share_delisted_since": 0.3355048859934853,
+   "stopped": 1,
+   "bankruptcy_tagged": 0,
+   "signals": 312,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.08:any": {
+   "trades": 56,
+   "stocks": 48,
+   "net_bps": -109.72248656409127,
+   "net_t": -0.5035824169271433,
+   "median_net_bps": 329.6947479248047,
+   "win_rate": 0.6071428571428571,
+   "excess_bps": -200.0526302870109,
+   "excess_t": -0.975546952960526,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -109.72248656409127,
+   "trimmed_excess_bps": -200.0526302870109,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 5,
+     "net_bps": -167.3952341079712,
+     "excess_bps": -287.5671488973721
+    },
+    "2017": {
+     "trades": 8,
+     "net_bps": 522.2973227500916,
+     "excess_bps": 342.03452266695257
+    },
+    "2018": {
+     "trades": 9,
+     "net_bps": 597.4906020694309,
+     "excess_bps": 282.399302293363
+    },
+    "2019": {
+     "trades": 12,
+     "net_bps": 34.24445788065592,
+     "excess_bps": -239.63886374555165
+    },
+    "2020": {
+     "trades": 11,
+     "net_bps": -593.1050669063221,
+     "excess_bps": -154.19110678902226
+    },
+    "2021": {
+     "trades": 11,
+     "net_bps": -795.4595305702903,
+     "excess_bps": -951.928446721434
+    }
+   },
+   "gross_bps": -60.14651485851833,
+   "share_delisted_since": 0.32142857142857145,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 57,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.08:up": {
+   "trades": 8,
+   "stocks": 8,
+   "net_bps": -1157.076209783554,
+   "net_t": null,
+   "median_net_bps": -2096.177041530609,
+   "win_rate": 0.25,
+   "excess_bps": -1321.9373936628049,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -1157.076209783554,
+   "trimmed_excess_bps": -1321.9373936628047,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2020": {
+     "trades": 4,
+     "net_bps": 192.9055154323578,
+     "excess_bps": 120.23964674965553
+    },
+    "2021": {
+     "trades": 4,
+     "net_bps": -2507.057934999466,
+     "excess_bps": -2764.114434075265
+    }
+   },
+   "gross_bps": -1112.7505451440811,
+   "share_delisted_since": 0.125,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 8,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "5.08:down": {
+   "trades": 4,
+   "stocks": 4,
+   "net_bps": -1300.1543283462524,
+   "net_t": null,
+   "median_net_bps": -1239.6800518035889,
+   "win_rate": 0.5,
+   "excess_bps": -1215.6387973476244,
+   "excess_t": null,
+   "years_counted": 0,
+   "years_positive": 0,
+   "trimmed_net_bps": -1300.1543283462524,
+   "trimmed_excess_bps": -1215.6387973476244,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2020": {
+     "trades": 3,
+     "net_bps": -1848.0396270751953,
+     "excess_bps": -1633.0493818475654
+    },
+    "2021": {
+     "trades": 1,
+     "net_bps": 343.5015678405762,
+     "excess_bps": 36.59295615219938
+    }
+   },
+   "gross_bps": -1256.5454840660095,
+   "share_delisted_since": 0.25,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 4,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "7.01:any": {
+   "trades": 20599,
+   "stocks": 2877,
+   "net_bps": 65.12201534346983,
+   "net_t": 1.0198115053054508,
+   "median_net_bps": 44.41261291503906,
+   "win_rate": 0.5242487499393175,
+   "excess_bps": -82.9784595404256,
+   "excess_t": -2.307373286491539,
+   "years_counted": 6,
+   "years_positive": 1,
+   "trimmed_net_bps": 3.7703004271022893,
+   "trimmed_excess_bps": -141.3595514862951,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 2928,
+     "net_bps": 279.1414045489551,
+     "excess_bps": 89.43230983356814
+    },
+    "2017": {
+     "trades": 3253,
+     "net_bps": 67.01937445192897,
+     "excess_bps": -102.32657086650504
+    },
+    "2018": {
+     "trades": 3341,
+     "net_bps": -169.52985277150214,
+     "excess_bps": -110.71393141029749
+    },
+    "2019": {
+     "trades": 3185,
+     "net_bps": 63.251283329734626,
+     "excess_bps": -141.34585004675313
+    },
+    "2020": {
+     "trades": 3800,
+     "net_bps": 208.4704864966242,
+     "excess_bps": -7.152843929487639
+    },
+    "2021": {
+     "trades": 4092,
+     "net_bps": -29.603033121729876,
+     "excess_bps": -193.30404986911233
+    }
+   },
+   "gross_bps": 115.57430614863294,
+   "share_delisted_since": 0.28020777707655714,
+   "stopped": 57,
+   "bankruptcy_tagged": 0,
+   "signals": 28681,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "7.01:up": {
+   "trades": 1856,
+   "stocks": 1142,
+   "net_bps": 126.2662309254038,
+   "net_t": 1.0758847813516557,
+   "median_net_bps": 45.113563537597656,
+   "win_rate": 0.5199353448275862,
+   "excess_bps": -113.33966953253251,
+   "excess_t": -1.2882983694971832,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": 34.71912380401147,
+   "trimmed_excess_bps": -203.63611890717223,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 210,
+     "net_bps": 385.8328830628168,
+     "excess_bps": 213.6971875434053
+    },
+    "2017": {
+     "trades": 202,
+     "net_bps": -117.99754777757248,
+     "excess_bps": -302.88370681478125
+    },
+    "2018": {
+     "trades": 235,
+     "net_bps": -119.22334102874106,
+     "excess_bps": -89.22273800524728
+    },
+    "2019": {
+     "trades": 193,
+     "net_bps": 58.10314818367439,
+     "excess_bps": -151.68363181956335
+    },
+    "2020": {
+     "trades": 591,
+     "net_bps": 512.1734703051055,
+     "excess_bps": 68.78423243601667
+    },
+    "2021": {
+     "trades": 425,
+     "net_bps": -255.8358108296114,
+     "excess_bps": -434.0271158992627
+    }
+   },
+   "gross_bps": 177.0250001472646,
+   "share_delisted_since": 0.3604525862068966,
+   "stopped": 1,
+   "bankruptcy_tagged": 0,
+   "signals": 1961,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "7.01:down": {
+   "trades": 1591,
+   "stocks": 1036,
+   "net_bps": 51.27837941153554,
+   "net_t": 0.38704442205361467,
+   "median_net_bps": -31.63933753967285,
+   "win_rate": 0.48774355751099935,
+   "excess_bps": -206.12619457528126,
+   "excess_t": -2.4008815722733514,
+   "years_counted": 6,
+   "years_positive": 1,
+   "trimmed_net_bps": -13.51807171923255,
+   "trimmed_excess_bps": -267.0186662120075,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 179,
+     "net_bps": 258.5923438631622,
+     "excess_bps": 45.23563521607716
+    },
+    "2017": {
+     "trades": 172,
+     "net_bps": -30.13940744621809,
+     "excess_bps": -184.475843153717
+    },
+    "2018": {
+     "trades": 212,
+     "net_bps": -238.28549486286235,
+     "excess_bps": -139.13633416662492
+    },
+    "2019": {
+     "trades": 176,
+     "net_bps": 57.1402907371521,
+     "excess_bps": -148.07753124524646
+    },
+    "2020": {
+     "trades": 494,
+     "net_bps": 483.16285436452637,
+     "excess_bps": -42.90983185849262
+    },
+    "2021": {
+     "trades": 358,
+     "net_bps": -440.6222517929929,
+     "excess_bps": -635.6371619271722
+    }
+   },
+   "gross_bps": 101.661280518729,
+   "share_delisted_since": 0.3431803896920176,
+   "stopped": 0,
+   "bankruptcy_tagged": 0,
+   "signals": 1701,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "8.01:any": {
+   "trades": 23122,
+   "stocks": 3249,
+   "net_bps": 66.5313023749999,
+   "net_t": 1.1296047911424356,
+   "median_net_bps": 37.22667694091797,
+   "win_rate": 0.5243491047487242,
+   "excess_bps": -84.60220847967152,
+   "excess_t": -2.7064833111645705,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": -2.0120339022619707,
+   "trimmed_excess_bps": -150.81944595400407,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 3435,
+     "net_bps": 185.0668729826526,
+     "excess_bps": 11.203987140040839
+    },
+    "2017": {
+     "trades": 3792,
+     "net_bps": 78.75784445664047,
+     "excess_bps": -93.34971522833229
+    },
+    "2018": {
+     "trades": 3671,
+     "net_bps": -130.61737907059475,
+     "excess_bps": -75.50026539375696
+    },
+    "2019": {
+     "trades": 3472,
+     "net_bps": 58.697022428985015,
+     "excess_bps": -150.42799221328212
+    },
+    "2020": {
+     "trades": 4156,
+     "net_bps": 253.7033118171343,
+     "excess_bps": 36.36563390613677
+    },
+    "2021": {
+     "trades": 4596,
+     "net_bps": -38.01312197074359,
+     "excess_bps": -215.91904948565633
+    }
+   },
+   "gross_bps": 116.99066369057773,
+   "share_delisted_since": 0.28302049995675116,
+   "stopped": 257,
+   "bankruptcy_tagged": 2,
+   "bankruptcy_minus_100": {
+    "net_bps": 65.6614265900955,
+    "net_t": 1.1152603966665406,
+    "excess_bps": -85.47208426457593,
+    "excess_t": -2.7334151238900333
+   },
+   "signals": 33927,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "8.01:up": {
+   "trades": 1926,
+   "stocks": 1225,
+   "net_bps": 74.58333223903414,
+   "net_t": 0.6152442914778975,
+   "median_net_bps": -30.28690814971924,
+   "win_rate": 0.48130841121495327,
+   "excess_bps": -158.7955021303243,
+   "excess_t": -1.6863996358626065,
+   "years_counted": 6,
+   "years_positive": 1,
+   "trimmed_net_bps": -43.56324516420409,
+   "trimmed_excess_bps": -278.080936172632,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 209,
+     "net_bps": 153.26965938914907,
+     "excess_bps": -20.71591912591281
+    },
+    "2017": {
+     "trades": 215,
+     "net_bps": -53.79149802895479,
+     "excess_bps": -236.60963477083774
+    },
+    "2018": {
+     "trades": 219,
+     "net_bps": -231.39238629711272,
+     "excess_bps": -208.8036128896385
+    },
+    "2019": {
+     "trades": 219,
+     "net_bps": 59.873358299743096,
+     "excess_bps": -170.3744933744951
+    },
+    "2020": {
+     "trades": 590,
+     "net_bps": 530.3196492841688,
+     "excess_bps": 122.49022906416073
+    },
+    "2021": {
+     "trades": 474,
+     "net_bps": -320.9844193881071,
+     "excess_bps": -506.05204305056594
+    }
+   },
+   "gross_bps": 125.08304598175478,
+   "share_delisted_since": 0.4101765316718588,
+   "stopped": 10,
+   "bankruptcy_tagged": 0,
+   "signals": 2082,
+   "selected": false,
+   "avoid_candidate": false
+  },
+  "8.01:down": {
+   "trades": 1752,
+   "stocks": 1093,
+   "net_bps": 164.70776879351976,
+   "net_t": 1.1236091370375303,
+   "median_net_bps": 15.735030174255371,
+   "win_rate": 0.5045662100456622,
+   "excess_bps": -82.22966756310491,
+   "excess_t": -0.8382462450736547,
+   "years_counted": 6,
+   "years_positive": 2,
+   "trimmed_net_bps": 55.190825324924255,
+   "trimmed_excess_bps": -189.38302037529118,
+   "criteria": {
+    "1_net_positive_t": false,
+    "2_beats_spy_t": false,
+    "3_most_years": false,
+    "4_without_top_1pct": false
+   },
+   "passes": false,
+   "by_year": {
+    "2016": {
+     "trades": 166,
+     "net_bps": 228.44467177448504,
+     "excess_bps": 20.277293368806323
+    },
+    "2017": {
+     "trades": 170,
+     "net_bps": 80.82869473625631,
+     "excess_bps": -102.96135083587721
+    },
+    "2018": {
+     "trades": 239,
+     "net_bps": -326.89632481610926,
+     "excess_bps": -245.45017601465238
+    },
+    "2019": {
+     "trades": 181,
+     "net_bps": -30.722288795597645,
+     "excess_bps": -212.1046842277665
+    },
+    "2020": {
+     "trades": 549,
+     "net_bps": 872.2312517722014,
+     "excess_bps": 404.98665342617625
+    },
+    "2021": {
+     "trades": 447,
+     "net_bps": -354.0507472334826,
+     "excess_bps": -570.9465580445766
+    }
+   },
+   "gross_bps": 215.65926027352407,
+   "share_delisted_since": 0.3561643835616438,
+   "stopped": 5,
+   "bankruptcy_tagged": 0,
+   "signals": 1879,
+   "selected": false,
+   "avoid_candidate": false
+  }
+ },
+ "selected": [],
+ "avoid": []
+}
