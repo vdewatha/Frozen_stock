@@ -132,7 +132,8 @@ def pdfs(work: Path) -> None:
 #   every asset carries a type code in brackets ([ST] = stock).
 # * Older reports: the labels are spelled out, there is no type code, days are not zero-padded, and some
 #   capital letters come out lower-case ("Apple Inc. (AAPL)" reads "apple Inc. (aaPL)", a sale's "S" can read
-#   "s"). Tickers and types are therefore matched without regard to case and upper-cased.
+#   "s", and in 2018-2019 a type code can read "[sT]"). Tickers, types and codes are therefore matched without
+#   regard to case and upper-cased.
 #
 # One transaction ends with: type, trade date, notification date, amount. The asset text (with the ticker in
 # parentheses and, in the newer layout, the type code) comes before it, except that a long asset name pushes
@@ -142,8 +143,8 @@ def pdfs(work: Path) -> None:
 ROW = re.compile(r"(?<![A-Za-z0-9(\[])(P|S \(partial\)|S|E)\s+(\d{1,2}/\d{1,2}/\d{4})\s+(\d{1,2}/\d{1,2}/\d{4})\s+"
                  r"(\$[\d,]+(?:\s*-\s*\$[\d,]+)?|Over\s+\$[\d,]+|Spouse/DC\s+Over\s+\$[\d,]+)", re.IGNORECASE)
 TICKER = re.compile(r"\(([A-Za-z][A-Za-z0-9]{0,4}(?:[./][A-Za-z]{1,2})?)\)")
-ASSET_TYPE = re.compile(r"\[([A-Z]{2})\]")
-LEADING_TYPE = re.compile(r"\s*\[([A-Z]{2})\]")
+ASSET_TYPE = re.compile(r"\[([A-Za-z]{2})\]")
+LEADING_TYPE = re.compile(r"\s*-?\s*\[([A-Za-z]{2})\]")   # "- [ST]": a code inside a wrapped amount
 LABEL_LINE = re.compile(r"^(?:F S|S O|D|C|L|FILING STATUS|SUBHOLDING OF|DESCRIPTION|COMMENTS?|LOCATION): .*$",
                         re.MULTILINE | re.IGNORECASE)
 OWNER = re.compile(r"(?:^|\n)\s*(SP|JT|DC)\s", re.IGNORECASE)
@@ -165,21 +166,21 @@ def parse_text(text: str) -> list[dict]:
         segment = LABEL_LINE.sub("", text[cursor:match.start()])
         lead = LEADING_TYPE.match(segment)
         if lead and rows and not rows[-1]["asset_type"]:
-            rows[-1]["asset_type"] = lead.group(1)
+            rows[-1]["asset_type"] = lead.group(1).upper()
             segment = segment[lead.end():]
         tickers, kinds, owner = TICKER.findall(segment), ASSET_TYPE.findall(segment), OWNER.search(segment)
         kind = " ".join(match.group(1).upper().split())
         rows.append({"layout": layout, "owner": owner.group(1).upper() if owner else "",
                      "asset": " ".join(segment.split())[-120:],
                      "ticker": tickers[-1].upper().replace("/", ".") if tickers else "",
-                     "asset_type": kinds[-1] if kinds else "", "type": "S (partial)" if kind.startswith("S (") else kind,
+                     "asset_type": kinds[-1].upper() if kinds else "", "type": "S (partial)" if kind.startswith("S (") else kind,
                      "trade_date": _date(match.group(2)) or "", "notified": _date(match.group(3)) or "",
                      "amount": " ".join(match.group(4).split())})
         cursor = match.end()
     if rows and layout == "coded" and not rows[-1]["asset_type"]:    # the last row's code, wrapped below its amount
         lead = LEADING_TYPE.match(LABEL_LINE.sub("", text[cursor:cursor + 80]))
         if lead:
-            rows[-1]["asset_type"] = lead.group(1)
+            rows[-1]["asset_type"] = lead.group(1).upper()
     return rows
 
 
