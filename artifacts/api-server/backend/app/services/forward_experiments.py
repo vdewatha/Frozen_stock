@@ -258,7 +258,7 @@ def _registered_at(payload: Mapping) -> Optional[datetime]:
 def _bind(db: Session, candidate: Mapping, *, now: datetime) -> tuple[Optional[Strategy], str, bool, Optional[str]]:
     """``(row, mechanism, created, mismatch)`` for a candidate: ``rule_row`` or ``tag_row``."""
     slug = candidate_slug(candidate)
-    existing = db.scalars(select(Strategy).where(Strategy.strategy_type == slug).order_by(Strategy.id)).first()
+    existing = db.scalars(select(Strategy).where(Strategy.strategy_type == slug).order_by(Strategy.id).limit(1)).first()
     if candidate.get("hand_written"):
         if existing is None:
             return None, "tag_row", False, f"{slug} row is missing; the candidate tags that row's own entries"

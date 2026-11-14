@@ -299,7 +299,7 @@ def build_graduation_evidence(
     monitor = db.get(StockMonitoringSnapshot, cycle.monitor_snapshot_id) if cycle and cycle.monitor_snapshot_id else db.scalar(
         select(StockMonitoringSnapshot).order_by(
             StockMonitoringSnapshot.generated_at.desc(), StockMonitoringSnapshot.id.desc()
-        )
+        ).limit(1)
     )
     if monitor is None or monitor.status not in {"clear", "healthy"}:
         _block(blockers, "safety", "monitoring", "A clear monitoring snapshot is unavailable", monitor.id if monitor else None)

@@ -275,7 +275,7 @@ def _broker_gate(db: Session) -> dict:
 
 def _monitoring_gate(db: Session) -> dict:
     snapshot = db.scalars(
-        select(StockMonitoringSnapshot).order_by(StockMonitoringSnapshot.generated_at.desc())
+        select(StockMonitoringSnapshot).order_by(StockMonitoringSnapshot.generated_at.desc()).limit(1)
     ).first()
     if not snapshot:
         return _gate("unknown", "current monitoring evidence is unavailable")
