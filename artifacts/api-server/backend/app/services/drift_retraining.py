@@ -134,6 +134,7 @@ def evaluate_drift_trigger(db: Session, *, now: datetime | None = None) -> dict:
     snapshot = db.scalar(
         select(StockMonitoringSnapshot).where(StockMonitoringSnapshot.monitor_key == MONITOR_KEY)
         .order_by(StockMonitoringSnapshot.generated_at.desc(), StockMonitoringSnapshot.id.desc())
+        .limit(1)  # one row, not every snapshot ever recorded (live_safety._latest_monitoring_snapshot)
     )
     result = {
         "triggered": False, "breach_keys": [], "episodes": [], "breaches": [],

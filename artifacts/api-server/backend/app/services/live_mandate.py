@@ -222,7 +222,7 @@ def mandate_state(db: Session, mandate: LiveMandate, *, now: datetime | None = N
     actions = [row.action for row in _events(db, mandate.id, ("revoke", "suspend", "reinstate"))]
     if "revoke" in actions:
         return "revoked", "the mandate was revoked by two approvers"
-    successor = db.scalars(select(LiveMandate.id).where(LiveMandate.supersedes_mandate_id == mandate.id)).first()
+    successor = db.scalars(select(LiveMandate.id).where(LiveMandate.supersedes_mandate_id == mandate.id).limit(1)).first()
     if successor:
         return "superseded", f"amended by mandate {successor}"
     suspension = [action for action in actions if action in {"suspend", "reinstate"}]
@@ -784,6 +784,7 @@ def suspend_for_pilot_action(db: Session, mandate_id: int | None, *, trigger: st
     while True:
         successor = db.scalars(
             select(LiveMandate).where(LiveMandate.supersedes_mandate_id == chain[-1].id).order_by(LiveMandate.id)
+            .limit(1)
         ).first()
         if successor is None or successor.id in seen:
             break

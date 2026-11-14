@@ -159,10 +159,25 @@ def _broker_account_gate(db: Session) -> dict:
     )
 
 
-def _current_data_gate(db: Session, now: datetime) -> dict:
-    snapshot = db.scalars(
-        select(StockMonitoringSnapshot).order_by(StockMonitoringSnapshot.generated_at.desc())
+def _latest_monitoring_snapshot(db: Session) -> StockMonitoringSnapshot | None:
+    """The newest monitoring snapshot, asking the database for that one row.
+
+    Without the limit the database sent every snapshot ever recorded (20,424
+    on 2026-11-13, about 1,000 more a day, each with its checks as JSON) and
+    the caller kept the first.  This runs in the API's readiness build every
+    five minutes and in the three learning jobs every fifteen: each call took
+    45 to 80 seconds and grew its process by up to 1.8 GiB, which is what the
+    memory guard was killing paper-core for.
+    """
+    return db.scalars(
+        select(StockMonitoringSnapshot)
+        .order_by(StockMonitoringSnapshot.generated_at.desc(), StockMonitoringSnapshot.id.desc())
+        .limit(1)
     ).first()
+
+
+def _current_data_gate(db: Session, now: datetime) -> dict:
+    snapshot = _latest_monitoring_snapshot(db)
     if not snapshot:
         return _gate("unknown", "current live decision-data evidence is unavailable")
     generated = snapshot.generated_at
@@ -186,9 +201,7 @@ def _current_data_gate(db: Session, now: datetime) -> dict:
 
 
 def _monitoring_gate(db: Session, now: datetime) -> dict:
-    snapshot = db.scalars(
-        select(StockMonitoringSnapshot).order_by(StockMonitoringSnapshot.generated_at.desc())
-    ).first()
+    snapshot = _latest_monitoring_snapshot(db)
     if not snapshot:
         return _gate("unknown", "monitoring health has not been evidenced")
     generated = snapshot.generated_at

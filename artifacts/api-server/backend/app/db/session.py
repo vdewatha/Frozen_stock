@@ -4,7 +4,7 @@ import logging
 import os
 from collections.abc import Generator, Mapping
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import Select, create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -35,7 +35,32 @@ engine = create_engine(
     pool_pre_ping=True,
     pool_timeout=10,
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def first_row_only(statement):
+    """``statement`` limited to one row when it is a plain SELECT with no limit of its own.
+
+    ``Session.scalar`` returns the first column of the first row, but the
+    database still sends every matching row and the driver holds them all.
+    "The latest row" written as ``db.scalar(select(X).order_by(...))`` therefore
+    costs the whole table (2026-11-13: the monitoring snapshots, up to 1.8 GiB
+    a call).  The result is the same with LIMIT 1.  Statements that already
+    page, or that lock rows, are left alone.
+    """
+    if (isinstance(statement, Select) and statement._limit_clause is None and statement._offset_clause is None
+            and statement._fetch_clause is None and statement._for_update_arg is None):
+        return statement.limit(1)
+    return statement
+
+
+class OneRowScalarSession(Session):
+    """A session whose ``scalar()`` asks the database for the one row it reads."""
+
+    def scalar(self, statement, *args, **kwargs):
+        return super().scalar(first_row_only(statement), *args, **kwargs)
+
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=OneRowScalarSession)
 
 
 def _limit_idle_transactions(dbapi_connection, _record=None) -> None:
