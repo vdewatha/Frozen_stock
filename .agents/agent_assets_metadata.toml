@@ -98,3 +98,17 @@ mtime_ms = 1794532887585
 storage_uri = "gcs://replit-rams-assets-spock/rams/assets/repl:42f84b92-955d-4943-892d-c0e5f14f9aa6/8070c5fa-7880-43a7-990e-ad1e37ee4f5c/2be945e3-c5f1-4921-8a58-f2e2ad0a1771"
 storage_version_token = "1794532922233284"
 content_type = "text/plain"
+
+[[outputs]]
+id = "6izcGPHTdJd0Pv-bouYX1"
+uri = "file://generated-artifacts/deployment-logs-2026-11-13.txt"
+type = "text"
+title = "Production logs — November 13, 2026"
+description = "Complete chronological export of 81,348 deployed-app log entries for the full day in America/New_York, midnight to midnight. Credential-like values redacted. Timestamps in UTC."
+logical_id = "6447fcca-64e8-4705-a9eb-1e7f36839810"
+content_hash = "sha256:6c01bfb9a3bb4fe37e41ae4d22764fe0531dbcef6e909c61a97fe9d7c1ea7f4d"
+size = 17680493
+mtime_ms = 1794688206544
+storage_uri = "gcs://replit-rams-assets-spock/rams/assets/repl:42f84b92-955d-4943-892d-c0e5f14f9aa6/6447fcca-64e8-4705-a9eb-1e7f36839810/af0df940-399e-4985-806b-503e2ca9b09b"
+storage_version_token = "1794688247439634"
+content_type = "text/plain"
