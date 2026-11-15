@@ -1,0 +1,46 @@
+{
+ "tag": "fixed",
+ "half": "all",
+ "stories": 400,
+ "unlabelled": 0,
+ "agreement": 0.8525,
+ "labels": {
+  "P": 90,
+  "N": 38,
+  "Z": 272
+ },
+ "calls": {
+  "P": 66,
+  "N": 28,
+  "Z": 306
+ },
+ "confusion_label_then_call": {
+  "PP": 57,
+  "PN": 0,
+  "PZ": 33,
+  "NP": 1,
+  "NN": 24,
+  "NZ": 13,
+  "ZP": 8,
+  "ZN": 4,
+  "ZZ": 260
+ },
+ "positive_calls_right": 0.8636,
+ "negative_calls_right": 0.8571,
+ "directional_stories_called_neutral": 0.3594,
+ "directional_stories_called_the_wrong_way": 0.0078,
+ "by_stratum": {
+  "2016_2025": {
+   "stories": 200,
+   "agreement": 0.835
+  },
+  "2026_other": {
+   "stories": 100,
+   "agreement": 0.85
+  },
+  "2026_fiscal": {
+   "stories": 100,
+   "agreement": 0.89
+  }
+ }
+}

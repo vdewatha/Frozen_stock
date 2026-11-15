@@ -1,0 +1,46 @@
+{
+ "tag": "live",
+ "half": "design",
+ "stories": 200,
+ "unlabelled": 0,
+ "agreement": 0.775,
+ "labels": {
+  "P": 40,
+  "N": 21,
+  "Z": 139
+ },
+ "calls": {
+  "P": 23,
+  "N": 18,
+  "Z": 159
+ },
+ "confusion_label_then_call": {
+  "PP": 17,
+  "PN": 1,
+  "PZ": 22,
+  "NP": 0,
+  "NN": 11,
+  "NZ": 10,
+  "ZP": 6,
+  "ZN": 6,
+  "ZZ": 127
+ },
+ "positive_calls_right": 0.7391,
+ "negative_calls_right": 0.6111,
+ "directional_stories_called_neutral": 0.5246,
+ "directional_stories_called_the_wrong_way": 0.0164,
+ "by_stratum": {
+  "2016_2025": {
+   "stories": 100,
+   "agreement": 0.79
+  },
+  "2026_other": {
+   "stories": 50,
+   "agreement": 0.8
+  },
+  "2026_fiscal": {
+   "stories": 50,
+   "agreement": 0.72
+  }
+ }
+}

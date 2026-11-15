@@ -1,0 +1,46 @@
+{
+ "tag": "live",
+ "half": "all",
+ "stories": 400,
+ "unlabelled": 0,
+ "agreement": 0.7725,
+ "labels": {
+  "P": 90,
+  "N": 38,
+  "Z": 272
+ },
+ "calls": {
+  "P": 51,
+  "N": 32,
+  "Z": 317
+ },
+ "confusion_label_then_call": {
+  "PP": 39,
+  "PN": 2,
+  "PZ": 49,
+  "NP": 0,
+  "NN": 20,
+  "NZ": 18,
+  "ZP": 12,
+  "ZN": 10,
+  "ZZ": 250
+ },
+ "positive_calls_right": 0.7647,
+ "negative_calls_right": 0.625,
+ "directional_stories_called_neutral": 0.5234,
+ "directional_stories_called_the_wrong_way": 0.0156,
+ "by_stratum": {
+  "2016_2025": {
+   "stories": 200,
+   "agreement": 0.76
+  },
+  "2026_other": {
+   "stories": 100,
+   "agreement": 0.78
+  },
+  "2026_fiscal": {
+   "stories": 100,
+   "agreement": 0.79
+  }
+ }
+}

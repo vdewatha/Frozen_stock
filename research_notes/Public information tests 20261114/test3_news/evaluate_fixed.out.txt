@@ -1,0 +1,22 @@
+8719 series, 8254 with news (8 s)
+1000/8254 series replayed (14 s)
+2000/8254 series replayed (20 s)
+3000/8254 series replayed (26 s)
+4000/8254 series replayed (32 s)
+5000/8254 series replayed (37 s)
+6000/8254 series replayed (41 s)
+7000/8254 series replayed (46 s)
+8000/8254 series replayed (49 s)
+positive_news_trend#1    trades   49743 net -50.8 (t -12.05) vs SPY -63.6 (t -19.83) vs drift -73.5 pass False
+positive_news_trend#2    trades   49545 net -50.0 (t -11.41) vs SPY -63.8 (t -19.30) vs drift -74.1 pass False
+positive_news_trend#3    trades   49638 net -41.9 (t -9.28) vs SPY -54.3 (t -17.78) vs drift -65.6 pass False
+positive_news_trend#4    trades   49471 net -41.0 (t -8.77) vs SPY -54.4 (t -17.30) vs drift -66.2 pass False
+negative_news_dip#1      trades    5909 net -35.2 (t -3.08) vs SPY -50.7 (t -7.05) vs drift -87.5 pass False
+negative_news_dip#2      trades   19245 net -14.7 (t -1.21) vs SPY -40.3 (t -5.07) vs drift -43.3 pass False
+negative_news_dip#3      trades    4659 net -35.0 (t -2.86) vs SPY -56.3 (t -6.45) vs drift -81.5 pass False
+negative_news_dip#4      trades   15023 net -13.8 (t -1.12) vs SPY -43.2 (t -5.11) vs drift -42.2 pass False
+post_upgrade_drift#1     trades   31857 net -30.7 (t -1.61) vs SPY -80.7 (t -6.91) vs drift -142.6 pass False
+post_upgrade_drift#2     trades   29814 net +1.9 (t +0.06) vs SPY -91.3 (t -4.85) vs drift -197.7 pass False
+post_upgrade_drift#3     trades   51710 net -15.8 (t -0.78) vs SPY -73.2 (t -6.59) vs drift -112.6 pass False
+post_upgrade_drift#4     trades   48358 net +21.9 (t +0.67) vs SPY -80.9 (t -4.64) vs drift -148.6 pass False
+{"passed": [], "verdict": "closed"} (66 s)

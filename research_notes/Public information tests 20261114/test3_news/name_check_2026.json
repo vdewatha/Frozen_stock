@@ -1,0 +1,20 @@
+{
+ "year": "2026",
+ "tag": "fixed",
+ "by_source": {
+  "benzinga": {
+   "pairs": 179593,
+   "name": 157341,
+   "ticker_only": 326,
+   "neither": 21926,
+   "share_neither": 0.1221
+  },
+  "fiscal.ai": {
+   "pairs": 162464,
+   "name": 143270,
+   "ticker_only": 180,
+   "neither": 19014,
+   "share_neither": 0.117
+  }
+ }
+}
