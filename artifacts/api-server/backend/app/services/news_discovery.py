@@ -145,6 +145,11 @@ def analyst_note_sentiment(headline: str) -> float | None:
     return 0.5 if _BULLISH_RATING.search(rating) else 0.0
 
 
+# Bump when a story can score differently.  The tone history cache is kept per reader version and stored
+# articles are re-read with the current reader (``news_history``), so one series never mixes two readers.
+READER_VERSION = 2
+
+
 def _article_sentiment(article: dict) -> float:
     analyst = analyst_note_sentiment(str(article.get("headline") or ""))
     if analyst is not None:

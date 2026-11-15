@@ -5,10 +5,17 @@ reader agreed with 155 of 200 labels and called 32 of the 61 plainly good or bad
 below is a story from that half, or a pattern that misfired when the change was read against 100,000 archive
 stories.  No price was used to design any of it.
 """
+from datetime import datetime
+from decimal import Decimal
+
+import pandas as pd
 import pytest
 
+from app.models import NewsArticle
 from app.services import news_discovery as nd
+from app.services import news_history as nh
 from app.services.news_sentiment import reference_votes, score_headline_sentiment
+from tests.test_loss_feedback_loop import db  # noqa: F401  (fixture)
 
 
 def _sign(value: float) -> int:
@@ -121,3 +128,34 @@ def test_analyst_notes_and_routine_notes_are_read_as_before():
     assert _tone("BofA Securities Upgrades Trex to Buy and Raises Price Target") == 1
     assert _tone("Morgan Stanley Downgrades Rivian to Underweight") == -1
     assert _tone("Gray Media, Inc. Declares Quarterly Cash Dividend") == 0
+
+
+# ------------------------------------------------------------ one series, one reader
+
+def test_the_tone_cache_is_kept_per_reader_version(tmp_path, monkeypatch):
+    first = nh.cache_dir(tmp_path)
+    assert first == tmp_path / "news" / f"reader-{nd.READER_VERSION}"
+    nh._write_series("PLTR", pd.DataFrame({"date": ["2026-11-04"], "tone": [1.0], "articles": [1], "directional": [1]}),
+                     tmp_path)
+    nh._save_coverage({"PLTR": {"start": "2026-11-01", "end": "2026-11-05"}}, tmp_path)
+    assert len(nh.cached_tone_series("PLTR", tmp_path)) == 1 and nh.covered_span("PLTR", tmp_path) is not None
+    # A new reader starts from an empty cache: the old reader's series and coverage are not read.
+    monkeypatch.setattr(nd, "READER_VERSION", nd.READER_VERSION + 1)
+    assert nh.cache_dir(tmp_path) != first
+    assert nh.cached_tone_series("PLTR", tmp_path).empty
+    assert nh.load_coverage(tmp_path) == {} and nh.covered_span("PLTR", tmp_path) is None
+
+
+def test_stored_stories_are_read_with_the_current_reader(db):  # noqa: F811
+    # The table keeps the score given when the story came in; the series must not use an older reader's.
+    contract = "Kopin Corporation Secures New $3.2 Million Sentinel FPV Module Contract"
+    programme = "Cigna Healthcare Expands AI-Driven Personalized Care Management Programs"
+    db.add(NewsArticle(symbol="KOPN", published_at=datetime(2026, 11, 4, 15, 0), source=nd.SOURCE, title=contract,
+                       summary=contract, sentiment_score=Decimal("0")))       # the old reader: neutral
+    db.add(NewsArticle(symbol="CI", published_at=datetime(2026, 11, 4, 15, 0), source=nd.SOURCE, title=programme,
+                       summary="Cigna Healthcare is expanding its AI-enabled care management programs.",
+                       sentiment_score=Decimal("1")))                         # the old reader: "expands" was good news
+    db.flush()
+    assert [tone for _, tone in nh.stored_stories(db, "KOPN")] == [1.0]
+    assert [tone for _, tone in nh.stored_stories(db, "CI")] == [0.0]
+    assert nh.stored_tone_series(db, "KOPN")["tone"].tolist() == [1.0]
