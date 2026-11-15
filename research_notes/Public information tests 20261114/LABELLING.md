@@ -71,3 +71,28 @@ The reader gives a story one score and applies it to every company the story nam
 ## When in doubt
 
 Z. A label is P or N only when a careful reader would not hesitate over the direction.
+
+---
+
+## Addendum, written after the sample was drawn and labelled, before any score or price was seen
+
+**A fourth note, `wrong_company`.** Some stories carry a ticker that is not the company the story is about:
+an analyst note tagged with the *brokerage's* ticker instead of the covered stock ("Piper Sandler Raises
+Price Target on AbbVie", tagged `PIPR`), or a tag the feed itself later corrected. The conventions above did
+not foresee this. The question is unchanged (is the story good or bad for the shareholders of the company the
+ticker names?), so these are labelled **Z**: the story says nothing about the tagged company. They carry the
+note `wrong_company` so the audit can also report agreement without them. 8 of the 400 stories: 6 of the 100
+from `fiscal.ai`, 2 of the 300 from Benzinga.
+
+Not flagged, because it cannot be judged from the text alone: stories from `fiscal.ai` about a company listed
+abroad, tagged with its *local* ticker, which in the US belongs to another company or to none ("Tesco PLC",
+tagged `TSCO`; "Metacon", tagged `META`; "Air Liquide", tagged `AI`). Those are labelled for the company the
+story is about. How often the tag names a different US stock is measured separately, against the issuer names
+in the price cache, with no price read.
+
+**Two readings fixed while labelling** (both applied to every such story):
+
+* Results that beat on one line and are in line on the other: P (nothing in them is negative).
+* An article whose *headline* states an analyst's stance ("Sees Huge Upside", "Is Bullish On") is opinion and
+  takes that stance, even when the rating behind it was only maintained. The "rating maintained: Z" rule is for
+  the standard one-line rating notes.
