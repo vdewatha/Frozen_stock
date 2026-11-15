@@ -116,9 +116,13 @@ _ANALYST_ACTION = re.compile(r"\b(Upgrades|Downgrades|Maintains|Reiterates|Initi
 _BULLISH_RATING = re.compile(r"\b(Strong Buy|Buy|Outperform|Overweight|Positive|Accumulate)\b", re.IGNORECASE)
 # Housekeeping with no view on the business: board pay approvals, dividend
 # declarations, call transcripts, conference slots ("eGain Approves ...
-# Compensation" scored +1 on "approval").
+# Compensation" scored +1 on "approval").  Also the auto-written explainers
+# that quote the stock's three-month move as boilerplate ("A Look Into
+# Lowe's Debt", "Return On Capital Employed Overview"): their text is not news.
 _ROUTINE = re.compile(r"\bPrice Target\b|\bInsider\b|\bCompensation\b|\bDeclares\b.*\bDividend\b|"
-                      r"\bTranscript\b|\bto (Present|Participate)\b|\bConference\b", re.IGNORECASE)
+                      r"\bTranscript\b|\bto (Present|Participate)\b|\bConference\b|"
+                      r"\bA Look Into\b.*\bDebt\b|\bDebt (Overview|Insights)\b|"
+                      r"\bReturn On (Invested Capital|Capital Employed)\b", re.IGNORECASE)
 _BEARISH_RATING = re.compile(r"\b(Sell|Underperform|Underweight|Reduce|Negative)\b", re.IGNORECASE)
 
 
