@@ -2,6 +2,7 @@
 
     <repo venv> python -I news_rules.py tone     <work_dir> <price cache dir> --backend <backend dir> --tag <tag>
     <repo venv> python -I news_rules.py evaluate <work_dir> <price cache dir> --backend <backend dir> --tag <tag> [--workers 8]
+    <repo venv> python -I news_rules.py reaction <work_dir> <price cache dir> --backend <backend dir> --tag <tag>
 
 ``--backend`` is the app code whose reader scores the stories (``news_discovery._article_sentiment``) and
 whose rule engine and labeler replay the rules; ``--tag`` names the output (``fixed`` for the reader frozen
@@ -12,6 +13,8 @@ in 3b, ``live`` for the reader of commit a530b16).
   (<work_dir>/news_rules/tone_<tag>.pkl.gz) and the per-story scores (stories_<tag>.pkl.gz). No return is read.
 * ``evaluate`` attaches the tone to each series, replays the twelve rules with the app's rule engine and
   labeler (PR #95's method) at 25 and 12.5 bps a side, and writes trades_<tag>.csv.gz and results_<tag>.json.
+* ``reaction`` (reported, not decisive) compares each story's tone with the stock's move against SPY over the
+  story's own session, and writes reaction_<tag>.json.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ import json
 import math
 import sys
 import time
+from bisect import bisect_left
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +43,7 @@ COSTS_BPS = (25.0, 12.5)                # a side; the first is decisive
 OPEN_EXITS = {"stop_loss_gap", "vertical", "indicator", "take_profit_gap"}
 MAX_SYMBOLS_PER_ARTICLE = 3
 FISCAL_SOURCE = "fiscal.ai"
+FIRST_CREATED = "2016-01-01"            # the registered window; a few older stories come back as later updates
 
 
 def _dip():
@@ -72,6 +77,8 @@ def stage_tone(work: Path, cache: Path, backend: Path, tag: str) -> None:
     rows, total, focused, unmapped = [], 0, 0, 0
     started = time.time()
     for item in read_news(work):
+        if item["created_at"] < FIRST_CREATED:
+            continue
         total += 1
         symbols = news_discovery._article_symbols(item)
         headline = item.get("headline") or ""
@@ -80,7 +87,7 @@ def stage_tone(work: Path, cache: Path, backend: Path, tag: str) -> None:
         focused += 1
         published = datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")).astimezone(timezone.utc)
         session = news_history.session_day(published).isoformat()
-        at = int(np.searchsorted(calendar, session))            # the first bar on or after that session
+        at = bisect_left(calendar, session)                     # the first bar on or after that session
         if at >= len(calendar):
             continue
         score = float(news_discovery._article_sentiment(item))
@@ -89,7 +96,7 @@ def stage_tone(work: Path, cache: Path, backend: Path, tag: str) -> None:
             if s is None:
                 unmapped += 1
                 continue
-            rows.append((s, session, at, score, item["id"], item.get("source") or "", len(symbols)))
+            rows.append((market.names[s], session, at, score, item["id"], item.get("source") or "", len(symbols)))
         if total % 500000 == 0:
             print(f"{total} stories read ({time.time() - started:.0f} s)", flush=True)
     stories = pd.DataFrame(rows, columns=["series", "session", "bar", "score", "id", "source", "named"])
@@ -226,7 +233,7 @@ def describe_rule(rule: dict, plan: dict) -> str:
            f"stop {plan['stop_loss_pct']:.0%}"
 
 
-def stage_evaluate(work: Path, cache: Path, backend: Path, tag: str, workers: int) -> None:
+def stage_evaluate(work: Path, cache: Path, backend: Path, tag: str, workers: int, limit: int = 0) -> None:
     from multiprocessing import Pool
 
     started = time.time()
@@ -248,11 +255,21 @@ def stage_evaluate(work: Path, cache: Path, backend: Path, tag: str, workers: in
     names = list(kept["series"])                               # the row order of pubinfo_lib.load_market
     blocked = {name: {y for y in years.split(",") if y} for name, years in zip(kept["series"], kept["blocked_years"])}
     bars, _series = dip.load_series(cache)
-    tone = pd.read_pickle(out / f"tone_{tag}.pkl.gz")
-    tone_of = {names[int(s)]: part[["date", "tone", "articles", "directional"]].reset_index(drop=True)
-               for s, part in tone.groupby("series")}
+    tone = pd.read_pickle(out / f"tone_{tag}.pkl.gz")           # keyed by the series name ("CIK:TICKER")
+    tone_of = {name: part[["date", "tone", "articles", "directional"]].reset_index(drop=True)
+               for name, part in tone.groupby("series")}
+    assert set(tone_of) <= set(names), "a tone series is not in the price cache"
     items = [(name, bars[name], blocked[name], tone_of[name]) for name in names if name in bars and name in tone_of]
     print(f"{len(names)} series, {len(items)} with news ({time.time() - started:.0f} s)", flush=True)
+    if limit:                                                   # crash test: counts only, no return is printed or kept
+        with Pool(workers, initializer=_init, initargs=(state, str(backend))) as pool:
+            done = pool.map(replay, items[:limit], chunksize=4)
+        counts: dict = defaultdict(int)
+        for result in done:
+            for trade in result["trades"]:
+                counts[(trade["rule"], trade["cost_bps"])] += 1
+        print("crash test:", {f"{rule}@{cost}": n for (rule, cost), n in sorted(counts.items())})
+        return
     results = []
     with Pool(workers, initializer=_init, initargs=(state, str(backend))) as pool:
         for i, result in enumerate(pool.imap_unordered(replay, items, chunksize=8)):
@@ -307,16 +324,63 @@ def stage_evaluate(work: Path, cache: Path, backend: Path, tag: str, workers: in
     print(json.dumps({"passed": passed, "verdict": summary["verdict"]}), f"({time.time() - started:.0f} s)")
 
 
+def stage_reaction(work: Path, cache: Path, tag: str) -> None:
+    """Does the reader's tone match the stock's move on the story's own session?  Reported, not decisive.
+
+    One row per (story, stock) with a bar on the session and the one before, the stock eligible at the earlier
+    close.  Reaction = adjusted close to close over the story's session, minus SPY's.  A story written during
+    the session ("Why shares are trading higher") describes a move already made: this is a check of the reader,
+    not a return anyone could have traded.
+    """
+    market = L.load_market(cache)
+    row_of = {name: i for i, name in enumerate(market.names)}
+    out = work / "news_rules"
+    stories = pd.read_pickle(out / f"stories_{tag}.pkl.gz")
+    s = stories["series"].map(row_of).to_numpy(int)
+    at = stories["bar"].to_numpy(int)
+    ok = at >= 1
+    before = np.where(ok, at - 1, 0)
+    close, spy = market.close, market.spy_close
+    stock = close[s, at] / close[s, before] - 1
+    reaction = stock - (spy[at] / spy[before] - 1)
+    ok &= np.isfinite(reaction) & market.eligible[s, before]
+    frame = stories[ok].assign(reaction=reaction[ok], month=stories["session"].str[:7][ok])
+    frame["call"] = np.where(frame["score"] > 0, "positive", np.where(frame["score"] < 0, "negative", "neutral"))
+    frame["era"] = np.where(frame["source"] == FISCAL_SOURCE, "fiscal.ai", "benzinga")
+
+    def describe(part: pd.DataFrame) -> dict:
+        values = part["reaction"].to_numpy(float)
+        if not len(values):
+            return {"pairs": 0}
+        return {"pairs": int(len(values)), "mean_bps": float(values.mean() * 1e4),
+                "median_bps": float(np.median(values) * 1e4), "share_up": float((values > 0).mean()),
+                "t": L.clustered_t(values, part["month"].to_numpy())}
+
+    summary = {"tag": tag, "pairs": int(len(frame)), "by_call": {}, "by_source_and_call": {}}
+    for call, part in frame.groupby("call"):
+        summary["by_call"][call] = describe(part)
+    for (era, call), part in frame.groupby(["era", "call"]):
+        summary["by_source_and_call"][f"{era}:{call}"] = describe(part)
+    positive, negative = frame[frame["call"] == "positive"], frame[frame["call"] == "negative"]
+    if len(positive) and len(negative):
+        summary["positive_minus_negative_bps"] = float((positive["reaction"].mean() - negative["reaction"].mean()) * 1e4)
+    (out / f"reaction_{tag}.json").write_text(json.dumps(summary, indent=1))
+    print(json.dumps(summary, indent=1))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("stage", choices=["tone", "evaluate"])
+    parser.add_argument("stage", choices=["tone", "evaluate", "reaction"])
     parser.add_argument("work", type=Path)
     parser.add_argument("cache", type=Path)
     parser.add_argument("--backend", type=Path, required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--limit", type=int, default=0, help="crash test on the first N series; prints trade counts only")
     args = parser.parse_args()
     if args.stage == "tone":
         stage_tone(args.work, args.cache, args.backend.resolve(), args.tag)
+    elif args.stage == "reaction":
+        stage_reaction(args.work, args.cache, args.tag)
     else:
-        stage_evaluate(args.work, args.cache, args.backend.resolve(), args.tag, args.workers)
+        stage_evaluate(args.work, args.cache, args.backend.resolve(), args.tag, args.workers, args.limit)
