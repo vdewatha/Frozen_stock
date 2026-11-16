@@ -129,6 +129,8 @@ MARKER_CLOSURE_KEYS = ("closed_at", "closure_kind", "entries_blocked", "released
 PARAMETER_KEY = "forward_experiment"
 SPEC_FILE = Path(__file__).with_name("data") / "forward-experiments-20261110.json"
 SPEC_SHA256 = "0a87603dfa1ba05343d47a000484c2b3ee310d1203c9f0cde814038e1a84b439"
+# Specs registered before the admission requirement (experiment_admission.py); their terms are not re-judged.
+GRANDFATHERED_SPECS = frozenset({SPEC_SHA256})
 SPEC_REPORT = "reports/local-sweep-20261110/forward-experiments.md"
 SPEC_JSON = "reports/local-sweep-20261110/forward-experiments.json"
 FROZEN_AT = "2026-11-10"
@@ -341,11 +343,17 @@ def register_forward_experiments(db: Session, *, now: Optional[datetime] = None,
     now = now or datetime.now(UTC)
     spec = load_spec()
     done = {payload["sweep_id"]: payload for payload in registrations(db)}
-    registered, created, reused, already, mismatched = [], [], [], [], []
+    registered, created, reused, already, mismatched, refused = [], [], [], [], [], []
     for candidate in spec["candidates"]:
         sweep_id = candidate["sweep_id"]
         if sweep_id in done:
             already.append(sweep_id)
+            continue
+        admission = _admission(db, candidate)
+        if admission is not None and not admission["admitted"]:
+            refused.append({"sweep_id": sweep_id, "candidate": candidate["candidate"], "reasons": admission["reasons"],
+                            "years_to_verdict": admission["estimate"].get("years_to_verdict")})
+            logger.warning("forward experiment %s not registered: %s", sweep_id, "; ".join(admission["reasons"]))
             continue
         row, mechanism, was_created, mismatch = _bind(db, candidate, now=now)
         if mismatch is not None or row is None:
@@ -367,8 +375,30 @@ def register_forward_experiments(db: Session, *, now: Optional[datetime] = None,
         (created if was_created else reused).append(row.strategy_type)
     if registered:
         db.flush()
-    return {"registered": registered, "rows_created": created, "rows_reused": reused, "already_registered": already,
-            "mismatched": mismatched, "spec_sha256": SPEC_SHA256, "paper_only": True}
+    out = {"registered": registered, "rows_created": created, "rows_reused": reused, "already_registered": already,
+           "mismatched": mismatched, "spec_sha256": SPEC_SHA256, "paper_only": True}
+    if refused:
+        out["refused"] = refused
+    return out
+
+
+def _admission(db: Session, candidate: Mapping) -> Optional[dict]:
+    """The admission decision for a candidate of a spec frozen after the requirement existed; None when grandfathered.
+
+    The 2026-11-10 spec keeps its original terms: its candidates were
+    registered before any admission requirement and are never refused here.
+    Any later spec (another ``SPEC_SHA256``) must pass
+    ``experiment_admission.check_forward_candidate`` before a candidate binds.
+    """
+    from app.services import experiment_admission
+
+    if SPEC_SHA256 in GRANDFATHERED_SPECS or not experiment_admission.enabled():
+        return None
+    number = int(candidate["candidate"])
+    decision = experiment_admission.check_forward_candidate(
+        {**candidate, "verdict_sample": VERDICT_SAMPLE.get(number)})
+    experiment_admission.record(db, decision)
+    return decision
 
 
 def is_registered_row(parameters: Optional[Mapping]) -> bool:

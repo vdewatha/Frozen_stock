@@ -152,7 +152,7 @@ def test_gate_tiers():
     assert bad_holdout["tier"] == "rejected" and not bad_holdout["checks"]["holdout_positive"]
 
 
-def _row(cid, tier, family="down_streak"):
+def _row(cid, tier, family="pullback_in_uptrend"):
     return {"id": cid, "family": family, "universe": "index_etfs", "rule": RULES[1],
             "description": rules.describe_rule(RULES[1]), "stop_loss_pct": 0.1, "take_profit_pct": 0.0,
             "max_holding_sessions": 10, "symbols": ["SPY", "QQQ"],
