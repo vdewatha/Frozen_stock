@@ -22,6 +22,7 @@ from app.models import RiskRule, StockPaperRecoveryEvent, StockPaperRecoveryStat
 from app.models.stock_paper import StockPaperAccount, StockPaperLedgerEvent, StockPaperOrder
 from app.services import auto_revalidation
 from app.services.stock_paper_ledger import (
+    RECOVERY_ROW_DEFERRED_REASON,
     StockPaperError,
     dispatch_reserved_order,
     initialize_stock_paper_account,
@@ -40,7 +41,6 @@ from app.services.stock_recovery import (
 )
 from tests.postgres_support import (
     WAIT_SECONDS,
-    KnownDeadlock,
     backend_pid,
     outcomes_or_known_deadlock,
     result_or_fail,
@@ -252,11 +252,6 @@ def test_reconciliation_watchdog_and_resume_check_never_deadlock(ledger):
         assert db.query(StockPaperRecoveryEvent).filter_by(action="automatic_restore").count() == 1
 
 
-@pytest.mark.xfail(strict=True, raises=KnownDeadlock, reason=(
-    "Open defect: enter_stock_recovery waits for the account row while holding the recovery row, and "
-    "reconciliation writes the recovery row while holding the account. The fix reorders locks in "
-    "stock_paper_ledger.py; remove this marker with it."
-))
 def test_pause_queued_behind_a_restoring_reconciliation_is_applied(ledger):
     """The same two rows as 2026-11-10, on the paths that still wait for the account.
 
@@ -265,6 +260,11 @@ def test_pause_queued_behind_a_restoring_reconciliation_is_applied(ledger):
     a heartbeat-only pause writes the recovery row at its end. On 2026-11-16 this
     test showed PostgreSQL killing the pause, leaving trading restored with the
     monitor's pause dropped until its next run.
+
+    Reconciliation no longer waits for the recovery row while it holds the
+    account (``_recovery_row_without_waiting``). It finds the row held, leaves
+    the watchdog's halt in place for its next pass, and commits; the pause then
+    gets the account and is applied.
     """
     engine = ledger.engine
     _watchdog_pause(engine)
@@ -287,13 +287,91 @@ def test_pause_queued_behind_a_restoring_reconciliation_is_applied(ledger):
         finally:
             gateway.release.set()
         outcomes = outcomes_or_known_deadlock({"reconciliation": reconciliation, "pause": monitor})
-    assert outcomes == {"reconciliation": "reconciled", "pause": "paused"}
+    # Nobody was killed. Reconciliation gave way on the recovery row, so its
+    # own result is the halt it left; the pause, which came last, stands.
+    assert outcomes == {"reconciliation": "halted", "pause": "paused"}
     with Session(engine) as db:
-        # The pause came last, so it stands.
         state, account = db.query(StockPaperRecoveryState).one(), db.query(StockPaperAccount).one()
         assert (state.status, state.pause_reason) == ("cooldown", reason)
         assert (account.status, account.halt_reason) == ("halted", reason)
         assert db.query(RiskRule).one().value["kill_switch_enabled"] is True
+        deferred = db.query(StockPaperLedgerEvent).filter_by(event_type="reconcile", status="recovery_deferred").one()
+        assert deferred.reason == RECOVERY_ROW_DEFERRED_REASON
+        # The pause was never undone: no restore was written at any point.
+        assert db.query(StockPaperRecoveryEvent).filter_by(action="automatic_restore").count() == 0
+        assert db.query(StockPaperRecoveryEvent).filter_by(action="pause", actor="stock_monitor").count() == 1
+
+
+def _hold_recovery_row(engine, held: Event, release: Event):
+    """Another process holding the recovery row without waiting for anything."""
+    with Session(engine) as db:
+        db.execute(text("SELECT id FROM stock_paper_recovery_state WHERE id = 1 FOR UPDATE"))
+        held.set()
+        release.wait(WAIT_SECONDS * 4)
+        db.rollback()
+
+
+def _lock_timeout(engine) -> str:
+    with Session(engine) as db:
+        return db.execute(text("SELECT current_setting('lock_timeout')")).scalar_one()
+
+
+def test_reconciliation_never_waits_for_a_held_recovery_row_and_the_next_one_restores(ledger):
+    engine = ledger.engine
+    _watchdog_pause(engine)
+    held, release = Event(), Event()
+    usual = _lock_timeout(engine)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        holder = pool.submit(_hold_recovery_row, engine, held, release)
+        try:
+            assert held.wait(WAIT_SECONDS), "The holder never locked the recovery row"
+            started = time.monotonic()
+            with Session(engine) as db:
+                assert reconcile_stock_paper_account(db, FakeAlpaca())["status"] == "halted"
+            # It queued for RECOVERY_ROW_WAIT_MS and gave way; the holder is still there.
+            assert time.monotonic() - started < WAIT_SECONDS / 2 and not holder.done()
+            # The short timeout was that one statement's: sessions still have their own setting.
+            assert _lock_timeout(engine) == usual != "500ms"
+        finally:
+            release.set()
+        result_or_fail(holder, "Recovery row holder")
+    with Session(engine) as db:
+        state, account = db.query(StockPaperRecoveryState).one(), db.query(StockPaperAccount).one()
+        # Everything the watchdog set is still in place: nothing was half-restored.
+        assert state.status == "cooldown" and account.status == "halted"
+        assert (account.halt_reason or "").startswith("Independent watchdog:")
+        assert db.query(RiskRule).one().value["kill_switch_enabled"] is True
+        assert db.query(StockPaperLedgerEvent).filter_by(status="recovery_deferred").count() == 1
+    # With the row free, the next reconciliation does what the first one left.
+    with Session(engine) as db:
+        assert reconcile_stock_paper_account(db, FakeAlpaca())["status"] == "reconciled"
+    with Session(engine) as db:
+        state = db.query(StockPaperRecoveryState).one()
+        assert state.status == "resumable" and db.query(StockPaperAccount).one().status == "reconciled"
+        assert db.query(RiskRule).one().value["kill_switch_enabled"] is False
+        assert db.query(StockPaperRecoveryEvent).filter_by(action="automatic_restore").count() == 1
+        assert db.query(StockPaperLedgerEvent).filter_by(status="recovery_deferred").count() == 1
+
+
+def test_a_recovery_row_held_for_a_moment_does_not_defer_the_restore(ledger):
+    """A holder that is not waiting for the account (a heartbeat write) is gone within the retries."""
+    engine = ledger.engine
+    _watchdog_pause(engine)
+    held, release = Event(), Event()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        holder = pool.submit(_hold_recovery_row, engine, held, release)
+        try:
+            assert held.wait(WAIT_SECONDS), "The holder never locked the recovery row"
+            pids = {}
+            reconciliation = pool.submit(_reconcile, engine, FakeAlpaca(), pids)
+            time.sleep(0.2)  # well inside RECOVERY_ROW_WAIT_MS
+        finally:
+            release.set()
+        assert result_or_fail(reconciliation, "Broker reconciliation") == "reconciled"
+        result_or_fail(holder, "Recovery row holder")
+    with Session(engine) as db:
+        assert db.query(StockPaperRecoveryState).one().status == "resumable"
+        assert db.query(StockPaperLedgerEvent).filter_by(status="recovery_deferred").count() == 0
 
 
 # --- (b) dispatch_reserved_order against reconciliation ---
@@ -410,11 +488,6 @@ def test_reconciliation_during_an_order_post_fails_closed_and_the_next_one_clear
         assert db.query(StockPaperOrder).filter_by(client_order_id=client_order_id).count() == 1
 
 
-@pytest.mark.xfail(strict=True, raises=KnownDeadlock, reason=(
-    "Open defect: after the POST, dispatch_reserved_order updates the order row and then inserts a ledger "
-    "event that needs the account row; reconciliation holds the account and updates the same order row. "
-    "The fix is in stock_paper_ledger.py; remove this marker with it."
-))
 def test_order_post_returning_during_reconciliation_keeps_one_accepted_order(reserved_sell):
     """Reconciliation takes the account while an order POST is in flight, then imports that order.
 
@@ -424,6 +497,10 @@ def test_order_post_returning_during_reconciliation_keeps_one_accepted_order(res
     write the same order row. On 2026-11-16 this test showed PostgreSQL
     killing dispatch: the accepted order was recorded as "unknown" and the
     account halted until the next reconciliation looked the order up.
+
+    Dispatch now takes the account row before the order row once the broker
+    has replied (``_account_then_order``), so it waits for the reconciliation
+    and then records the order that reconciliation already imported.
     """
     ledger, order_id, client_order_id = reserved_sell
     engine = ledger.engine
@@ -448,9 +525,6 @@ def test_order_post_returning_during_reconciliation_keeps_one_accepted_order(res
             broker.finish.set()
             gateway.release.set()
         outcomes = outcomes_or_known_deadlock({"reconciliation": reconciliation, "dispatch": dispatch})
-    if outcomes["dispatch"] == "unknown":
-        # Dispatch was the victim: it caught the error and filed the accepted order as uncertain.
-        raise KnownDeadlock(f"{outcomes}; {_order_and_account(engine, order_id)}")
     assert outcomes == {"reconciliation": "reconciled", "dispatch": "accepted"}
     assert broker.calls == 1
     assert _order_and_account(engine, order_id) == (("accepted", "broker-1", False), ("reconciled", None))
