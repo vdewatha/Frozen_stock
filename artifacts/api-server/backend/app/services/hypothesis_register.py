@@ -80,6 +80,28 @@ def closed_families(register: Optional[Mapping] = None) -> dict[str, list[str]]:
             if all(entry["status"] == "failed" for entry in entries)}
 
 
+def family_closure(family: Optional[str], *, register: Optional[Mapping] = None) -> Optional[dict]:
+    """Whether a proposal's family is closed, and the new evidence recorded for it, if any.
+
+    ``family`` may be a register family or a name another part of the app
+    uses for it (``family_aliases``: the discovery library's names).  A closed
+    family takes a new experiment only when ``admission_overrides`` records
+    the evidence that justifies one.  None when the family is unknown to the
+    register: nothing has been established about it.
+    """
+    if not family:
+        return None
+    register = register or load_register()
+    resolved = (register.get("family_aliases") or {}).get(family, family)
+    entries = [entry["id"] for entry in register["entries"] if entry["family"] == resolved]
+    if not entries:
+        return None
+    override = (register.get("admission_overrides") or {}).get(family) or (
+        register.get("admission_overrides") or {}).get(resolved) or {}
+    return {"family": resolved, "asked_as": family, "closed": resolved in closed_families(register), "entries": entries,
+            "new_evidence": override.get("new_evidence")}
+
+
 # ------------------------------------------------------------- paper orders
 
 def _approved_evidence(db: Session, strategy_ids: list[int], now: datetime) -> set[int]:

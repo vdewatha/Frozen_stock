@@ -8,6 +8,16 @@
     "collecting"
   ],
   "about": "One entry per hand-run study. Live sources (forward experiments, the discovery library, the experiment engine) are merged in by app/services/hypothesis_register.py and are not listed here.",
+  "family_aliases": {
+    "earnings_drift": "post_earnings_drift",
+    "opening_gap_fill": "gap_fill",
+    "breakout_momentum": "breakout",
+    "weekly_reversal": "dip_buying",
+    "down_streak": "dip_buying",
+    "negative_news_dip": "news",
+    "positive_news_trend": "news"
+  },
+  "admission_overrides": {},
   "entries": [
     {
       "id": "dip-rules-full-market",

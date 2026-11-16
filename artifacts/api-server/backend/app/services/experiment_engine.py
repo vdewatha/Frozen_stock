@@ -1108,6 +1108,43 @@ def _active_rules(db: Session) -> dict:
         return {}
 
 
+def apply_admission(db: Session, plan: dict, attributions: Iterable, *, now: datetime) -> dict:
+    """Drop planned experiments that cannot reach their forward verdict in a useful time (experiment_admission.py).
+
+    An experiment whose change would be adopted is then judged on the
+    strategy's next ``experiment_verdict_min_trades`` paper trades; at the
+    strategy's own recent trade rate that must fit the admission limit.  A
+    refused experiment is reported under ``skipped`` with its numbers and one
+    that does not fit this run's compute budget under ``deferred``.  A check
+    that cannot run changes nothing.
+    """
+    from app.services import experiment_admission as admission
+
+    if not admission.enabled() or not plan["planned"]:
+        return plan
+    try:
+        rates = admission.trade_rates(attributions, now=now)
+        inputs = admission.measured_inputs(db)
+        known = admission.latest_decisions(db)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("experiment engine: admission check unavailable: %s", exc.__class__.__name__)
+        return plan
+    kept, skipped, deferred, spent = [], list(plan["skipped"]), list(plan["deferred"]), 0.0
+    for item in plan["planned"]:
+        decision = admission.check_engine(item, rates, inputs=inputs, compute_spent_minutes=spent, book=BOOK)
+        admission.record(db, decision, known=known, now=now)
+        if decision["admitted"]:
+            spent += decision["compute_minutes"]
+            kept.append(item)
+        elif decision["decision"] == "deferred":
+            deferred.append({**item, "reason": decision["reasons"][0]})
+        else:
+            skipped.append({**item, "reason": "admission: " + "; ".join(decision["reasons"]),
+                            "admission": decision["estimate"]})
+    return {**plan, "planned": kept, "skipped": skipped, "deferred": deferred}
+
+
 def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader=None, earnings_loader=None,
                           vix_loader=None, simulate=None, breadth_loader=None, book_candidates=None) -> dict:
     """Weekly pass: plan from the repeating failures, replay, decide, adopt (paper only)."""
@@ -1129,6 +1166,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                             cooldown_days=settings.experiment_engine_cooldown_days,
                             max_experiments=settings.experiment_engine_max_experiments,
                             frozen=learning["frozen"], shadow=learning["shadow"], statuses=learning["statuses"])
+    plan = apply_admission(db, plan, attributions, now=now)
     experiments, adopted, errors = [], [], []
     history = None
     calibration = _calibration_factor(db)
