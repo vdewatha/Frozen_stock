@@ -187,31 +187,35 @@ def _hold_inserts_until_all_read(engine, table: str, parties: int):
 
 
 def test_two_collectors_storing_the_same_new_minutes_keep_one_row_each(postgres_schema):
+    """Writers of one symbol take turns (``_serialize_bar_writers``), so the second reads what the first stored.
+
+    Before that lock both could read "nothing stored" and insert the same
+    minutes; the test used to hold both inserts until both reads were done.
+    That interleaving can no longer happen, so the two simply start together.
+    """
     engine = postgres_schema.engine
     offsets = range(30)
-    release = _hold_inserts_until_all_read(engine, "intraday_bars", 2)
+    start = _together(2)
 
     def collect(close: float, verified: bool):
+        start.wait()
         with Session(engine) as db:
             return intraday_data.upsert_intraday_bars(
                 db, "SPY", _bars(offsets, close), ingested_at=INGESTED_AT,
                 provider="alpaca_iex", feed_class="iex", verify_entitlement=verified,
             )["rows_imported"]
 
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            # An authenticated collector and an unauthenticated import of the same minutes.
-            verified = pool.submit(collect, 101.0, True)
-            unverified = pool.submit(collect, 102.0, False)
-            assert result_or_fail(verified, "Verifying collector") == len(offsets)
-            assert result_or_fail(unverified, "Non-verifying import") == len(offsets)
-    finally:
-        release()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        # An authenticated collector and an unauthenticated import of the same minutes.
+        verified = pool.submit(collect, 101.0, True)
+        unverified = pool.submit(collect, 102.0, False)
+        assert result_or_fail(verified, "Verifying collector") == len(offsets)
+        assert result_or_fail(unverified, "Non-verifying import") == len(offsets)
 
     with Session(engine) as db:
         rows = db.query(IntradayBar).order_by(IntradayBar.opened_at).all()
         assert [row.opened_at for row in rows] == [_minute(offset) for offset in offsets]
-        # Whichever statement ran second replaced every bar: no minute mixes the two fetches.
+        # Whichever collector ran second replaced every bar: no minute mixes the two fetches.
         assert len({row.close for row in rows}) == 1
         # In either order the authenticated observation survives.
         assert {row.last_verified_at for row in rows} == {INGESTED_AT}
