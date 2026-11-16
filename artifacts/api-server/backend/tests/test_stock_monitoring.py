@@ -21,6 +21,7 @@ def test_research_only_assets_do_not_block_execution_feed_gate():
             ])
             db.commit()
             with patch.object(stock_monitoring.settings, "paper_execution_symbols", ["AAPL"]), \
+                 patch.object(stock_monitoring, "feed_statuses", return_value={}), \
                  patch.object(stock_monitoring, "feed_status", return_value={
                      "status": "ready",
                      "execution_status": "ready",
@@ -45,6 +46,8 @@ def test_market_closed_historical_gaps_are_warning_not_safety_breach():
             db.add(Asset(symbol="SPY", asset_type="stock", is_active=True))
             db.commit()
             with patch.object(stock_monitoring.settings, "paper_execution_symbols", ["SPY"]), patch.object(
+                stock_monitoring, "feed_statuses", return_value={},
+            ), patch.object(
                 stock_monitoring,
                 "feed_status",
                 return_value={
@@ -85,6 +88,7 @@ def test_historical_only_warning_does_not_pause_stock_path():
                 "unavailable_reason": "Historical repair gaps remain",
             }
             with patch.object(stock_monitoring.settings, "paper_execution_symbols", ["SPY"]), \
+                 patch.object(stock_monitoring, "feed_statuses", return_value={}), \
                  patch.object(stock_monitoring, "feed_status", return_value=historical_only), \
                  patch.object(stock_monitoring, "_distribution_drift", return_value=[]), \
                  patch.object(stock_monitoring, "_performance_drift", return_value={"key": "model.performance", "category": "model", "metric": "performance", "status": "clear", "message": "clear", "value": {}, "threshold": {}, "details": {}, "action_scope": "model"}), \

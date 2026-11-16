@@ -162,6 +162,7 @@ def _freshness_at(db, when):
     stale = {"status": "stale", "execution_status": "stale", "entitlement_state": "verified",
              "exchange_timestamp": None}
     with patch.object(settings, "paper_execution_symbols", ["SPY", "QQQ"]), \
+         patch.object(stock_monitoring, "feed_statuses", return_value={}), \
          patch.object(stock_monitoring, "feed_status", return_value=stale), \
          patch.object(stock_monitoring, "_session_bounds", return_value=SESSION):
         return stock_monitoring._freshness_and_provenance(db, when)

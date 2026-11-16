@@ -32,6 +32,15 @@ STALE_RUNNING_AFTER = timedelta(minutes=10)
 MAX_INTRADAY_GAP = timedelta(minutes=5)
 SCALP_LATE_DATA_ALLOWANCE = timedelta(minutes=2)
 FEED_VERIFICATION_MAX_AGE = timedelta(minutes=5)
+
+
+def _verification_max_age(now: datetime) -> timedelta:
+    """Five minutes, or the import's closed-hours allowance while it runs less often."""
+    from app.services.intraday_data import entitlement_max_age
+
+    return max(FEED_VERIFICATION_MAX_AGE, entitlement_max_age(now))
+
+
 NY = ZoneInfo("America/New_York")
 
 
@@ -263,7 +272,7 @@ def _session_quality(
     verification_age = now.astimezone(timezone.utc) - latest_verification
     if (
         not history_fallback
-        and (verification_age < timedelta(0) or verification_age > FEED_VERIFICATION_MAX_AGE)
+        and (verification_age < timedelta(0) or verification_age > _verification_max_age(now))
     ):
         return {
             "status": "blocked",

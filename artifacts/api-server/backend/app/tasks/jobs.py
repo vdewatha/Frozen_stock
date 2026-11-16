@@ -440,6 +440,21 @@ def daily_market_data_import() -> dict:
     reject_on_worker_lost=True,
 )
 def intraday_market_data_import() -> dict:
+    # Deep in closed hours the previous session cannot change; run every eight
+    # minutes there instead of back to back (intraday_data.deep_closed_hours).
+    from app.services.intraday_data import closed_hours_import_wait, deep_closed_hours
+    from app.services.operations_health import latest_intraday_import_run
+
+    now = datetime.now(timezone.utc)
+    if deep_closed_hours(now):
+        wait = closed_hours_import_wait(now, latest_intraday_import_run())
+        if wait is not None:
+            return {
+                "status": "skipped", "job": "intraday_market_data_import",
+                "reason": "market closed: the last session was re-read under eight minutes ago",
+                "next_run_in_seconds": round(wait),
+            }
+
     def work(db):
         from app.services.operations_health import record_intraday_import_run
 
@@ -1071,10 +1086,23 @@ def nightly_strategy_learning_job() -> dict:
     return _run_job("nightly_strategy_learning_job", work)
 
 
+# daily_feature_generation ends every run by rebuilding the candidate snapshot
+# (02:45 and 17:45 ET), and this job is due fifteen minutes after it starts.
+# Rebuilding here as well repeated the whole scan (a model fit and a backtest
+# of every strategy on every symbol, about 2.6 hours) on the same daily data,
+# alongside the first one: 5.6 worker-hours a day on 2026-11-13. A snapshot
+# from either of the last two feature runs is at most ~13 hours old when this
+# job fires, so reuse one that recent and scan only when there is none (the
+# feature run was deferred or failed).
+TRADE_CANDIDATE_SCAN_REUSE_MINUTES = 16 * 60
+
+
 @celery_app.task
 def trade_candidate_scan_job() -> dict:
     def work(db):
-        snapshot = get_trade_candidate_snapshot(db, limit=12, refresh=True)
+        snapshot = get_trade_candidate_snapshot(
+            db, limit=12, refresh=False, max_age_minutes=TRADE_CANDIDATE_SCAN_REUSE_MINUTES,
+        )
         return {
             "status": "complete",
             "job": "trade_candidate_scan_job",

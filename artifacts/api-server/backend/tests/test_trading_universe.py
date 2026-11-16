@@ -130,6 +130,7 @@ def _monitor(failed, symbols=UNIVERSE, ingested=None):
             db.add_all([_ingested(symbol) for symbol in (symbols if ingested is None else ingested)])
             db.commit()
             with patch.object(settings, "paper_execution_symbols", list(symbols)), \
+                 patch.object(stock_monitoring, "feed_statuses", return_value={}), \
                  patch.object(stock_monitoring, "feed_status",
                               side_effect=lambda _db, symbol: stale if symbol in failed else ready):
                 return stock_monitoring._freshness_and_provenance(db)
@@ -176,7 +177,10 @@ def test_readiness_blocks_only_on_broad_outage(monkeypatch):
         return {"status": "ready"}
 
     monkeypatch.setattr(settings, "paper_execution_symbols", symbols)
-    monkeypatch.setattr(readiness, "trusted_history", lambda *_a, **_k: (None, "yfinance"))
+    monkeypatch.setattr(readiness, "daily_history_checks", lambda _db, names: {
+        name: {"error": None, "latest_date": readiness.date.today(), "latest_source": "yfinance"} for name in names
+    })
+    monkeypatch.setattr(readiness, "feed_statuses", lambda *_a, **_k: {})
     monkeypatch.setattr(readiness, "validate_intraday_readiness", validate)
     monkeypatch.setattr(readiness, "feed_status", lambda _db, symbol: {"status": "stale"})
     try:

@@ -1,11 +1,11 @@
 """Fail-closed market data boundary for persisted models and paper execution."""
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import numpy as np
 import pandas as pd
 
 from app.models import Asset, IntradayBar
-from app.services.market_data import get_price_history
+from app.services.market_data import get_price_histories, get_price_history
 from app.services.intraday_data import (
     feed_status,
     MARKET_DATA_PROVIDER,
@@ -18,7 +18,9 @@ TRUSTED_SOURCES = frozenset({"yfinance", "yahoo_chart", "alpaca_sip_daily", "alp
 class UntrustedMarketData(ValueError):
     pass
 
-def validate_intraday_readiness(db, symbol: str, *, now: datetime | None = None, max_age_seconds: int = 120) -> dict:
+def validate_intraday_readiness(
+    db, symbol: str, *, now: datetime | None = None, max_age_seconds: int = 120, status: dict | None = None,
+) -> dict:
     """Require an authenticated, current execution observation.
 
     Historical repair gaps remain visible to research callers, but an incomplete
@@ -27,10 +29,12 @@ def validate_intraday_readiness(db, symbol: str, *, now: datetime | None = None,
     boundary remains fail-closed.
     """
     now = now or datetime.now(timezone.utc)
-    try:
-        status = feed_status(db, symbol, now=now)
-    except ValueError as exc:
-        raise UntrustedMarketData(str(exc)) from exc
+    if status is None:
+        # ``status`` is a feed status the caller already read (feed_statuses).
+        try:
+            status = feed_status(db, symbol, now=now)
+        except ValueError as exc:
+            raise UntrustedMarketData(str(exc)) from exc
     # A current bar cannot mask a gap in the same decision session.
     if status["status"] not in {"ready", "market_closed"}:
         reason = status.get("unavailable_reason") or "Intraday feed is not ready."
@@ -105,6 +109,10 @@ def trusted_history(
         prices, source = get_price_history(
             db, symbol, limit, auto_seed=False, source_filter=provider_source
         )
+    return _validated_and_adjusted(prices, minimum), source
+
+
+def _validated_and_adjusted(prices: pd.DataFrame, minimum: int) -> pd.DataFrame:
     validate_history(prices, minimum=minimum)
     if "adjusted_close" in prices:
         adjusted = pd.to_numeric(prices["adjusted_close"], errors="coerce")
@@ -116,4 +124,30 @@ def trusted_history(
         for column in ("open", "high", "low", "close"):
             prices[column] = pd.to_numeric(prices[column], errors="coerce") * factor
         prices["adjustment_policy"] = "yahoo_adjusted_close_factor"
-    return prices, source
+    return prices
+
+
+def daily_history_checks(db, symbols: list[str], limit: int = 260, minimum: int = 60) -> dict[str, dict]:
+    """What ``trusted_history(db, symbol, require_active=False)`` decides, for many symbols.
+
+    For each symbol: ``error`` (the reason it is not trusted, or None), and the
+    newest stored price's ``latest_date`` and ``latest_source`` (None when the
+    symbol has no prices). The histories come from two queries per 25 symbols
+    (``get_price_histories``) and pass through the same validation as the
+    single-symbol call, so a readiness build no longer asks the database
+    three times per active symbol.
+    """
+    checks: dict[str, dict] = {}
+    for symbol, (prices, _source) in get_price_histories(db, symbols, limit).items():
+        error = None
+        try:
+            _validated_and_adjusted(prices, minimum)
+        except UntrustedMarketData as exc:
+            error = str(exc)
+        newest = prices.iloc[-1] if not prices.empty else None
+        checks[symbol] = {
+            "error": error,
+            "latest_date": date.fromisoformat(str(newest["date"])) if newest is not None else None,
+            "latest_source": str(newest["source"]) if newest is not None else None,
+        }
+    return checks
