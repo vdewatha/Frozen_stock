@@ -1071,10 +1071,23 @@ def nightly_strategy_learning_job() -> dict:
     return _run_job("nightly_strategy_learning_job", work)
 
 
+# daily_feature_generation ends every run by rebuilding the candidate snapshot
+# (02:45 and 17:45 ET), and this job is due fifteen minutes after it starts.
+# Rebuilding here as well repeated the whole scan (a model fit and a backtest
+# of every strategy on every symbol, about 2.6 hours) on the same daily data,
+# alongside the first one: 5.6 worker-hours a day on 2026-11-13. A snapshot
+# from either of the last two feature runs is at most ~13 hours old when this
+# job fires, so reuse one that recent and scan only when there is none (the
+# feature run was deferred or failed).
+TRADE_CANDIDATE_SCAN_REUSE_MINUTES = 16 * 60
+
+
 @celery_app.task
 def trade_candidate_scan_job() -> dict:
     def work(db):
-        snapshot = get_trade_candidate_snapshot(db, limit=12, refresh=True)
+        snapshot = get_trade_candidate_snapshot(
+            db, limit=12, refresh=False, max_age_minutes=TRADE_CANDIDATE_SCAN_REUSE_MINUTES,
+        )
         return {
             "status": "complete",
             "job": "trade_candidate_scan_job",
