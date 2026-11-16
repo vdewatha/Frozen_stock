@@ -1447,9 +1447,18 @@ def preflight_intraday(
     # (2026-11-09: tranche 1 was blocked "no fresh reference price for SGOV,
     # VOO" because only execution symbols were ingested during the session.)
     book_only = _book_only_symbols(selected) if symbols is None else []
+    # So are the symbols traded outside the configured list: news-discovered
+    # names, exploration-lane names and hedge instruments. The cycle may buy
+    # them only on a minute bar under two minutes old, but this run fetched
+    # the execution list alone, so their bars came from the half-hourly
+    # self-healing repair and they were tradable for a few minutes in thirty.
+    # (2026-11-16: NOC, admitted 11:10 ET, was ingested four times all
+    # session, each on the half hour; SPY every minute.) Like the book's ETFs
+    # they stay out of the readiness check below.
+    feed_only = _feed_only_symbols(selected + book_only, observed_at) if symbols is None else []
     ingest_started = time.monotonic()
     ingestion = ingest_intraday(
-        db, selected + book_only, now=observed_at,
+        db, selected + book_only + feed_only, now=observed_at,
         backfill_time_budget_seconds=settings.intraday_backfill_session_time_budget_seconds,
     )
     status_started = time.monotonic()
@@ -1580,6 +1589,12 @@ def preflight_intraday(
              "rows_imported": ingestion_by_symbol.get(symbol, {}).get("rows_imported", 0)}
             for symbol in book_only
         ]} if book_only else {}),
+        **({"feed_only_symbols": [
+            {"symbol": symbol,
+             "status": ingestion_by_symbol.get(symbol, {}).get("status", "missing"),
+             "rows_imported": ingestion_by_symbol.get(symbol, {}).get("rows_imported", 0)}
+            for symbol in feed_only
+        ]} if feed_only else {}),
     })
 
 
@@ -1592,6 +1607,41 @@ def _book_only_symbols(selected: list[str]) -> list[str]:
         return sorted(_symbol(value) for value in target_weight_symbols() if _symbol(value) not in chosen)
     except Exception:
         return []
+
+
+# The in-session run is scheduled every minute and must finish inside it, or
+# every symbol falls back to a bar every second minute. News discovery admits
+# at most ``news_discovery_max_symbols`` (8 by default, 15 at most); an open
+# exploration lane can add dozens. Past this many, the extra symbols take
+# turns, a different window each minute, so the execution list keeps its pace.
+FEED_ONLY_SYMBOLS_PER_RUN = 15
+
+
+def _feed_only_symbols(already: list[str], observed_at: datetime) -> list[str]:
+    """Symbols traded outside the configured execution list that ``already`` lacks.
+
+    News-discovered symbols (admitted or still held), exploration-lane names
+    and admitted hedge instruments. Each source is read on its own and never
+    raises: one that fails leaves the others. At most
+    ``FEED_ONLY_SYMBOLS_PER_RUN`` are returned; beyond that the window moves
+    on by that many each minute.
+    """
+    from app.services import trading_universe
+
+    chosen = set(already)
+    extra: set[str] = set()
+    for source in (trading_universe.discovered_symbols, trading_universe.exploration_lane_symbols,
+                   trading_universe.hedge_symbols):
+        try:
+            extra.update(_symbol(value) for value in source())
+        except Exception:
+            continue
+    ordered = sorted(extra - chosen)
+    if len(ordered) <= FEED_ONLY_SYMBOLS_PER_RUN:
+        return ordered
+    minute = int(_aware_utc(observed_at).timestamp() // 60)
+    start = (minute * FEED_ONLY_SYMBOLS_PER_RUN) % len(ordered)
+    return sorted((ordered + ordered)[start:start + FEED_ONLY_SYMBOLS_PER_RUN])
 
 
 def publication_lag_allowance() -> timedelta:
