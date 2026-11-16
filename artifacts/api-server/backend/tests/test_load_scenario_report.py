@@ -233,15 +233,63 @@ def test_runner_refuses_a_database_that_is_not_on_this_machine():
 
 def test_scenario_workers_use_the_hosted_queue_layout():
     source = SERVER.read_text()
-    workers = re.findall(r'^\s*"(paper-[a-z]+)\|([a-z_,]+)\|(\d+)"$', RUNNER.read_text(), flags=re.MULTILINE)
-    assert [label for label, _queues, _threads in workers] == [
-        "paper-core", "paper-fast", "paper-intraday", "paper-broker"]
-    for label, queues, threads in workers:
+    workers = re.findall(r'^\s*"(paper-[a-z]+)\|([a-z_,]+)\|([a-z]+)\|(\d+)"$', RUNNER.read_text(), flags=re.MULTILINE)
+    assert [label for label, _queues, _pool, _count in workers] == [
+        "paper-core", "paper-research", "paper-fast", "paper-intraday", "paper-broker"]
+    for label, queues, pool, count in workers:
         match = re.search(
-            rf'--hostname={label}@%h",\s*"--queues=([^"]+)",.*?"--pool=threads", "--concurrency=(\d+)", "--prefetch-multiplier=1"',
+            rf'--hostname={label}@%h",\s*"--queues=([^"]+)",.*?"--pool=([a-z]+)", "--concurrency=(\d+)", '
+            rf'"--prefetch-multiplier=1"(, "--max-tasks-per-child=1")?',
             source, flags=re.DOTALL,
         )
         assert match, label
-        assert (queues, threads) == match.groups(), label
+        assert (queues, pool, count) == match.groups()[:3], label
+        # One task per process is what makes the prefork worker the research lane.
+        assert bool(match.group(4)) == (pool == "prefork"), label
+    assert dict((label, pool) for label, _queues, pool, _count in workers)["paper-research"] == "prefork"
     runner = RUNNER.read_text()
-    assert "--pool=threads" in runner and "--prefetch-multiplier=1" in runner
+    assert "--prefetch-multiplier=1" in runner and "--max-tasks-per-child=1" in runner
+
+
+def test_recovery_reports_a_task_process_kill_and_the_recorded_losses():
+    # The research worker (pid 20) stays up; its task process (pid 21) was killed mid-job.
+    events = [
+        _sent("r1", "learning", 100.0, task="load_scenario.research"),
+        _started("r1", "learning", 100.0, 1.0, pid=21, worker="paper-research@host", task="load_scenario.research"),
+        _sent("r2", "learning", 100.0, task="load_scenario.research"),
+        _started("r2", "learning", 100.0, 62.5, pid=22, worker="paper-research@host", task="load_scenario.research"),
+    ]
+    drill = {"worker": "paper-research", "status": "recovered", "killed": "task_process", "killed_pid": 21,
+             "worker_pid": 20, "killed_at": 160.0, "process_restarted_seconds": None, "worker_restarted": False,
+             "task_process_replaced_seconds": 0.4, "heartbeat_restored_seconds": 1.9,
+             "heartbeat_key": "celery:worker:heartbeat:paper-research@build-machine.local"}
+    lost = [{"job": "research", "cause": "Worker exited prematurely: signal 9 (SIGKILL)", "task_id": "r1",
+             "message": "The process running research was stopped"}]
+    result = _recovery(drill, events, lost)
+    assert result["tasks_in_flight_at_kill"] == ["load_scenario.research"]
+    assert result["tasks_lost_at_kill"] == ["load_scenario.research"]
+    assert result["first_task_started_seconds"] == 2.5
+    assert result["lost_jobs_recorded"] == lost
+    assert _recovery({}, [])["lost_jobs_recorded"] == []
+    # A task-process kill has no heartbeat to restore; the replacement is the evidence.
+    replaced = {**drill, "heartbeat_restored_seconds": None}
+    report = build_report({}, events, [{"lock_waits": [], "memory_mb": {"paper-research": 200.0}}], replaced)
+    assert report["coverage"]["measured"]["recovery"] is True
+    unreplaced = {**replaced, "task_process_replaced_seconds": None}
+    report = build_report({}, events, [{"lock_waits": [], "memory_mb": {"paper-research": 200.0}}], unreplaced)
+    assert report["coverage"]["missing"] == ["recovery"]
+
+    # The whole worker killed instead: its task process (pid 21) dies with it.
+    worker_kill = {**drill, "killed": "worker", "killed_pid": 20, "process_restarted_seconds": 2.1,
+                   "worker_restarted": True, "task_process_replaced_seconds": None, "heartbeat_restored_seconds": 4.7}
+    result = _recovery(worker_kill, events, lost)
+    assert result["tasks_lost_at_kill"] == ["load_scenario.research"]
+    assert result["first_task_started_seconds"] == 2.5
+
+    meta = {"started_epoch": 100.0, "ended_epoch": 300.0, "lost_jobs_recorded": lost}
+    report = build_report(meta, events, [{"lock_waits": [], "memory_mb": {"paper-research:task": 1410.0}}], drill)
+    lines = compare(report, report)
+    assert "recovery task_process_replaced_seconds | 0.40 | 0.40" in lines
+    assert "recovery tasks_lost_at_kill | 1 | 1" in lines
+    assert "recovery lost_jobs_recorded | 1 | 1" in lines
+    assert "memory paper-research:task peak_mb | 1410.00 | 1410.00" in lines

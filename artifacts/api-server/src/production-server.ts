@@ -382,12 +382,29 @@ function startPaperWorkers(): void {
     supervisePaperWorker([
       "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
       "--loglevel=INFO", "--hostname=paper-core@%h",
-      "--queues=default,market_data,intraday_market_data,research_market_data,scalp_research,learning,learning_fast,paper_trading,risk,monitoring",
+      "--queues=default,market_data,intraday_market_data,research_market_data,scalp_research,learning_fast,paper_trading,risk,monitoring",
       // Only reserve tasks a free thread can start. With the default prefetch,
       // a core busy with long learning or import jobs held minutely intraday
       // imports until their 55-second expiry and they were discarded.
       "--pool=threads", "--concurrency=2", "--prefetch-multiplier=1",
     ], "paper-core");
+    // Research lane: the learning queue (backtests, discovery, the experiment
+    // engine, retraining) has a worker of its own. On paper-core two research
+    // jobs took both threads, so every queue only paper-core serves waited as
+    // long as the research backlog, and freeing research memory meant killing
+    // the worker that also runs market data. Here one task runs at a time in a
+    // process of its own that exits when the task ends (prefork, one task per
+    // child), so its memory goes back to the VM in full. That process stops
+    // itself above PAPER_RESEARCH_MAX_MEMORY_MB (default 2048; see
+    // backend/app/tasks/research_worker.py), and the memory guard stops it
+    // first (resource-guard.ts). A job stopped this way is recorded as lost
+    // with the scheduled run that covers it; it is not delivered again.
+    supervisePaperWorker([
+      "-m", "celery", "-A", "app.tasks.celery_app:celery_app", "worker",
+      "--loglevel=INFO", "--hostname=paper-research@%h",
+      "--queues=learning",
+      "--pool=prefork", "--concurrency=1", "--prefetch-multiplier=1", "--max-tasks-per-child=1",
+    ], "paper-research");
     // Time-critical lane: long research and learning jobs must never starve
     // paper signals, risk or monitoring. It also serves learning_fast (trade
     // attribution, news discovery: under a minute, twice an hour); behind a

@@ -1,0 +1,437 @@
+{
+  "config": {
+    "broker_latency_ms": 150,
+    "drain_seconds": 15,
+    "duration_seconds": 90,
+    "feed_latency_ms": 100,
+    "intraday_interval_seconds": 5.0,
+    "intraday_symbols": 10,
+    "kill_after_seconds": 0,
+    "kill_target": "task",
+    "kill_worker": "paper-research",
+    "probe_interval_seconds": 5.0,
+    "probe_queues": [
+      "learning_fast",
+      "market_data",
+      "research_market_data",
+      "default"
+    ],
+    "reconcile_interval_seconds": 10.0,
+    "research_ballast_mb": 1200,
+    "research_jobs": 10,
+    "research_max_memory_mb": 1024,
+    "research_sweeps_per_job": 60,
+    "research_symbols": 6,
+    "restart_delay_seconds": 2.0,
+    "sample_interval_seconds": 1.0,
+    "signal_hold_ms": 50,
+    "signal_interval_seconds": 5.0,
+    "signal_lock_timeout_ms": 3000
+  },
+  "coverage": {
+    "complete": false,
+    "measured": {
+      "lock_waits": true,
+      "memory": true,
+      "queue_delay": true,
+      "recovery": false
+    },
+    "missing": [
+      "recovery"
+    ]
+  },
+  "elapsed_seconds": 105.0,
+  "environment": {
+    "cpu_count": 2,
+    "platform": "Linux-6.8.0-117-generic-aarch64-with-glibc2.41",
+    "postgres": "16.15",
+    "python": "3.11.17"
+  },
+  "layout": {
+    "paper-broker": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "broker_reconciliation"
+    },
+    "paper-core": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "default,market_data,intraday_market_data,research_market_data,scalp_research,learning_fast,paper_trading,risk,monitoring"
+    },
+    "paper-fast": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "paper_trading,risk,monitoring,learning_fast"
+    },
+    "paper-intraday": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "intraday_market_data"
+    },
+    "paper-research": {
+      "concurrency": 1,
+      "pool": "prefork",
+      "queues": "learning"
+    }
+  },
+  "live_trading": false,
+  "lock_waits": {
+    "by_wait_event": {
+      "transactionid": 6
+    },
+    "longest_wait_seconds": 0.148,
+    "max_idle_in_transaction": 2,
+    "max_sessions": 10,
+    "max_waiting_sessions": 1,
+    "postgres_deadlocks": 0,
+    "samples": 105,
+    "samples_failed": 0,
+    "samples_with_a_waiting_session": 6,
+    "sqlstate_counts": {
+      "40P01": 0,
+      "55P03": 0,
+      "by_task": {},
+      "other": {}
+    }
+  },
+  "memory": {
+    "peak_total_mb": 2433.1,
+    "processes": {
+      "paper-broker": {
+        "first_mb": 198.2,
+        "last_mb": 215.0,
+        "mean_mb": 214.7,
+        "peak_mb": 215.0,
+        "samples": 105
+      },
+      "paper-core": {
+        "first_mb": 197.8,
+        "last_mb": 211.1,
+        "mean_mb": 208.4,
+        "peak_mb": 211.1,
+        "samples": 105
+      },
+      "paper-fast": {
+        "first_mb": 198.3,
+        "last_mb": 205.6,
+        "mean_mb": 205.5,
+        "peak_mb": 205.6,
+        "samples": 105
+      },
+      "paper-intraday": {
+        "first_mb": 198.3,
+        "last_mb": 211.9,
+        "mean_mb": 211.7,
+        "peak_mb": 211.9,
+        "samples": 105
+      },
+      "paper-research": {
+        "first_mb": 198.6,
+        "last_mb": 205.1,
+        "mean_mb": 205.0,
+        "peak_mb": 205.1,
+        "samples": 105
+      },
+      "paper-research:task": {
+        "first_mb": 159.1,
+        "last_mb": 165.2,
+        "mean_mb": 256.0,
+        "peak_mb": 1381.5,
+        "samples": 103
+      },
+      "redis": {
+        "first_mb": 13.8,
+        "last_mb": 14.3,
+        "mean_mb": 14.3,
+        "peak_mb": 14.3,
+        "samples": 105
+      }
+    },
+    "source": "proc"
+  },
+  "paper_only": true,
+  "queue_delay": {
+    "broker_reconciliation": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 9,
+        "max": 0.025,
+        "mean": 0.011,
+        "p50": 0.01,
+        "p95": 0.025
+      },
+      "sent": 9,
+      "started": 9
+    },
+    "default": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 1.704,
+        "mean": 0.304,
+        "p50": 0.024,
+        "p95": 1.704
+      },
+      "sent": 18,
+      "started": 18
+    },
+    "intraday_market_data": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 0.013,
+        "mean": 0.008,
+        "p50": 0.007,
+        "p95": 0.013
+      },
+      "sent": 18,
+      "started": 18
+    },
+    "learning": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 10,
+        "max": 14.688,
+        "mean": 7.717,
+        "p50": 8.466,
+        "p95": 14.688
+      },
+      "sent": 10,
+      "started": 10
+    },
+    "learning_fast": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 0.014,
+        "mean": 0.008,
+        "p50": 0.007,
+        "p95": 0.014
+      },
+      "sent": 18,
+      "started": 18
+    },
+    "market_data": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 0.689,
+        "mean": 0.195,
+        "p50": 0.032,
+        "p95": 0.689
+      },
+      "sent": 18,
+      "started": 18
+    },
+    "paper_trading": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 0.023,
+        "mean": 0.009,
+        "p50": 0.008,
+        "p95": 0.023
+      },
+      "sent": 18,
+      "started": 18
+    },
+    "research_market_data": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 0.589,
+        "mean": 0.148,
+        "p50": 0.014,
+        "p95": 0.589
+      },
+      "sent": 18,
+      "started": 18
+    }
+  },
+  "recovery": {
+    "lost_jobs_recorded": [
+      {
+        "cause": "memory cap: 1363.0 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 1 s (memory cap: 1363.0 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "b428f97d-b9bc-4d93-be8f-a1e27574a0c7"
+      },
+      {
+        "cause": "memory cap: 1368.9 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 1 s (memory cap: 1368.9 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "d5170f29-ff58-4885-9fed-b09cc0270146"
+      },
+      {
+        "cause": "memory cap: 1389.7 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 1 s (memory cap: 1389.7 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "87fcdddf-7492-4c59-ade4-bf553938e3e1"
+      },
+      {
+        "cause": "memory cap: 1381.5 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 4 s (memory cap: 1381.5 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "2c17612e-7c9b-431a-a3b3-7066032848bf"
+      },
+      {
+        "cause": "memory cap: 1383.7 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 1 s (memory cap: 1383.7 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "61256a01-8c2c-4b1d-8bb7-8c9a177ea663"
+      },
+      {
+        "cause": "memory cap: 1381.6 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 1 s (memory cap: 1381.6 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "1b0b990e-a9ce-4d72-a9fe-eb7e209c0780"
+      },
+      {
+        "cause": "memory cap: 1381.6 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 1 s (memory cap: 1381.6 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "67613395-898e-429c-844d-e66c3d34c287"
+      },
+      {
+        "cause": "memory cap: 1381.6 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 1 s (memory cap: 1381.6 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "feed71a5-35ca-4d5f-8741-14a41b312f75"
+      },
+      {
+        "cause": "memory cap: 1381.7 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 1 s (memory cap: 1381.7 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "a6aee633-1f18-4fe8-bf0c-f5fd3b7c4b76"
+      },
+      {
+        "cause": "memory cap: 1381.9 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)",
+        "job": "research",
+        "message": "The process running research was stopped after 4 s (memory cap: 1381.9 MiB resident, cap 1024 MiB (PAPER_RESEARCH_MAX_MEMORY_MB)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "0e2965a1-fcf0-441b-8d90-8aa7b2ed9bb4"
+      }
+    ],
+    "reason": "the run ended before the kill",
+    "status": "not_run",
+    "worker": "paper-research"
+  },
+  "report": "load_scenario",
+  "schema": "load_scenario_20261116203426_7",
+  "started_at": "2026-11-16T20:34:41.971824+00:00",
+  "tasks": {
+    "load_scenario.broker_reconciliation": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 9
+      },
+      "result_status": {
+        "complete": 9
+      },
+      "runtime_seconds": {
+        "count": 9,
+        "max": 2.335,
+        "mean": 1.029,
+        "p50": 0.87,
+        "p95": 2.335
+      },
+      "sent": 9,
+      "started": 9,
+      "started_not_finished": 0
+    },
+    "load_scenario.intraday_import": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 18
+      },
+      "result_status": {
+        "complete": 18
+      },
+      "runtime_seconds": {
+        "count": 18,
+        "max": 2.445,
+        "mean": 0.82,
+        "p50": 0.26,
+        "p95": 2.445
+      },
+      "sent": 18,
+      "started": 18,
+      "started_not_finished": 0
+    },
+    "load_scenario.probe": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 72
+      },
+      "result_status": {
+        "complete": 72
+      },
+      "runtime_seconds": {
+        "count": 72,
+        "max": 0.079,
+        "mean": 0.01,
+        "p50": 0.006,
+        "p95": 0.031
+      },
+      "sent": 72,
+      "started": 72,
+      "started_not_finished": 0
+    },
+    "load_scenario.research": {
+      "expired_before_start": 0,
+      "failed": {
+        "WorkerLostError": 10
+      },
+      "finished": {},
+      "result_status": {},
+      "runtime_seconds": {
+        "count": 0,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null
+      },
+      "sent": 10,
+      "started": 10,
+      "started_not_finished": 10
+    },
+    "load_scenario.signal_pass": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 18
+      },
+      "result_status": {
+        "complete": 18
+      },
+      "runtime_seconds": {
+        "count": 18,
+        "max": 0.699,
+        "mean": 0.217,
+        "p50": 0.078,
+        "p95": 0.699
+      },
+      "sent": 18,
+      "started": 18,
+      "started_not_finished": 0
+    }
+  }
+}

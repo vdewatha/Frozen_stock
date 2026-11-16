@@ -1,0 +1,404 @@
+{
+  "config": {
+    "broker_latency_ms": 150,
+    "drain_seconds": 15,
+    "duration_seconds": 180,
+    "feed_latency_ms": 100,
+    "intraday_interval_seconds": 5.0,
+    "intraday_symbols": 10,
+    "kill_after_seconds": 60,
+    "kill_target": "task",
+    "kill_worker": "paper-research",
+    "probe_interval_seconds": 5.0,
+    "probe_queues": [
+      "learning_fast",
+      "market_data",
+      "research_market_data",
+      "default"
+    ],
+    "reconcile_interval_seconds": 10.0,
+    "research_ballast_mb": 1200,
+    "research_jobs": 10,
+    "research_max_memory_mb": 2048,
+    "research_sweeps_per_job": 60,
+    "research_symbols": 6,
+    "restart_delay_seconds": 2.0,
+    "sample_interval_seconds": 1.0,
+    "signal_hold_ms": 50,
+    "signal_interval_seconds": 5.0,
+    "signal_lock_timeout_ms": 3000
+  },
+  "coverage": {
+    "complete": true,
+    "measured": {
+      "lock_waits": true,
+      "memory": true,
+      "queue_delay": true,
+      "recovery": true
+    },
+    "missing": []
+  },
+  "elapsed_seconds": 195.0,
+  "environment": {
+    "cpu_count": 2,
+    "platform": "Linux-6.8.0-117-generic-aarch64-with-glibc2.41",
+    "postgres": "16.15",
+    "python": "3.11.17"
+  },
+  "layout": {
+    "paper-broker": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "broker_reconciliation"
+    },
+    "paper-core": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "default,market_data,intraday_market_data,research_market_data,scalp_research,learning_fast,paper_trading,risk,monitoring"
+    },
+    "paper-fast": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "paper_trading,risk,monitoring,learning_fast"
+    },
+    "paper-intraday": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "intraday_market_data"
+    },
+    "paper-research": {
+      "concurrency": 1,
+      "pool": "prefork",
+      "queues": "learning"
+    }
+  },
+  "live_trading": false,
+  "lock_waits": {
+    "by_wait_event": {
+      "transactionid": 9
+    },
+    "longest_wait_seconds": 0.156,
+    "max_idle_in_transaction": 2,
+    "max_sessions": 12,
+    "max_waiting_sessions": 1,
+    "postgres_deadlocks": 0,
+    "samples": 195,
+    "samples_failed": 0,
+    "samples_with_a_waiting_session": 9,
+    "sqlstate_counts": {
+      "40P01": 0,
+      "55P03": 0,
+      "by_task": {},
+      "other": {}
+    }
+  },
+  "memory": {
+    "peak_total_mb": 2454.8,
+    "processes": {
+      "paper-broker": {
+        "first_mb": 198.3,
+        "last_mb": 215.1,
+        "mean_mb": 214.9,
+        "peak_mb": 215.1,
+        "samples": 195
+      },
+      "paper-core": {
+        "first_mb": 198.3,
+        "last_mb": 210.5,
+        "mean_mb": 209.7,
+        "peak_mb": 210.5,
+        "samples": 195
+      },
+      "paper-fast": {
+        "first_mb": 198.3,
+        "last_mb": 205.5,
+        "mean_mb": 205.4,
+        "peak_mb": 205.5,
+        "samples": 195
+      },
+      "paper-intraday": {
+        "first_mb": 198.3,
+        "last_mb": 211.8,
+        "mean_mb": 211.7,
+        "peak_mb": 211.8,
+        "samples": 195
+      },
+      "paper-research": {
+        "first_mb": 198.6,
+        "last_mb": 205.0,
+        "mean_mb": 203.0,
+        "peak_mb": 205.0,
+        "samples": 195
+      },
+      "paper-research:task": {
+        "first_mb": 159.2,
+        "last_mb": 1381.7,
+        "mean_mb": 1288.7,
+        "peak_mb": 1392.8,
+        "samples": 191
+      },
+      "redis": {
+        "first_mb": 13.9,
+        "last_mb": 14.5,
+        "mean_mb": 14.4,
+        "peak_mb": 14.5,
+        "samples": 195
+      }
+    },
+    "source": "proc"
+  },
+  "paper_only": true,
+  "queue_delay": {
+    "broker_reconciliation": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 0.021,
+        "mean": 0.009,
+        "p50": 0.007,
+        "p95": 0.021
+      },
+      "sent": 18,
+      "started": 18
+    },
+    "default": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 1.323,
+        "mean": 0.41,
+        "p50": 0.344,
+        "p95": 1.312
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "intraday_market_data": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 0.032,
+        "mean": 0.007,
+        "p50": 0.004,
+        "p95": 0.022
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "learning": {
+      "expired_before_start": 0,
+      "never_started": 1,
+      "oldest_unstarted_wait_seconds": 194.798,
+      "seconds": {
+        "count": 9,
+        "max": 188.278,
+        "mean": 92.529,
+        "p50": 88.086,
+        "p95": 188.278
+      },
+      "sent": 10,
+      "started": 9
+    },
+    "learning_fast": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 0.037,
+        "mean": 0.008,
+        "p50": 0.006,
+        "p95": 0.025
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "market_data": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 0.572,
+        "mean": 0.155,
+        "p50": 0.023,
+        "p95": 0.521
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "paper_trading": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 0.04,
+        "mean": 0.008,
+        "p50": 0.005,
+        "p95": 0.021
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "research_market_data": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 1.322,
+        "mean": 0.41,
+        "p50": 0.346,
+        "p95": 1.311
+      },
+      "sent": 36,
+      "started": 36
+    }
+  },
+  "recovery": {
+    "first_task_started_seconds": 3.08,
+    "heartbeat_key": "celery:worker:heartbeat:paper-research@<host>",
+    "heartbeat_restored_seconds": null,
+    "heartbeat_ttl_at_kill_ms": 27701,
+    "killed": "task_process",
+    "killed_at": 1794860696.5006838,
+    "killed_pid": 63,
+    "lost_jobs_recorded": [
+      {
+        "cause": "Worker exited prematurely: signal 9 (SIGKILL)",
+        "job": "research",
+        "message": "The process running research was stopped after 10 s (Worker exited prematurely: signal 9 (SIGKILL)). The job was not delivered again. No beat entry runs this task, so nothing queues it again.",
+        "task_id": "75297adf-5f5e-46be-9e47-cbcae9962e1a"
+      }
+    ],
+    "new_pid": null,
+    "process_restarted_seconds": null,
+    "signal": "SIGKILL",
+    "status": "recovered",
+    "task_process_replaced_seconds": 3.07,
+    "tasks_in_flight_at_kill": [
+      "load_scenario.research"
+    ],
+    "tasks_lost_at_kill": [
+      "load_scenario.research"
+    ],
+    "tasks_redelivered_after_kill": [],
+    "worker": "paper-research",
+    "worker_pid": 32,
+    "worker_restarted": false
+  },
+  "report": "load_scenario",
+  "schema": "load_scenario_20261116202340_7",
+  "started_at": "2026-11-16T20:23:56.424678+00:00",
+  "tasks": {
+    "load_scenario.broker_reconciliation": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 18
+      },
+      "result_status": {
+        "complete": 18
+      },
+      "runtime_seconds": {
+        "count": 18,
+        "max": 2.167,
+        "mean": 0.93,
+        "p50": 0.847,
+        "p95": 2.167
+      },
+      "sent": 18,
+      "started": 18,
+      "started_not_finished": 0
+    },
+    "load_scenario.intraday_import": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 36
+      },
+      "result_status": {
+        "complete": 36
+      },
+      "runtime_seconds": {
+        "count": 36,
+        "max": 2.416,
+        "mean": 0.542,
+        "p50": 0.275,
+        "p95": 1.723
+      },
+      "sent": 36,
+      "started": 36,
+      "started_not_finished": 0
+    },
+    "load_scenario.probe": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 144
+      },
+      "result_status": {
+        "complete": 144
+      },
+      "runtime_seconds": {
+        "count": 144,
+        "max": 0.103,
+        "mean": 0.007,
+        "p50": 0.004,
+        "p95": 0.019
+      },
+      "sent": 144,
+      "started": 144,
+      "started_not_finished": 0
+    },
+    "load_scenario.research": {
+      "expired_before_start": 0,
+      "failed": {
+        "WorkerLostError": 1
+      },
+      "finished": {
+        "SUCCESS": 7
+      },
+      "result_status": {
+        "complete": 7
+      },
+      "runtime_seconds": {
+        "count": 7,
+        "max": 25.814,
+        "mean": 24.119,
+        "p50": 24.08,
+        "p95": 25.814
+      },
+      "sent": 10,
+      "started": 9,
+      "started_not_finished": 2
+    },
+    "load_scenario.signal_pass": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 36
+      },
+      "result_status": {
+        "complete": 36
+      },
+      "runtime_seconds": {
+        "count": 36,
+        "max": 0.697,
+        "mean": 0.216,
+        "p50": 0.069,
+        "p95": 0.692
+      },
+      "sent": 36,
+      "started": 36,
+      "started_not_finished": 0
+    }
+  }
+}

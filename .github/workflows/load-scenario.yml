@@ -10,7 +10,7 @@ on:
         description: Seconds of load per run (60 or more)
         default: "180"
       kill_after_seconds:
-        description: Seconds into each run at which the core worker is killed
+        description: Seconds into each run at which the research worker's task process is killed
         default: "60"
       runs:
         description: Back-to-back runs (two shows whether the numbers repeat)

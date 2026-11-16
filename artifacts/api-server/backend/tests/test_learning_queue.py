@@ -71,6 +71,9 @@ def test_every_worker_layout_serves_the_fast_lane():
     # Compact (hosted) layout: the fast lane serves it even when paper-core is busy.
     assert LEARNING_FAST_QUEUE in _queues("paper-fast")
     assert LEARNING_FAST_QUEUE in _queues("paper-core")
+    # The research worker takes long learning jobs only; the fast lane stays off it.
+    assert _queues("paper-research") == {"learning"}
+    assert "learning" not in _queues("paper-core")
     # Full layout: the learning replicas.
     assert re.search(r'"--queues=learning,learning_fast"', SERVER.read_text())
     for compose in ("compose.yaml", "compose.oracle-micro.yaml"):

@@ -160,8 +160,10 @@ def _memory(samples: list[dict], meta: dict) -> dict:
     }
 
 
-def _recovery(drill: dict, events: list[dict]) -> dict:
+def _recovery(drill: dict, events: list[dict], lost_jobs: list[dict] | None = None) -> dict:
     result = dict(drill or {"status": "not_run", "reason": "no drill record"})
+    # Every lost research job a worker wrote down during the run, drill or not.
+    result["lost_jobs_recorded"] = list(lost_jobs or [])
     if "@" in str(result.get("heartbeat_key") or ""):
         # The worker label is the evidence; the machine's name is not.
         result["heartbeat_key"] = result["heartbeat_key"].split("@", 1)[0] + "@<host>"
@@ -169,7 +171,19 @@ def _recovery(drill: dict, events: list[dict]) -> dict:
     if killed_at is None:
         return result
     finished_ids = {event.get("id") for event in _by_kind(events, "finished")}
-    on_killed = [event for event in _by_kind(events, "started") if event.get("pid") == killed_pid]
+    label = str(result.get("worker") or "")
+
+    def on_worker(event: dict) -> bool:
+        return bool(label) and str(event.get("worker") or "").split("@", 1)[0] == label
+
+    started = _by_kind(events, "started")
+    if result.get("killed") == "task_process":
+        # Only the task that process was running.
+        on_killed = [event for event in started if event.get("pid") == killed_pid]
+    else:
+        # A killed worker takes its task processes with it, and a prefork
+        # worker's tasks carry their task process's pid, not the worker's.
+        on_killed = [event for event in started if event.get("pid") == killed_pid or on_worker(event)]
     in_flight = [
         event for event in on_killed
         if event.get("id") not in finished_ids and float(event.get("at") or 0) <= float(killed_at)
@@ -177,7 +191,7 @@ def _recovery(drill: dict, events: list[dict]) -> dict:
     # A task acknowledged when it started is gone with its worker; one that
     # acknowledges late (the intraday import) is delivered again.
     again = {
-        event.get("id") for event in _by_kind(events, "started")
+        event.get("id") for event in started
         if event.get("pid") != killed_pid and float(event.get("at") or 0) > float(killed_at)
     }
     result["tasks_in_flight_at_kill"] = sorted(str(event.get("task")) for event in in_flight)
@@ -185,7 +199,7 @@ def _recovery(drill: dict, events: list[dict]) -> dict:
     result["tasks_lost_at_kill"] = sorted(str(event.get("task")) for event in in_flight if event.get("id") not in again)
     worker = next((event.get("worker") for event in on_killed if event.get("worker")), None)
     after = sorted(
-        float(event["at"]) for event in _by_kind(events, "started")
+        float(event["at"]) for event in started
         if event.get("worker") == worker and event.get("pid") != killed_pid and float(event.get("at") or 0) > float(killed_at)
     ) if worker else []
     result["first_task_started_seconds"] = round(after[0] - float(killed_at), 2) if after else None
@@ -210,7 +224,7 @@ def build_report(meta: dict, events: list[dict], samples: list[dict], drill: dic
         "tasks": _tasks(events),
         "lock_waits": _lock_waits(samples, events, meta),
         "memory": _memory(samples, meta),
-        "recovery": _recovery(drill, events),
+        "recovery": _recovery(drill, events, meta.get("lost_jobs_recorded")),
     }
     report["coverage"] = _coverage(report)
     return report
@@ -221,7 +235,10 @@ def _coverage(report: dict) -> dict:
         "queue_delay": any(queue["started"] for queue in report["queue_delay"].values()),
         "lock_waits": report["lock_waits"]["samples"] > 0,
         "memory": bool(report["memory"]["processes"]),
-        "recovery": report["recovery"].get("heartbeat_restored_seconds") is not None,
+        # A killed worker is back when its heartbeat is; a killed task process
+        # when its worker has started another.
+        "recovery": (report["recovery"].get("heartbeat_restored_seconds") is not None
+                     or report["recovery"].get("task_process_replaced_seconds") is not None),
     }
     return {
         "complete": all(measured.values()),
@@ -259,8 +276,12 @@ def compare(first: dict, second: dict) -> list[str]:
             row(f"memory {label} {field}", (first["memory"]["processes"].get(label) or {}).get(field),
                 (second["memory"]["processes"].get(label) or {}).get(field))
     row("memory peak_total_mb", first["memory"].get("peak_total_mb"), second["memory"].get("peak_total_mb"))
-    for field in ("process_restarted_seconds", "heartbeat_restored_seconds", "first_task_started_seconds"):
+    for field in ("process_restarted_seconds", "task_process_replaced_seconds", "heartbeat_restored_seconds",
+                  "first_task_started_seconds"):
         row(f"recovery {field}", first["recovery"].get(field), second["recovery"].get(field))
+    for field in ("tasks_lost_at_kill", "tasks_redelivered_after_kill", "lost_jobs_recorded"):
+        row(f"recovery {field}", *(None if report["recovery"].get(field) is None else len(report["recovery"][field])
+                                   for report in (first, second)))
     return lines
 
 

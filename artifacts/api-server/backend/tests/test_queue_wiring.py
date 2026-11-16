@@ -75,3 +75,11 @@ def test_local_launcher_consumes_every_declared_queue():
     # process and beat does not schedule stock-monitoring-job.
     assert _launcher_queues(direct_monitor_loop=False) == _declared_queues()
     assert _launcher_queues(direct_monitor_loop=True) == _declared_queues() - {MONITORING_QUEUE}
+
+
+def test_local_launcher_gives_learning_to_the_research_worker_only():
+    source = LAUNCHER.read_text()
+    literals = re.findall(r"--queues=([a-z_,]+)", source)
+    assert [literal for literal in literals if "learning" in literal.split(",")] == ["learning"]
+    for general in re.findall(r'^\s*general_queues="([a-z_,]+)"$', source, flags=re.MULTILINE):
+        assert "learning" not in general.split(",")
