@@ -898,6 +898,16 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
     if not settings.strategy_discovery_enabled:
         return base | {"status": "disabled"}
     injected = loader is not None   # a caller-supplied loader means no network for the T-bill history either
+    # Which data this run is computed on (research_data.py): a configured
+    # snapshot, or the app's own cached history.  Recorded in the run row.
+    from app.services import research_data
+
+    try:
+        dataset, snapshot_loader = research_data.replay_dataset(injected=injected)
+    except Exception as exc:  # a configured snapshot that cannot be read is never swapped for other data
+        return base | {"status": "blocked", "reason": f"research snapshot unavailable: {exc}"[:300]}
+    if snapshot_loader is not None:
+        loader = snapshot_loader
     symbols = sorted({s.upper() for s in settings.paper_execution_symbols})
     tradeable = set(symbols)
     universe, universe_summary = None, {"mode": "today", "symbols": len(symbols)}
@@ -961,7 +971,10 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
         admission = admit_survivors(db, result, now=now, max_new=settings.strategy_discovery_max_new,
                                     max_live=settings.strategy_discovery_max_live,
                                     require_proven=settings.strategy_discovery_require_proven)
+    if dataset["kind"] == "live_path":
+        dataset = {**dataset, "data_end": result["data_end"], "universe": universe_summary}
     summary = {"data_end": result["data_end"], "holdout_start": result["holdout_start"], "trials": result["trials"],
+               "dataset": dataset,
                "library": len(library), "proven": len(result["proven"]), "explore": len(result["explore"]),
                "missing_symbols": missing, "universe": universe_summary, "mutation": mutation,
                "require_proven": settings.strategy_discovery_require_proven, **admission,

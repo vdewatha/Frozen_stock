@@ -23,6 +23,7 @@ export type HypothesisEntry = {
   sample?: { required: number | null; observed: number | null; expected_trades_per_year: number | null; years_to_verdict: number | null };
   revisit_if: string;
   sources: { reports: string[]; notes: string | null; pr: number | null };
+  dataset?: { snapshots: { name: string; snapshot_id: string }[]; note: string } | null;
   can_place_paper_orders: boolean;
   paper_orders: { can_place: boolean; detail: string; rows: RowAbility[] };
 };
@@ -95,6 +96,7 @@ export function HypothesisRegisterView({ register, filter = "all", onFilter }: {
         <tbody>{shown.map(entry => <tr key={entry.id}>
           <th scope="row">{entry.title}<small className="block font-normal">{entry.hypothesis ?? ""}</small>
             <small className="block font-normal">Tested on: {entry.data}</small>
+            {entry.dataset && <small className="block font-normal" title={entry.dataset.note}>Data snapshot: {entry.dataset.snapshots.map(snapshot => `${snapshot.name} (${snapshot.snapshot_id.slice(0, 12)})`).join(", ")}</small>}
             <small className="block font-normal">{SOURCE_LABEL[entry.source]} · {label(entry.family)} · {entry.sources.reports.join(", ")}{entry.sources.pr !== null ? ` · PR #${entry.sources.pr}` : ""}</small></th>
           <td><StatusPill status={entry.status} />{entry.decided_on && <small>decided {entry.decided_on}</small>}
             <span className="block">{entry.result}</span>
