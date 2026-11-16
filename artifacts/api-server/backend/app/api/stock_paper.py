@@ -187,6 +187,14 @@ def record_forward_experiments_review(request: Request, db: Session = Depends(ge
     return {**result, "paper_only": True, "live_authorized": False}
 
 
+@router.get("/hypothesis-register")
+def hypothesis_register_view(db: Session = Depends(get_db)) -> dict:
+    """Every hypothesis tested so far: the data, the verdict, why, the next decision and whether it can place a paper order (read-only)."""
+    from app.services.hypothesis_register import hypothesis_register
+
+    return hypothesis_register(db)
+
+
 class ForwardExperimentCloseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
