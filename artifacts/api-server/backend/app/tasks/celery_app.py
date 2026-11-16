@@ -161,6 +161,7 @@ celery_app.conf.task_queues = (
     Queue(RESEARCH_MARKET_DATA_QUEUE, Exchange(RESEARCH_MARKET_DATA_QUEUE), routing_key=RESEARCH_MARKET_DATA_QUEUE),
     Queue(SCALP_RESEARCH_QUEUE, Exchange(SCALP_RESEARCH_QUEUE), routing_key=SCALP_RESEARCH_QUEUE),
     Queue("learning", Exchange("learning"), routing_key="learning"),
+    Queue(LEARNING_FAST_QUEUE, Exchange(LEARNING_FAST_QUEUE), routing_key=LEARNING_FAST_QUEUE),
     Queue("paper_trading", Exchange("paper_trading"), routing_key="paper_trading"),
     Queue("risk", Exchange("risk"), routing_key="risk"),
     Queue(MONITORING_QUEUE, Exchange(MONITORING_QUEUE), routing_key=MONITORING_QUEUE),
