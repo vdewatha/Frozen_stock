@@ -1,0 +1,718 @@
+{
+  "version": 1,
+  "updated": "2026-11-16",
+  "statuses": [
+    "passed",
+    "failed",
+    "inconclusive",
+    "collecting"
+  ],
+  "about": "One entry per hand-run study. Live sources (forward experiments, the discovery library, the experiment engine) are merged in by app/services/hypothesis_register.py and are not listed here.",
+  "entries": [
+    {
+      "id": "dip-rules-full-market",
+      "family": "dip_buying",
+      "title": "Dip rules on the whole market",
+      "hypothesis": "Forward-experiment candidates 2 (5-day drop below -8% in an uptrend) and 5 (four down closes with VIX >= 20) earn money after costs and beat SPY on every US stock, delisted ones included.",
+      "data": "about 8,700 US stocks 2016-2026 with delisted names (SEC filer map + Alpaca SIP daily bars by as-of date); no delisting returns",
+      "status": "failed",
+      "result": "Candidate 2: -18.8 bps a trade (t -1.88), -41.1 bps against SPY. Candidate 5: +25.6 bps (t 1.03), -36.4 bps against SPY. Each met 0 of 4 criteria.",
+      "why": "The earlier edge came from the hindsight 29-stock list, not from the rule.",
+      "decided_on": "2026-11-12",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "A dip rule with a stated reason to beat SPY, tested on delisted-inclusive data with delisting returns.",
+      "sources": {
+        "reports": [
+          "reports/dip-rules-full-market-20261112.md"
+        ],
+        "notes": "research_notes/Dip rules full market 20261112",
+        "pr": 95
+      }
+    },
+    {
+      "id": "new-high-breakout-full-market",
+      "family": "breakout",
+      "title": "50-day breakout on the whole market",
+      "hypothesis": "Buying a 50-day closing high, with or without a market gate, earns money after costs and beats SPY.",
+      "data": "about 8,700 US stocks 2016-2026 with delisted names (SEC filer map + Alpaca SIP daily bars by as-of date); no delisting returns",
+      "status": "failed",
+      "result": "Best of four settings: +10.0 bps a trade (t 0.26, needed 2.50), -94.7 bps against SPY. 0 of 4 criteria.",
+      "why": "No setting is close; the other three are within 6 bps of the ungated rule.",
+      "decided_on": "2026-11-12",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "A breakout definition that is not a re-tuning of lookback or gate on the same data.",
+      "sources": {
+        "reports": [
+          "reports/dip-rules-full-market-20261112.md"
+        ],
+        "notes": "research_notes/Dip rules full market 20261112",
+        "pr": 95
+      }
+    },
+    {
+      "id": "earnings-drift",
+      "family": "post_earnings_drift",
+      "title": "Post-earnings drift",
+      "hypothesis": "Stocks that jump on an earnings release keep rising over the next 20 sessions, after costs.",
+      "data": "every US-listed filer of an 8-K Item 2.02 since 2016, delisted included (SEC acceptance times + Alpaca SIP bars)",
+      "status": "failed",
+      "result": "+0.76% a 20-day hold after costs (t 1.41), -0.44% against SPY. Fails all four parts of its rule.",
+      "why": "The +90 to +320 bps seen on today's megacaps was survivorship; with delisted stocks the drift does not beat SPY.",
+      "decided_on": "2026-11-11",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Intraday reaction data (entry within minutes of the release), which this daily test cannot see.",
+      "sources": {
+        "reports": [
+          "reports/earnings-drift-delisted-20261111.md",
+          "reports/gap-fill-earnings-drift-20261102.md"
+        ],
+        "notes": "research_notes/Earnings drift delisted 20261111",
+        "pr": 92
+      }
+    },
+    {
+      "id": "opening-gap-fill",
+      "family": "gap_fill",
+      "title": "Opening-gap fill",
+      "hypothesis": "A stock that gaps down 0.3% to 3% at the open fills the gap the same day often enough to pay after costs.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased)",
+      "status": "failed",
+      "result": "No edge even before costs; 0 of 342 library candidates proven after the family was added.",
+      "why": "The fill is not there gross, so no cost assumption rescues it.",
+      "decided_on": "2026-11-02",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Auction or first-minute data showing a fill the daily open-to-close bar hides.",
+      "sources": {
+        "reports": [
+          "reports/gap-fill-earnings-drift-20261102.md"
+        ],
+        "notes": null,
+        "pr": 3
+      }
+    },
+    {
+      "id": "insider-cluster-buys",
+      "family": "insider_trades",
+      "title": "Insider cluster buys",
+      "hypothesis": "Stocks that three or more insiders buy within 30 days beat a small-cap index over the next three months.",
+      "data": "SEC insider data sets 2006-2026 (12,262 events) priced on Alpaca history with delisted stocks",
+      "status": "failed",
+      "result": "+0.20% excess over IWM per three-month hold after costs (t 0.31); negative against SPY.",
+      "why": "A first pass on yfinance prices passed only because delisted stocks were missing.",
+      "decided_on": "2026-11-11",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "A sub-population defined in advance (for example first-time buyers) with its own pre-registration.",
+      "sources": {
+        "reports": [
+          "reports/insider-cluster-buys-20261111.md"
+        ],
+        "notes": "research_notes/Insider cluster buys 20261111",
+        "pr": 88
+      }
+    },
+    {
+      "id": "factor-etf-tilt",
+      "family": "factor_tilt",
+      "title": "Factor ETF tilt in the slow book",
+      "hypothesis": "Holding a quality, value, momentum, low-volatility or blended factor ETF in place of VOO raises the passive arm's Sharpe ratio after costs.",
+      "data": "factor ETF adjusted closes 2005-2026 (yfinance; an ETF's history includes every stock it held)",
+      "status": "failed",
+      "result": "All eight candidates fail; none raised the arm's Sharpe in any cell and seven returned less than SPY.",
+      "why": "Momentum beat SPY by 0.6% a year only with more volatility, so the arm's Sharpe still fell.",
+      "decided_on": "2026-11-11",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "A tilt that can be backtested with delisted constituents at $0, which factor ETFs were the workaround for.",
+      "sources": {
+        "reports": [
+          "reports/factor-tilt-20261111.md"
+        ],
+        "notes": "research_notes/Factor tilt 20261111",
+        "pr": 83
+      }
+    },
+    {
+      "id": "filings-8k",
+      "family": "public_information",
+      "title": "Company event filings (Form 8-K)",
+      "hypothesis": "Buying after one of 25 types of 8-K filing earns money after costs and beats SPY over 20 sessions.",
+      "data": "about 8,700 US stocks 2016-2026 with delisted names (SEC filer map + Alpaca SIP daily bars by as-of date); no delisting returns",
+      "status": "failed",
+      "result": "None of 75 signals was selected; the six largest types made +0.34% to +1.24% a trade and lost 0.58% to 1.02% against SPY. The held-out period was not opened.",
+      "why": "Positive raw returns were the market's own rise; nothing beat SPY in selection.",
+      "decided_on": "2026-11-14",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "An event type with a stated mechanism, tested on the unopened held-out period only.",
+      "sources": {
+        "reports": [
+          "reports/public-information-tests-20261114.md"
+        ],
+        "notes": "research_notes/Public information tests 20261114",
+        "pr": 100
+      }
+    },
+    {
+      "id": "house-disclosed-purchases",
+      "family": "public_information",
+      "title": "Politicians' disclosed purchases",
+      "hypothesis": "Stocks a House member discloses buying beat SPY over the next 60 sessions after costs.",
+      "data": "about 8,700 US stocks 2016-2026 with delisted names (SEC filer map + Alpaca SIP daily bars by as-of date); no delisting returns",
+      "status": "failed",
+      "result": "+2.92% a trade (t 3.39) but -0.91% against SPY (t -2.26). Fails 3 of 4 criteria.",
+      "why": "The purchases lean to large stocks that rose with the index; the excess is negative.",
+      "decided_on": "2026-11-14",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Disclosure data with trade dates close to filing dates (the House lag is weeks).",
+      "sources": {
+        "reports": [
+          "reports/public-information-tests-20261114.md"
+        ],
+        "notes": "research_notes/Public information tests 20261114",
+        "pr": 100
+      }
+    },
+    {
+      "id": "news-rules",
+      "family": "news",
+      "title": "The app's twelve news rules",
+      "hypothesis": "A stock picked by one of the app's twelve news-tone rules earns money after costs and beats SPY.",
+      "data": "about 8,700 US stocks 2016-2026 with delisted names (SEC filer map + Alpaca SIP daily bars by as-of date); no delisting returns; Alpaca news archive from 2015",
+      "status": "failed",
+      "result": "Every rule fails with the old reader and the improved one: -0.51% to +0.22% a trade, -0.40% to -0.91% against SPY (t -4.6 to -19.8). On the 29 paper stocks none of 12 candidates cleared the discovery gate either.",
+      "why": "News tone known by the next open is already in the price.",
+      "decided_on": "2026-11-14",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Entry within minutes of the story, which needs intraday prices and a measured reaction time.",
+      "sources": {
+        "reports": [
+          "reports/public-information-tests-20261114.md",
+          "reports/news-entries-20261106.md"
+        ],
+        "notes": "research_notes/Public information tests 20261114",
+        "pr": 100
+      }
+    },
+    {
+      "id": "spy-intraday-momentum",
+      "family": "intraday",
+      "title": "SPY intraday momentum (noise band)",
+      "hypothesis": "The published noise-band rule, long-only and unlevered, makes money on SPY in the period its paper never saw.",
+      "data": "Alpaca SIP 1-minute SPY bars; held out 2024-05-01 to 2026-11-11 (636 sessions)",
+      "status": "failed",
+      "result": "-6.6% over the held-out period (-2.7% a year), Sharpe -0.68, correlation with SPY 0.35. Fails all four criteria.",
+      "why": "It lost 0.7% at zero cost, so there is no break-even cost; the paper replicates only in its own sample.",
+      "decided_on": "2026-11-12",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Nothing on this rule. A different intraday hypothesis needs its own pre-registration and execution evidence.",
+      "sources": {
+        "reports": [
+          "reports/spy-intraday-momentum-20261112.md"
+        ],
+        "notes": "research_notes/SPY intraday momentum 20261112",
+        "pr": 96
+      }
+    },
+    {
+      "id": "stocks-in-play-breakout",
+      "family": "intraday",
+      "title": "5-minute opening-range breakout on stocks in play",
+      "hypothesis": "A 5-minute opening-range breakout on the 20 highest relative-volume stocks, long-only with 2 cents a share of slippage, makes money and beats SPY.",
+      "data": "Alpaca SIP 1- and 5-minute bars; held out 2024-01-02 to 2026-11-11 (719 sessions)",
+      "status": "failed",
+      "result": "-33.9 bps a trade (t -16.45, 5,836 trades), -27.8% a year against SPY's +19.2%. Fails all three criteria.",
+      "why": "Entry and stop fall inside the same 1-minute bar in 57% of held-out long trades; the published result needs the favourable ordering.",
+      "decided_on": "2026-11-12",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Quote and trade timestamps that settle the order of entry and stop inside the bar.",
+      "sources": {
+        "reports": [
+          "reports/stocks-in-play-breakout-20261112.md"
+        ],
+        "notes": "research_notes/Stocks in play breakout 20261112",
+        "pr": 97
+      }
+    },
+    {
+      "id": "local-sweep",
+      "family": "rule_library_sweep",
+      "title": "Full-history walk-forward sweep",
+      "hypothesis": "Some rule, gate or hand-written strategy among 3,104 configurations survives multiple-testing correction net of 25 bps a side.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased), 24 six-month windows 2015-01 to 2026-11",
+      "status": "failed",
+      "result": "Nothing survives at 25 bps: the reality check over all trials gives p = 0.087 and names no survivor.",
+      "why": "Six survive at 11 bps only; six-month lookbacks anti-correlate with the next window.",
+      "decided_on": "2026-11-10",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Do not re-test these rules on history: the six frozen forward experiments carry the sweep's trial count.",
+      "sources": {
+        "reports": [
+          "reports/local-sweep-20261110.md"
+        ],
+        "notes": null,
+        "pr": 75
+      }
+    },
+    {
+      "id": "pooled-ranker",
+      "family": "cross_sectional_ranker",
+      "title": "Pooled price-and-volume ranker",
+      "hypothesis": "One pooled gradient-boosting ranker on the point-in-time S&P 500 passes the build plan's nine rules.",
+      "data": "point-in-time S&P 500 replay on yfinance bars (74% of past-member days have no bar)",
+      "status": "failed",
+      "result": "Fails five of nine rules: IC t 1.63 (bar 3), one-day-lag t 1.47 (bar 2), turnover 20.2x (cap 8).",
+      "why": "The signal is too weak and too fast to pay for its own turnover.",
+      "decided_on": "2026-11-07",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "New inputs beyond price and volume; the run was registered as one attempt.",
+      "sources": {
+        "reports": [
+          "reports/pooled-ranker-20261107.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "pairs-market-neutral",
+      "family": "market_neutral",
+      "title": "Sector-hedged reversal (pairs kill test)",
+      "hypothesis": "Hedging each sector-reversal trade with its sector ETF leaves a residual of at least 60 bps a trade.",
+      "data": "point-in-time S&P 500 replay on yfinance bars (74% of past-member days have no bar), 2015+",
+      "status": "failed",
+      "result": "+12.5 bps a trade residual (95% CI +6.3 to +18.6, t 4.0): real, but a fifth of the 60 bps required.",
+      "why": "Four fills cost more than the residual; the market-neutral lane is closed for good.",
+      "decided_on": "2026-11-07",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "A measured cost per fill well under 3 bps, or the VIX >= 25 slice pre-registered on its own.",
+      "sources": {
+        "reports": [
+          "reports/pairs-kill-test-20261107.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "sector-reversal",
+      "family": "sector_reversal",
+      "title": "Sector-relative reversal",
+      "hypothesis": "Short-term reversal measured against the stock's sector pays after costs on the point-in-time S&P 500.",
+      "data": "point-in-time S&P 500 replay on yfinance bars (74% of past-member days have no bar)",
+      "status": "failed",
+      "result": "Gross +12 to +33 bps a trade against 29 to 44 bps of cost; excess over the stock's own drift -29 to -51 bps.",
+      "why": "The gross edge is the stock's own drift. The strategy row was created paused.",
+      "decided_on": "2026-11-07",
+      "next_decision": null,
+      "strategy_types": [
+        "sector_reversal"
+      ],
+      "revisit_if": "A measured round-trip cost below the gross edge.",
+      "sources": {
+        "reports": [
+          "reports/sector-reversal-20261107.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "short-horizon-reversion",
+      "family": "short_horizon_reversion",
+      "title": "IBS and RSI(2) as a funded sleeve",
+      "hypothesis": "IBS or RSI(2) dip buying on the four index ETFs passes the sleeve rule at 10 bps, 25 bps or the cost model.",
+      "data": "yfinance daily bars 2015-2026 (index ETFs); RSI(2) stock leg on the 707-name point-in-time universe",
+      "status": "failed",
+      "result": "Nothing passes at any cost. Closest: IBS at 10 bps, net Sharpe 0.67 over T-bills, 0.33 after the 50% haircut against a bar of 0.5.",
+      "why": "Every number is in-sample. Both rows moved to shadow: they record signals and place no orders.",
+      "decided_on": "2026-11-07",
+      "next_decision": null,
+      "strategy_types": [
+        "ibs_mean_reversion",
+        "rsi2_pullback"
+      ],
+      "revisit_if": "Forward experiment 6 (IBS tagged by VIX >= 20) is the only open test of this family.",
+      "sources": {
+        "reports": [
+          "reports/short-horizon-reverdict-20261107.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "month-end-flow",
+      "family": "calendar_flow",
+      "title": "Month-end rebalancing flow",
+      "hypothesis": "The month-to-date gap between SPY and IEF predicts the next session's gap at month-end or quarter-end.",
+      "data": "yfinance SPY and IEF adjusted closes 2002-07 to 2026-11",
+      "status": "failed",
+      "result": "Both registered variants fail; no other calendar variant was tested.",
+      "why": "No predictive slope after HAC errors.",
+      "decided_on": "2026-11-07",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Nothing: the family was registered as two variants only.",
+      "sources": {
+        "reports": [
+          "reports/month-end-flow-20261107.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "defensive-sleeve",
+      "family": "trend_following_sleeve",
+      "title": "Defensive sleeve (TSMOM and GTAA)",
+      "hypothesis": "A trend-following ETF sleeve improves the slow book enough to be funded.",
+      "data": "ETF adjusted closes (yfinance), costs of 11 and 25 bps a side",
+      "status": "failed",
+      "result": "Both frozen designs fail the rule; no sleeve is funded and the passive arm keeps all the capital.",
+      "why": "Design A runs as a zero-capital shadow that places no orders.",
+      "decided_on": "2026-11-07",
+      "next_decision": {
+        "date": "2029-11-07",
+        "note": "or after the next SPY drawdown deeper than 20%, whichever first"
+      },
+      "strategy_types": [],
+      "revisit_if": "The rule is re-decided once: at 36 months or after the next SPY drawdown deeper than 20%.",
+      "sources": {
+        "reports": [
+          "reports/defensive-sleeve-20261107.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "liquid-universe",
+      "family": "liquid_universe",
+      "title": "Wider exploration universe",
+      "hypothesis": "Liquidity terciles outside the 45-name core list trade as well as the core once wider spreads are paid.",
+      "data": "point-in-time S&P 500 replay on yfinance bars (74% of past-member days have no bar) (707 symbols)",
+      "status": "failed",
+      "result": "No tercile qualifies: -25 to -46 bps a trade against the core list's +7.4 bps (2015+).",
+      "why": "The exploration lane stays on the core list.",
+      "decided_on": "2026-11-07",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Measured spreads for the outer terciles, not a proxy.",
+      "sources": {
+        "reports": [
+          "reports/liquid-universe-20261107.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "meta-label-filter",
+      "family": "meta_label",
+      "title": "Meta-label BUY filter",
+      "hypothesis": "A calibrated model that vetoes weak BUY signals raises net results out of sample.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased), yearly walk-forward folds 2014-2026; retrained on the bot's own paper trades",
+      "status": "inconclusive",
+      "result": "Not proven. The 80% win-rate target was unreachable (166 trades, 49.4% wins, +0.04% a trade); the retrained filter helps IBS and hurts RSI(2).",
+      "why": "It runs in shadow and can only be enforced through the live shadow gate.",
+      "decided_on": "2026-11-02",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "A forward shadow record showing the vetoed trades did worse than the taken ones.",
+      "sources": {
+        "reports": [
+          "reports/meta-label-20261028.md",
+          "reports/meta-label-learning-20261102.md"
+        ],
+        "notes": null,
+        "pr": 15
+      }
+    },
+    {
+      "id": "win-rate-80",
+      "family": "win_rate_target",
+      "title": "Eight wins in ten after costs",
+      "hypothesis": "Some strategy or published high-hit-rate candidate wins 80% of its trades and still makes money after costs.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased), 28 variants, three windows",
+      "status": "failed",
+      "result": "No pooled strategy reaches an 80% net win rate; the best is 64% (RSI(2) pullback).",
+      "why": "The goal was changed on 2026-11-06 to profit after costs.",
+      "decided_on": "2026-10-28",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Nothing: the target itself was dropped.",
+      "sources": {
+        "reports": [
+          "reports/strategy-scorecard-20261028.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "adx-regime-gate",
+      "family": "market_timing_gates",
+      "title": "ADX range/trend gate",
+      "hypothesis": "Range strategies do better buying only in a sideways market, trend strategies only in a rising trend.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased)",
+      "status": "passed",
+      "result": "Adopted for RSI(14) and Bollinger mean reversion only. The gate makes RSI(2), IBS and the breakout rules worse.",
+      "why": "Adopted by a rule fixed in advance, on in-sample history.",
+      "decided_on": "2026-11-06",
+      "next_decision": null,
+      "strategy_types": [
+        "rsi_mean_reversion",
+        "bollinger_mean_reversion"
+      ],
+      "revisit_if": "A forward record on the two gated rows; the gate is a row parameter and can be reverted.",
+      "sources": {
+        "reports": [
+          "reports/regime-gate-20261106.md"
+        ],
+        "notes": null,
+        "pr": 8
+      },
+      "caveat": "In-sample on a survivor list; neither row has passed a forward test."
+    },
+    {
+      "id": "vix-gate",
+      "family": "market_timing_gates",
+      "title": "VIX fear gate",
+      "hypothesis": "A strategy does better if it buys only when the VIX is in the right range.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased)",
+      "status": "passed",
+      "result": "Adopted for Channel Breakout only (VIX < 20). IBS and RSI(2) make more per trade when fear is high but each fails one part of the rule.",
+      "why": "Adopted by a rule fixed in advance, on in-sample history.",
+      "decided_on": "2026-11-06",
+      "next_decision": null,
+      "strategy_types": [
+        "channel_breakout"
+      ],
+      "revisit_if": "Forward experiments 4, 5 and 6 test the opposite reading (VIX >= 20) for dip rules.",
+      "sources": {
+        "reports": [
+          "reports/vix-gate-20261106.md"
+        ],
+        "notes": null,
+        "pr": null
+      },
+      "caveat": "In-sample on a survivor list; the whole-market breakout test later failed."
+    },
+    {
+      "id": "trend-filter-200",
+      "family": "market_timing_gates",
+      "title": "200-day trend filter for RSI(2) and IBS",
+      "hypothesis": "RSI(2) and IBS should buy only when the last close is above its 200-day average.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased)",
+      "status": "passed",
+      "result": "On for RSI(2) (drawdown 3.7% to 1.7%, expectancy not worse); off for IBS, where it lowers expectancy.",
+      "why": "Decided by a rule set in advance.",
+      "decided_on": "2026-10-29",
+      "next_decision": null,
+      "strategy_types": [
+        "rsi2_pullback"
+      ],
+      "revisit_if": "Both rows are in shadow since 2026-11-07, so the filter decides no order today.",
+      "sources": {
+        "reports": [
+          "reports/regime-filter-20261029.md"
+        ],
+        "notes": null,
+        "pr": null
+      },
+      "caveat": "In-sample on a survivor list."
+    },
+    {
+      "id": "rsi2-threshold-scope",
+      "family": "short_horizon_reversion",
+      "title": "RSI(2) threshold and symbol scope",
+      "hypothesis": "RSI(2) should enter at RSI < 5 instead of < 10, and should trade single stocks as well as index ETFs.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased)",
+      "status": "inconclusive",
+      "result": "RSI < 10 kept; scope widened to the 29 single stocks as an exploration change. No post-2015 interval excludes zero.",
+      "why": "The stock leg later failed on the point-in-time universe and moved to shadow.",
+      "decided_on": "2026-11-02",
+      "next_decision": null,
+      "strategy_types": [
+        "rsi2_pullback"
+      ],
+      "revisit_if": "See the short-horizon re-verdict.",
+      "sources": {
+        "reports": [
+          "reports/rsi2-scope-20261102.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "spy-market-gate",
+      "family": "market_timing_gates",
+      "title": "SPY trend gate and position caps",
+      "hypothesis": "No new longs while SPY is below its N-day average, or a tighter cap on open longs, improves the book.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased)",
+      "status": "passed",
+      "result": "SPY trend gate adopted for MACD Momentum, Channel Breakout, Trend Pullback and RSI(2). No tighter position cap adopted: caps of 12, 8 and 5 lower expectancy in every window.",
+      "why": "Adopted by rules fixed before the run.",
+      "decided_on": "2026-11-06",
+      "next_decision": null,
+      "strategy_types": [
+        "macd_momentum",
+        "channel_breakout",
+        "trend_pullback",
+        "rsi2_pullback"
+      ],
+      "revisit_if": "A forward record on the gated rows.",
+      "sources": {
+        "reports": [
+          "reports/market-gate-20261106.md"
+        ],
+        "notes": null,
+        "pr": null
+      },
+      "caveat": "In-sample on a survivor list."
+    },
+    {
+      "id": "stop-cooldown",
+      "family": "book_allocation",
+      "title": "Signal ranking, caps and the stop-out cooldown",
+      "hypothesis": "Ranking competing signals, changing caps or not re-buying a symbol right after a stop improves the capped book.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased)",
+      "status": "passed",
+      "result": "Adopted: no strategy re-enters a symbol until the 10th session after a stop-out. No ranking or cap change adopted.",
+      "why": "The real cost was re-entry after stops.",
+      "decided_on": "2026-11-06",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "A forward comparison of stopped symbols' next ten sessions.",
+      "sources": {
+        "reports": [
+          "reports/slot-allocation-20261106.md"
+        ],
+        "notes": null,
+        "pr": 16
+      },
+      "caveat": "In-sample on a survivor list."
+    },
+    {
+      "id": "position-sizing-modes",
+      "family": "position_sizing",
+      "title": "Volatility-target and quarter-Kelly sizing",
+      "hypothesis": "Sizing by the loss at the stop or by quarter Kelly raises the book's profit without a worse drawdown.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased)",
+      "status": "failed",
+      "result": "No mode is adopted; every strategy stays on the fixed fraction.",
+      "why": "No candidate passed the rule in every window.",
+      "decided_on": "2026-11-06",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "A strategy with a proven positive expectancy to size.",
+      "sources": {
+        "reports": [
+          "reports/position-sizing-20261106.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "regime-aware-allocation",
+      "family": "book_allocation",
+      "title": "Regime-aware risk budget",
+      "hypothesis": "Weighting each strategy by its record in the current regime cell raises expectancy per unit of risk.",
+      "data": "yfinance adjusted daily bars for the 45 paper symbols (a current-stock list: survivorship-biased)",
+      "status": "failed",
+      "result": "Not adopted; the setting ships off.",
+      "why": "The regime arm did not pass in every window.",
+      "decided_on": "2026-11-06",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "More trades per regime cell than the history holds.",
+      "sources": {
+        "reports": [
+          "reports/regime-allocation-20261106.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    },
+    {
+      "id": "inverse-etf-hedge",
+      "family": "inverse_etf_hedge",
+      "title": "SH hedge while the market gate is closed",
+      "hypothesis": "A small long in SH while the SPY gate is closed lowers drawdown without costing return.",
+      "data": "yfinance daily bars for the paper symbols and SH",
+      "status": "failed",
+      "result": "No hedge size is adopted.",
+      "why": "No size passed the rule in every window.",
+      "decided_on": "2026-11-06",
+      "next_decision": null,
+      "strategy_types": [],
+      "revisit_if": "Each alternative hedge is a separate experiment with its own rule fixed first.",
+      "sources": {
+        "reports": [
+          "reports/hedge-20261106.md"
+        ],
+        "notes": null,
+        "pr": null
+      }
+    }
+  ],
+  "not_hypotheses": {
+    "reports/Frozen stock research priorities.md": "synthesis",
+    "reports/Retail bot edge feasibility.md": "synthesis",
+    "reports/backtest-realism-20261027.md": "method",
+    "reports/cost-calibration-20261106.md": "measurement",
+    "reports/drift-retraining-20261106.md": "engine",
+    "reports/engine-audit-20261106.md": "engine",
+    "reports/event-logs-20261107.md": "data",
+    "reports/execution-cost-provenance-20261110.md": "measurement",
+    "reports/exit-autopsy-20261106.md": "engine",
+    "reports/exploration-budget-20261106.md": "engine",
+    "reports/feed-hygiene-20261107.md": "data",
+    "reports/gate-cost-20261106.md": "engine",
+    "reports/learning-loop-20261111.md": "engine",
+    "reports/learning-loop-review-20261027.md": "engine",
+    "reports/lesson-templates-20261106.md": "engine",
+    "reports/loss-learning-20261105.md": "engine",
+    "reports/memory-freezes-20261111.md": "operations",
+    "reports/news-symbols-20261105.md": "engine",
+    "reports/open-source-research-20261028.md": "synthesis",
+    "reports/paper-results-audit-20261027.md": "audit",
+    "reports/phase1-bracket-exits.md": "engine",
+    "reports/phase1-fast-cycle-universe.md": "engine",
+    "reports/phase1-restart-grace.md": "operations",
+    "reports/phase2-circuit-breakers.md": "engine",
+    "reports/phase2-exploration-scorecard.md": "engine",
+    "reports/phase3-exec-robustness.md": "engine",
+    "reports/phase3-rsi2-paper.md": "engine",
+    "reports/point-in-time-coverage-20261110.md": "data",
+    "reports/research-worker-audit-20261007.md": "audit",
+    "reports/rule-mutation-20261106.md": "engine",
+    "reports/self-evolution-roadmap-20261106.md": "synthesis",
+    "reports/self-healing-20261106.md": "operations",
+    "reports/setup-shadow-20261106.md": "engine",
+    "reports/signal-autopsy-20261106.md": "engine",
+    "reports/slow-book-20261107.md": "engine",
+    "reports/strategy-discovery-20261102.md": "engine",
+    "reports/strategy-evaluation-audit-20261007.md": "audit",
+    "reports/strategy-risk-review-20261027.md": "audit",
+    "reports/survivorship-20261106.md": "data",
+    "reports/verdict-inputs-20261107.md": "measurement",
+    "reports/verdict-replay-20261107.md": "engine",
+    "reports/worker-lifecycle-audit-20261007.md": "audit",
+    "reports/yardstick-20261107.md": "method"
+  }
+}
