@@ -68,6 +68,10 @@ export ACTIVE_MARKET_DATA_PROVIDER="alpaca_iex"
 # restarted worker meets the leases its killed predecessor left behind.
 export PAPER_BOOT_ID="$schema"
 export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
+# macOS starts pool processes with spawn, not fork, and Celery only prepares a
+# spawned task process when this is set (without it every task of the prefork
+# research worker fails before it starts).  Linux forks and does not need it.
+[[ "$(uname -s)" == "Darwin" ]] && export FORKED_BY_MULTIPROCESSING=1
 
 # No provider may be reached.  The tasks call fakes; these two measures make a
 # mistake fail instead of leaving the machine: no credentials, and a proxy
@@ -165,22 +169,31 @@ python3.11 -m alembic upgrade head >"$run_dir/logs/alembic.log" 2>&1
 PYTHONPATH=. python3.11 -m scripts.load_scenario_driver seed --run-dir "$run_dir"
 
 # The hosted (compact) worker layout of artifacts/api-server/src/production-server.ts:
-# label, queues, thread count.  tests/test_load_scenario_report.py keeps the
-# queue lists equal to the production file.
+# label, queues, pool, concurrency.  tests/test_load_scenario_report.py keeps
+# the queue lists and pools equal to the production file.  paper-research is
+# the research lane: a prefork pool whose one task process runs a single
+# learning job and exits.
 workers=(
-  "paper-core|default,market_data,intraday_market_data,research_market_data,scalp_research,learning,learning_fast,paper_trading,risk,monitoring|2"
-  "paper-fast|paper_trading,risk,monitoring,learning_fast|2"
-  "paper-intraday|intraday_market_data|1"
-  "paper-broker|broker_reconciliation|1"
+  "paper-core|default,market_data,intraday_market_data,research_market_data,scalp_research,learning_fast,paper_trading,risk,monitoring|threads|2"
+  "paper-research|learning|prefork|1"
+  "paper-fast|paper_trading,risk,monitoring,learning_fast|threads|2"
+  "paper-intraday|intraday_market_data|threads|1"
+  "paper-broker|broker_reconciliation|threads|1"
 )
 
 # Restart a worker that exits, after the same pause the production supervisor uses.
 supervise() {
-  local label="$1" queues="$2" concurrency="$3"
+  local label="$1" queues="$2" pool="$3" concurrency="$4"
+  local pool_args=(--pool="$pool" --concurrency="$concurrency" --prefetch-multiplier=1)
+  [[ "$pool" == "prefork" ]] && pool_args+=(--max-tasks-per-child=1)
   (
     child=""
     stop_child() {
-      [[ -n "$child" ]] && kill -KILL "$child" 2>/dev/null || true
+      if [[ -n "$child" ]]; then
+        # A prefork worker's task processes first, so none outlives the run.
+        pkill -KILL -P "$child" 2>/dev/null || true
+        kill -KILL "$child" 2>/dev/null || true
+      fi
       exit 0
     }
     trap stop_child TERM INT
@@ -190,7 +203,7 @@ supervise() {
         --hostname="${label}@%h" \
         --queues="$queues" \
         --include=scripts.load_scenario_tasks \
-        --pool=threads --concurrency="$concurrency" --prefetch-multiplier=1 \
+        "${pool_args[@]}" \
         >>"$run_dir/logs/${label}.log" 2>&1 &
       child="$!"
       echo "$child" >"$run_dir/pids/${label}.pid"
@@ -208,9 +221,9 @@ supervise() {
 
 layout="{"
 for worker in "${workers[@]}"; do
-  IFS='|' read -r label queues concurrency <<<"$worker"
-  supervise "$label" "$queues" "$concurrency"
-  layout+="\"${label}\": {\"queues\": \"${queues}\", \"pool\": \"threads\", \"concurrency\": ${concurrency}},"
+  IFS='|' read -r label queues pool concurrency <<<"$worker"
+  supervise "$label" "$queues" "$pool" "$concurrency"
+  layout+="\"${label}\": {\"queues\": \"${queues}\", \"pool\": \"${pool}\", \"concurrency\": ${concurrency}},"
 done
 echo "${layout%,}}" >"$run_dir/layout.json"
 

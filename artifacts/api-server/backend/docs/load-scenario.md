@@ -16,9 +16,11 @@ PostgreSQL schema and its own non-persistent Redis. Unlike the soak it starts
 no beat, API or watchdog: the driver publishes the workload itself on a fixed
 timetable, so two runs do the same work.
 
-The four workers are the hosted layout of `src/production-server.ts`
-(`paper-core`, `paper-fast`, `paper-intraday`, `paper-broker`: thread pools,
-prefetch 1). A test keeps the queue lists equal to that file.
+The five workers are the hosted layout of `src/production-server.ts`:
+`paper-core`, `paper-fast`, `paper-intraday` and `paper-broker` (thread pools,
+prefetch 1) and `paper-research`, which alone consumes `learning`: a prefork
+pool whose one task process runs a single job and exits. A test keeps the
+queue lists and pools equal to that file.
 
 | Workload | Queue | What runs |
 | --- | --- | --- |
@@ -26,8 +28,8 @@ prefetch 1). A test keeps the queue lists equal to that file.
 | Intraday import | `intraday_market_data` | The real `ingest_intraday` for one simulated session minute per tick, with its Redis lease, fed by a generated minute-bar feed |
 | Broker reconciliation | `broker_reconciliation` | The real `reconcile_stock_paper_account` and exit re-arm against an in-memory paper broker; it holds the paper account row for the whole pass |
 | Signal pass | `paper_trading` | Takes the paper account row the way an order reservation does, with a lock timeout; it reserves nothing |
-| Probes | `learning_fast`, `market_data`, `research_market_data` | One short database round trip each, to time queues the scenario does not otherwise load |
-| Recovery drill | | `SIGKILL` to one worker part-way through; a supervisor restarts it after the production pause of 2 seconds |
+| Probes | `learning_fast`, `market_data`, `research_market_data`, `default` | One short database round trip each, to time queues the scenario does not otherwise load |
+| Recovery drill | | `SIGKILL` part-way through to the research worker's task process, which is what the memory guard stops; with `LOAD_KILL_TARGET=worker`, to a whole worker, which a supervisor restarts after the production pause of 2 seconds |
 
 Cadences are compressed (an import every 5 seconds stands for every minute),
 and each stream keeps production's ratio of expiry to cadence, so a tick that
@@ -83,7 +85,10 @@ reports and worker logs and is not part of CI.
 | `LOAD_BROKER_LATENCY_MS` | 150 | Delay of each fake broker call |
 | `LOAD_FEED_LATENCY_MS` | 100 | Delay of each fake feed call |
 | `LOAD_SIGNAL_LOCK_TIMEOUT_MS` | 3000 | Lock timeout of the signal pass |
-| `LOAD_KILL_WORKER` | `paper-core` | Worker the drill kills |
+| `LOAD_PROBE_QUEUES` | `learning_fast,market_data,research_market_data,default` | Queues that get a probe |
+| `PAPER_RESEARCH_MAX_MEMORY_MB` | 2048 | The research task process's memory cap, as in production; set it below the ballast to watch the cap stop a job |
+| `LOAD_KILL_WORKER` | `paper-research` | Worker the drill kills |
+| `LOAD_KILL_TARGET` | `task` | `task`: the worker's largest task process (the worker itself when it has none); `worker`: the whole worker |
 | `LOAD_KILL_AFTER_SECONDS` | 60 | When it is killed; 0 skips the drill |
 | `LOAD_KEEP_SCHEMA` | false | Keep the schema for inspection |
 | `LOAD_RUN_DIR` | a temporary directory | Raw samples, events and worker logs |
@@ -106,20 +111,33 @@ sampled, an upper bound on the wait. `sqlstate_counts` counts every `55P03`
 including ones a job caught and retried; `postgres_deadlocks` is the server's
 own counter over the run.
 
-`memory` is memory per process, sampled once a second. On Linux it is resident
+`memory` is memory per process, sampled once a second. A prefork worker's
+tasks run in its task processes, so it has two entries: the worker itself and
+`<label>:task`, the task processes together (`paper-research:task` is the
+research job). On Linux the figure is resident
 memory from `app.core.memory.resident_mb` (`memory.source` is `proc`). macOS
 has no `/proc` and compresses idle pages, so its resident figure understates
 what a process holds; there the driver reads the physical footprint, the
 figure Activity Monitor shows (`macos_phys_footprint`), and falls back to `ps`.
 A macOS figure is not directly comparable with the hosted Linux VM.
 
-`recovery` times the drill from the kill: `process_restarted_seconds` (the
-supervisor started a new process), `heartbeat_restored_seconds` (the worker's
-heartbeat key, the one `/api/heartbeat` reads, was written again) and
-`first_task_started_seconds`. The key lives 90 seconds and outlives a dead
-worker, so "restored" is the first time its remaining life goes up after the
-kill. `tasks_lost_at_kill` are tasks the dead worker had already acknowledged;
+`recovery` times the drill from the kill. `killed` says what died. After a
+task-process kill the worker stays up: `task_process_replaced_seconds` is when
+it had a new task process, `worker_restarted` is false, and
+`process_restarted_seconds` and `heartbeat_restored_seconds` stay empty. After
+a worker kill, `process_restarted_seconds` is when the supervisor started a
+new process and `heartbeat_restored_seconds` is when its heartbeat key was
+written again. A worker writes the key named after it when it becomes ready;
+the key lives 90 seconds and outlives a dead worker, so "restored" is the
+first time its remaining life goes up after the kill.
+`first_task_started_seconds` applies to both kinds of kill.
+`tasks_lost_at_kill` are tasks the dead process had already acknowledged;
 `tasks_redelivered_after_kill` are late-acknowledging ones that ran again.
+`lost_jobs_recorded` lists every research job a worker wrote down as lost
+during the run (`app/tasks/research_worker.py`): a lost research job is not
+delivered again, it is recorded with the scheduled run that covers it. The
+scenario's research task has no beat entry, so its records say nothing queues
+it again.
 
 `tasks` lists, per task, how many were sent, started and finished, their
 result status and their runtimes. `coverage.missing` names any of the four
@@ -133,4 +151,5 @@ measurements the run did not produce.
   `LOAD_RESEARCH_BALLAST_MB` can stand in for a known production footprint.
 - The database is local. The hosted database answers a query in about 0.1
   second, so lock hold times there are longer than any local run shows.
-- Nothing here exercises the Node gateway, its memory guard or the API.
+- Nothing here exercises the Node gateway, its memory guard or the API. The
+  drill stands in for the guard: it kills the process the guard would kill.

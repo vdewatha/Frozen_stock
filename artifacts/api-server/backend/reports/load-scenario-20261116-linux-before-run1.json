@@ -1,0 +1,371 @@
+{
+  "config": {
+    "broker_latency_ms": 150,
+    "drain_seconds": 15,
+    "duration_seconds": 180,
+    "feed_latency_ms": 100,
+    "intraday_interval_seconds": 5.0,
+    "intraday_symbols": 10,
+    "kill_after_seconds": 60,
+    "kill_worker": "paper-core",
+    "probe_interval_seconds": 5.0,
+    "probe_queues": [
+      "learning_fast",
+      "market_data",
+      "research_market_data",
+      "default"
+    ],
+    "reconcile_interval_seconds": 10.0,
+    "research_ballast_mb": 1200,
+    "research_jobs": 10,
+    "research_sweeps_per_job": 60,
+    "research_symbols": 6,
+    "restart_delay_seconds": 2.0,
+    "sample_interval_seconds": 1.0,
+    "signal_hold_ms": 50,
+    "signal_interval_seconds": 5.0,
+    "signal_lock_timeout_ms": 3000
+  },
+  "coverage": {
+    "complete": true,
+    "measured": {
+      "lock_waits": true,
+      "memory": true,
+      "queue_delay": true,
+      "recovery": true
+    },
+    "missing": []
+  },
+  "elapsed_seconds": 195.0,
+  "environment": {
+    "cpu_count": 2,
+    "platform": "Linux-6.8.0-117-generic-aarch64-with-glibc2.41",
+    "postgres": "16.15",
+    "python": "3.11.17"
+  },
+  "layout": {
+    "paper-broker": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "broker_reconciliation"
+    },
+    "paper-core": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "default,market_data,intraday_market_data,research_market_data,scalp_research,learning,learning_fast,paper_trading,risk,monitoring"
+    },
+    "paper-fast": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "paper_trading,risk,monitoring,learning_fast"
+    },
+    "paper-intraday": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "intraday_market_data"
+    }
+  },
+  "live_trading": false,
+  "lock_waits": {
+    "by_wait_event": {
+      "transactionid": 6
+    },
+    "longest_wait_seconds": 0.714,
+    "max_idle_in_transaction": 2,
+    "max_sessions": 12,
+    "max_waiting_sessions": 1,
+    "postgres_deadlocks": 0,
+    "samples": 195,
+    "samples_failed": 0,
+    "samples_with_a_waiting_session": 6,
+    "sqlstate_counts": {
+      "40P01": 0,
+      "55P03": 0,
+      "by_task": {},
+      "other": {}
+    }
+  },
+  "memory": {
+    "peak_total_mb": 3264.5,
+    "processes": {
+      "paper-broker": {
+        "first_mb": 197.7,
+        "last_mb": 214.4,
+        "mean_mb": 214.3,
+        "peak_mb": 214.4,
+        "samples": 195
+      },
+      "paper-core": {
+        "first_mb": 197.8,
+        "last_mb": 2609.6,
+        "mean_mb": 2507.4,
+        "peak_mb": 2618.3,
+        "samples": 193
+      },
+      "paper-fast": {
+        "first_mb": 198.2,
+        "last_mb": 205.4,
+        "mean_mb": 205.4,
+        "peak_mb": 205.4,
+        "samples": 195
+      },
+      "paper-intraday": {
+        "first_mb": 198.2,
+        "last_mb": 212.0,
+        "mean_mb": 211.9,
+        "peak_mb": 212.0,
+        "samples": 195
+      },
+      "redis": {
+        "first_mb": 13.8,
+        "last_mb": 14.5,
+        "mean_mb": 14.3,
+        "peak_mb": 14.5,
+        "samples": 195
+      }
+    },
+    "source": "proc"
+  },
+  "paper_only": true,
+  "queue_delay": {
+    "broker_reconciliation": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 0.062,
+        "mean": 0.019,
+        "p50": 0.011,
+        "p95": 0.062
+      },
+      "sent": 18,
+      "started": 18
+    },
+    "default": {
+      "expired_before_start": 0,
+      "never_started": 31,
+      "oldest_unstarted_wait_seconds": 170.007,
+      "seconds": {
+        "count": 5,
+        "max": 171.474,
+        "mean": 131.64,
+        "p50": 127.775,
+        "p95": 171.474
+      },
+      "sent": 36,
+      "started": 5
+    },
+    "intraday_market_data": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 0.03,
+        "mean": 0.01,
+        "p50": 0.007,
+        "p95": 0.026
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "learning": {
+      "expired_before_start": 0,
+      "never_started": 1,
+      "oldest_unstarted_wait_seconds": 194.888,
+      "seconds": {
+        "count": 9,
+        "max": 189.097,
+        "mean": 92.956,
+        "p50": 66.709,
+        "p95": 189.097
+      },
+      "sent": 10,
+      "started": 9
+    },
+    "learning_fast": {
+      "expired_before_start": 0,
+      "never_started": 1,
+      "oldest_unstarted_wait_seconds": 194.883,
+      "seconds": {
+        "count": 35,
+        "max": 0.055,
+        "mean": 0.015,
+        "p50": 0.009,
+        "p95": 0.049
+      },
+      "sent": 36,
+      "started": 35
+    },
+    "market_data": {
+      "expired_before_start": 0,
+      "never_started": 30,
+      "oldest_unstarted_wait_seconds": 165.011,
+      "seconds": {
+        "count": 6,
+        "max": 167.195,
+        "mean": 116.853,
+        "p50": 120.991,
+        "p95": 167.195
+      },
+      "sent": 36,
+      "started": 6
+    },
+    "paper_trading": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 0.055,
+        "mean": 0.011,
+        "p50": 0.008,
+        "p95": 0.032
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "research_market_data": {
+      "expired_before_start": 0,
+      "never_started": 30,
+      "oldest_unstarted_wait_seconds": 165.011,
+      "seconds": {
+        "count": 6,
+        "max": 166.509,
+        "mean": 116.505,
+        "p50": 120.166,
+        "p95": 166.509
+      },
+      "sent": 36,
+      "started": 6
+    }
+  },
+  "recovery": {
+    "first_task_started_seconds": 4.83,
+    "heartbeat_key": "celery:worker:heartbeat:paper-core@<host>",
+    "heartbeat_restored_seconds": 4.88,
+    "heartbeat_ttl_at_kill_ms": 28594,
+    "killed_at": 1794860190.324447,
+    "killed_pid": 29,
+    "new_pid": 57,
+    "process_restarted_seconds": 2.22,
+    "signal": "SIGKILL",
+    "status": "recovered",
+    "tasks_in_flight_at_kill": [
+      "load_scenario.research",
+      "load_scenario.research"
+    ],
+    "tasks_lost_at_kill": [
+      "load_scenario.research",
+      "load_scenario.research"
+    ],
+    "tasks_redelivered_after_kill": [],
+    "worker": "paper-core"
+  },
+  "report": "load_scenario",
+  "schema": "load_scenario_20261116201519_7",
+  "started_at": "2026-11-16T20:15:30.251370+00:00",
+  "tasks": {
+    "load_scenario.broker_reconciliation": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 18
+      },
+      "result_status": {
+        "complete": 18
+      },
+      "runtime_seconds": {
+        "count": 18,
+        "max": 1.904,
+        "mean": 0.952,
+        "p50": 0.88,
+        "p95": 1.904
+      },
+      "sent": 18,
+      "started": 18,
+      "started_not_finished": 0
+    },
+    "load_scenario.intraday_import": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 36
+      },
+      "result_status": {
+        "complete": 36
+      },
+      "runtime_seconds": {
+        "count": 36,
+        "max": 2.137,
+        "mean": 0.611,
+        "p50": 0.34,
+        "p95": 1.808
+      },
+      "sent": 36,
+      "started": 36,
+      "started_not_finished": 0
+    },
+    "load_scenario.probe": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 52
+      },
+      "result_status": {
+        "complete": 52
+      },
+      "runtime_seconds": {
+        "count": 52,
+        "max": 0.901,
+        "mean": 0.034,
+        "p50": 0.009,
+        "p95": 0.054
+      },
+      "sent": 144,
+      "started": 52,
+      "started_not_finished": 0
+    },
+    "load_scenario.research": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 5
+      },
+      "result_status": {
+        "complete": 5
+      },
+      "runtime_seconds": {
+        "count": 5,
+        "max": 68.348,
+        "mean": 60.479,
+        "p50": 59.91,
+        "p95": 68.348
+      },
+      "sent": 10,
+      "started": 9,
+      "started_not_finished": 4
+    },
+    "load_scenario.signal_pass": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 36
+      },
+      "result_status": {
+        "complete": 36
+      },
+      "runtime_seconds": {
+        "count": 36,
+        "max": 1.503,
+        "mean": 0.193,
+        "p50": 0.081,
+        "p95": 0.736
+      },
+      "sent": 36,
+      "started": 36,
+      "started_not_finished": 0
+    }
+  }
+}

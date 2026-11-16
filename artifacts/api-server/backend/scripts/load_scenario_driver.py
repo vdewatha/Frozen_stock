@@ -35,6 +35,8 @@ from app.core.config import settings  # noqa: E402
 from app.core.memory import resident_mb  # noqa: E402
 from app.db.session import SessionLocal, application_name  # noqa: E402
 from app.services.heartbeat import WORKER_HEARTBEAT_PATTERN  # noqa: E402
+from app.services.notifications import LOST_RESEARCH_JOB_ENTITY  # noqa: E402
+from app.tasks import research_worker  # noqa: E402
 from app.tasks.celery_app import (  # noqa: E402
     BROKER_RECONCILIATION_QUEUE,
     INTRADAY_MARKET_DATA_QUEUE,
@@ -83,10 +85,14 @@ def config_from_env() -> dict:
         "signal_lock_timeout_ms": _env_int("LOAD_SIGNAL_LOCK_TIMEOUT_MS", 3000),
         "probe_interval_seconds": _env_float("LOAD_PROBE_INTERVAL_SECONDS", 5),
         "probe_queues": [q for q in os.environ.get(
-            "LOAD_PROBE_QUEUES", "learning_fast,market_data,research_market_data").split(",") if q],
+            "LOAD_PROBE_QUEUES", "learning_fast,market_data,research_market_data,default").split(",") if q],
         "feed_latency_ms": _env_int("LOAD_FEED_LATENCY_MS", 100),
         "broker_latency_ms": _env_int("LOAD_BROKER_LATENCY_MS", 150),
-        "kill_worker": os.environ.get("LOAD_KILL_WORKER", "paper-core"),
+        "research_max_memory_mb": research_worker.max_memory_mb(),
+        "kill_worker": os.environ.get("LOAD_KILL_WORKER", "paper-research"),
+        # "task": the worker's task process, as the memory guard stops it (the
+        # worker itself when it has none); "worker": the whole worker.
+        "kill_target": os.environ.get("LOAD_KILL_TARGET", "task"),
         "kill_after_seconds": _env_int("LOAD_KILL_AFTER_SECONDS", 60),
         "restart_delay_seconds": _env_float("LOAD_RESTART_DELAY_SECONDS", 2),
         "sample_interval_seconds": _env_float("LOAD_SAMPLE_INTERVAL_SECONDS", 1),
@@ -167,6 +173,50 @@ def _pids(run_dir: Path) -> dict[str, int]:
     return pids
 
 
+def descendants(pid: int | None) -> list[int]:
+    """Every descendant of ``pid``: the task processes of a prefork worker."""
+    if pid is None:
+        return []
+    parents: dict[int, int] = {}
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/stat", "r", encoding="ascii", errors="replace") as handle:
+                    stat = handle.read()
+                # "pid (comm) state ppid ...": the name may contain spaces and parentheses.
+                parents[int(entry)] = int(stat[stat.rindex(")") + 1:].split()[1])
+            except (OSError, ValueError, IndexError):
+                continue
+    except OSError:
+        try:
+            output = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+        for line in output.splitlines():
+            fields = line.split()
+            if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
+                parents[int(fields[0])] = int(fields[1])
+    found, queue = [], [int(pid)]
+    while queue:
+        current = queue.pop()
+        for child, parent in parents.items():
+            if parent == current and child not in found and child != pid:
+                found.append(child)
+                queue.append(child)
+    return sorted(found)
+
+
+def prefork_labels(run_dir: Path) -> list[str]:
+    path = run_dir / "layout.json"
+    try:
+        layout = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    return sorted(label for label, worker in layout.items() if worker.get("pool") == "prefork")
+
+
 _libproc = None
 
 
@@ -222,6 +272,7 @@ class Sampler(threading.Thread):
             connect_args={"application_name": SAMPLER_APPLICATION, "connect_timeout": 5},
         )
         self.queues = sorted(queue.name for queue in celery_app.conf.task_queues)
+        self.prefork = prefork_labels(run_dir)
 
     def deadlocks(self) -> int | None:
         try:
@@ -246,7 +297,17 @@ class Sampler(threading.Thread):
             row["idle_in_transaction"] = int(states["idle_in_transaction"])
         except Exception as exc:
             row["database_error"] = type(exc).__name__
-        row["memory_mb"], self.memory_source = process_memory_mb(_pids(self.run_dir))
+        pids = _pids(self.run_dir)
+        row["memory_mb"], self.memory_source = process_memory_mb(pids)
+        # A prefork worker's tasks run in its task processes: "<label>:task" is
+        # their memory, apart from the worker's own.
+        for label in self.prefork:
+            tasks = descendants(pids.get(label))
+            if tasks:
+                values, _source = process_memory_mb({str(task): task for task in tasks})
+                known = [value for value in values.values() if value is not None]
+                if known:
+                    row["memory_mb"][f"{label}:task"] = round(sum(known), 1)
         try:
             row["queue_depth"] = {queue: int(self.client.llen(queue)) for queue in self.queues}
             row["heartbeat_ttl_ms"] = {
@@ -266,35 +327,89 @@ class Sampler(threading.Thread):
                 self.stop.wait(max(0.05, self.interval - (time.monotonic() - tick)))
 
 
-def recovery_drill(run_dir: Path, client, label: str, result: dict, timeout: float = 120.0) -> None:
-    """SIGKILL one worker and time the return of its heartbeat key.
+def running_task_process(client, hostname: str, tasks: list[int], wait_seconds: float = 30.0) -> int | None:
+    """The task process of ``hostname`` that is running a research job now, waiting for one if need be.
 
-    The key (``celery_app._record_worker_heartbeat``) is rewritten every two
-    seconds with a 90-second expiry and outlives a dead worker, so "restored"
-    is the first time its remaining life goes up again after the kill.
+    The research worker marks each job it starts with the process running it
+    (``research_worker.INFLIGHT_PREFIX``). Between two jobs there is only an
+    idle process, and killing that would measure nothing.
     """
-    pid = _pids(run_dir).get(label)
+    deadline = time.time() + wait_seconds
+    while time.time() < deadline:
+        try:
+            markers = client.hgetall(f"{research_worker.INFLIGHT_PREFIX}{hostname}") or {}
+        except Exception:
+            markers = {}
+        for raw in markers.values():
+            try:
+                pid = int(json.loads(raw).get("pid"))
+            except (TypeError, ValueError):
+                continue
+            if pid in tasks or pid in descendants_of_any(tasks):
+                return pid
+        time.sleep(0.1)
+    return None
+
+
+def descendants_of_any(pids: list[int]) -> list[int]:
+    return [child for pid in pids for child in descendants(pid)]
+
+
+def recovery_drill(run_dir: Path, client, label: str, result: dict, timeout: float = 120.0,
+                   target: str = "task") -> None:
+    """SIGKILL one worker, or its task process, and time the recovery.
+
+    ``target="task"`` kills the task process that is running a research job,
+    which is what the memory guard does to the research worker; the worker
+    itself stays up and starts a new one, so recovery is the time to that new
+    process. A worker without task processes (a thread pool) is killed whole,
+    as with ``target="worker"``: recovery is then the return of its heartbeat
+    key, which a worker writes when it becomes ready.
+    """
+    worker_pid = _pids(run_dir).get(label)
     keys = [key for key in client.scan_iter(match=f"celery:worker:heartbeat:{label}@*", count=100)]
-    if pid is None or not keys:
+    if worker_pid is None or not keys:
         result.update({"worker": label, "status": "not_run", "reason": "worker pid or heartbeat key not found"})
         return
     key = keys[0]
+    hostname = key.decode().rsplit(":", 1)[-1]
+    pid, killed_what = worker_pid, "worker"
+    tasks_before = descendants(worker_pid)
+    if target == "task" and tasks_before:
+        running = running_task_process(client, hostname, tasks_before)
+        tasks_before = descendants(worker_pid)
+        if running is None and tasks_before:
+            sizes, _source = process_memory_mb({str(task): task for task in tasks_before})
+            running = max(tasks_before, key=lambda task: sizes.get(str(task)) or 0.0)
+        if running is not None:
+            pid, killed_what = running, "task_process"
     last_ttl = int(client.pttl(key))
     os.kill(pid, signal.SIGKILL)
     killed = time.time()
     result.pop("reason", None)
     result.update({
-        "worker": label, "status": "killed", "signal": "SIGKILL", "killed_pid": pid, "killed_at": killed,
+        "worker": label, "status": "killed", "signal": "SIGKILL", "killed": killed_what, "killed_pid": pid,
+        "killed_at": killed, "worker_pid": worker_pid,
         "heartbeat_key": key.decode(), "heartbeat_ttl_at_kill_ms": last_ttl,
         "process_restarted_seconds": None, "heartbeat_restored_seconds": None, "new_pid": None,
+        "task_process_replaced_seconds": None, "worker_restarted": False,
     })
     while time.time() - killed < timeout:
         time.sleep(0.05)
         if result["new_pid"] is None:
             current = _pids(run_dir).get(label)
-            if current is not None and current != pid:
+            if current is not None and current != worker_pid:
                 result["new_pid"] = current
+                result["worker_restarted"] = True
                 result["process_restarted_seconds"] = round(time.time() - killed, 2)
+        if killed_what == "task_process":
+            # The worker never went away, so its heartbeat key is not the
+            # evidence; a new task process is.
+            if any(task not in tasks_before for task in descendants(worker_pid)):
+                result["task_process_replaced_seconds"] = round(time.time() - killed, 2)
+                result["status"] = "recovered"
+                return
+            continue
         try:
             ttl = int(client.pttl(key))
         except Exception:
@@ -306,7 +421,7 @@ def recovery_drill(run_dir: Path, client, label: str, result: dict, timeout: flo
         if ttl >= 0:
             last_ttl = ttl
     result["status"] = "not_recovered"
-    result["reason"] = f"no heartbeat within {int(timeout)} seconds of the kill"
+    result["reason"] = f"no recovery within {int(timeout)} seconds of the kill"
 
 
 def _send(name: str, queue: str, args: list, expires: float | None = None) -> None:
@@ -364,7 +479,8 @@ def run(config: dict, run_dir: Path) -> dict:
                 stream[0] += stream[1]
         if drill_thread is None and config["kill_after_seconds"] > 0 and elapsed >= config["kill_after_seconds"]:
             drill_thread = threading.Thread(
-                target=recovery_drill, args=(run_dir, client, config["kill_worker"], drill), daemon=True)
+                target=recovery_drill, args=(run_dir, client, config["kill_worker"], drill),
+                kwargs={"target": config["kill_target"]}, daemon=True)
             drill_thread.start()
         time.sleep(0.05)
     publishing_stopped = time.time()
@@ -381,6 +497,10 @@ def run(config: dict, run_dir: Path) -> dict:
     layout_path = run_dir / "layout.json"
     with SessionLocal() as db:
         server_version = db.execute(text("SHOW server_version")).scalar()
+        # What the workers wrote down about jobs lost with their process.
+        lost = db.execute(text(
+            "SELECT source, message, payload FROM notifications WHERE entity_type = :entity ORDER BY id"
+        ), {"entity": LOST_RESEARCH_JOB_ENTITY}).mappings().all()
     meta = {
         "schema": scenario.SCHEMA,
         "started_at": datetime.fromtimestamp(started, UTC).isoformat(),
@@ -391,6 +511,11 @@ def run(config: dict, run_dir: Path) -> dict:
         "postgres_deadlocks_before": deadlocks_before,
         "postgres_deadlocks_after": sampler.deadlocks(),
         "memory_source": sampler.memory_source,
+        "lost_jobs_recorded": [
+            {"job": row["source"], "cause": (row["payload"] or {}).get("cause"),
+             "task_id": (row["payload"] or {}).get("task_id"), "message": row["message"]}
+            for row in lost
+        ],
         "environment": {
             "platform": platform.platform(), "python": platform.python_version(),
             "cpu_count": os.cpu_count(), "postgres": server_version,
