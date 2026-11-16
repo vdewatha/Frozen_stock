@@ -319,9 +319,12 @@ def restore_after_transient_heartbeat_pause(db: Session, account: StockPaperAcco
     * no position is open and no order is in flight; and
     * both heartbeats are fresh again (the caller just reconciled).
 
-    Anything else keeps the operator revalidation path. The caller holds the
-    account row lock, so the recovery row is read without a second row lock
-    (the watchdog takes them in the opposite order).
+    Anything else keeps the operator revalidation path. The caller
+    (reconciliation) holds the account row lock and has already locked the
+    recovery row without waiting for it
+    (``stock_paper_ledger._recovery_row_without_waiting``), so the state read
+    here is current and nothing below can wait on a pause that is waiting for
+    the account.
     """
     now = _now()
     state = _state(db, for_update=False)
