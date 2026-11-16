@@ -1,0 +1,26 @@
+{
+ "data_end": "2026-11-11",
+ "counts": {
+  "filings": 685204,
+  "with_item_202": 188173,
+  "no_time": 0,
+  "before_2016": 443,
+  "no_session": 83,
+  "no_series": 90257,
+  "no_bar_at_p": 421,
+  "not_eligible": 217225,
+  "no_listed_item": 2377,
+  "events": 186225
+ },
+ "accepted_clock": {
+  "before_0930": 0.25432675526916365,
+  "session": 0.10416431735803464,
+  "after_1600": 0.6415089273728017
+ },
+ "candidates_tested": 75,
+ "selected": [],
+ "avoid": [],
+ "held_out": {},
+ "passed": [],
+ "verdict": "closed"
+}
