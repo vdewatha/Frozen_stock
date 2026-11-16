@@ -13,7 +13,7 @@ from app.models.stock_paper import StockPaperAccount, StockPaperOrder
 from app.services.stock_paper_ledger import _upsert_orders
 
 
-@pytest.mark.parametrize("dialect", ["sqlite", "postgresql"])
+@pytest.mark.parametrize("dialect", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)])
 def test_quantity_upgrade_and_repeat_import(tmp_path, dialect):
     owner = None
     schema = None

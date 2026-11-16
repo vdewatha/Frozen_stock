@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.db.schema import migration_config
 
 
-@pytest.mark.parametrize("dialect", ["sqlite", "postgresql"])
+@pytest.mark.parametrize("dialect", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)])
 def test_upgrade_preserves_legacy_rows_and_allows_date_only_v2(tmp_path, dialect):
     schema = None
     owner = None
