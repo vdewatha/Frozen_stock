@@ -5,6 +5,7 @@ before one POST and turns an ambiguous outcome into a halt rather than a retry.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN
 import hashlib
@@ -138,6 +139,8 @@ class AlpacaPaperClient:
 
     base_url = ALPACA_PAPER_URL
     supports_bracket_orders = True
+    # Set only inside ``one_connection``: the client that block's requests share.
+    _kept_clients: list[httpx.Client] | None = None
 
     def _headers(self) -> dict[str, str]:
         key, secret = settings.paper_broker_credentials()
@@ -145,10 +148,38 @@ class AlpacaPaperClient:
             raise StockPaperUnavailable("Alpaca paper credentials are not configured")
         return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret, "Accept": "application/json"}
 
+    @contextmanager
+    def one_connection(self):
+        """Send the requests made inside the block over one kept-alive connection.
+
+        A request normally opens its own connection, which costs a TCP and TLS
+        handshake each time. A reconciliation makes several in a row (account,
+        positions, order pages, activity pages, lookups), so it shares one.
+        The client is opened by the first request, not here, so a missing
+        credential still fails where the request is made. Nothing is retried.
+        """
+        if self._kept_clients is not None:
+            yield  # already inside a block: keep using its connection
+            return
+        self._kept_clients = []
+        try:
+            yield
+        finally:
+            kept, self._kept_clients = self._kept_clients, None
+            for client in kept:
+                client.close()
+
+    def _send(self, method: str, path: str, *, params: dict | None, payload: dict | None) -> httpx.Response:
+        if self._kept_clients is None:
+            with httpx.Client(base_url=self.base_url, timeout=20.0, headers=self._headers()) as client:
+                return client.request(method, path, params=params, json=payload)
+        if not self._kept_clients:
+            self._kept_clients.append(httpx.Client(base_url=self.base_url, timeout=20.0, headers=self._headers()))
+        return self._kept_clients[0].request(method, path, params=params, json=payload)
+
     def _request_response(self, method: str, path: str, *, params: dict | None = None, payload: dict | None = None) -> tuple[Any, dict[str, str]]:
         try:
-            with httpx.Client(base_url=self.base_url, timeout=20.0, headers=self._headers()) as client:
-                response = client.request(method, path, params=params, json=payload)
+            response = self._send(method, path, params=params, payload=payload)
             if response.status_code >= 400:
                 # Broker bodies stay redacted; Alpaca's numeric error code
                 # (e.g. 40310000 for a wash trade) is enough to diagnose.
@@ -2304,6 +2335,61 @@ def _late_activity_explanation(
     }
 
 
+def _history_by_client_id(raw_orders: list[dict]) -> dict[str, dict | None]:
+    """Fetched order rows by client id; ``None`` where two rows claim the same id."""
+    rows: dict[str, dict | None] = {}
+    for row in raw_orders:
+        client_id = str(row.get("client_order_id") or "")
+        if client_id:
+            rows[client_id] = None if client_id in rows else row
+    return rows
+
+
+def _linked_leg_roles(db: Session, account: StockPaperAccount, orders: list[StockPaperOrder],
+                      known_broker_ids: set[str]) -> dict[int, set[str]]:
+    """Exit roles already linked to each entry or OCO root, counting only legs the history shows."""
+    parent_ids = [order.id for order in orders if not order.leg_role or is_oco_exit_root(order)]
+    roles: dict[int, set[str]] = {}
+    if not parent_ids:
+        return roles
+    for parent_id, role, broker_order_id in (
+        db.query(StockPaperOrder.parent_order_id, StockPaperOrder.leg_role, StockPaperOrder.broker_order_id)
+        .filter(StockPaperOrder.account_id == account.id, StockPaperOrder.parent_order_id.in_(parent_ids))
+        .all()
+    ):
+        if role and broker_order_id and broker_order_id in known_broker_ids:
+            roles.setdefault(parent_id, set()).add(role)
+    return roles
+
+
+def _history_already_answers(order: StockPaperOrder, history: dict[str, dict | None],
+                             linked_leg_roles: dict[int, set[str]]) -> bool:
+    """A client-id lookup of ``order`` would add nothing to the fetched history.
+
+    The lookup returns the order and, for a bracket entry or an OCO root, its
+    child legs. It is redundant only when the history holds this exact broker
+    order (same client id and the broker id the ledger already recorded) and
+    every leg the lookup could attach is already linked and in the history.
+    Anything else is asked: an uncertain submission, an order with no broker
+    id yet, an order the history does not show, an entry whose exits are not
+    all linked, and any order class not listed here.
+    """
+    row = history.get(order.client_order_id)
+    if (row is None or not order.broker_order_id or order.uncertain_submission
+            or str(row.get("id") or "") != order.broker_order_id):
+        return False
+    if order.leg_role and not is_oco_exit_root(order):
+        return True  # a child leg has no legs of its own
+    roles = linked_leg_roles.get(order.id, set())
+    if is_oco_exit_root(order):
+        return "stop_loss" in roles
+    if order.order_class == "simple":
+        return True
+    if order.order_class == "bracket":
+        return {"take_profit", "stop_loss"} <= roles
+    return False
+
+
 def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None) -> dict:
     """Reconcile the broker account and preserve the automatic-recovery contract.
 
@@ -2316,6 +2402,13 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
     if account is None:
         raise StockPaperError("Stock paper account is not initialized")
     gateway = gateway or active_paper_gateway()
+    # The account row stays locked until this returns, and every order
+    # reservation waits on it: share one broker connection for the whole pass.
+    with gateway.one_connection() if isinstance(gateway, AlpacaPaperClient) else nullcontext():
+        return _reconcile_locked_account(db, account, gateway)
+
+
+def _reconcile_locked_account(db: Session, account: StockPaperAccount, gateway: AlpacaPaperGateway) -> dict:
     automatic_recovery = None
     try:
         prior_cash = account.cash
@@ -2342,20 +2435,27 @@ def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | Non
         )
         if upgraded:
             raw_account, raw_positions, raw_orders, raw_fills, observed = snapshot
-        # Poll every client-owned nonterminal order by immutable client id.
-        # Full history catches old order transitions; the lookup is the
-        # fail-closed evidence path if a provider page cannot show one.
+        # Full history catches old order transitions. A client-owned
+        # nonterminal order the history cannot fully answer for is looked up by
+        # its immutable client id: the fail-closed evidence path. Looking up
+        # every open order on every pass cost one broker request each inside
+        # the account lock (2026-11-13: 11,752 lookups for 28 orders), nearly
+        # all of them for exit legs the history had just returned.
         nonterminal = db.query(StockPaperOrder).filter(
             StockPaperOrder.account_id == account.id,
             StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES),
             StockPaperOrder.source != "broker_import",
         ).all()
         known_broker_ids = {str(row.get("id") or "") for row in raw_orders}
+        history = _history_by_client_id(raw_orders)
+        linked_leg_roles = _linked_leg_roles(db, account, nonterminal, known_broker_ids)
         unresolved_nonterminal: list[str] = []
         leg_hints: dict[str, str] = {}
         for order in nonterminal:
             if order.status == "reserved" and order.submission_attempted_at is None and not order.broker_order_id:
                 # Local reservations cannot exist at the broker before dispatch.
+                continue
+            if _history_already_answers(order, history, linked_leg_roles):
                 continue
             resolved = gateway.order_by_client_id(order.client_order_id)
             if resolved and (not order.leg_role or is_oco_exit_root(order)):
