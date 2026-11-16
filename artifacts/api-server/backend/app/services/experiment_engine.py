@@ -1195,6 +1195,16 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
     calibration = _calibration_factor(db)
     prior = prior_trials_by_strategy(experiment_history(db))
     injected = loader is not None   # a caller-supplied loader means no network for the T-bill history either
+    # Which data the replays are computed on (research_data.py): a configured
+    # snapshot, or the app's own cached history.  Recorded on every experiment.
+    from app.services import research_data
+
+    try:
+        dataset, snapshot_loader = research_data.replay_dataset(injected=injected)
+    except Exception as exc:  # a configured snapshot that cannot be read is never swapped for other data
+        return base | {"status": "blocked", "reason": f"research snapshot unavailable: {exc}"[:300]}
+    if snapshot_loader is not None:
+        loader = snapshot_loader
     if plan["planned"]:
         from app.services import gate_replay
         from app.services import meta_label_primary as primary
@@ -1233,6 +1243,10 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
         # history to replay" with nothing recorded about the load; the run row
         # now says what was loaded and why the rest was dropped.
         history = history_summary(symbols, frames, reasons)
+        if dataset["kind"] == "live_path":
+            dataset = {**dataset, "universe": universe_summary,
+                       "data_end": max((str(frame["date"].iloc[-1]) for frame in frames.values() if len(frame)),
+                                       default=None)}
         try:
             vix = (vix_loader or _load_vix)(settings.experiment_engine_history_start)
         except Exception as exc:  # the VIX gate fails open live; replay the same way
@@ -1286,7 +1300,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                                "lesson_source": item.get("lesson_source"),
                                "cost": {"seconds": round(time.monotonic() - started, 3),
                                         "setups": len(experiment.get("rows") or {}), "symbols": len(frames)}})
-            experiment.update({"trigger": item["trigger"], "lesson_count": item["lesson_count"],
+            experiment.update({"dataset": dataset, "trigger": item["trigger"], "lesson_count": item["lesson_count"],
                                "lesson_scope": item["lesson_scope"], "ran_at": _iso(now),
                                "symbols": len(frames), "missing_symbols": missing, "universe": universe_summary,
                                "breadth_history": breadth is not None,
@@ -1327,7 +1341,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                "skipped": plan["skipped"], "untemplated": plan["untemplated"],
                "learning_set": {"active": sorted(name for name in strategies if name not in learning["shadow"]),
                                 "shadow": sorted(learning["shadow"]), "frozen": sorted(learning["frozen"])},
-               "history": history,
+               "history": history, "dataset": dataset,
                "cost": {"seconds": round(time.monotonic() - run_started, 3),
                         "experiment_seconds": round(sum((e.get("cost") or {}).get("seconds") or 0.0
                                                         for e in experiments), 3)},

@@ -9,6 +9,7 @@ const failed: HypothesisEntry = {
   status: "failed", result: "+0.76% a hold, -0.44% against SPY.", why: "With delisted stocks the drift does not beat SPY.",
   decided_on: "2026-11-11", next_decision: null, revisit_if: "Intraday reaction data.",
   sources: { reports: ["reports/earnings-drift-delisted-20261111.md"], notes: null, pr: 92 },
+  dataset: { snapshots: [{ name: "earnings-drift-delisted-20261111", snapshot_id: "cb6f332389ecdf167f91141c085524f5ac77b4079a5d6d87825ac6c8662f00a2" }], note: "assigned after the study ran" },
   can_place_paper_orders: false, paper_orders: { can_place: false, detail: "research only: no strategy row", rows: [] },
 };
 const collecting: HypothesisEntry = {
@@ -42,6 +43,7 @@ test("the register shows the verdict, the reason, the next decision and whether 
   assert.match(html, /With delisted stocks the drift does not beat SPY/);
   assert.match(html, /research only: no strategy row/);
   assert.match(html, /PR #92/);
+  assert.match(html, /Data snapshot: earnings-drift-delisted-20261111 \(cb6f332389ec\)/);
   assert.match(html, /needs 800 trades, has 12/);
   assert.match(html, /about 17\.8 years at the expected rate/);
   assert.match(html, /learning-sized exploration entries only/);

@@ -38,6 +38,15 @@
         ],
         "notes": "research_notes/Dip rules full market 20261112",
         "pr": 95
+      },
+      "dataset": {
+        "snapshots": [
+          {
+            "name": "dip-rules-full-market-20261112",
+            "snapshot_id": "6ddf921908c93135cb93f67c47a117c1a5b34e4d66ff1c83684f7ca98e72299e"
+          }
+        ],
+        "note": "Snapshot ids were assigned on 2026-11-16, after the study ran: they identify the cache as found on this machine, read with scripts/research_snapshot.py."
       }
     },
     {
@@ -59,6 +68,15 @@
         ],
         "notes": "research_notes/Dip rules full market 20261112",
         "pr": 95
+      },
+      "dataset": {
+        "snapshots": [
+          {
+            "name": "dip-rules-full-market-20261112",
+            "snapshot_id": "6ddf921908c93135cb93f67c47a117c1a5b34e4d66ff1c83684f7ca98e72299e"
+          }
+        ],
+        "note": "Snapshot ids were assigned on 2026-11-16, after the study ran: they identify the cache as found on this machine, read with scripts/research_snapshot.py."
       }
     },
     {
@@ -81,6 +99,15 @@
         ],
         "notes": "research_notes/Earnings drift delisted 20261111",
         "pr": 92
+      },
+      "dataset": {
+        "snapshots": [
+          {
+            "name": "earnings-drift-delisted-20261111",
+            "snapshot_id": "cb6f332389ecdf167f91141c085524f5ac77b4079a5d6d87825ac6c8662f00a2"
+          }
+        ],
+        "note": "Snapshot ids were assigned on 2026-11-16, after the study ran: they identify the cache as found on this machine, read with scripts/research_snapshot.py."
       }
     },
     {
@@ -165,6 +192,19 @@
         ],
         "notes": "research_notes/Public information tests 20261114",
         "pr": 100
+      },
+      "dataset": {
+        "snapshots": [
+          {
+            "name": "public-information-20261114",
+            "snapshot_id": "8cc251eb1487a8ca7f8fece7547d3294b2a4384dbbbeeb646b382c0ce848358e"
+          },
+          {
+            "name": "dip-rules-full-market-20261112",
+            "snapshot_id": "6ddf921908c93135cb93f67c47a117c1a5b34e4d66ff1c83684f7ca98e72299e"
+          }
+        ],
+        "note": "Snapshot ids were assigned on 2026-11-16, after the study ran: they identify the cache as found on this machine, read with scripts/research_snapshot.py."
       }
     },
     {
@@ -186,6 +226,19 @@
         ],
         "notes": "research_notes/Public information tests 20261114",
         "pr": 100
+      },
+      "dataset": {
+        "snapshots": [
+          {
+            "name": "public-information-20261114",
+            "snapshot_id": "8cc251eb1487a8ca7f8fece7547d3294b2a4384dbbbeeb646b382c0ce848358e"
+          },
+          {
+            "name": "dip-rules-full-market-20261112",
+            "snapshot_id": "6ddf921908c93135cb93f67c47a117c1a5b34e4d66ff1c83684f7ca98e72299e"
+          }
+        ],
+        "note": "Snapshot ids were assigned on 2026-11-16, after the study ran: they identify the cache as found on this machine, read with scripts/research_snapshot.py."
       }
     },
     {
@@ -208,6 +261,19 @@
         ],
         "notes": "research_notes/Public information tests 20261114",
         "pr": 100
+      },
+      "dataset": {
+        "snapshots": [
+          {
+            "name": "public-information-20261114",
+            "snapshot_id": "8cc251eb1487a8ca7f8fece7547d3294b2a4384dbbbeeb646b382c0ce848358e"
+          },
+          {
+            "name": "dip-rules-full-market-20261112",
+            "snapshot_id": "6ddf921908c93135cb93f67c47a117c1a5b34e4d66ff1c83684f7ca98e72299e"
+          }
+        ],
+        "note": "Snapshot ids were assigned on 2026-11-16, after the study ran: they identify the cache as found on this machine, read with scripts/research_snapshot.py."
       }
     },
     {
@@ -229,6 +295,15 @@
         ],
         "notes": "research_notes/SPY intraday momentum 20261112",
         "pr": 96
+      },
+      "dataset": {
+        "snapshots": [
+          {
+            "name": "spy-intraday-momentum-20261112",
+            "snapshot_id": "abd6fea2c60df805db2e20fe813036089f05e02aa4ec544984f04ec8b2627fa4"
+          }
+        ],
+        "note": "Snapshot ids were assigned on 2026-11-16, after the study ran: they identify the cache as found on this machine, read with scripts/research_snapshot.py."
       }
     },
     {
@@ -250,6 +325,19 @@
         ],
         "notes": "research_notes/Stocks in play breakout 20261112",
         "pr": 97
+      },
+      "dataset": {
+        "snapshots": [
+          {
+            "name": "stocks-in-play-breakout-20261112",
+            "snapshot_id": "2dc1aaaea1cc1aae48627a3a6368c88aa0130bc90c5b14ec4807c151bf95b04d"
+          },
+          {
+            "name": "dip-rules-full-market-20261112",
+            "snapshot_id": "6ddf921908c93135cb93f67c47a117c1a5b34e4d66ff1c83684f7ca98e72299e"
+          }
+        ],
+        "note": "Snapshot ids were assigned on 2026-11-16, after the study ran: they identify the cache as found on this machine, read with scripts/research_snapshot.py."
       }
     },
     {
