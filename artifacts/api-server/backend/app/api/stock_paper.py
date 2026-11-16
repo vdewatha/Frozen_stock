@@ -195,6 +195,14 @@ def hypothesis_register_view(db: Session = Depends(get_db)) -> dict:
     return hypothesis_register(db)
 
 
+@router.get("/learning-trace")
+def learning_trace_view(db: Session = Depends(get_db)) -> dict:
+    """Every experiment followed from its lesson to its change, forward verdict and outcome, with its cost (read-only)."""
+    from app.services.learning_trace import learning_trace
+
+    return learning_trace(db)
+
+
 @router.get("/experiment-admissions")
 def experiment_admissions(db: Session = Depends(get_db)) -> dict:
     """The admission rule for new experiments, its budget and every recorded decision with its numbers (read-only)."""

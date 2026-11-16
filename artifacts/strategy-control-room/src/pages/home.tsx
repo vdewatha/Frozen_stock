@@ -34,6 +34,7 @@ import { PaperScorecardPanel } from "@/components/paper-scorecard-panel";
 import { WeeklyReportPanel } from "@/components/weekly-report-panel";
 import { LearningScoreboardPanel } from "@/components/learning-scoreboard-panel";
 import { HypothesisRegisterPanel } from "@/components/hypothesis-register-panel";
+import { LearningTracePanel } from "@/components/learning-trace-panel";
 import { LossFeedbackPanel } from "@/components/loss-feedback-panel";
 import { StockTrainingLab } from "@/components/stock-training-lab";
 import { StockMonitoringPanel } from "@/components/stock-monitoring-panel";
@@ -124,7 +125,7 @@ function PageContent({ page, section, dashboard, session }: { page: string; sect
   const views: Record<string, ReactNode> = {
     "markets/iex": <IexResearchPanel />, "markets/consolidated": <DelayedSipPanel />, "markets/history": <MarketLab />, "markets/context": <><RegimeMonitorLab /><EconomicContextLab /><NewsSentimentLab /></>,
     "portfolio/ledger": <StockPaperLedgerPanel />, "portfolio/shorts": <ShortPilotMonitor />, "portfolio/scorecard": <PaperScorecardPanel />, "portfolio/weekly": <WeeklyReportPanel />, "portfolio/equity": <EquitySection dashboard={dashboard} />,
-    "learning/scoreboard": <LearningScoreboardPanel />, "learning/cycles": <StockLearningCyclePanel />, "learning/training": <StockTrainingLab />, "learning/evaluation": <ForwardPaperEvaluationPanel />, "learning/performance": <ModelPerformanceLab />, "learning/losses": <LossFeedbackPanel />,
+    "learning/scoreboard": <div className="space-y-8"><LearningScoreboardPanel /><LearningTracePanel /></div>, "learning/cycles": <StockLearningCyclePanel />, "learning/training": <StockTrainingLab />, "learning/evaluation": <ForwardPaperEvaluationPanel />, "learning/performance": <ModelPerformanceLab />, "learning/losses": <LossFeedbackPanel />,
     "research/runs": <ResearchControlRoom />, "research/scalp": <ResearchOnly><ScalpResearchPanel /></ResearchOnly>, "research/register": <HypothesisRegisterPanel />, "research/experiments": <ExperimentManagerLab />, "research/library": <StrategyLibrary dashboard={dashboard} />, "research/models": <ResearchOnly><ModelLab /></ResearchOnly>, "research/signals": <ResearchOnly><PredictionScanner /><OpportunityRadar /></ResearchOnly>, "research/memory": <ResearchOnly><MemoryReplayPanel /></ResearchOnly>,
     "risk/readiness": <ReadinessChecklist />, "risk/limits": <RiskSettingsPanel initialRule={dashboard.risk_rules[0] ?? null} onSafetyAction={refreshWorkspace} />, "risk/broker": <><PaperVenueGovernancePanel /><BrokerSafetyLab /></>, "risk/recovery": <StockRecoveryPanel onKillSwitchChange={refreshWorkspace} />,
     "activity/notifications": <NotificationCenter />, "activity/audit": <AuditHistoryPanel />,
