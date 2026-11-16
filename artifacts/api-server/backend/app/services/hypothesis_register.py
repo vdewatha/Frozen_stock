@@ -301,8 +301,8 @@ def hypothesis_register(db: Session, *, now: Optional[datetime] = None) -> dict:
     entries = []
     for entry in register["entries"]:
         orders = _orders(entry["strategy_types"], rows_by_type, blocked=blocked, evidence=evidence)
-        entries.append({**entry, "source": "report", "can_place_paper_orders": orders["can_place"],
-                        "paper_orders": orders})
+        entries.append({**entry, "source": "report", "dataset": entry.get("dataset"),
+                        "can_place_paper_orders": orders["can_place"], "paper_orders": orders})
     for name, build in (
         ("forward_experiments", lambda: _forward_entries(db, rows_by_id, blocked=blocked, evidence=evidence)),
         ("strategy_discovery", lambda: _discovery_entry(db)),

@@ -60,6 +60,25 @@ def test_the_packaged_register_is_well_formed_and_a_bad_one_is_refused(tmp_path)
         hr.load_register(path)
 
 
+def test_a_study_on_a_snapshot_names_it_by_id_and_the_view_passes_it_on(db):  # noqa: F811
+    from scripts.research_snapshot import PRESETS
+
+    register = hr.load_register()
+    named = {entry["id"]: entry["dataset"] for entry in register["entries"] if entry.get("dataset")}
+    assert set(named) == {"dip-rules-full-market", "new-high-breakout-full-market", "earnings-drift", "filings-8k",
+                          "house-disclosed-purchases", "news-rules", "spy-intraday-momentum", "stocks-in-play-breakout"}
+    for dataset in named.values():
+        assert dataset["note"].startswith("Snapshot ids were assigned on 2026-11-16, after the study ran")
+        for snapshot in dataset["snapshots"]:
+            assert len(snapshot["snapshot_id"]) == 64 and snapshot["name"] in PRESETS
+    # The news study reads its events from one cache and its prices from another.
+    assert [s["name"] for s in named["news-rules"]["snapshots"]] == ["public-information-20261114",
+                                                                      "dip-rules-full-market-20261112"]
+    view = hr.hypothesis_register(db, now=NOW)
+    assert _entry(view, "earnings-drift")["dataset"] == named["earnings-drift"]
+    assert _entry(view, "vix-gate")["dataset"] is None  # computed on the app's own history: no snapshot
+
+
 def test_closed_families_are_the_ones_where_every_study_failed():
     closed = hr.closed_families()
     for family in ("post_earnings_drift", "insider_trades", "public_information", "intraday", "breakout", "dip_buying",

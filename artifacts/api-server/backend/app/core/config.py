@@ -518,6 +518,14 @@ class Settings(BaseSettings):
     # guard killed that run on 2026-11-10, so production turns it off and the
     # full-history research runs locally (scripts/local_sweep.py).
     strategy_discovery_point_in_time: Optional[bool] = None
+    # Research data snapshots (research_data.py).  ``research_snapshot_root``
+    # is where snapshot folders live (default ~/.paper-training).  With
+    # ``research_snapshot_id`` set, strategy discovery and the experiment
+    # engine replay that snapshot instead of the app's cached yfinance history
+    # and record its id; unset (production), they record that they used the
+    # app's own history.
+    research_snapshot_root: str = ""
+    research_snapshot_id: str = ""
     # Admission requirement for new experiments (experiment_admission.py): a
     # new rule row, engine experiment or forward-spec candidate starts only if
     # it can reach its verdict within this many years under favourable inputs,
