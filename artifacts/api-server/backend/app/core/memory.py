@@ -23,10 +23,13 @@ _libc: Optional[ctypes.CDLL] = None
 _libc_checked = False
 
 
-def resident_mb() -> Optional[float]:
-    """This process's resident memory in MiB (Linux), or None where /proc is unavailable."""
+def resident_mb(pid: Optional[int] = None) -> Optional[float]:
+    """Resident memory in MiB of this process, or of ``pid`` (Linux).
+
+    None where /proc is unavailable or the process is gone.
+    """
     try:
-        with open("/proc/self/statm", "r", encoding="ascii") as handle:
+        with open(f"/proc/{'self' if pid is None else int(pid)}/statm", "r", encoding="ascii") as handle:
             pages = int(handle.read().split()[1])
         return round(pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024), 1)
     except (OSError, ValueError, IndexError):
