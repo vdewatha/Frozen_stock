@@ -397,6 +397,7 @@ def _wait_for_postgres_blocker(admin_engine, waiting_pid, blocking_pid):
     pytest.fail("Expected PostgreSQL row-lock contention was not observed")
 
 
+@pytest.mark.postgres
 @pytest.mark.parametrize("scheduler_commits_during_checks", [True, False])
 @pytest.mark.parametrize("transition,denial", [
     ("advance", "rejected at forward_trial"),
@@ -480,6 +481,7 @@ def test_paper_approval_rechecks_concurrent_scheduler_transition(
         assert db.query(AuditLog).filter(AuditLog.action == "paper_run_approval").count() == 0
 
 
+@pytest.mark.postgres
 @pytest.mark.parametrize("commit_approval", [True, False])
 def test_paper_approval_lock_orders_scheduler_write_and_releases_on_rollback(
     approval_race_db, commit_approval,
@@ -530,6 +532,7 @@ def test_paper_approval_lock_orders_scheduler_write_and_releases_on_rollback(
             create_paper_run_approval(db, cycle_id, actor="operator", **body)
 
 
+@pytest.mark.postgres
 def test_concurrent_scheduled_handoffs_share_one_binding_and_trial():
     schema, admin_engine, engine = _postgres_schema_engine()
     cycle_id = "8" * 64
@@ -708,6 +711,7 @@ def test_concurrent_scheduled_handoffs_share_one_binding_and_trial():
         admin_engine.dispose()
 
 
+@pytest.mark.postgres
 def test_concurrent_scheduled_handoff_workers_defer_cross_cycle_paper_binding():
     schema, admin_engine, engine = _postgres_schema_engine()
     cycle_ids = ("a" * 64, "b" * 64)

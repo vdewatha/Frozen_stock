@@ -908,6 +908,7 @@ def test_the_close_endpoint_is_admin_only_confirms_the_candidate_and_writes_the_
     assert len(_close_rows(db)) == 1 and fx.entry_block_for(db, c2.id) is not None
 
 
+@pytest.mark.postgres
 def test_two_closers_at_once_write_one_close_row_on_postgresql():
     """The weekly review and an operator closing the same candidate together: one row, one unbroken audit chain."""
     import threading
