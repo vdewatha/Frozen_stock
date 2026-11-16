@@ -310,6 +310,27 @@ class RoundTripTests(ScorecardFixture):
         self.assertEqual((row["status"], row["verdict_sample"]), ("research", 40))
         self.assertEqual(books["slow_book"]["status"], "not_started")
 
+    def test_a_closed_forward_experiment_shows_its_closure_and_what_is_winding_down(self):
+        from app.services import forward_experiments as fx
+        from app.services.audit import write_audit_log
+
+        self.build_book()
+        registration = {"candidate": 1, "sweep_id": "probe:none", "strategy_type": "probe_b",
+                        "strategy_id": self.probe.id, "mechanism": "rule_row", "registered_at": at(13).isoformat(),
+                        "sample": {"verdict_sample": 40}}
+        write_audit_log(self.db, event_type="forward_experiment", entity_type="strategy", entity_id=self.probe.id,
+                        action="register", status="registered", message="candidate 1", payload=registration)
+        self.db.flush()
+        fx.close_candidate(self.db, registration, reason_kind="stop_rule", reasons=["clustered t -2.40 <= -2 after 61 trades"],
+                           now=NOW, actor="forward_experiments_review", review_number=1)
+        card = build_scorecard(self.db, days=30, now=NOW, account_id=self.account.id)
+        row = card["books"]["forward_experiments"]["candidates"][0]
+        self.assertEqual((row["entries"], row["closed_trades"], row["winding_down"]), (2, 1, 1))
+        self.assertEqual((row["closure"]["reason_kind"], row["closure"]["entries_blocked"]), ("stop_rule", True))
+        # Its lots stay off the exploration line while they wind down.
+        self.assertEqual(card["books"]["exploration"]["open"]["positions"], 0)
+        self.assertIn(f"closed {NOW.date().isoformat()} (stop rule), entries off, 1 winding down", render_markdown(card))
+
     def test_a_failing_book_line_never_breaks_the_scorecard(self):
         self.build_book()
         with patch.object(scorecard_module, "slow_book_line", side_effect=RuntimeError("boom")):

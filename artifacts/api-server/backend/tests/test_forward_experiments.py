@@ -548,3 +548,417 @@ def test_api_routes_exist():
     paths = {route.path: route.methods for route in router.routes}
     assert "GET" in paths["/stock-paper/forward-experiments"]
     assert "POST" in paths["/stock-paper/forward-experiments/review"]
+
+
+# ------------------------------------------------------------------ closures
+
+def _losing_run(db, strategy, *, trades=70, start=datetime(2026, 11, 13, 14, 31, tzinfo=UTC)):
+    """Enough losing round trips, spread over months, to trip the t arm of the stop rule."""
+    for i in range(trades):
+        opened = start + timedelta(days=i)
+        _attribution(db, strategy, "AAPL", opened, opened + timedelta(days=2), -0.02 - 0.001 * (i % 5))
+
+
+def _registered_rows(db):
+    _ibs(db)
+    fx.register_forward_experiments(db, now=NOW)
+    return {row.strategy_type: row for row in db.scalars(select(Strategy)).all()}
+
+
+def _close_rows(db):
+    return db.scalars(select(AuditLog).where(AuditLog.event_type == fx.EVENT, AuditLog.action == fx.ACTION_CLOSE)
+                      .order_by(AuditLog.id)).all()
+
+
+def test_the_review_that_records_a_triggered_stop_rule_closes_the_candidate_once(db):  # noqa: F811
+    from app.models import Notification
+
+    rows = _registered_rows(db)
+    c2 = rows["rule_1cd460d679"]
+    _losing_run(db, c2)
+    frames = _flat_frames(["AAPL"], start="2026-06-01")
+    # Before a review records it, the live reading says what will happen.
+    live = fx.build_review(db, now=datetime(2027, 3, 1, tzinfo=UTC), loader=frames.get, measured={}, inputs={})
+    two = {c["candidate"]: c for c in live["candidates"]}[2]
+    assert two["stop_rule"]["triggered"] and two["closure"] is None
+    assert "the next recorded review closes it" in fx.render_markdown(live, number=1)
+    assert fx.entry_block_for(db, c2.id) is None and fx.entry_blocks(db) == {}
+
+    recorded = fx.record_review(db, now=datetime(2027, 3, 1, tzinfo=UTC), loader=frames.get)
+    assert recorded["status"] == "recorded" and recorded["closed"] == [2]
+    assert "candidate 2: the stop rule triggered" in recorded["reasons"]
+    (close,) = _close_rows(db)
+    review = db.scalars(select(AuditLog).where(AuditLog.event_type == fx.EVENT, AuditLog.action == fx.ACTION_REVIEW)).one()
+    assert close.entity_type == "strategy" and close.entity_id == c2.id and close.status == "closed"
+    payload = close.payload
+    assert payload["candidate"] == 2 and payload["sweep_id"] == "1cd460d679:none" and payload["mechanism"] == "rule_row"
+    assert payload["reason_kind"] == "stop_rule" and payload["entries_blocked"] is True and payload["reopen"] == "none"
+    assert payload["review_number"] == 1 and payload["review_audit_id"] == review.id
+    assert payload["reasons"] == two["stop_rule"]["reasons"] and payload["closed_by"] == "forward_experiments_review"
+    assert payload["open_at_closure"] == {"lots": [], "pending_entries": 0}
+    # The review row carries the closure it caused.
+    reviewed = {c["candidate"]: c for c in review.payload["candidates"]}[2]
+    assert reviewed["closure"]["reason_kind"] == "stop_rule" and reviewed["status"].startswith("closed 2027-03-01")
+    assert "Candidate 2: CLOSED 2027-03-01 (stop rule:" in review.payload["markdown"]
+    assert "new entries disabled" in review.payload["markdown"] and "| CLOSED |" in review.payload["markdown"]
+    # The row takes no new entries, by its id; the marker mirrors the closure; it is still protected (not retired).
+    reason = fx.entry_block_for(db, c2.id)
+    assert reason.startswith("forward experiment 2 is closed (stop rule, 2027-03-01)")
+    assert fx.entry_blocks(db) == {c2.id: reason}
+    marker = c2.parameters["forward_experiment"]
+    assert marker["closure_kind"] == "stop_rule" and marker["entries_blocked"] is True and "released_at" not in marker
+    assert fx.is_registered_row(c2.parameters) and c2.current_status == "paper_trading_candidate"
+    notice = db.scalars(select(Notification).where(Notification.source == "forward_experiments")).one()
+    assert notice.title == "Forward experiment 2 closed" and notice.entity_id == c2.id
+    # A closed candidate calls for no further review and is never closed twice.
+    assert fx.record_review(db, now=datetime(2027, 3, 8, tzinfo=UTC), loader=frames.get)["status"] == "not_due"
+    forced = fx.record_review(db, now=datetime(2027, 3, 9, tzinfo=UTC), loader=frames.get, force=True)
+    assert forced["status"] == "recorded" and forced["closed"] == [] and len(_close_rows(db)) == 1
+    again = fx.close_candidate_by_number(db, 2, reason="a second closure must not be written")
+    assert again["status"] == "already_closed" and len(_close_rows(db)) == 1
+    view = fx.forward_experiments_view(db, now=datetime(2027, 3, 10, tzinfo=UTC))
+    assert [c["candidate"] for c in view["closures"]] == [2]
+    assert {r["candidate"]: r["closure"] for r in view["registrations"]}[2]["reason_kind"] == "stop_rule"
+    assert {r["candidate"]: r["closure"] for r in view["registrations"]}[1] is None
+
+
+def test_a_trigger_an_earlier_review_already_recorded_still_closes(db):  # noqa: F811
+    from app.services.audit import write_audit_log
+
+    rows = _registered_rows(db)
+    c2 = rows["rule_1cd460d679"]
+    _losing_run(db, c2)
+    frames = _flat_frames(["AAPL"], start="2026-06-01")
+    # A review written before closures existed: the trigger is on record, nothing was closed.
+    earlier = fx.build_review(db, now=datetime(2027, 3, 1, tzinfo=UTC), loader=frames.get)
+    write_audit_log(db, event_type=fx.EVENT, entity_type="forward_experiments", action=fx.ACTION_REVIEW,
+                    status="recorded", message="review 1", payload={**earlier, "review_number": 1})
+    db.flush()
+    assert fx.closures(db) == {}
+    recorded = fx.record_review(db, now=datetime(2027, 3, 2, tzinfo=UTC), loader=frames.get)
+    assert recorded["status"] == "recorded" and recorded["review_number"] == 2 and recorded["closed"] == [2]
+    assert fx.entry_block_for(db, c2.id) is not None
+
+
+def test_a_closed_candidate_s_sample_ends_at_its_closure_and_the_pool_keeps_its_trades(db):  # noqa: F811
+    rows = _registered_rows(db)
+    c2, ibs = rows["rule_1cd460d679"], rows["ibs_mean_reversion"]
+    closed_at = datetime(2026, 12, 1, 18, 0, tzinfo=UTC)
+    before = _signal(db, c2, "AAPL", "2026-11-12")
+    at_broker = _signal(db, c2, "MSFT", "2026-11-30", when=datetime(2026, 12, 1, 17, 59))
+    after = _signal(db, c2, "AAPL", "2026-12-01", when=datetime(2026, 12, 1, 18, 1))
+    _attribution(db, c2, "AAPL", datetime(2026, 11, 13, 14, 31, tzinfo=UTC), datetime(2026, 11, 18, 20, 0, tzinfo=UTC), 0.012,
+                 signal_id=before.id)
+    # Decided before the closure, filled after it, closed long after it: the candidate's trade.
+    _attribution(db, c2, "MSFT", datetime(2026, 12, 1, 18, 5, tzinfo=UTC), datetime(2026, 12, 8, 20, 0, tzinfo=UTC), -0.004,
+                 signal_id=at_broker.id)
+    # Decided after the closure (any path that got past the gates): not the candidate's trade.
+    _attribution(db, c2, "AAPL", datetime(2026, 12, 2, 14, 31, tzinfo=UTC), datetime(2026, 12, 4, 20, 0, tzinfo=UTC), 0.05,
+                 signal_id=after.id)
+    _attribution(db, c2, "AAPL", datetime(2026, 12, 3, 14, 31, tzinfo=UTC), datetime(2026, 12, 5, 20, 0, tzinfo=UTC), 0.05)
+    frames = _flat_frames(["SPY", "QQQ", "AAPL", "MSFT"], start="2026-06-01", rows=200)
+    for name in frames:
+        f = frames[name]
+        f["close"] = 100 + np.arange(len(f)) * 0.1
+        f["open"], f["high"], f["low"] = f["close"], f["close"] + 0.5, f["close"] - 0.5
+    _signal(db, ibs, "SPY", "2026-11-12", vix=True)
+    _signal(db, ibs, "QQQ", "2026-12-02", vix=True)  # after candidate 6 closes
+    later = datetime(2027, 1, 15, 22, 0, tzinfo=UTC)
+    inputs = {"loss_bound_bps": {"technical": 1600.0, "reversion": 1100.0}, "sigma_bps": {"technical": 450.0, "reversion": 300.0},
+              "rho": 0.07, "as_of": "2026-11-07", "source": "test", "recorded": False}
+
+    def reading():
+        with patch("app.services.meta_label_primary.replay_exit_signals", lambda frame, slug: np.ones(len(frame), dtype=bool)):
+            review = fx.build_review(db, now=later, loader=frames.get, measured={}, inputs=inputs)
+        return {c["candidate"]: c for c in review["candidates"]}, review
+
+    open_, _ = reading()
+    assert open_[2]["trades"] == 4 and open_[6]["trades"] == 2
+    fx.close_candidate_by_number(db, 2, reason="cannot reach a verdict in a useful time", now=closed_at)
+    fx.close_candidate_by_number(db, 6, reason="closing the tag sample for the test", now=closed_at)
+    closed, review = reading()
+    assert closed[2]["trades"] == 2 and closed[2]["symbols_covered"] == ["AAPL", "MSFT"]
+    assert closed[2]["status"] == "closed 2026-12-01 (operator closure), final n = 2"
+    assert closed[2]["closure"]["reason_kind"] == "operator_closure" and closed[2]["open_lots"] == {"lots": [], "pending_entries": 0}
+    assert closed[6]["trades"] == 1 and closed[6]["symbols_covered"] == ["SPY"] and closed[6]["open_lots"] is None
+    assert review["pooled"]["trades"] == 2  # the pooled hypothesis keeps the closed member's trades
+    markdown = fx.render_markdown(review, number=1)
+    assert "Candidate 6: CLOSED 2026-12-01 (operator closure: closing the tag sample for the test); the sample is closed" in markdown
+    # Neither closed candidate asks for a review again.
+    assert fx.review_due(review, None, now=later)["reasons"] == []
+
+
+def test_a_tag_candidate_closes_its_sample_only_and_a_rule_row_closes_its_entries(db):  # noqa: F811
+    rows = _registered_rows(db)
+    ibs = rows["ibs_mean_reversion"]
+    assert fx.is_registered_row(ibs.parameters)
+    out = fx.close_candidate_by_number(db, 6, reason="two-year clock elapsed without a pass", reason_kind="verdict_failed",
+                                       actor="operator:me", now=datetime(2027, 3, 1, tzinfo=UTC))
+    assert out["status"] == "closed" and out["closure"]["mechanism"] == "tag_row"
+    assert out["closure"]["entries_blocked"] is False and out["closure"]["closed_by"] == "operator:me"
+    # The host row is not the experiment's to change: it still enters, and it is released to normal governance.
+    assert fx.entry_block_for(db, ibs.id) is None and fx.entry_blocks(db) == {}
+    assert ibs.current_status == "shadow" and not fx.is_registered_row(ibs.parameters)
+    assert ibs.parameters["forward_experiment"]["released_at"] == "2027-03-01T00:00:00+00:00"
+    # Candidate 4 has no ungated host here, so it was bound as its own gated row: the mechanism decides, not the number.
+    four = next(r for r in fx.registrations(db) if r["candidate"] == 4)
+    assert four["mechanism"] == "rule_row"
+    out = fx.close_candidate_by_number(db, 4, reason="closing the gated row for the test")
+    assert out["closure"]["entries_blocked"] is True and fx.entry_block_for(db, four["strategy_id"]) is not None
+
+
+def test_a_closed_rule_row_stays_in_the_cycle_until_it_is_flat_then_retires(db):  # noqa: F811
+    from tests.test_strategy_discovery import _row
+
+    rows = _registered_rows(db)
+    c1 = rows["rule_c8e129d06c"]
+    fx.close_candidate_by_number(db, 1, reason="cannot reach a verdict in a useful time", now=datetime(2027, 3, 1, tzinfo=UTC))
+    # A discovery re-grade must not take the row out of the cycle while a lot may still need its exits.
+    outcome = sd.admit_survivors(db, {"candidates": [_row("c8e129d06c", "rejected", family="weekly_reversal")]}, now=NOW)
+    assert outcome["retired"] == [] and c1.current_status == "paper_trading_candidate"
+    held = {"lots": [{"symbol": "XLK", "quantity": "3"}], "pending_entries": 0}
+    with patch.object(fx, "open_lots", return_value=held):
+        settled = fx.settle_closures(db, now=datetime(2027, 3, 6, tzinfo=UTC))
+    assert settled["retired"] == [] and settled["winding_down"] == [
+        {"candidate": 1, "strategy_type": "rule_c8e129d06c", "open": held}]
+    assert c1.current_status == "paper_trading_candidate" and fx.is_registered_row(c1.parameters)
+    # An unreadable book is never read as flat.
+    with patch.object(fx, "open_lots", side_effect=RuntimeError("down")):
+        assert fx.settle_closures(db)["retired"] == [] and c1.current_status == "paper_trading_candidate"
+    # An entry still in flight keeps it in the cycle too.
+    with patch.object(fx, "open_lots", return_value={"lots": [], "pending_entries": 1}):
+        assert fx.settle_closures(db)["retired"] == []
+    settled = fx.settle_closures(db, now=datetime(2027, 3, 13, tzinfo=UTC))
+    assert settled["retired"] == ["rule_c8e129d06c"] and c1.current_status == "retired"
+    assert not fx.is_registered_row(c1.parameters)
+    audit = db.scalars(select(AuditLog).where(AuditLog.event_type == "strategy_governance",
+                                              AuditLog.action == fx.RETIRE_ACTION)).one()
+    assert audit.entity_id == c1.id and audit.payload["old_status"] == "paper_trading_candidate"
+    assert audit.payload["closure_audit_id"] == _close_rows(db)[0].id
+    assert fx.settle_closures(db)["retired"] == []  # once
+    assert fx.entry_block_for(db, c1.id) is not None  # retired or not, the closure still refuses entries
+    # An open candidate's row is never settled.
+    assert rows["rule_1cd460d679"].current_status == "paper_trading_candidate"
+
+
+def test_open_lots_reads_the_row_s_own_holding_and_entries_in_flight(db):  # noqa: F811
+    from app.models.stock_paper import StockPaperAccount, StockPaperFill, StockPaperOrder, StockPaperPosition
+
+    rows = _registered_rows(db)
+    c2, c1 = rows["rule_1cd460d679"], rows["rule_c8e129d06c"]
+    account = StockPaperAccount(broker="alpaca_paper", broker_account_id="paper-test", currency="USD", cash=1000,
+                                buying_power=1000, equity=1000, status="reconciled", reconciliation_required=False,
+                                raw_payload={})
+    db.add(account)
+    db.flush()
+    when = datetime(2026, 11, 20, 15, 0, tzinfo=UTC)
+
+    def order(strategy, symbol, side, status, key):
+        row = StockPaperOrder(account_id=account.id, strategy_id=strategy.id, client_order_id=key, symbol=symbol,
+                              side=side, quantity=Decimal("2"), status=status, source="paper_exploration")
+        db.add(row)
+        db.flush()
+        return row
+
+    def fill(order_row, key):
+        db.add(StockPaperFill(account_id=account.id, order_id=order_row.id, broker_activity_id=key,
+                              symbol=order_row.symbol, side=order_row.side, quantity=order_row.quantity,
+                              price=Decimal("100"), filled_at=when, raw_payload={}))
+
+    fill(order(c2, "AAPL", "buy", "filled", "b1"), "a1")
+    fill(order(c2, "MSFT", "buy", "filled", "b2"), "a2")
+    fill(order(c2, "MSFT", "sell", "filled", "s2"), "a3")   # MSFT is flat again
+    fill(order(c1, "XLK", "buy", "filled", "b3"), "a4")     # another row's lot
+    order(c2, "NVDA", "buy", "accepted", "b4")              # an entry still at the broker
+    for symbol, quantity in (("AAPL", "2"), ("XLK", "2")):
+        db.add(StockPaperPosition(account_id=account.id, symbol=symbol, quantity=Decimal(quantity), observed_at=when,
+                                  raw_payload={}))
+    db.flush()
+    assert fx.open_lots(db, c2) == {"lots": [{"symbol": "AAPL", "quantity": "2.000000000"}], "pending_entries": 1}
+    assert fx.open_lots(db, rows["rule_213239cdf2"]) == {"lots": [], "pending_entries": 0}
+    fx.close_candidate_by_number(db, 2, reason="closing with a lot still open")
+    assert _close_rows(db)[0].payload["open_at_closure"]["lots"] == [{"symbol": "AAPL", "quantity": "2.000000000"}]
+    assert fx.settle_closures(db)["retired"] == [] and c2.current_status == "paper_trading_candidate"
+
+
+def test_a_closure_survives_a_reseed_a_resume_a_lost_marker_and_a_new_session(db):  # noqa: F811
+    from sqlalchemy.orm import Session as OrmSession
+
+    from app.models import RiskRule
+    from app.services import seed
+    from app.services.safety_controls import resume_candidate_strategies
+
+    rows = _registered_rows(db)
+    c2 = rows["rule_1cd460d679"]
+    fx.close_candidate_by_number(db, 2, reason="cannot reach a verdict in a useful time", now=datetime(2027, 3, 1, tzinfo=UTC))
+    blocked = fx.entry_block_for(db, c2.id)
+    assert blocked is not None
+    # A reseed registers nothing again, closes nothing again and re-mirrors a marker that lost its closure.
+    params = dict(c2.parameters)
+    params["forward_experiment"] = {k: v for k, v in params["forward_experiment"].items() if k not in fx.MARKER_CLOSURE_KEYS}
+    c2.parameters = params
+    db.flush()
+    out = seed.register_forward_experiments_once(db)
+    assert out["registered"] == [] and out["closure_markers"] == ["rule_1cd460d679"]
+    assert c2.parameters["forward_experiment"]["closure_kind"] == "operator_closure" and len(_close_rows(db)) == 1
+    assert seed.register_forward_experiments_once(db)["closure_markers"] == []
+    # A pause followed by the control room's resume puts the row back in the cycle; the closure still refuses entries.
+    db.add(RiskRule(name="defaults", value={}))
+    c2.current_status = "paused"
+    db.flush()
+    resume_candidate_strategies(db, actor="operator:test")
+    assert c2.current_status == "paper_trading_candidate" and fx.entry_block_for(db, c2.id) == blocked
+    # An overlay that replaces the row's parameters wholesale loses the marker, not the closure.
+    c2.parameters = {"rule": c2.parameters["rule"]}
+    db.commit()
+    assert fx.entry_block_for(db, c2.id) == blocked and fx.entry_blocks(db) == {c2.id: blocked}
+    # A restart: nothing but the database.
+    with OrmSession(db.get_bind()) as fresh:
+        assert fx.entry_block_for(fresh, c2.id) == blocked
+        assert list(fx.closures(fresh)) == ["1cd460d679:none"]
+
+
+def test_a_failed_registration_no_longer_discards_the_rest_of_the_seed_pass(db, monkeypatch):  # noqa: F811
+    from app.services import seed
+
+    db.add(Strategy(name="earlier lineup step", strategy_type="earlier_step", parameters={}, is_active=True,
+                    current_status="research"))
+    db.flush()  # written by an earlier lineup step of the same pass, not committed yet
+    monkeypatch.setattr(fx, "load_spec", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+    assert seed.register_forward_experiments_once(db)["status"] == "failed"
+    assert db.scalars(select(Strategy).where(Strategy.strategy_type == "earlier_step")).one().name == "earlier lineup step"
+
+
+def test_an_operator_closure_needs_a_registered_candidate_a_reason_and_an_operator_kind(db):  # noqa: F811
+    _registered_rows(db)
+    with pytest.raises(fx.ForwardExperimentError, match="not registered"):
+        fx.close_candidate_by_number(db, 9, reason="there is no ninth candidate")
+    with pytest.raises(fx.ForwardExperimentError, match="at least 10 characters"):
+        fx.close_candidate_by_number(db, 2, reason="short")
+    with pytest.raises(fx.ForwardExperimentError, match="reason_kind"):
+        fx.close_candidate_by_number(db, 2, reason="only the review closes on the stop rule", reason_kind="stop_rule")
+    assert fx.closures(db) == {}
+
+
+def test_an_annul_row_would_reopen_only_its_own_candidate():
+    rows = [(1, fx.ACTION_CLOSE, {"sweep_id": "a", "entries_blocked": True}),
+            (2, fx.ACTION_CLOSE, {"sweep_id": "b", "entries_blocked": True}),
+            (3, fx.ACTION_ANNUL, {"sweep_id": "a"}),
+            (4, "close", {"no": "sweep id"})]
+    assert fx._closure_state(rows) == {"b": {"sweep_id": "b", "entries_blocked": True, "audit_id": 2}}
+
+
+def test_the_close_route_and_the_settling_job_are_wired():
+    import inspect
+
+    from app.api.stock_paper import ForwardExperimentCloseRequest, router
+    from app.tasks import jobs
+
+    paths = {route.path: route.methods for route in router.routes}
+    assert "POST" in paths["/stock-paper/forward-experiments/{candidate}/close"]
+    with pytest.raises(ValueError):
+        ForwardExperimentCloseRequest(reason="too short", confirm_candidate=2)
+    with pytest.raises(ValueError):
+        ForwardExperimentCloseRequest(reason="only the review closes on the stop rule", reason_kind="stop_rule",
+                                      confirm_candidate=2)
+    body = inspect.getsource(jobs.forward_experiments_review_job)
+    assert body.index("settle_closures(db)") < body.index("record_review(db)")
+
+
+def test_the_close_endpoint_is_admin_only_confirms_the_candidate_and_writes_the_closure(db):  # noqa: F811
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.stock_paper import router
+    from app.core.config import Settings
+    from app.core.security import AuthenticationMiddleware, required_role
+    from app.db.session import get_db
+
+    rows = _registered_rows(db)
+    db.commit()
+    c2 = rows["rule_1cd460d679"]
+    app = FastAPI()
+    app.add_middleware(AuthenticationMiddleware, configuration=Settings(
+        auth_viewer_key="v" * 40, auth_researcher_key="r" * 40, auth_operator_key="o" * 40, auth_admin_key="a" * 40))
+    app.include_router(router, prefix="/api")
+    app.dependency_overrides[get_db] = lambda: db
+    assert required_role("POST", "/stock-paper/forward-experiments/2/close") == "admin"
+    url = "/api/stock-paper/forward-experiments/2/close"
+    body = {"reason": "cannot reach a verdict in a useful time", "confirm_candidate": 2}
+    admin = {"Authorization": "Bearer " + "a" * 40}
+    with TestClient(app) as client:
+        assert client.post(url, json=body).status_code == 401
+        for role in ("v", "r", "o"):
+            assert client.post(url, json=body, headers={"Authorization": "Bearer " + role * 40}).status_code == 403
+        assert fx.closures(db) == {}
+        assert client.post(url, json={**body, "confirm_candidate": 3}, headers=admin).status_code == 422
+        assert client.post(url, json={**body, "reason": "short"}, headers=admin).status_code == 422
+        assert client.post(url, json={**body, "reason_kind": "stop_rule"}, headers=admin).status_code == 422
+        missing = client.post("/api/stock-paper/forward-experiments/9/close", json={**body, "confirm_candidate": 9},
+                              headers=admin)
+        assert missing.status_code == 422 and "not registered" in missing.text
+        assert fx.closures(db) == {}
+        done = client.post(url, json=body, headers=admin)
+        assert done.status_code == 200, done.text
+        out = done.json()
+        assert out["status"] == "closed" and out["paper_only"] is True and out["live_authorized"] is False
+        assert out["closure"]["reason_kind"] == "operator_closure" and out["closure"]["entries_blocked"] is True
+        assert out["closure"]["closed_by"].startswith("operator:")
+        assert client.post(url, json=body, headers=admin).json()["status"] == "already_closed"
+    assert len(_close_rows(db)) == 1 and fx.entry_block_for(db, c2.id) is not None
+
+
+@pytest.mark.postgres
+def test_two_closers_at_once_write_one_close_row_on_postgresql():
+    """The weekly review and an operator closing the same candidate together: one row, one unbroken audit chain."""
+    import threading
+    from uuid import uuid4
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.orm import Session as OrmSession
+
+    from app.db.base import Base
+
+    url = make_url(settings.database_url)
+    if url.get_backend_name() != "postgresql":
+        pytest.skip("Requires isolated PostgreSQL validation stack")
+    owner = create_engine(url)
+    schema = "fxclose_" + uuid4().hex
+    with owner.begin() as conn:
+        conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+    engine = create_engine(url.update_query_dict({"options": f"-csearch_path={schema}"}))
+    try:
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as setup:
+            _ibs(setup)
+            fx.register_forward_experiments(setup, now=NOW)
+            setup.commit()
+        barrier, outcomes, errors = threading.Barrier(2), [], []
+
+        def closer(name):
+            try:
+                with OrmSession(engine) as session:
+                    barrier.wait(timeout=10)
+                    out = fx.close_candidate_by_number(session, 2, reason=f"closed at the same moment by {name}",
+                                                       actor=name)
+                    session.commit()
+                    outcomes.append(out["status"])
+            except Exception as exc:  # surfaced below; a thread must not swallow it
+                errors.append(exc)
+
+        threads = [threading.Thread(target=closer, args=(name,)) for name in ("review", "operator")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert errors == [] and sorted(outcomes) == ["already_closed", "closed"]
+        with OrmSession(engine) as check:
+            assert len(_close_rows(check)) == 1 and list(fx.closures(check)) == ["1cd460d679:none"]
+            chain = check.execute(select(AuditLog.previous_event_sha256, AuditLog.event_sha256).order_by(AuditLog.id)).all()
+            assert [previous for previous, _ in chain[1:]] == [digest for _, digest in chain[:-1]]
+    finally:
+        engine.dispose()
+        with owner.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        owner.dispose()

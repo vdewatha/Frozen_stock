@@ -54,7 +54,10 @@ const statusClass: Record<string, string> = {
   ok: "bg-emerald-50 text-mint border-emerald-200",
   warning: "bg-amber-50 text-amber border-amber-200",
   failing: "bg-red-50 text-coral border-red-200",
-  waiting: "bg-slate-100 text-slate-700 border-slate-200"
+  waiting: "bg-slate-100 text-slate-700 border-slate-200",
+  passed: "bg-emerald-50 text-mint border-emerald-200",
+  inconclusive: "bg-amber-50 text-amber border-amber-200",
+  collecting: "bg-blue-50 text-blue-700 border-blue-200"
 };
 
 export function StatusPill({ status }: { status: string }) {

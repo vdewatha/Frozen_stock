@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import math
+import time
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -2390,6 +2391,74 @@ def _history_already_answers(order: StockPaperOrder, history: dict[str, dict | N
     return False
 
 
+RECOVERY_ROW_BUSY = object()
+# How long reconciliation may queue for the recovery row while it holds the
+# account.  It must stay below PostgreSQL's deadlock_timeout (1 s by default):
+# a pause that holds the row is waiting for the account, and the deadlock
+# check that would kill one of the two runs once this wait has lasted that long.
+RECOVERY_ROW_WAIT_MS = 500
+RECOVERY_ROW_DEFERRED_REASON = ("The recovery state is held by another process (a pause or resume in flight); this "
+                                "reconciliation left the halt in place and the next one decides")
+
+
+def _recovery_row_without_waiting(db: Session):
+    """The recovery row, locked, for a write made while this transaction holds the account; or ``RECOVERY_ROW_BUSY``.
+
+    Lock order.  Every pause (monitor, watchdog, operator) and every resume
+    locks the recovery row and then the account.  Reconciliation holds the
+    account for the whole broker sync and writes the recovery row at its end,
+    the opposite order.  If it waited for a row held by a pause that is itself
+    waiting for the account, PostgreSQL broke the cycle by killing one of
+    them: on 2026-11-16 a test showed the monitor's pause dropped and trading
+    restored.  So reconciliation never waits for such a holder.  It queues for
+    ``RECOVERY_ROW_WAIT_MS`` at most: a holder that is not waiting for the
+    account (a heartbeat write, a resume check that gives way) is gone in
+    milliseconds, and queueing, unlike polling, cannot be starved by a stream
+    of them.  Past that it reports the row busy, and the caller leaves its
+    recovery decision to the next reconciliation.
+
+    Reading the row under its lock also means the decision is made on the
+    current state, not on one read before a pause that has since committed.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    if db.get_bind().dialect.name != "postgresql":
+        return db.get(StockPaperRecoveryState, 1)
+    statement = (select(StockPaperRecoveryState).where(StockPaperRecoveryState.id == 1)
+                 .with_for_update().execution_options(populate_existing=True))
+    previous = db.execute(text("SELECT current_setting('lock_timeout')")).scalar_one()
+    try:
+        with db.begin_nested():
+            db.execute(text("SELECT set_config('lock_timeout', :value, true)"), {"value": f"{RECOVERY_ROW_WAIT_MS}ms"})
+            row = db.execute(statement).scalar_one_or_none()
+    except DBAPIError as exc:  # the savepoint's rollback also undid the timeout it set
+        orig = getattr(exc, "orig", None)
+        if getattr(orig, "sqlstate", None) != "55P03" and type(orig).__name__ != "LockNotAvailable":
+            raise
+        return RECOVERY_ROW_BUSY
+    db.execute(text("SELECT set_config('lock_timeout', :value, true)"), {"value": previous})
+    return row
+
+
+def _account_then_order(db: Session, account_id: int, order_id: int) -> tuple[StockPaperAccount, StockPaperOrder]:
+    """After a broker reply: lock the account row, then the order row, and read both fresh.
+
+    Lock order.  Dispatch holds nothing during the POST, so a reconciliation
+    can take the account then and import the very order being posted.  Writing
+    the order row first and the ledger event second (its foreign key needs the
+    account row) crossed that reconciliation, and PostgreSQL killed one of the
+    two: on 2026-11-16 a test showed an accepted order filed as ``unknown``
+    and the account halted.  Taking the account first means dispatch simply
+    waits for the reconciliation to finish.
+    """
+    account = db.execute(select(StockPaperAccount).where(StockPaperAccount.id == account_id)
+                         .with_for_update().execution_options(populate_existing=True)).scalar_one()
+    order = db.execute(select(StockPaperOrder).where(StockPaperOrder.id == order_id)
+                       .with_for_update().execution_options(populate_existing=True)).scalar_one()
+    return account, order
+
+
 def reconcile_stock_paper_account(db: Session, gateway: AlpacaPaperGateway | None = None) -> dict:
     """Reconcile the broker account and preserve the automatic-recovery contract.
 
@@ -2751,7 +2820,14 @@ def _reconcile_locked_account(db: Session, account: StockPaperAccount, gateway: 
                 # broker/reconciliation breach) stayed operator-only until
                 # someone pressed Resume.
                 review_cleared = False
-                recovery_state = db.get(StockPaperRecoveryState, 1)
+                recovery_state = _recovery_row_without_waiting(db)
+                if recovery_state is RECOVERY_ROW_BUSY:
+                    # Never wait for the recovery row while holding the account.
+                    # The review flag stays up for an operator: failing closed.
+                    recovery_state = None
+                    _event(db, account, "reconcile", "review_flag_left",
+                           "Residual resolved, but the recovery state was held by another process; the accounting "
+                           "review flag was left for an operator")
                 if recovery_state is not None and recovery_state.accounting_review_required:
                     recovery_state.accounting_review_required = False
                     recovery_state.accounting_reviewed_at = datetime.now(UTC)
@@ -2817,6 +2893,17 @@ def _reconcile_locked_account(db: Session, account: StockPaperAccount, gateway: 
                 )
             )
             account.reconciliation_required = False
+            # Clearing either halt reads and may write the recovery row, which
+            # a pause or resume in flight holds while it waits for this account.
+            # Reconciliation never waits for it (_recovery_row_without_waiting):
+            # when it is busy the halt stays and the next reconciliation decides.
+            recovery_state = None
+            if watchdog_halt or transient_provider_halt:
+                recovery_state = _recovery_row_without_waiting(db)
+            recovery_busy = recovery_state is RECOVERY_ROW_BUSY
+            if recovery_busy:
+                watchdog_halt = transient_provider_halt = False
+                _event(db, account, "reconcile", "recovery_deferred", RECOVERY_ROW_DEFERRED_REASON)
             # A fully matched Alpaca activity snapshot is sufficient to clear
             # only the exact transient-provider halt. Accounting, cost, and
             # recovery gates remain independent and continue to fail closed.
@@ -2828,7 +2915,6 @@ def _reconcile_locked_account(db: Session, account: StockPaperAccount, gateway: 
 
                 restored = restore_after_transient_heartbeat_pause(db, account)
             if (watchdog_halt or transient_provider_halt) and not restored:
-                recovery_state = db.get(StockPaperRecoveryState, 1)
                 if recovery_state and recovery_state.status in {"cooldown", "paused"}:
                     recovery_state.status = "revalidation_required"
                     recovery_state.updated_by = "stock_reconciler"
@@ -2902,6 +2988,20 @@ def resume_stock_paper_account(db: Session, *, reason: str) -> dict:
     )
 
 
+def _refuse_closed_forward_experiment(db: Session, strategy_id: int) -> None:
+    """No buy is bound to a row whose frozen forward experiment is closed.
+
+    Read from the close audit row on every reservation and again at dispatch
+    (``forward_experiments.entry_block_for``), so the refusal does not depend
+    on the row's status or parameters and a failed read refuses the buy.
+    """
+    from app.services.forward_experiments import entry_block_for
+
+    reason = entry_block_for(db, strategy_id)
+    if reason is not None:
+        raise StockPaperError(reason[:1].upper() + reason[1:])
+
+
 def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, signal_id: int | None,
                          quantity: Decimal, reference_price: Decimal, rules: dict, now: datetime) -> tuple[StrategySignal, StockPaperStrategyEvidence]:
     if signal_id is None:
@@ -2914,6 +3014,7 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     strategy = db.get(Strategy, signal.strategy_id)
     if not strategy or not strategy.is_active or strategy.current_status != "paper_trading_active":
         raise StockPaperError("Signal strategy is not active for paper trading")
+    _refuse_closed_forward_experiment(db, strategy.id)
     evidence = db.query(StockPaperStrategyEvidence).filter_by(strategy_id=strategy.id, status="approved").one_or_none()
     if not evidence or _utc(evidence.expires_at) < now:
         raise StockPaperError("Validated non-legacy strategy performance evidence is required for a buy")
@@ -3183,6 +3284,7 @@ def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: s
     allowed = EXPLORATION_STRATEGY_STATUSES | ({"paper_trading_active"} if lane else set())
     if not strategy or not strategy.is_active or strategy.current_status not in allowed:
         raise StockPaperError("Only active candidate or research strategies may explore")
+    _refuse_closed_forward_experiment(db, strategy.id)
     confidence = float(signal.confidence or 0)
     if not math.isfinite(confidence) or confidence < float(rules["min_confidence"]):
         raise StockPaperError("Exploration signal confidence is below the minimum threshold")
@@ -3830,8 +3932,14 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
         broker_id = str(raw.get("id") or "").strip()
         if not broker_id:
             raise StockPaperUnavailable("Broker accepted an order without an identifier")
-        order = db.get(StockPaperOrder, order_id)
-        order.broker_order_id, order.status, order.submitted_at, order.raw_payload = broker_id, str(raw.get("status") or "accepted"), datetime.now(UTC), raw
+        account, order = _account_then_order(db, account_id, order_id)
+        if order.broker_order_id == broker_id:
+            # A reconciliation that ran while this waited for the account has
+            # already imported the order, with a broker reading at least as new
+            # as this reply: keep its status, only record the submission time.
+            order.submitted_at = order.submitted_at or datetime.now(UTC)
+        else:
+            order.broker_order_id, order.status, order.submitted_at, order.raw_payload = broker_id, str(raw.get("status") or "accepted"), datetime.now(UTC), raw
         legs = []
         if (order.order_class or "simple") != "simple":
             try:
@@ -3840,7 +3948,7 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
                 # The entry is accepted; reconciliation imports the legs by
                 # client-id lookup.  Never turn an accepted POST into a retry.
                 legs = []
-        _event(db, db.get(StockPaperAccount, account_id), "order_submission", order.status,
+        _event(db, account, "order_submission", order.status,
                "Broker reported sandbox order submission", {"client_order_id": order.client_order_id, "broker_order_id": broker_id,
                                                             **({"order_class": order.order_class,
                                                                 "exit_leg_broker_order_ids": [leg.broker_order_id for leg in legs]}
@@ -3848,7 +3956,7 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
         db.commit()
     except _BrokerRejected as rejected:
         db.rollback()
-        order, account = db.get(StockPaperOrder, order_id), db.get(StockPaperAccount, account_id)
+        account, order = _account_then_order(db, account_id, order_id)
         order.status, order.reserved_cash, order.uncertain_submission = "rejected", Decimal("0"), False
         logger.info("stock paper order %s rejected by broker: %s", order.client_order_id, rejected.cause)
         _event(db, account, "order_submission", "rejected", "Broker rejected the order; nothing was accepted",
@@ -3858,7 +3966,7 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     except Exception as exc:
         db.rollback()
         logger.exception("stock paper order %s submission outcome uncertain: %s", order_id, exc.__class__.__name__)
-        order, account = db.get(StockPaperOrder, order_id), db.get(StockPaperAccount, account_id)
+        account, order = _account_then_order(db, account_id, order_id)
         order.status, order.uncertain_submission = "unknown", True
         _halt(account, "Order submission outcome is uncertain; read-only broker lookup/reconciliation required")
         _event(db, account, "order_submission", "unknown", account.halt_reason, {"client_order_id": order.client_order_id})

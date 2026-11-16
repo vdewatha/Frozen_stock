@@ -49,6 +49,8 @@ READ_PATHS = {
     "/stock-paper/weekly-report",
     "/stock-paper/learning-scoreboard",
     "/stock-paper/learning-experiments",
+    "/stock-paper/hypothesis-register",
+    "/stock-paper/experiment-admissions",
     "/stock-paper/gate-costs",
     "/stock-paper/setup-shadow",
     "/stock-paper/exploration-budget",

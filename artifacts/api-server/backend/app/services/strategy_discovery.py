@@ -680,7 +680,8 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
     existing = {row.strategy_type: row for row in
                 db.query(Strategy).filter(Strategy.strategy_type.like(f"{RULE_SLUG_PREFIX}%")).all()}
     live = sum(1 for row in existing.values() if row.current_status in LIVE_STATUSES)
-    admitted, retired, refreshed, vetoed = [], [], [], []
+    admission_known: dict = {}
+    admitted, retired, refreshed, vetoed, refused = [], [], [], [], []
     for slug, strategy in existing.items():
         row = by_id.get(slug[len(RULE_SLUG_PREFIX):])
         if row is None:
@@ -717,6 +718,14 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
             continue
         if len(admitted) >= max_new or live >= max_live:
             break
+        # A new row is a new experiment: it starts only if it can reach a
+        # verdict in a useful time and its family is not closed
+        # (experiment_admission.py).  Rows already admitted are not re-judged.
+        admission = _admission(db, row, result, known=admission_known)
+        if admission is not None and not admission["admitted"]:
+            refused.append({"slug": slug, "family": row.get("family"), "reasons": admission["reasons"],
+                            "years_to_verdict": admission["estimate"].get("years_to_verdict")})
+            continue
         strategy = Strategy(name=f"Discovered {row['family']} ({row['universe']}) {row['id']}"[:128],
                             strategy_type=slug, description=f"{row['description']}. Found by strategy discovery.",
                             parameters=strategy_parameters(row, now=now), is_active=True,
@@ -730,7 +739,27 @@ def admit_survivors(db: Session, result: dict, *, now: Optional[datetime] = None
                         entity_id=strategy.id,
                         payload={"slug": slug, "gate": row["gate"], "lineage": row.get("lineage"), "paper_only": True})
     db.flush()
-    return {"admitted": admitted, "retired": retired, "refreshed": refreshed, "live": live, "vetoed": vetoed}
+    return {"admitted": admitted, "retired": retired, "refreshed": refreshed, "live": live, "vetoed": vetoed,
+            "refused": refused}
+
+
+def _admission(db: Session, row: Mapping, result: Mapping, *, known: dict) -> Optional[dict]:
+    """The admission decision for a rule about to get a row, recorded; None when admission is off or unreadable."""
+    from app.services import experiment_admission
+
+    if not experiment_admission.enabled():
+        return None
+    try:
+        if "decisions" not in known:
+            known["decisions"] = experiment_admission.latest_decisions(db)
+            known["inputs"] = experiment_admission.measured_inputs(db)
+        decision = experiment_admission.check_discovery(db, row, result, inputs=known["inputs"])
+    except Exception as exc:  # a check that cannot run must not stop the weekly discovery pass
+        logger.warning("strategy discovery: admission check unavailable for %s: %s", row.get("id"),
+                       exc.__class__.__name__)
+        return None
+    experiment_admission.record(db, decision, known=known["decisions"])
+    return decision
 
 
 # ---------------------------------------------------------------- scheduled run
@@ -927,7 +956,7 @@ def run_strategy_discovery(db: Session, *, now: Optional[datetime] = None, loade
         for row in result["candidates"]:
             row["evaluated_symbols"] = len(row["symbols"])
             row["symbols"] = [s for s in row["symbols"] if s in tradeable]
-    admission = {"admitted": [], "retired": [], "refreshed": [], "live": None, "vetoed": []}
+    admission = {"admitted": [], "retired": [], "refreshed": [], "live": None, "vetoed": [], "refused": []}
     if settings.strategy_discovery_admission_enabled:
         admission = admit_survivors(db, result, now=now, max_new=settings.strategy_discovery_max_new,
                                     max_live=settings.strategy_discovery_max_live,

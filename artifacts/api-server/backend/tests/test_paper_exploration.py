@@ -106,6 +106,60 @@ class ExplorationLedgerTests(unittest.TestCase):
             self.assertEqual(order.strategy_id, strategy.id)
             self.assertIsNone(order.evidence_id)  # never promotion evidence
 
+    def close_experiment(self, db, strategy, mechanism="rule_row"):
+        from app.services import forward_experiments as fx
+
+        out = fx.close_candidate(
+            db, {"candidate": 2, "sweep_id": f"test-{strategy.id}:none", "strategy_id": strategy.id,
+                 "strategy_type": strategy.strategy_type, "mechanism": mechanism},
+            reason_kind="operator_closure", reasons=["closed for the test"], actor="test")
+        db.commit()
+        return out
+
+    def test_a_closed_forward_experiment_row_takes_no_exploration_buy_and_none_at_dispatch(self):
+        from app.services.stock_paper_ledger import dispatch_reserved_order
+
+        with Session(self.engine) as db, ExitStack() as stack:
+            for item in self.gates():
+                stack.enter_context(item)
+            account, strategy, signal = self.seed(db)
+            quantity = self.budget_quantity(account)
+            order = self.reserve(db, signal, quantity)  # admitted while the experiment is open
+            self.assertTrue(self.close_experiment(db, strategy)["closure"]["entries_blocked"])
+            # No new reservation is bound to the row...
+            with self.assertRaisesRegex(StockPaperError, "Forward experiment 2 is closed"):
+                self.reserve(db, signal, quantity, key="explore-2")
+            # ...and the one reserved before the closure is refused when it reaches dispatch.
+            gateway = FakeAlpaca()
+            with self.assertRaisesRegex(StockPaperError, "Forward experiment 2 is closed"):
+                dispatch_reserved_order(db, order.id, gateway)
+            self.assertEqual(gateway.calls, 0)
+            # The refusal reads the close row, not the row's status or parameters.
+            strategy.parameters, strategy.current_status = {}, "research"
+            db.commit()
+            with self.assertRaisesRegex(StockPaperError, "Forward experiment 2 is closed"):
+                self.reserve(db, signal, quantity, key="explore-3")
+
+    def test_a_closed_tag_candidate_leaves_its_host_row_s_entries_alone(self):
+        with Session(self.engine) as db, ExitStack() as stack:
+            for item in self.gates():
+                stack.enter_context(item)
+            account, strategy, signal = self.seed(db)
+            self.assertFalse(self.close_experiment(db, strategy, mechanism="tag_row")["closure"]["entries_blocked"])
+            order = self.reserve(db, signal, self.budget_quantity(account))
+            self.assertEqual(order.strategy_id, strategy.id)
+
+    def test_a_closure_that_cannot_be_read_refuses_the_buy(self):
+        with Session(self.engine) as db, ExitStack() as stack:
+            for item in self.gates():
+                stack.enter_context(item)
+            account, _strategy, signal = self.seed(db)
+            stack.enter_context(patch("app.services.forward_experiments.entry_block_for",
+                                      side_effect=RuntimeError("audit log unavailable")))
+            with self.assertRaises(RuntimeError):
+                self.reserve(db, signal, self.budget_quantity(account))
+            self.assertEqual(db.query(StockPaperOrder).count(), 0)
+
     def test_launch_gates_run_before_the_account_row_lock(self):
         from app.services import stock_paper_ledger
 
@@ -298,3 +352,23 @@ def test_cycle_keeps_candidates_observation_only_when_exploration_is_off():
     result, reserve = _run_cycle(enabled=False)
     reserve.assert_not_called()
     assert result["results"][0]["status"] == "observed"
+
+
+def test_cycle_records_the_buy_of_a_closed_forward_experiment_and_reserves_nothing():
+    reason = "forward experiment 2 is closed (stop rule, 2027-03-06): no new entries; open lots keep their exits"
+    with patch("app.services.stock_paper_autotrader._closed_experiment_entries", return_value={3: reason}):
+        result, reserve = _run_cycle(enabled=True)
+    reserve.assert_not_called()
+    row = result["results"][0]
+    assert row["status"] == "observed" and row["reason"] == reason and row["experiment_closed"] is True
+    assert result["submitted_count"] == 0
+    # Another row's closure changes nothing for this one.
+    with patch("app.services.stock_paper_autotrader._closed_experiment_entries", return_value={99: reason}):
+        result, reserve = _run_cycle(enabled=True)
+    assert result["submitted_count"] == 1
+
+
+def test_the_cycle_s_closure_read_fails_open_because_the_ledger_is_the_authority():
+    from app.services.stock_paper_autotrader import _closed_experiment_entries
+
+    assert _closed_experiment_entries(_Db([])) == {}  # a store that cannot answer never stops the cycle

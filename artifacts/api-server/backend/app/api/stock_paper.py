@@ -187,6 +187,53 @@ def record_forward_experiments_review(request: Request, db: Session = Depends(ge
     return {**result, "paper_only": True, "live_authorized": False}
 
 
+@router.get("/hypothesis-register")
+def hypothesis_register_view(db: Session = Depends(get_db)) -> dict:
+    """Every hypothesis tested so far: the data, the verdict, why, the next decision and whether it can place a paper order (read-only)."""
+    from app.services.hypothesis_register import hypothesis_register
+
+    return hypothesis_register(db)
+
+
+@router.get("/experiment-admissions")
+def experiment_admissions(db: Session = Depends(get_db)) -> dict:
+    """The admission rule for new experiments, its budget and every recorded decision with its numbers (read-only)."""
+    from app.services.experiment_admission import admission_view
+
+    return admission_view(db)
+
+
+class ForwardExperimentCloseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=10, max_length=500)
+    reason_kind: Literal["operator_closure", "verdict_failed"] = "operator_closure"
+    confirm_candidate: int = Field(ge=1)
+
+
+@router.post("/forward-experiments/{candidate}/close")
+def close_forward_experiment(candidate: int, payload: ForwardExperimentCloseRequest, request: Request,
+                             db: Session = Depends(get_db)) -> dict:
+    """Close one frozen forward experiment for a stated reason (permanent; the frozen terms are not edited).
+
+    A rule-row candidate takes no new entries from then on and its open lots
+    keep their exits; a tag-and-compare candidate closes its sample only.
+    """
+    from app.services.forward_experiments import ForwardExperimentError, close_candidate_by_number
+
+    if payload.confirm_candidate != candidate:
+        raise HTTPException(status_code=422, detail="confirm_candidate must repeat the candidate number")
+    _attribute(db, request)
+    try:
+        result = close_candidate_by_number(db, candidate, reason=payload.reason, reason_kind=payload.reason_kind,
+                                           actor=f"operator:{getattr(request.state, 'actor', 'unknown')}")
+    except ForwardExperimentError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    db.commit()
+    return {**result, "paper_only": True, "live_authorized": False}
+
+
 @router.get("/gate-costs")
 def gate_costs(db: Session = Depends(get_db)) -> dict:
     """What each entry gate cost: the trades it stopped, scored under the tested exits (read-only)."""
