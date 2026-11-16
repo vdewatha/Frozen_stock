@@ -2902,6 +2902,20 @@ def resume_stock_paper_account(db: Session, *, reason: str) -> dict:
     )
 
 
+def _refuse_closed_forward_experiment(db: Session, strategy_id: int) -> None:
+    """No buy is bound to a row whose frozen forward experiment is closed.
+
+    Read from the close audit row on every reservation and again at dispatch
+    (``forward_experiments.entry_block_for``), so the refusal does not depend
+    on the row's status or parameters and a failed read refuses the buy.
+    """
+    from app.services.forward_experiments import entry_block_for
+
+    reason = entry_block_for(db, strategy_id)
+    if reason is not None:
+        raise StockPaperError(reason[:1].upper() + reason[1:])
+
+
 def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, signal_id: int | None,
                          quantity: Decimal, reference_price: Decimal, rules: dict, now: datetime) -> tuple[StrategySignal, StockPaperStrategyEvidence]:
     if signal_id is None:
@@ -2914,6 +2928,7 @@ def _validate_signal_buy(db: Session, account: StockPaperAccount, symbol: str, s
     strategy = db.get(Strategy, signal.strategy_id)
     if not strategy or not strategy.is_active or strategy.current_status != "paper_trading_active":
         raise StockPaperError("Signal strategy is not active for paper trading")
+    _refuse_closed_forward_experiment(db, strategy.id)
     evidence = db.query(StockPaperStrategyEvidence).filter_by(strategy_id=strategy.id, status="approved").one_or_none()
     if not evidence or _utc(evidence.expires_at) < now:
         raise StockPaperError("Validated non-legacy strategy performance evidence is required for a buy")
@@ -3183,6 +3198,7 @@ def _validate_exploration_buy(db: Session, account: StockPaperAccount, symbol: s
     allowed = EXPLORATION_STRATEGY_STATUSES | ({"paper_trading_active"} if lane else set())
     if not strategy or not strategy.is_active or strategy.current_status not in allowed:
         raise StockPaperError("Only active candidate or research strategies may explore")
+    _refuse_closed_forward_experiment(db, strategy.id)
     confidence = float(signal.confidence or 0)
     if not math.isfinite(confidence) or confidence < float(rules["min_confidence"]):
         raise StockPaperError("Exploration signal confidence is below the minimum threshold")

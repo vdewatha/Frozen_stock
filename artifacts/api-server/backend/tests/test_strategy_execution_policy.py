@@ -452,6 +452,40 @@ def test_policy_exit_still_runs_for_a_paused_strategy():
     assert kwargs["side"] == "sell" and kwargs["source"] == "scheduled_paper_signal"
 
 
+def test_a_closed_forward_experiment_row_enters_nothing_and_keeps_its_policy_exit():
+    """A closure removes entries only: the row stays in the cycle so its open lot still exits."""
+    reason = "forward experiment 2 is closed (stop rule, 2027-03-06): no new entries; open lots keep their exits"
+    closed = {_rsi2().id: reason}
+    planned = {}
+
+    def plan(_db, _account, outcomes, *args, **kwargs):
+        planned.update(outcomes)
+        raise RuntimeError("stop here: only the plan's input matters")
+
+    # Its BUY is recorded, never reserved, and takes no share of the learning budget.
+    with patch("app.services.stock_paper_autotrader._closed_experiment_entries", return_value=closed), \
+         patch("app.services.stock_paper_autotrader.plan_exploration", side_effect=plan):
+        try:
+            _cycle(_ModelDb([_rsi2(), _MA], {}), _signal("BUY"), now=NOW)
+        except RuntimeError:
+            pass
+    assert ("SPY", "moving_average_crossover") in planned and ("SPY", "rsi2_pullback") not in planned
+    with patch("app.services.stock_paper_autotrader._closed_experiment_entries", return_value=closed):
+        result, calls, _ = _cycle(_ModelDb([_rsi2()], {}), _signal("BUY"), now=NOW)
+    calls.reserve.assert_not_called()
+    row = result["results"][0]
+    assert row["status"] == "observed" and row["reason"] == reason and row["experiment_closed"] is True
+    # Its open lot still leaves on the tested indicator exit.
+    entry = datetime(2026, 10, 23, 15, 0, tzinfo=UTC)
+    db = _ModelDb([_rsi2()], {"StockPaperPosition": [_position()]})
+    with patch("app.services.stock_paper_autotrader._closed_experiment_entries", return_value=closed):
+        _result, calls, _ = _cycle(db, _signal("HOLD"), holdings={"rsi2_pullback": Decimal("2")},
+                                   lots={"opened_at": {"rsi2_pullback": entry}, "buyers": {"rsi2_pullback"}},
+                                   frame=_rising_frame(), now=NOW)
+    kwargs = calls.reserve.call_args.kwargs
+    assert kwargs["side"] == "sell" and calls.reserve.call_count == 1
+
+
 def test_strategies_without_policy_keep_existing_behaviour():
     legacy = SimpleNamespace(id=1, strategy_type="legacy_bracket", current_status="paper_trading_candidate",
                              is_active=True, parameters={})
@@ -557,7 +591,7 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                                             "rule_4ec6c68526", "rule_7df4090f31"],
                            "rows_reused": ["ibs_mean_reversion"], "already_registered": [], "mismatched": [],
                            "spec_sha256": "0a87603dfa1ba05343d47a000484c2b3ee310d1203c9f0cde814038e1a84b439",
-                           "paper_only": True}}
+                           "paper_only": True, "closure_markers": []}}
     rows = {row.strategy_type: row for row in db.query(Strategy).all()}
     # Demoted from active, then retired from exploration on the same evidence.
     assert rows["moving_average_crossover"].current_status == "retired"
@@ -592,7 +626,7 @@ def test_lineup_seeds_candidates_and_demotes_active_crossover_once(db):
                                                                      "ibs_mean_reversion:vix_above_20"],
                                               "mismatched": [],
                                               "spec_sha256": "0a87603dfa1ba05343d47a000484c2b3ee310d1203c9f0cde814038e1a84b439",
-                                              "paper_only": True}}
+                                              "paper_only": True, "closure_markers": []}}
     db.commit()
     assert rows["moving_average_crossover"].current_status == "paper_trading_active"
     assert rows["rsi2_pullback"].current_status == "paused"

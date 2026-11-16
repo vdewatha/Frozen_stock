@@ -10,6 +10,17 @@ from sqlalchemy.orm import Session
 from app.models import AuditLog
 
 
+def lock_audit_chain(db: Session) -> None:
+    """Take the audit writers' transaction lock (PostgreSQL; a no-op elsewhere).
+
+    ``write_audit_log`` takes it for every row.  A writer that must look
+    before it writes (a once-only record) takes it first, so a second writer
+    waits and then sees the first one's row.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(781928344203)"))
+
+
 def write_audit_log(
     db: Session,
     *,
@@ -23,9 +34,7 @@ def write_audit_log(
 ) -> AuditLog:
     # Serialize audit writers so the previous digest is unambiguous under
     # PostgreSQL concurrency. SQLite remains deterministic for local tests.
-    bind = db.get_bind()
-    if bind.dialect.name == "postgresql":
-        db.execute(text("SELECT pg_advisory_xact_lock(781928344203)"))
+    lock_audit_chain(db)
     # A transaction can write several audit events before it commits. Flush
     # earlier events in this session so the next event links to the actual
     # latest row rather than branching from the last committed row.
