@@ -440,6 +440,21 @@ def daily_market_data_import() -> dict:
     reject_on_worker_lost=True,
 )
 def intraday_market_data_import() -> dict:
+    # Deep in closed hours the previous session cannot change; run every eight
+    # minutes there instead of back to back (intraday_data.deep_closed_hours).
+    from app.services.intraday_data import closed_hours_import_wait, deep_closed_hours
+    from app.services.operations_health import latest_intraday_import_run
+
+    now = datetime.now(timezone.utc)
+    if deep_closed_hours(now):
+        wait = closed_hours_import_wait(now, latest_intraday_import_run())
+        if wait is not None:
+            return {
+                "status": "skipped", "job": "intraday_market_data_import",
+                "reason": "market closed: the last session was re-read under eight minutes ago",
+                "next_run_in_seconds": round(wait),
+            }
+
     def work(db):
         from app.services.operations_health import record_intraday_import_run
 

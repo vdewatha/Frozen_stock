@@ -94,6 +94,59 @@ def _aware_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+# Deep in closed hours the previous session cannot change, yet the import ran
+# every minute around the clock only to keep the five-minute entitlement proof
+# fresh: 769 runs of about 87 s on 2026-11-13, a third of all job time. From
+# two hours after a close until one hour before the next open it now runs once
+# every eight minutes, and the proof may be correspondingly older. Thirty-five
+# minutes still spans two failed runs, as five minutes did at the old pace.
+# The stricter limit returns a quarter of an hour after the full pace does.
+CLOSED_HOURS_AFTER_CLOSE = timedelta(hours=2)
+CLOSED_HOURS_BEFORE_OPEN = timedelta(hours=1)
+CLOSED_HOURS_IMPORT_GAP = timedelta(minutes=8)
+CLOSED_HOURS_VERIFICATION_MAX_AGE = timedelta(minutes=35)
+CLOSED_HOURS_VERIFICATION_GRACE = timedelta(minutes=15)
+
+
+def deep_closed_hours(now: datetime) -> bool:
+    """No session open, the last close over two hours ago, the next open over an hour away."""
+    observed_at = _aware_utc(now)
+    bounds = session_bounds(observed_at.astimezone(NY).date())
+    if bounds is not None and bounds[0] <= observed_at < bounds[1] + CLOSED_HOURS_AFTER_CLOSE:
+        return False
+    return next_regular_session_open(observed_at) - observed_at >= CLOSED_HOURS_BEFORE_OPEN
+
+
+def entitlement_max_age(now: datetime) -> timedelta:
+    """How old the newest authenticated provider answer may be at ``now``."""
+    observed_at = _aware_utc(now)
+    if deep_closed_hours(observed_at) or deep_closed_hours(observed_at - CLOSED_HOURS_VERIFICATION_GRACE):
+        return CLOSED_HOURS_VERIFICATION_MAX_AGE
+    return ENTITLEMENT_VERIFICATION_MAX_AGE
+
+
+def closed_hours_import_wait(now: datetime, last_run: dict | None) -> float | None:
+    """Seconds the scheduled import should still wait, or None when a run is due.
+
+    Only deep in closed hours, and only after a run that finished (``complete``
+    or ``incomplete``): a failed run, an unknown one, or no record at all (Redis
+    unavailable) keeps the every-minute pace.
+    """
+    observed_at = _aware_utc(now)
+    if not deep_closed_hours(observed_at):
+        return None
+    if not last_run or last_run.get("status") not in {"complete", "incomplete"}:
+        return None
+    try:
+        finished_at = _aware_utc(datetime.fromisoformat(str(last_run.get("finished_at"))))
+    except ValueError:
+        return None
+    since = observed_at - finished_at
+    if since < timedelta(0) or since >= CLOSED_HOURS_IMPORT_GAP:
+        return None
+    return (CLOSED_HOURS_IMPORT_GAP - since).total_seconds()
+
+
 def next_regular_session_open(now: datetime) -> datetime:
     """Return the next NYSE regular-session open after the observed time.
 
@@ -898,9 +951,20 @@ def ingest_intraday(
         latest_window = verify_window
     prefetched: dict[str, tuple[list[dict], int, bool]] = {}
     prefetch_rate_limited: Exception | None = None
+    # Where a run spends its time: on the hosted database a run took 80-95 s,
+    # longer than the minute it is scheduled for, and nothing said why.
+    run_started = time.monotonic()
+    spent: dict[str, float] = {}
+
+    def timed(phase: str, call, *args, **kwargs):
+        started = time.monotonic()
+        try:
+            return call(*args, **kwargs)
+        finally:
+            spent[phase] = spent.get(phase, 0.0) + time.monotonic() - started
     if latest_window and len(selected) > 1:
         try:
-            prefetched = _fetch_bars_multi(selected, *latest_window)
+            prefetched = timed("prefetch", _fetch_bars_multi, selected, *latest_window)
         except Exception as exc:
             # Fall back to bounded per-symbol requests so one bad symbol cannot
             # fail the whole universe -- except on HTTP 429, where per-symbol
@@ -926,7 +990,7 @@ def ingest_intraday(
     index_end = observed_at + timedelta(days=1)
     for symbol in processing_order:
         try:
-            index = _MinuteIndex(db, symbol, index_start, index_end)
+            index = timed("index", _MinuteIndex, db, symbol, index_start, index_end)
             windows: list[tuple[datetime, datetime]] = []
             target_ranges: list[tuple[datetime, datetime]] = []
             today_bounds = session_bounds(local_now.date())
@@ -998,9 +1062,10 @@ def ingest_intraday(
                             # cycle, so the live minute is never held back.
                             break
                         backfill_budget -= 1
-                    rows, duplicates, out_of_order = _fetch_bars(symbol, window_start, window_end)
+                    rows, duplicates, out_of_order = timed("fetch", _fetch_bars, symbol, window_start, window_end)
                 stored: list[datetime] = []
-                persisted = upsert_intraday_bars(
+                persisted = timed(
+                    "store", upsert_intraday_bars,
                     db, symbol, rows, ingested_at=observed_at, verify_entitlement=True,
                     persisted_minutes=stored,
                 )
@@ -1010,7 +1075,8 @@ def ingest_intraday(
                 # answers, not transport gaps. Only short, bracketed runs on a
                 # partial-venue feed are recorded; outages stay missing.
                 configured_provider = settings.active_market_data_provider.strip().lower()
-                newly_verified = record_verified_no_trade_minutes(
+                newly_verified = timed(
+                    "no_trade", record_verified_no_trade_minutes,
                     db,
                     symbol,
                     window_start,
@@ -1090,6 +1156,13 @@ def ingest_intraday(
             )
     position = {symbol: index for index, symbol in enumerate(selected)}
     results.sort(key=lambda row: position.get(row["symbol"], len(position)))
+    total = time.monotonic() - run_started
+    phases = ", ".join(f"{phase} {seconds:.1f}s" for phase, seconds in sorted(spent.items(), key=lambda item: -item[1]))
+    print(
+        f"intraday import: {total:.1f}s for {len(selected)} symbols; {phases or 'no timed work'}, "
+        f"other {max(0.0, total - sum(spent.values())):.1f}s",
+        flush=True,
+    )
     return {
         "provider": MARKET_DATA_PROVIDER,
         "feed_class": MARKET_DATA_FEED_CLASS,
@@ -1620,7 +1693,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None, _input
     entitlement_verified = bool(
         configured
         and verification_age is not None
-        and timedelta(0) <= verification_age <= ENTITLEMENT_VERIFICATION_MAX_AGE
+        and timedelta(0) <= verification_age <= entitlement_max_age(observed_at)
     )
     base = {
         "symbol": symbol,
