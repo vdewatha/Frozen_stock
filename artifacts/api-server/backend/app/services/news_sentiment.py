@@ -19,21 +19,142 @@ from app.services.audit import write_audit_log
 # "guided below forecasts" scored as good news when only "falls" and "cuts"
 # were listed (MCHP, 2026-11-06). Every match counts, so a beat with a weak
 # guide and a falling stock nets negative.
-POSITIVE_PATTERN = re.compile(
-    r"\b(beats?|beating|tops|topped|surg(e|es|ed|ing)|soar(s|ed|ing)?|jump(s|ed|ing)?|"
-    r"rall(y|ies|ied|ying)|climb(s|ed|ing)?|gains?|gained|rais(e|es|ed|ing)|upgrad(e|es|ed|ing)|"
-    r"record|strong(er|est)?|outperform(s|ed|ing)?|buybacks?|approvals?|approved|wins?|won|"
-    r"exceed(s|ed|ing)?|boost(s|ed|ing)?|above|upbeat|optimism|resilient|expands?|expanded|growth|profits?)\b",
-    re.IGNORECASE,
+#
+# 2026-11-14 audit (reports/public-information-tests-20261114.md): on 200
+# hand-labelled stories the reader called half of the plainly good or bad
+# ones neutral, and was wrong on words that carry no direction by themselves.
+# So the lists now leave out the bare nouns ("profit", "loss", "risks",
+# "expands": a net loss figure, weight loss, a risk disclaimer and an
+# expanded partnership are not news about the stock's direction), skip
+# "record date" and the Korean won, and read the shapes headlines actually
+# use: "trading higher", "shares rose", "Up From ... YoY", a dividend increase,
+# a share repurchase, "secures"/"awarded" a contract, "FDA clears", a trial
+# that "met its primary endpoint", "failed", "lose money", "bullish"/"bearish".
+# Each new pattern was then read against 100,000 archive stories, which is why
+# "rose" needs a price or a business line beside it ("death toll rises" and
+# "rising costs" are not good news) and "failure" skips "heart failure".
+_WORDS_UP = (
+    r"beats?|beating|tops|topped|surg(?:e|es|ed|ing)|soar(?:s|ed|ing)?|jump(?:s|ed|ing)?|"
+    r"rall(?:y|ies|ied|ying)|climb(?:s|ed|ing)?|gain(?:s|ed|ing)?|rais(?:e|es|ed|ing)|"
+    r"upgrad(?:e|es|ed|ing)|record(?!\s+(?:date|holders?))|strong(?:er|est)?|outperform(?:s|ed|ing)?|"
+    r"buybacks?|approvals?|approved|wins?|won|exceed(?:s|ed|ing)?|boost(?:s|ed|ing)?|above|upbeat|"
+    r"optimism|resilient|growth|bullish|secures|awarded|clears|cleared|clearance|greenlights"
 )
-NEGATIVE_PATTERN = re.compile(
-    r"\b(miss(es|ed|ing)?|fell|falls?|falling|drop(s|ped|ping)?|slid(e|es|ing)?|sank|sinks?|sinking|"
-    r"plung(e|es|ed|ing)|tumbl(e|es|ed|ing)|slump(s|ed|ing)?|downgrad(e|es|ed|ing)|cuts?|cutting|"
-    r"slash(es|ed|ing)?|lower(s|ed|ing)?|weak(er|ness)?|warn(s|ed|ing|ings)?|below|prob(e|es|ed)|"
-    r"recalls?|recalled|layoffs?|bankrupt(cy)?|loss(es)?|delay(s|ed)?|underperform(s|ed|ing)?|"
-    r"lawsuits?|pressure|declin(e|es|ed|ing)|risks?|disappoint(s|ed|ing)?)\b",
-    re.IGNORECASE,
+_PHRASES_UP = (
+    r"bull\s+case|up\s+from|green-lights|better[-\s]than[-\s](?:expected|anticipated|feared|estimated)|"
+    # "shares rose", "sales rising", "rose 4.4%".
+    r"(?:shares?|stocks?|sales|revenues?|earnings|income|eps|ebitda|margins?|demand|deliveries|orders|bookings|"
+    r"subscribers|volumes?|production|shipments)\s+(?:\w+\s+){0,4}?(?:rose|rises?|rising)|"
+    r"(?:rose|rises?|rising)\s+(?:by\s+|about\s+|nearly\s+|over\s+|more\s+than\s+|~\s?)?\d+(?:\.\d+)?(?=\s?%)|"
+    r"(?:share|stock)\s+repurchases?|repurchase\s+(?:program|plan|authori[sz]ation)|"
+    r"(?:increas\w+|hik\w+)\b[^.;|]{0,40}?\bdividend|(?:inaugural|special)\s+(?:cash\s+)?dividend|"
+    # "shares are trading higher", "spike higher": the move, not "higher costs".
+    r"(?:trad\w+|mov\w+|spik\w+|shares|stock|gapp?\w*|open\w*|clos\w+|ended|ends|tick\w*|edg\w+|head\w*)"
+    r"\s+(?:\w+\s+){0,2}?higher|"
+    r"met\s+(?:its\s+|the\s+|all\s+)?(?:primary|co-primary)\s+endpoints?"
 )
+_WORDS_DOWN = (
+    r"miss(?:es|ed|ing)?|fell|falls?|falling|drop(?:s|ped|ping)?|slid(?:e|es|ing)?|sank|sinks?|sinking|"
+    r"plung(?:e|es|ed|ing)|tumbl(?:e|es|ed|ing)|slump(?:s|ed|ing)?|downgrad(?:e|es|ed|ing)|cuts?|cutting|"
+    r"slash(?:es|ed|ing)?|lower(?:s|ed|ing)?|weak(?:er|ness)?|warn(?:s|ed|ing|ings)?|below|prob(?:e|es|ed)|"
+    r"recalls?|recalled|layoffs?|bankrupt(?:cy)?|delay(?:s|ed)?|underperform(?:s|ed|ing)?|"
+    r"lawsuits?|pressure|declin(?:e|es|ed|ing)|disappoint(?:s|ed|ing)?|worse|worsen(?:s|ed|ing)?|bearish|"
+    r"fail(?:s|ed|ing)?|los(?:e|es|ing|t)|"
+    r"(?<!heart )(?<!kidney )(?<!renal )(?<!liver )(?<!organ )(?<!treatment )(?<!respiratory )failures?"
+)
+_PHRASES_DOWN = r"bear\s+case|down\s+from|did\s+not\s+meet"
+
+POSITIVE_PATTERN = re.compile(rf"\b(?:{_WORDS_UP}|{_PHRASES_UP})\b", re.IGNORECASE)
+NEGATIVE_PATTERN = re.compile(rf"\b(?:{_WORDS_DOWN}|{_PHRASES_DOWN})\b", re.IGNORECASE)
+
+# "1.1T Won Investment", "500 billion won": the currency, not a win.
+_KOREAN_WON = re.compile(r"(\d[\d.,]*\s*(?:trillion|billion|million|[TBMK])?\s+)won\b", re.IGNORECASE)
+
+# Numbers against their reference.  Most older headlines carry no verdict
+# word: "Q2 Adj. EPS $0.59 vs $0.55 Est., Sales $282.2M vs $275.3M Est." and
+# "Sees FY24 Adjusted EBITDA Of $1.22B-$1.27B (Prior View: $1.20B-$1.26B)".
+# A figure (or a whole range) above its estimate is a vote up, below it a vote
+# down, a range around the estimate no vote.  Against a prior view both ends
+# must move the same way.  Amounts keep their K/M/B unit only when it is
+# attached ("$5B", never the T of "$5 To").
+_AMOUNT = r"\$?\(?-?\$?\d[\d,]*(?:\.\d+)?\)?(?:[KMBT](?![A-Za-z])|\s?(?:million|billion|trillion))?%?"
+_BETWEEN = r"(?:\s*[-\u2013]\s*|\s+to\s+)"  # "$1.78-$1.82" and "$1.78 to $1.82"
+_RANGE = rf"{_AMOUNT}(?:{_BETWEEN}{_AMOUNT})?"
+_AMOUNT_PARTS = re.compile(
+    r"\$?(\()?(-)?\$?(\d[\d,]*(?:\.\d+)?)\)?\s?([KMBT]|million|billion|trillion)?%?", re.IGNORECASE)
+_RANGE_PARTS = re.compile(rf"({_AMOUNT})(?:{_BETWEEN}({_AMOUNT}))?", re.IGNORECASE)
+_VERSUS_ESTIMATE = re.compile(rf"({_RANGE})\s*,?\s*(?:vs\.?|versus)\s*({_AMOUNT})\s*(?:consensus\s+)?est", re.IGNORECASE)
+_VERSUS_PRIOR = re.compile(rf"({_RANGE})\s*\(\s*prior(?:\s+view)?\s*:?\s*(?:of\s+)?({_RANGE})\s*\)", re.IGNORECASE)
+# A bigger number is worse news when it is a loss, a decline or a cost written as a plain figure
+# ("Sees Q1 loss per share $0.10-$0.12 vs $0.08 Est"); a loss written as a negative ("Loss/Share $(2.94)
+# vs. $(0.86) Est.") already compares the right way round.
+_LOWER_IS_BETTER = re.compile(
+    r"\b(?:loss(?:es)?|declin\w+|decreas\w+|drop\w*|outflows?|costs?|expenses?|capex|charges?)\b[^,;()]{0,40}$",
+    re.IGNORECASE)
+# "France HICP (MoM) -0.2% Vs. 0.1% Est.", "Jobless Claims 210K vs 225K Est.": a number under its estimate
+# is not bad news there, and these name an index fund, not a company.
+_ECONOMIC_RELEASE = re.compile(
+    r"\((?:MoM|YoY|QoQ|WoW)\)|\b(?:PMI|CPI|PPI|GDP|HICP|Jobless|Payrolls|Retail\s+Sales|Home\s+Sales|"
+    r"Housing\s+Starts|Building\s+Permits|Consumer\s+(?:Confidence|Sentiment)|Trade\s+Balance|Inventories|"
+    r"Rig\s+Count|Purchasing\s+Managers|Employment\s+Change|Unemployment|Industrial\s+Production|"
+    r"Durable\s+Goods|Factory\s+Orders)\b|;[^;]*\bPrior\s*$", re.IGNORECASE)
+_UNITS = {"k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12, "million": 1e6, "billion": 1e9, "trillion": 1e12}
+
+
+def _amount(text: str) -> Optional[tuple[float, str]]:
+    match = _AMOUNT_PARTS.fullmatch(text.strip())
+    if match is None:
+        return None
+    unit = (match.group(4) or "").lower()
+    value = float(match.group(3).replace(",", "")) * _UNITS.get(unit, 1.0)
+    return (-value if match.group(1) or match.group(2) else value), unit
+
+
+def _span(text: str) -> Optional[tuple[float, float]]:
+    """(low, high) of "$1.22B-$1.27B", "$108M-112M", "$4.97" or "5%"; None when it does not parse."""
+    match = _RANGE_PARTS.fullmatch(text.strip())
+    if match is None:
+        return None
+    low = _amount(match.group(1))
+    high = _amount(match.group(2)) if match.group(2) else low
+    if low is None or high is None:
+        return None
+    (low_value, low_unit), (high_value, high_unit) = low, high
+    if high_unit and not low_unit:  # "$108-112M": the unit belongs to both ends
+        low_value *= _UNITS[high_unit]
+    if low_unit and not high_unit:
+        high_value *= _UNITS[low_unit]
+    return min(low_value, high_value), max(low_value, high_value)
+
+
+def _against_estimate(now: tuple[float, float], estimate: tuple[float, float]) -> int:
+    return 1 if now[0] > estimate[1] else -1 if now[1] < estimate[0] else 0
+
+
+def _against_prior(now: tuple[float, float], prior: tuple[float, float]) -> int:
+    if now[0] >= prior[0] and now[1] >= prior[1] and sum(now) > sum(prior):
+        return 1
+    if now[0] <= prior[0] and now[1] <= prior[1] and sum(now) < sum(prior):
+        return -1
+    return 0
+
+
+def reference_votes(text: str) -> tuple[int, int]:
+    """(up, down) from figures set against their estimate or their prior view."""
+    up = down = 0
+    if _ECONOMIC_RELEASE.search(text):
+        return up, down
+    for pattern, compare in ((_VERSUS_ESTIMATE, _against_estimate), (_VERSUS_PRIOR, _against_prior)):
+        for match in pattern.finditer(text):
+            now, reference = _span(match.group(1)), _span(match.group(2))
+            if now is None or reference is None:
+                continue
+            vote = compare(now, reference)
+            if _LOWER_IS_BETTER.search(text[:match.start()]) and min(now[0], reference[0]) >= 0:
+                vote = -vote
+            up += vote > 0
+            down += vote < 0
+    return up, down
 
 
 SYNTHETIC_NEWS_SOURCES = {"mock_news"}
@@ -44,8 +165,10 @@ def _decimal(value: float) -> Decimal:
 
 
 def score_headline_sentiment(text: str) -> float:
-    positive = len(POSITIVE_PATTERN.findall(text or ""))
-    negative = len(NEGATIVE_PATTERN.findall(text or ""))
+    text = _KOREAN_WON.sub(r"\1KRW", text or "")
+    up, down = reference_votes(text)
+    positive = len(POSITIVE_PATTERN.findall(text)) + up
+    negative = len(NEGATIVE_PATTERN.findall(text)) + down
     if positive == negative:
         return 0.0
     return max(-1.0, min(1.0, (positive - negative) / max(positive + negative, 1)))

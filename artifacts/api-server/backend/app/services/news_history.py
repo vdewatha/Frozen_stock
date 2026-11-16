@@ -26,7 +26,11 @@ a news rule over years, not days:
   window is recorded as covered only once every page of it was read; a 429 or
   an exhausted budget drops the partial window and the next run retries it.
   Coverage is written next to the per-symbol CSVs under
-  ``history_dir()/news/`` so the report can say how far back the series goes.
+  ``history_dir()/news/reader-<version>/`` so the report can say how far back
+  the series goes.  The cache is per reader version: when the reader changes
+  (``news_discovery.READER_VERSION``) the backfill starts again, and stored
+  articles are scored again as they are read, so a series is always one
+  reader's view from end to end.
 * **Runtime**.  ``runtime_tone`` merges the cache with stored articles
   outside the covered span (the last day or two) through a per-process cache,
   so the paper path's rule evaluation never waits on the news API.
@@ -171,18 +175,20 @@ def stored_stories(db, symbol: str, *, exclude: Optional[tuple[datetime, datetim
     from app.models import NewsArticle
     from app.services.news_discovery import SOURCE
 
-    query = db.query(NewsArticle.published_at, NewsArticle.sentiment_score).filter(
+    query = db.query(NewsArticle.published_at, NewsArticle.title, NewsArticle.summary).filter(
         NewsArticle.source == SOURCE, NewsArticle.symbol == symbol.upper())
     if since is not None:
         query = query.filter(NewsArticle.published_at >= _aware(since).astimezone(UTC).replace(tzinfo=None))
     out = []
-    for published, score in query.all():
+    for published, title, summary in query.all():
         if published is None:
             continue
         stamp = _aware(published)
         if exclude is not None and exclude[0] <= stamp < exclude[1]:
             continue
-        out.append((stamp, float(score or 0)))
+        # Scored now, not with the score stored at the time: that one may be an older reader's.
+        # (A story without a summary was stored with its headline as the summary.)
+        out.append((stamp, _score({"headline": title or "", "summary": "" if summary == title else summary or ""})))
     return out
 
 
@@ -198,7 +204,9 @@ def cache_dir(data_dir: Optional[Path] = None) -> Path:
         from app.services.meta_label_learning import history_dir
 
         data_dir = history_dir()
-    return Path(data_dir) / "news"
+    from app.services.news_discovery import READER_VERSION
+
+    return Path(data_dir) / "news" / f"reader-{READER_VERSION}"
 
 
 def load_coverage(data_dir: Optional[Path] = None) -> dict:

@@ -116,9 +116,13 @@ _ANALYST_ACTION = re.compile(r"\b(Upgrades|Downgrades|Maintains|Reiterates|Initi
 _BULLISH_RATING = re.compile(r"\b(Strong Buy|Buy|Outperform|Overweight|Positive|Accumulate)\b", re.IGNORECASE)
 # Housekeeping with no view on the business: board pay approvals, dividend
 # declarations, call transcripts, conference slots ("eGain Approves ...
-# Compensation" scored +1 on "approval").
+# Compensation" scored +1 on "approval").  Also the auto-written explainers
+# that quote the stock's three-month move as boilerplate ("A Look Into
+# Lowe's Debt", "Return On Capital Employed Overview"): their text is not news.
 _ROUTINE = re.compile(r"\bPrice Target\b|\bInsider\b|\bCompensation\b|\bDeclares\b.*\bDividend\b|"
-                      r"\bTranscript\b|\bto (Present|Participate)\b|\bConference\b", re.IGNORECASE)
+                      r"\bTranscript\b|\bto (Present|Participate)\b|\bConference\b|"
+                      r"\bA Look Into\b.*\bDebt\b|\bDebt (Overview|Insights)\b|"
+                      r"\bReturn On (Invested Capital|Capital Employed)\b", re.IGNORECASE)
 _BEARISH_RATING = re.compile(r"\b(Sell|Underperform|Underweight|Reduce|Negative)\b", re.IGNORECASE)
 
 
@@ -139,6 +143,11 @@ def analyst_note_sentiment(headline: str) -> float | None:
     if _BEARISH_RATING.search(rating):
         return -0.5
     return 0.5 if _BULLISH_RATING.search(rating) else 0.0
+
+
+# Bump when a story can score differently.  The tone history cache is kept per reader version and stored
+# articles are re-read with the current reader (``news_history``), so one series never mixes two readers.
+READER_VERSION = 2
 
 
 def _article_sentiment(article: dict) -> float:
