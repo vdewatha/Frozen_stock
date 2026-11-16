@@ -1063,6 +1063,42 @@ class StockPaperLedgerTests(unittest.TestCase):
                     reserve_stock_paper_order(db, symbol="SPY", side="sell", quantity=Decimal("0.5"),
                         reference_price=Decimal("100"), idempotency_key="race-key-2", source="manual_close")
 
+    def test_a_closed_forward_experiment_row_takes_no_scheduled_or_manual_buy(self):
+        from app.models import Strategy
+        from app.services import forward_experiments as fx
+
+        with Session(self.engine) as db:
+            initialize_stock_paper_account(db, FakeAlpaca())
+            now = datetime.now(timezone.utc)
+            strategy = Strategy(name="Closed experiment row", strategy_type="rule_closed", parameters={},
+                                is_active=True, current_status="paper_trading_active")
+            other = Strategy(name="Open row", strategy_type="rule_open", parameters={}, is_active=True,
+                             current_status="paper_trading_active")
+            db.add_all([strategy, other])
+            db.flush()
+            signal = self.add_approved_signal(db, strategy, "SPY", "closed", now)
+            open_signal = self.add_approved_signal(db, other, "QQQ", "open", now)
+            db.add(RiskRule(name="closed-experiment", value={}))
+            fx.close_candidate(db, {"candidate": 5, "sweep_id": "closed:vix_above_20", "strategy_id": strategy.id,
+                                    "strategy_type": strategy.strategy_type, "mechanism": "rule_row"},
+                               reason_kind="operator_closure", reasons=["closed for the test"], actor="test")
+            db.commit()
+            with ExitStack() as stack:
+                for patcher in self.reserve_context(now):
+                    stack.enter_context(patcher)
+                stack.enter_context(patch("app.services.stock_learning_cycle.evaluate_launch_admission_prerequisites",
+                                          return_value={"all": {"status": "pass"}}))
+                for source in ("manual_control_room", "scheduled_paper_signal"):
+                    with self.assertRaisesRegex(StockPaperError, "Forward experiment 5 is closed"):
+                        reserve_stock_paper_order(db, symbol="SPY", side="buy", quantity=Decimal("0.1"),
+                                                  reference_price=Decimal("100"), idempotency_key=f"closed-{source}",
+                                                  source=source, signal_id=signal.id)
+                # A row with no closure is untouched.
+                order = reserve_stock_paper_order(db, symbol="QQQ", side="buy", quantity=Decimal("0.1"),
+                                                  reference_price=Decimal("100"), idempotency_key="open-row",
+                                                  source="manual_control_room", signal_id=open_signal.id)
+            self.assertEqual(order.strategy_id, other.id)
+
     def test_pending_buys_apply_cumulative_symbol_notional_and_strategy_limits(self):
         with Session(self.engine) as db:
             initialize_stock_paper_account(db, FakeAlpaca())

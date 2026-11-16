@@ -883,6 +883,22 @@ def _target_book_symbols(db: Session) -> frozenset[str]:
         return frozenset()
 
 
+def _closed_experiment_entries(db: Session) -> dict[int, str]:
+    """``{strategy_id: reason}`` for rows a closed forward experiment stops entering.
+
+    The cycle's view, read once (``forward_experiments.entry_blocks``).  A
+    read that fails never stops the cycle: the ledger refuses the buy from
+    the close row itself on every reservation and again at dispatch.
+    """
+    try:
+        from app.services.forward_experiments import entry_blocks
+
+        return entry_blocks(db)
+    except Exception as exc:
+        logger.info("closed forward experiments unavailable: %s", exc.__class__.__name__)
+        return {}
+
+
 def shadow_symbols_for(row) -> frozenset[str]:
     raw = (getattr(row, "parameters", None) or {}).get("shadow_symbols") or ()
     try:
@@ -1060,6 +1076,9 @@ def _run_signal_cycle(db: Session) -> dict:
     payoff_by_type: dict[str, dict] = {}
     daily_bar_types = {row.strategy_type for row in strategies if daily_bar_execution(row)}
     cycle_rows = {row.strategy_type: row for row in strategies}
+    # A closed frozen forward experiment (forward_experiments.py) takes no new
+    # entries; the row stays in the cycle so its open lots keep their exits.
+    closed_entries = _closed_experiment_entries(db)
     policy_rows: list = []
     for row in [*strategies, *strategy_rows]:
         if row.strategy_type in {item.strategy_type for item in policy_rows}:
@@ -1109,11 +1128,13 @@ def _run_signal_cycle(db: Session) -> dict:
     # learning BUYs whose evidence is scarcest (exploration_budget.py), in
     # priority order until the budget is spent.  Scheduled entries, exits
     # and every cap are untouched; the plan never raises into the cycle.
-    # Shadow BUYs never trade, so they never take a share of the learning budget.
+    # Shadow BUYs never trade, so they never take a share of the learning budget;
+    # neither do the BUYs of a closed forward experiment.
     plan_outcomes = {
         key: value for key, value in signal_outcomes.items()
         if not (isinstance(value, dict) and value.get("signal_action") == "BUY" and key[1] in cycle_rows
-                and _shadow_entry(cycle_rows[key[1]], key[0]) is not None)
+                and (_shadow_entry(cycle_rows[key[1]], key[0]) is not None
+                     or getattr(cycle_rows[key[1]], "id", None) in closed_entries))
     }
     exploration_plan = plan_exploration(db, account, plan_outcomes, strategies, news_admitted, now=now,
                                         lane_admitted=lane_admitted)
@@ -1173,6 +1194,13 @@ def _run_signal_cycle(db: Session) -> dict:
                     result.update({"status": "observed", "reason": shadow_reason, "shadow": True})
                     if signal.get("gated_action") == "BUY":
                         result["gated_action"] = "BUY"
+                    results.append(result)
+                    continue
+                closed_reason = closed_entries.get(getattr(strategy, "id", None))
+                if closed_reason is not None and signal["signal_action"] == "BUY":
+                    # Recorded, never entered.  SELLs and the policy exits of
+                    # its open lots run as for any other row.
+                    result.update({"status": "observed", "reason": closed_reason, "experiment_closed": True})
                     results.append(result)
                     continue
                 exploring = (
