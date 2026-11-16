@@ -1004,7 +1004,7 @@ class StockPaperLedgerTests(unittest.TestCase):
             self.assertIsNone(result["positions"][0]["cost_basis"])
             self.assertIsNone(result["positions"][0]["unrealized_pl"])
 
-    def test_old_client_order_terminal_transition_is_full_backfilled_and_looked_up(self):
+    def test_old_client_order_terminal_transition_is_read_from_the_full_backfill(self):
         raw_order = {"id": "old-order", "client_order_id": "old-client", "symbol": "SPY", "side": "buy",
                      "qty": "1", "type": "limit", "time_in_force": "day", "limit_price": "100", "status": "canceled"}
         with Session(self.engine) as db:
@@ -1021,7 +1021,9 @@ class StockPaperLedgerTests(unittest.TestCase):
             self.assertEqual(result["status"], "reconciled")
             self.assertEqual(db.query(StockPaperOrder).filter_by(client_order_id="old-client").one().status, "canceled")
             self.assertEqual(gateway.orders_after, [None, None])
-            self.assertEqual(gateway.lookups, 1)
+            # The backfill holds this exact order (same client and broker id),
+            # so the reconcile does not ask the broker for it a second time.
+            self.assertEqual(gateway.lookups, 0)
 
     def test_stale_data_and_kill_switch_block_reservations(self):
         with Session(self.engine) as db:
