@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
 import threading
 import time
@@ -10,12 +10,13 @@ import redis
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.models import Asset, MarketPrice, ModelPrediction, Notification, RiskRule, Strategy
+from app.models import Asset, ModelPrediction, Notification, RiskRule, Strategy
 from app.core.config import settings
 from app.core.memory import resident_mb
 from app.services.broker import stock_paper_broker_status
 from app.services.intraday_data import (
     feed_status,
+    feed_statuses,
     MARKET_DATA_PROVIDER,
     MARKET_DATA_FEED_CLASS,
 )
@@ -27,7 +28,7 @@ from app.services.trading_universe import (
     never_ingested_symbols,
 )
 from app.tasks.celery_app import celery_app
-from app.services.trusted_data import trusted_history, validate_intraday_readiness, UntrustedMarketData, TRUSTED_SOURCES
+from app.services.trusted_data import daily_history_checks, validate_intraday_readiness, UntrustedMarketData, TRUSTED_SOURCES
 
 # The snapshot the API process last built, shared through Redis so the
 # deployment monitor does not build a second one.  On 2026-11-11 the snapshot
@@ -306,26 +307,22 @@ def readiness_snapshot(db: Session) -> dict:
     latest_sources: dict[str, str] = {}
     trusted_sources = TRUSTED_SOURCES
     invalid_histories: dict[str, str] = {}
+    # One pass for the whole universe: asking per symbol cost three database
+    # round trips each, 17 s of every build on the hosted database.
+    daily = daily_history_checks(db, [asset.symbol for asset in active_assets])
     for asset in active_assets:
-        try:
-            trusted_history(db, asset.symbol, require_active=False)
-        except UntrustedMarketData as exc:
-            invalid_histories[asset.symbol] = str(exc)
-        latest_price = (
-            db.query(MarketPrice)
-            .filter(MarketPrice.symbol == asset.symbol)
-            .order_by(MarketPrice.price_date.desc())
-            .first()
-        )
-        if not latest_price:
+        check = daily[asset.symbol.strip().upper()]
+        if check["error"]:
+            invalid_histories[asset.symbol] = check["error"]
+        latest_price_date = check["latest_date"]
+        if latest_price_date is None:
             missing_assets.append(asset.symbol)
             continue
-        latest_price_date = latest_price.price_date
         latest_prices[asset.symbol] = str(latest_price_date)
-        latest_sources[asset.symbol] = latest_price.source or "unknown"
+        latest_sources[asset.symbol] = check["latest_source"]
         if (today - latest_price_date).days > 7:
             stale_assets.append(asset.symbol)
-        if (latest_price.source or "unknown") not in trusted_sources:
+        if check["latest_source"] not in trusted_sources:
             untrusted_assets.append(asset.symbol)
     # Per-symbol gating: an invalid/stale/missing daily history blocks only
     # that symbol (trusted_history fails its signals); only a broad outage
@@ -392,9 +389,14 @@ def readiness_snapshot(db: Session) -> dict:
     unsupported_intraday_assets = [
         asset.symbol for asset in active_assets if asset.symbol not in intraday_universe
     ]
+    # Read every symbol's feed inputs together (three queries, not three a
+    # symbol); a symbol the batch leaves out is asked for individually.
+    feed_now = datetime.now(timezone.utc)
+    read_statuses = feed_statuses(db, [asset.symbol for asset in intraday_assets], now=feed_now)
     for asset in intraday_assets:
+        read = read_statuses.get(asset.symbol)
         try:
-            intraday_status[asset.symbol] = validate_intraday_readiness(db, asset.symbol)
+            intraday_status[asset.symbol] = validate_intraday_readiness(db, asset.symbol, now=feed_now, status=read)
             status = intraday_status[asset.symbol]
             if status.get("status") == "incomplete":
                 intraday_historical_warnings[asset.symbol] = (
@@ -403,6 +405,9 @@ def readiness_snapshot(db: Session) -> dict:
                 )
         except UntrustedMarketData as exc:
             intraday_failures[asset.symbol] = str(exc)
+            if read is not None:
+                intraday_status[asset.symbol] = read
+                continue
             try:
                 intraday_status[asset.symbol] = feed_status(db, asset.symbol)
             except ValueError as status_exc:

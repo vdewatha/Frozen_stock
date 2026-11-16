@@ -449,19 +449,27 @@ def _session_missing(
     if index is not None and index.covers(start, end):
         existing = index.present
     else:
-        rows = (
-            db.query(IntradayBar.opened_at)
-            .filter(
-                IntradayBar.symbol == symbol,
-                IntradayBar.timeframe == "1m",
-                IntradayBar.provider == MARKET_DATA_PROVIDER,
-                IntradayBar.opened_at >= start,
-                IntradayBar.opened_at < end,
-            )
-            .all()
+        existing = _bar_minutes(db, symbol, start, end) | _verified_no_trade_minutes(db, symbol, start, end)
+    return _missing_minutes(existing, start, end, cap=cap)
+
+
+def _bar_minutes(db: Session, symbol: str, start: datetime, end: datetime) -> set[datetime]:
+    """Opening minutes of the bars stored for ``symbol`` in ``[start, end)``."""
+    rows = (
+        db.query(IntradayBar.opened_at)
+        .filter(
+            IntradayBar.symbol == symbol,
+            IntradayBar.timeframe == "1m",
+            IntradayBar.provider == MARKET_DATA_PROVIDER,
+            IntradayBar.opened_at >= start,
+            IntradayBar.opened_at < end,
         )
-        existing = {_aware_utc(item.opened_at) for item in rows}
-        existing |= _verified_no_trade_minutes(db, symbol, start, end)
+        .all()
+    )
+    return {_aware_utc(item.opened_at) for item in rows}
+
+
+def _missing_minutes(existing: set[datetime], start: datetime, end: datetime, *, cap: int = 400) -> list[str]:
     missing: list[str] = []
     cursor = start
     while cursor < end and len(missing) < cap:
@@ -1522,9 +1530,13 @@ def publication_lag_allowance() -> timedelta:
     return timedelta(seconds=min(max(seconds, 0), 300))
 
 
-def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dict:
-    symbol = _symbol(symbol)
-    observed_at = _aware_utc(now or datetime.now(UTC))
+def _feed_window(observed_at: datetime):
+    """The session a feed status judges at ``observed_at``.
+
+    Returns ``(market_open, target_bounds, current_end, expected_end,
+    publication_lag)``; it depends on the clock only, so it is the same for
+    every symbol of one pass.
+    """
     local_now = observed_at.astimezone(NY)
     bounds = session_bounds(local_now.date())
     market_open = bounds is not None and bounds[0] <= observed_at < bounds[1] + LATE_TRADE_ALLOWANCE
@@ -1552,22 +1564,43 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         )
     else:
         current_end = expected_end = target_bounds[1]
-    latest = (
-        db.query(IntradayBar)
-        .filter(
-            IntradayBar.symbol == symbol,
-            IntradayBar.timeframe == "1m",
-            IntradayBar.provider == MARKET_DATA_PROVIDER,
-            IntradayBar.feed_class == MARKET_DATA_FEED_CLASS,
-            IntradayBar.opened_at >= target_bounds[0],
-            IntradayBar.opened_at < target_bounds[1],
+    return market_open, target_bounds, current_end, expected_end, publication_lag
+
+
+def feed_status(db: Session, symbol: str, *, now: datetime | None = None, _inputs: tuple | None = None) -> dict:
+    """One symbol's intraday feed state.
+
+    ``_inputs`` is for ``feed_statuses`` only: the newest bar of the judged
+    session and the stored bar and no-trade minutes of its expected window,
+    already read for every symbol at once.
+    """
+    symbol = _symbol(symbol)
+    observed_at = _aware_utc(now or datetime.now(UTC))
+    market_open, target_bounds, current_end, expected_end, publication_lag = _feed_window(observed_at)
+    window_started = expected_end > target_bounds[0]
+    if _inputs is None:
+        latest = (
+            db.query(IntradayBar)
+            .filter(
+                IntradayBar.symbol == symbol,
+                IntradayBar.timeframe == "1m",
+                IntradayBar.provider == MARKET_DATA_PROVIDER,
+                IntradayBar.feed_class == MARKET_DATA_FEED_CLASS,
+                IntradayBar.opened_at >= target_bounds[0],
+                IntradayBar.opened_at < target_bounds[1],
+            )
+            .order_by(IntradayBar.opened_at.desc())
+            .first()
         )
-        .order_by(IntradayBar.opened_at.desc())
-        .first()
-    )
+        bar_minutes = _bar_minutes(db, symbol, target_bounds[0], expected_end) if window_started else set()
+        no_trade_minutes = (
+            _verified_no_trade_minutes(db, symbol, target_bounds[0], expected_end) if window_started else set()
+        )
+    else:
+        latest, bar_minutes, no_trade_minutes = _inputs
     missing = (
-        _session_missing(db, symbol, target_bounds[0], expected_end)
-        if expected_end > target_bounds[0]
+        _missing_minutes(bar_minutes | no_trade_minutes, target_bounds[0], expected_end)
+        if window_started
         else []
     )
     configured_provider = settings.active_market_data_provider.strip().lower()
@@ -1621,12 +1654,7 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
         "oldest_unresolved_interval": missing[0] if missing else None,
         # Provider-verified no-trade minutes are excluded from missing
         # intervals; they are listed so operators can audit every exclusion.
-        "verified_no_trade_intervals": sorted(
-            value.isoformat()
-            for value in _verified_no_trade_minutes(
-                db, symbol, target_bounds[0], expected_end
-            )
-        ) if expected_end > target_bounds[0] else [],
+        "verified_no_trade_intervals": sorted(value.isoformat() for value in no_trade_minutes),
         "checked_at": observed_at,
         "publication_lag_seconds": int(publication_lag.total_seconds()),
         "expected_latest_open": (expected_end - BAR_CADENCE).isoformat() if market_open else None,
@@ -1698,3 +1726,86 @@ def feed_status(db: Session, symbol: str, *, now: datetime | None = None) -> dic
             ),
         }
     return {**base, "status": "ready", "execution_status": "ready", "unavailable_reason": None}
+
+
+def feed_statuses(db: Session, symbols: list[str], *, now: datetime | None = None) -> dict[str, dict]:
+    """``feed_status`` for many symbols at one instant, in three queries.
+
+    A per-symbol loop reads the database three times a symbol; over the
+    execution universe that was 16 s of every readiness build and of every
+    monitoring pass on the hosted database. The decision itself is
+    ``feed_status``'s: this only reads its inputs for all symbols together.
+    Symbols outside the intraday universe are left out, so a caller asks
+    ``feed_status`` for those and gets its error as before.
+    """
+    observed_at = _aware_utc(now or datetime.now(UTC))
+    universe = intraday_symbols()
+    selected = list(dict.fromkeys(
+        value for value in (symbol.strip().upper() for symbol in symbols) if value in universe
+    ))
+    if not selected:
+        return {}
+    _market_open, target_bounds, _current_end, expected_end, _lag = _feed_window(observed_at)
+    newest = (
+        db.query(IntradayBar.symbol.label("symbol"), func.max(IntradayBar.opened_at).label("opened_at"))
+        .filter(
+            IntradayBar.symbol.in_(selected),
+            IntradayBar.timeframe == "1m",
+            IntradayBar.provider == MARKET_DATA_PROVIDER,
+            IntradayBar.feed_class == MARKET_DATA_FEED_CLASS,
+            IntradayBar.opened_at >= target_bounds[0],
+            IntradayBar.opened_at < target_bounds[1],
+        )
+        .group_by(IntradayBar.symbol)
+        .subquery()
+    )
+    latest = {
+        row.symbol: row
+        for row in db.query(
+            IntradayBar.symbol, IntradayBar.opened_at, IntradayBar.exchange_timestamp,
+            IntradayBar.ingested_at, IntradayBar.last_verified_at,
+        )
+        .join(newest, (IntradayBar.symbol == newest.c.symbol) & (IntradayBar.opened_at == newest.c.opened_at))
+        .filter(
+            IntradayBar.timeframe == "1m",
+            IntradayBar.provider == MARKET_DATA_PROVIDER,
+            IntradayBar.feed_class == MARKET_DATA_FEED_CLASS,
+        )
+        .all()
+    }
+    bar_minutes: dict[str, set[datetime]] = {symbol: set() for symbol in selected}
+    no_trade_minutes: dict[str, set[datetime]] = {symbol: set() for symbol in selected}
+    if expected_end > target_bounds[0]:
+        for symbol, opened_at in (
+            db.query(IntradayBar.symbol, IntradayBar.opened_at)
+            .filter(
+                IntradayBar.symbol.in_(selected),
+                IntradayBar.timeframe == "1m",
+                IntradayBar.provider == MARKET_DATA_PROVIDER,
+                IntradayBar.opened_at >= target_bounds[0],
+                IntradayBar.opened_at < expected_end,
+            )
+            .all()
+        ):
+            bar_minutes[symbol].add(_aware_utc(opened_at))
+        if MARKET_DATA_FEED_CLASS in NO_TRADE_VERIFIABLE_FEEDS:
+            for symbol, opened_at in (
+                db.query(IntradayNoTradeInterval.symbol, IntradayNoTradeInterval.opened_at)
+                .filter(
+                    IntradayNoTradeInterval.symbol.in_(selected),
+                    IntradayNoTradeInterval.timeframe == "1m",
+                    IntradayNoTradeInterval.provider == MARKET_DATA_PROVIDER,
+                    IntradayNoTradeInterval.feed_class == MARKET_DATA_FEED_CLASS,
+                    IntradayNoTradeInterval.opened_at >= target_bounds[0],
+                    IntradayNoTradeInterval.opened_at < expected_end,
+                )
+                .all()
+            ):
+                no_trade_minutes[symbol].add(_aware_utc(opened_at))
+    return {
+        symbol: feed_status(
+            db, symbol, now=observed_at,
+            _inputs=(latest.get(symbol), bar_minutes[symbol], no_trade_minutes[symbol]),
+        )
+        for symbol in selected
+    }

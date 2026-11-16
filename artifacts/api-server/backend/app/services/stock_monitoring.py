@@ -33,6 +33,7 @@ from app.models.stock_paper import (
 from app.services.audit import write_audit_log
 from app.services.intraday_data import (
     feed_status,
+    feed_statuses,
     MARKET_DATA_PROVIDER,
     MARKET_DATA_FEED_CLASS,
 )
@@ -247,9 +248,15 @@ def _freshness_and_provenance(db: Session, now: datetime | None = None) -> dict:
     execution_assets = [asset for asset in assets if asset.symbol in execution_symbols]
     research_only_symbols = sorted(asset.symbol for asset in assets if asset.symbol not in execution_symbols)
     results, failures, historical_warnings = {}, {}, {}
+    # Every symbol's feed inputs in three queries; a symbol the batch leaves
+    # out (or a failed batch) is asked for individually, as before.
+    try:
+        read_statuses = feed_statuses(db, [asset.symbol for asset in execution_assets])
+    except Exception:
+        read_statuses = {}
     for asset in execution_assets:
         try:
-            status = feed_status(db, asset.symbol)
+            status = read_statuses.get(asset.symbol) or feed_status(db, asset.symbol)
             results[asset.symbol] = {
                 "status": status.get("status"),
                 "provider": status.get("provider"),

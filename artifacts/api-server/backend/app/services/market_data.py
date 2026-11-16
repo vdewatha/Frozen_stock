@@ -499,13 +499,77 @@ def get_price_history(
             .limit(limit)
             .all()
         )
-    rows = list(reversed(rows))
+    frame, label = _history_frame(list(reversed(rows)))
+    return frame, source if frame.empty else label
+
+
+def _history_frame(rows: list[MarketPrice]) -> tuple[pd.DataFrame, str]:
+    """Oldest-first frame and its source label, as ``get_price_history`` reports them."""
     frame = pd.DataFrame([_price_row_to_dict(row) for row in rows])
+    source = "database"
     if not frame.empty:
-        frame = frame.rename(columns={"date": "date"})
         sources = sorted(set(frame["source"].dropna().tolist())) if "source" in frame else []
         source = f"database:{sources[0]}" if len(sources) == 1 else f"database:mixed({','.join(sources)})" if sources else source
     return frame, source
+
+
+def get_price_histories(
+    db: Session, symbols: list[str], limit: int = 260, *, chunk: int = 25,
+) -> dict[str, tuple[pd.DataFrame, str]]:
+    """``get_price_history(db, symbol, limit, auto_seed=False)`` for many symbols.
+
+    Two queries per ``chunk`` symbols instead of two per symbol: the hosted
+    database answers a query in roughly 0.1 s, so a per-symbol loop over the
+    active universe cost the readiness check 17 s. Each symbol gets the same
+    provider choice (freshest, then most rows, then name) and the same newest
+    ``limit`` rows of that provider. A symbol whose chosen provider has no
+    name is read by ``get_price_history`` itself, which does not filter then.
+    """
+    cleaned = list(dict.fromkeys(_clean_symbol(symbol) for symbol in symbols))
+    histories: dict[str, tuple[pd.DataFrame, str]] = {}
+    for offset in range(0, len(cleaned), max(1, chunk)):
+        batch = cleaned[offset: offset + max(1, chunk)]
+        chosen: dict[str, tuple] = {}
+        for symbol, source, newest, count in (
+            db.query(MarketPrice.symbol, MarketPrice.source, func.max(MarketPrice.price_date), func.count(MarketPrice.id))
+            .filter(MarketPrice.symbol.in_(batch))
+            .group_by(MarketPrice.symbol, MarketPrice.source)
+            .all()
+        ):
+            key = (newest, count, source or "")
+            if symbol not in chosen or key > chosen[symbol][0]:
+                chosen[symbol] = (key, source)
+        named = {symbol: source for symbol, (_, source) in chosen.items() if source}
+        rows_by_symbol: dict[str, list[MarketPrice]] = {symbol: [] for symbol in named}
+        if named:
+            ranked = (
+                db.query(
+                    MarketPrice.id.label("id"),
+                    func.row_number().over(
+                        partition_by=(MarketPrice.symbol, MarketPrice.source),
+                        order_by=MarketPrice.price_date.desc(),
+                    ).label("position"),
+                )
+                .filter(MarketPrice.symbol.in_(list(named)))
+                .subquery()
+            )
+            for row in (
+                db.query(MarketPrice)
+                .join(ranked, MarketPrice.id == ranked.c.id)
+                .filter(ranked.c.position <= limit)
+                .order_by(MarketPrice.symbol, MarketPrice.price_date)
+                .all()
+            ):
+                if row.source == named.get(row.symbol):
+                    rows_by_symbol[row.symbol].append(row)
+        for symbol in batch:
+            if symbol in named:
+                histories[symbol] = _history_frame(rows_by_symbol[symbol])
+            elif symbol in chosen:
+                histories[symbol] = get_price_history(db, symbol, limit, auto_seed=False)
+            else:
+                histories[symbol] = _history_frame([])
+    return histories
 
 
 def get_price_points(db: Session, symbol: str, limit: int = 260) -> tuple[list[dict], str]:
