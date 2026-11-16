@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -298,6 +298,28 @@ def _fetch_alpaca_sip_bars(symbol: str, start: datetime, end: datetime) -> list[
     return fetch_sip_bars([symbol], start, end).get(symbol, [])
 
 
+BAR_WRITER_LOCK_NAMESPACE = 724191033
+
+
+def _serialize_bar_writers(db: Session, symbol: str, provider: str) -> None:
+    """One writer at a time per symbol and provider, until this transaction ends (PostgreSQL only).
+
+    An upsert reads the stored minutes, updates the ones it found and then
+    inserts the rest.  Two collectors of the same symbol with overlapping
+    windows each see a different set of stored minutes, so one could hold a
+    row the other's insert needs while waiting for a minute the other had
+    just inserted, and PostgreSQL killed one of them (seen in the PostgreSQL
+    CI job on 2026-11-16).  No ordering of rows fixes two statements that
+    cross; taking this lock before the read does, and it means each writer
+    reads what the previous one committed.  The lock is held for one symbol's
+    short write and nothing else is held while waiting for it.
+    """
+    if db.bind is None or db.bind.dialect.name != "postgresql":
+        return
+    db.execute(text("SELECT pg_advisory_xact_lock(:namespace, hashtext(:key))"),
+               {"namespace": BAR_WRITER_LOCK_NAMESPACE, "key": f"{provider}:{symbol}"})
+
+
 def upsert_intraday_bars(
     db: Session,
     symbol: str,
@@ -344,6 +366,7 @@ def upsert_intraday_bars(
     duplicate_count = len(timestamps) - len(set(timestamps))
     out_of_order = timestamps != sorted(timestamps)
     deduplicated = {timestamp: values for timestamp, values in parsed}
+    _serialize_bar_writers(db, symbol, provider)
     existing_rows = (
         db.query(IntradayBar)
         .filter(

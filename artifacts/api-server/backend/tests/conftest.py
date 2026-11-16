@@ -1,8 +1,103 @@
 """Suite-wide test fixtures."""
+from types import SimpleNamespace
+from uuid import uuid4
+
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
 from app.core.config import settings
 from app.db import schema  # Register the complete FK graph for isolated DB fixtures.
+from app.db.base import Base
+
+POSTGRES_SKIP_REASON = "Requires PostgreSQL: set DATABASE_URL to an isolated test database"
+
+
+def _database_is_postgres() -> bool:
+    return make_url(settings.database_url).get_backend_name() == "postgresql"
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--require-postgres", action="store_true", default=False,
+        help="Fail (instead of skip) every test marked 'postgres'; the PostgreSQL CI job runs with this.",
+    )
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "postgres: needs a real PostgreSQL server (row locks, advisory locks, ON CONFLICT). "
+        "Skipped on SQLite; a skip is a failure under --require-postgres.",
+    )
+    if config.getoption("--require-postgres") and not _database_is_postgres():
+        raise pytest.UsageError("--require-postgres needs DATABASE_URL to point at PostgreSQL")
+
+
+def pytest_collection_modifyitems(config, items):
+    if _database_is_postgres():
+        return
+    skip = pytest.mark.skip(reason=POSTGRES_SKIP_REASON)
+    for item in items:
+        if item.get_closest_marker("postgres"):
+            item.add_marker(skip)
+
+
+def pytest_collection_finish(session):
+    # An empty selection would pass with nothing run (a renamed marker, a bad -m).
+    if session.config.getoption("--require-postgres") and not any(
+        item.get_closest_marker("postgres") for item in session.items
+    ):
+        raise pytest.UsageError("--require-postgres selected no test marked 'postgres'")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if (
+        report.skipped
+        # A strict expected failure ran and failed as recorded; it is not a skip.
+        and not hasattr(report, "wasxfail")
+        and item.config.getoption("--require-postgres")
+        and item.get_closest_marker("postgres")
+    ):
+        reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
+        report.outcome = "failed"
+        report.longrepr = (
+            f"{item.nodeid} is marked 'postgres' and was skipped under --require-postgres: {reason}"
+        )
+
+
+@pytest.fixture()
+def postgres_schema():
+    """A throwaway PostgreSQL schema holding every table; dropped after the test.
+
+    Connections from ``engine`` see only that schema (``search_path``), so a
+    test never touches the database's own tables. ``owner`` connects without
+    the search path, for ``pg_blocking_pids`` and other server-wide checks.
+    Advisory locks are server-wide and are not isolated by the schema.
+    """
+    url = make_url(settings.database_url)
+    if url.get_backend_name() != "postgresql":
+        pytest.skip(POSTGRES_SKIP_REASON)
+    owner = create_engine(url)
+    name = "pgtest_" + uuid4().hex
+    with owner.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{name}"'))
+    engine = create_engine(
+        # A lock wait this long is a hang; fail with 55P03 instead of stalling the job.
+        url.update_query_dict({"options": f"-csearch_path={name} -clock_timeout=60s"}),
+        pool_size=10, max_overflow=10,
+    )
+    try:
+        Base.metadata.create_all(engine)
+        yield SimpleNamespace(engine=engine, owner=owner, name=name)
+    finally:
+        engine.dispose()
+        with owner.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{name}" CASCADE'))
+        owner.dispose()
 
 
 @pytest.fixture(autouse=True)
