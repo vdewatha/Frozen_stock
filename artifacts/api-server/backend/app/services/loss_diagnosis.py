@@ -324,7 +324,7 @@ def repeating_failures(rows: Iterable, *, window: int = 20, min_count: int = 3,
         symbol = getattr(row, "symbol", None) or detail.get("symbol")
         closed = getattr(row, "closed_at", None) or detail.get("closed_at")
         closed = closed.isoformat() if isinstance(closed, datetime) else str(closed)
-        item = (closed, symbol, diagnosis)
+        item = (closed, symbol, diagnosis, getattr(row, "id", None))
         by_strategy[strategy].append(item)
         by_strategy["all"].append(item)
     out = []
@@ -343,6 +343,9 @@ def repeating_failures(rows: Iterable, *, window: int = 20, min_count: int = 3,
                 "share_of_losses": round(count / len(losses), 4),
                 "symbols": sorted({item[1] for item in members if item[1]}),
                 "first_seen": members[0][0], "last_seen": members[-1][0],
+                # The losing trades the lesson stands on (trade_attribution ids), so an
+                # experiment it triggers can be traced back to them.
+                "attribution_ids": sorted(item[3] for item in members if item[3] is not None),
                 "lesson": LESSONS[cause], "proposal": PROPOSALS.get(cause),
                 "contributing": {flag: n for flag, n in flags.most_common() if flag in CONTRIBUTING_PROPOSALS},
                 "auto_apply": False, "requires_fresh_holdout_and_forward_trial": True,
