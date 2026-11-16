@@ -4,13 +4,18 @@ import { test } from "node:test";
 import {
   assess,
   defaultGuardConfig,
+  descendantsOf,
   formatSample,
   parseCgroup,
   parseMeminfo,
+  parseParentPid,
   parsePressure,
   parseRss,
   readSample,
   tighter,
+  treeBytes,
+  victimOf,
+  type ChildUsage,
   type GuardState,
   type Sample,
 } from "./resource-guard";
@@ -126,7 +131,7 @@ test("with no research worker running the guard only reports", () => {
 
 test("non-compact research lanes are killable; trading lanes never are", () => {
   const { killableLabels } = defaultGuardConfig({});
-  for (const label of ["paper-core", "learning-1", "learning-2", "research", "scalp-research-1"]) {
+  for (const label of ["paper-research", "paper-core", "learning-1", "learning-2", "research", "scalp-research-1"]) {
     assert.equal(killableLabels.test(label), true, label);
   }
   for (const label of ["paper-fast", "paper-broker", "paper-intraday", "watchdog", "direct-monitor", "beat",
@@ -146,4 +151,78 @@ test("reading a live sample never throws, on Linux or elsewhere", () => {
   const live = readSample(new Map([[process.pid, "self"], [999_999_999, "gone"]]));
   assert.ok(live.at);
   assert.ok(live.children.every((child) => child.label !== "gone"));
+});
+
+// The hosted layout after the research split: the learning queue runs in
+// paper-research (a prefork worker, pid 20) whose task process (pid 21) holds
+// the job's memory.
+function researchSample(availableMiB: number, taskMiB: number | null, coreMiB = 2200): Sample {
+  const base = sample(availableMiB);
+  const research: ChildUsage = { label: "paper-research", pid: 20, rssBytes: 200 * MiB };
+  if (taskMiB !== null) research.taskProcesses = [{ pid: 21, rssBytes: taskMiB * MiB }];
+  base.children = [
+    ...base.children.map((child) => (child.label === "paper-core" ? { ...child, rssBytes: coreMiB * MiB } : child)),
+    research,
+  ];
+  return base;
+}
+
+test("the research task process is stopped first, not paper-core", () => {
+  const config = defaultGuardConfig({});
+  // paper-core is larger, and it is still the research task process that goes.
+  const decision = assess(researchSample(300, 1400, 2200), { strikes: 0, lastKillAt: null }, config, 0);
+  assert.equal(decision.action, "kill");
+  assert.deepEqual(decision.action === "kill" && decision.victim,
+    { label: "paper-research", pid: 21, rssBytes: 1400 * MiB, taskProcess: true });
+  // The worker itself (pid 20) is never the target while it has a task process.
+  assert.notEqual(decision.action === "kill" && decision.victim.pid, 20);
+});
+
+test("an idle research worker frees nothing, so the guard falls back to paper-core", () => {
+  const config = defaultGuardConfig({});
+  // An idle task process: about 200 MiB, under the 512 MiB floor.
+  const idle = assess(researchSample(300, 200), { strikes: 0, lastKillAt: null }, config, 0);
+  assert.equal(idle.action === "kill" && idle.victim.label, "paper-core");
+  assert.equal(idle.action === "kill" && idle.victim.taskProcess, false);
+  // No task process at all (the worker is starting): the same.
+  const starting = assess(researchSample(300, null), { strikes: 0, lastKillAt: null }, config, 0);
+  assert.equal(starting.action === "kill" && starting.victim.label, "paper-core");
+  // The floor is configurable; at 0 any research task process goes first.
+  const eager = defaultGuardConfig({ MEMORY_GUARD_RESEARCH_MIN_MB: "0" });
+  const first = assess(researchSample(300, 200), { strikes: 0, lastKillAt: null }, eager, 0);
+  assert.equal(first.action === "kill" && first.victim.pid, 21);
+});
+
+test("after the research process is stopped, the cooldown holds and paper-core is next only if needed", () => {
+  const config = defaultGuardConfig({});
+  const state: GuardState = { strikes: 0, lastKillAt: null };
+  assert.equal(assess(researchSample(300, 1400), state, config, 0).action, "kill");
+  // Its replacement is idle; memory is still short, but the guard waits.
+  assert.match(assess(researchSample(300, 200), state, config, 10_000).reason, /cooldown/);
+  const later = assess(researchSample(300, 200), state, config, 320_000);
+  assert.equal(later.action === "kill" && later.victim.label, "paper-core");
+});
+
+test("a prefork worker's largest task process is the target, and totals include task processes", () => {
+  const worker: ChildUsage = {
+    label: "learning-1", pid: 30, rssBytes: 180 * MiB,
+    taskProcesses: [{ pid: 31, rssBytes: 300 * MiB }, { pid: 32, rssBytes: 900 * MiB }],
+  };
+  assert.deepEqual(victimOf(worker), { label: "learning-1", pid: 32, rssBytes: 900 * MiB, taskProcess: true });
+  assert.deepEqual(victimOf({ label: "paper-core", pid: 12, rssBytes: 500 * MiB }),
+    { label: "paper-core", pid: 12, rssBytes: 500 * MiB, taskProcess: false });
+  assert.equal(treeBytes(worker), 1380 * MiB);
+  const line = formatSample(researchSample(700, 1400, 400));
+  // 200 MiB worker + 1,400 MiB task process, listed under the worker's label.
+  assert.match(line, /top=fastapi:3000MiB,paper-fast:2500MiB,paper-research:1600MiB,paper-core:400MiB/);
+});
+
+test("the process tree is read from /proc stat lines", () => {
+  assert.equal(parseParentPid("21 (python3.11) S 20 20 1 0 -1 4194304 100 0 0 0"), 20);
+  // A command name with spaces and parentheses does not shift the fields.
+  assert.equal(parseParentPid("22 (celery (pool) x) R 20 20 1 0"), 20);
+  assert.equal(parseParentPid("garbage"), null);
+  const parents = new Map([[20, 1], [21, 20], [22, 20], [23, 21], [40, 1]]);
+  assert.deepEqual(descendantsOf(parents, 20).sort(), [21, 22, 23]);
+  assert.deepEqual(descendantsOf(parents, 40), []);
 });

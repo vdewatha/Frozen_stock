@@ -13,11 +13,20 @@
 // present, else /proc/meminfo), memory/CPU pressure (PSI), load and each
 // child's RSS. It logs a compact line each minute and at once when memory is
 // tight; Replit keeps logs off the VM, so the record survives a freeze. When
-// available memory stays critically low the guard SIGKILLs the largest
-// research worker (the one running backtests; it is restarted by its
-// supervisor) before the whole VM locks up. Trading, broker, monitor,
-// watchdog, beat and API processes are never killed.
-import { readFileSync } from "node:fs";
+// available memory stays critically low the guard SIGKILLs research before the
+// whole VM locks up. Trading, broker, monitor, watchdog, beat and API
+// processes are never killed.
+//
+// Research has a worker of its own, "paper-research": a prefork pool whose one
+// task process runs a single learning job and exits. That task process is the
+// first victim: stopping it frees the job's memory at once, the worker stays
+// up and starts a fresh process, and no other queue loses its consumer. Until
+// 2026-11 research ran inside "paper-core", so freeing research memory meant
+// killing the worker that also serves market data and the default queue (it
+// took 10 to 12 seconds to come back and dropped every task it held). The
+// other research-capable workers, paper-core included, remain a last resort
+// for when the research task process holds nothing worth freeing.
+import { readdirSync, readFileSync } from "node:fs";
 
 export type MemoryReading = {
   totalBytes: number;
@@ -30,7 +39,14 @@ export type MemoryReading = {
 
 export type Pressure = { some10: number | null; full10: number | null };
 
-export type ChildUsage = { label: string; pid: number; rssBytes: number };
+export type ProcessUsage = { pid: number; rssBytes: number };
+
+// A supervised child. taskProcesses are its own descendants: the pool
+// processes of a prefork Celery worker, which hold the memory of its tasks.
+export type ChildUsage = { label: string; pid: number; rssBytes: number; taskProcesses?: ProcessUsage[] };
+
+// What the guard stops: a worker's task process when it has one, else the worker.
+export type Victim = { label: string; pid: number; rssBytes: number; taskProcess: boolean };
 
 export type Sample = {
   at: string;
@@ -48,6 +64,9 @@ export type GuardConfig = {
   consecutiveSamples: number;
   cooldownMs: number;
   killableLabels: RegExp;
+  // Stopped before any other killable worker, when it holds at least preferredMinBytes.
+  preferredLabels: RegExp;
+  preferredMinBytes: number;
 };
 
 export const defaultGuardConfig = (env: NodeJS.ProcessEnv = process.env): GuardConfig => ({
@@ -63,9 +82,16 @@ export const defaultGuardConfig = (env: NodeJS.ProcessEnv = process.env): GuardC
   maxFullPressure10: Number(env.MEMORY_GUARD_MAX_FULL_PRESSURE ?? 25),
   consecutiveSamples: Math.max(1, Number(env.MEMORY_GUARD_CONSECUTIVE_SAMPLES ?? 2)),
   cooldownMs: Math.max(60_000, Number(env.MEMORY_GUARD_COOLDOWN_SECONDS ?? 300) * 1000),
-  // Research and learning lanes only: compact "paper-core" and the
-  // non-compact learning-N / research / scalp-research workers.
-  killableLabels: /^(paper-core|learning-\d+|research|scalp-research-\d+)$/,
+  // Research and learning lanes only: compact "paper-research" and
+  // "paper-core", and the non-compact learning-N / research / scalp-research
+  // workers.
+  killableLabels: /^(paper-research|paper-core|learning-\d+|research|scalp-research-\d+)$/,
+  preferredLabels: /^paper-research$/,
+  // An idle task process measured 159 MiB resident on Linux, nearly all of it
+  // pages shared with its worker; stopping one frees nothing and would only
+  // start the cooldown. Below this the guard looks at the other research
+  // workers.
+  preferredMinBytes: Math.max(0, Number(env.MEMORY_GUARD_RESEARCH_MIN_MB ?? 512)) * 1024 * 1024,
 });
 
 // ------------------------------------------------------------ parsing
@@ -122,6 +148,44 @@ export function parseRss(status: string): number | null {
   return kib(status, "VmRSS");
 }
 
+// Parent pid from /proc/<pid>/stat: "pid (comm) state ppid ...". The command
+// name may itself contain spaces and parentheses, so read after the last ")".
+export function parseParentPid(stat: string): number | null {
+  const fields = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+  const parent = Number(fields[1]);
+  return Number.isInteger(parent) && parent >= 0 && fields.length > 1 ? parent : null;
+}
+
+// Every descendant of root, given each process's parent.
+export function descendantsOf(parents: Map<number, number>, root: number): number[] {
+  const found: number[] = [];
+  const queue = [root];
+  while (queue.length > 0) {
+    const current = queue.shift() as number;
+    for (const [pid, parent] of parents) {
+      if (parent === current && pid !== root && !found.includes(pid)) {
+        found.push(pid);
+        queue.push(pid);
+      }
+    }
+  }
+  return found;
+}
+
+// A child's own memory plus its task processes'.
+export function treeBytes(child: ChildUsage): number {
+  return child.rssBytes + (child.taskProcesses ?? []).reduce((sum, task) => sum + task.rssBytes, 0);
+}
+
+// The process to stop for a worker: its largest task process when it has one
+// (the worker stays up and replaces it), else the worker itself.
+export function victimOf(child: ChildUsage): Victim {
+  const largest = [...(child.taskProcesses ?? [])].sort((left, right) => right.rssBytes - left.rssBytes)[0];
+  return largest
+    ? { label: child.label, pid: largest.pid, rssBytes: largest.rssBytes, taskProcess: true }
+    : { label: child.label, pid: child.pid, rssBytes: child.rssBytes, taskProcess: false };
+}
+
 // The tighter of the cgroup limit and the VM's own view.
 export function tighter(a: MemoryReading | null, b: MemoryReading | null): MemoryReading | null {
   if (!a) return b;
@@ -135,7 +199,7 @@ export type GuardState = { strikes: number; lastKillAt: number | null };
 
 export type GuardDecision =
   | { action: "none"; critical: boolean; reason: string }
-  | { action: "kill"; critical: true; reason: string; victim: ChildUsage };
+  | { action: "kill"; critical: true; reason: string; victim: Victim };
 
 export function assess(sample: Sample, state: GuardState, config: GuardConfig, nowMs: number): GuardDecision {
   const memory = sample.memory;
@@ -162,9 +226,14 @@ export function assess(sample: Sample, state: GuardState, config: GuardConfig, n
   if (state.lastKillAt !== null && nowMs - state.lastKillAt < config.cooldownMs) {
     return { action: "none", critical: true, reason: `${reason}; in cooldown after the last kill` };
   }
-  const victim = sample.children
+  const candidates = sample.children
     .filter((child) => config.killableLabels.test(child.label))
-    .sort((left, right) => right.rssBytes - left.rssBytes)[0];
+    .map(victimOf)
+    .sort((left, right) => right.rssBytes - left.rssBytes);
+  // The research worker's task process first; any other research-capable
+  // worker only when that process holds too little to matter.
+  const victim = candidates.find((candidate) =>
+    config.preferredLabels.test(candidate.label) && candidate.rssBytes >= config.preferredMinBytes) ?? candidates[0];
   if (!victim) {
     return { action: "none", critical: true, reason: `${reason}; no research worker to stop` };
   }
@@ -191,8 +260,8 @@ export function formatSample(sample: Sample): string {
     `psi_mem_some10=${sample.memoryPressure.some10 ?? "na"} full10=${sample.memoryPressure.full10 ?? "na"}`,
     `psi_cpu_some10=${sample.cpuPressure.some10 ?? "na"}`,
     `load1=${sample.load1 ?? "na"}`,
-    `top=${[...sample.children].sort((a, b) => b.rssBytes - a.rssBytes).slice(0, 6)
-      .map((child) => `${child.label}:${mib(child.rssBytes)}`).join(",") || "-"}`,
+    `top=${[...sample.children].sort((a, b) => treeBytes(b) - treeBytes(a)).slice(0, 6)
+      .map((child) => `${child.label}:${mib(treeBytes(child))}`).join(",") || "-"}`,
   ];
   return `[resources] ${parts.filter(Boolean).join(" ")}`;
 }
@@ -205,6 +274,24 @@ function read(path: string): string | null {
   } catch {
     return null;
   }
+}
+
+// pid -> parent pid for every process in /proc; empty where /proc is absent.
+function readParents(): Map<number, number> {
+  const parents = new Map<number, number>();
+  let entries: string[];
+  try {
+    entries = readdirSync("/proc");
+  } catch {
+    return parents;
+  }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    const stat = read(`/proc/${entry}/stat`);
+    const parent = stat ? parseParentPid(stat) : null;
+    if (parent !== null) parents.set(Number(entry), parent);
+  }
+  return parents;
 }
 
 export function readSample(children: Map<number, string>, now: Date = new Date()): Sample {
@@ -221,10 +308,20 @@ export function readSample(children: Map<number, string>, now: Date = new Date()
   const loadText = read("/proc/loadavg");
   const load1 = loadText ? Number(loadText.split(" ")[0]) : null;
   const usage: ChildUsage[] = [];
-  for (const [pid, label] of children) {
+  const parents = readParents();
+  const rssOf = (pid: number): number | null => {
     const status = read(`/proc/${pid}/status`);
-    const rss = status ? parseRss(status) : null;
-    if (rss !== null) usage.push({ label, pid, rssBytes: rss });
+    return status ? parseRss(status) : null;
+  };
+  for (const [pid, label] of children) {
+    const rss = rssOf(pid);
+    if (rss === null) continue;
+    const taskProcesses: ProcessUsage[] = [];
+    for (const descendant of descendantsOf(parents, pid)) {
+      const descendantRss = rssOf(descendant);
+      if (descendantRss !== null) taskProcesses.push({ pid: descendant, rssBytes: descendantRss });
+    }
+    usage.push(taskProcesses.length > 0 ? { label, pid, rssBytes: rss, taskProcesses } : { label, pid, rssBytes: rss });
   }
   return { at: now.toISOString(), memory, memoryPressure, cpuPressure, load1: Number.isFinite(load1) ? load1 : null, children: usage };
 }
@@ -234,7 +331,7 @@ export type ResourceGuardStats = {
   last_sample: Sample | null;
   peak_used_bytes: number | null;
   peak_at: string | null;
-  kills: { at: string; label: string; pid: number; rss: string; reason: string }[];
+  kills: { at: string; label: string; pid: number; rss: string; reason: string; scope: "task process" | "worker" }[];
 };
 
 export function startResourceGuard(options: {
@@ -272,8 +369,10 @@ export function startResourceGuard(options: {
       else if (tick % logEvery === 0) log(formatSample(sample));
       if (decision.action === "kill") {
         const { victim } = decision;
-        warn(`[memory-guard] stopping ${victim.label} (pid ${victim.pid}, ${mib(victim.rssBytes)}) before the VM runs out of memory: ${decision.reason}; its supervisor restarts it`);
-        stats.kills = [...stats.kills, { at: sample.at, label: victim.label, pid: victim.pid, rss: mib(victim.rssBytes), reason: decision.reason }].slice(-10);
+        const scope: "task process" | "worker" = victim.taskProcess ? "task process" : "worker";
+        warn(`[memory-guard] stopping ${victim.label} ${scope} (pid ${victim.pid}, ${mib(victim.rssBytes)}) before the VM runs out of memory: ${decision.reason}; ${
+          victim.taskProcess ? "its worker replaces the process and records the job as lost" : "its supervisor restarts it"}`);
+        stats.kills = [...stats.kills, { at: sample.at, label: victim.label, pid: victim.pid, rss: mib(victim.rssBytes), reason: decision.reason, scope }].slice(-10);
         try {
           kill(victim.pid);
         } catch (error) {

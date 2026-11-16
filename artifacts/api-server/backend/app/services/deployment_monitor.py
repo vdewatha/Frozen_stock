@@ -210,8 +210,11 @@ def _check_celery_workers() -> dict:
         }
         worker_queues[worker] = sorted(queue_names)
 
+    # The hosted layout gives the learning queue a worker of its own
+    # (paper-research), so the compact core is recognised without it. Learning
+    # must still have a consumer: missing_general_queues below covers that.
     compact_required_queues = (
-        set(GENERAL_WORKER_QUEUES)
+        (set(GENERAL_WORKER_QUEUES) - {"learning"})
         | {INTRADAY_MARKET_DATA_QUEUE, RESEARCH_MARKET_DATA_QUEUE,
            SCALP_RESEARCH_QUEUE, MONITORING_QUEUE}
     )

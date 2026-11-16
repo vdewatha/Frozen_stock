@@ -712,3 +712,6 @@ celery_app.conf.beat_schedule = excluded_schedule(
 # `app.tasks.tasks` module. Explicitly name that related module so standalone
 # Celery workers register the same tasks as the API process.
 celery_app.autodiscover_tasks(["app.tasks"], related_name="jobs")
+
+# The research worker's memory cap and its record of lost jobs (signal hooks).
+from app.tasks import research_worker  # noqa: E402,F401

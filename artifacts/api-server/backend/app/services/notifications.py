@@ -17,6 +17,8 @@ SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
 # critical alerts open and blocked every autonomous order, cost probes and the
 # slow book's rebalance included.
 RESEARCH_ONLY_JOB_SOURCE_PREFIXES = ("strategy_learning_scope_job:",)
+# entity_type of the warning that records a research job lost with its process.
+LOST_RESEARCH_JOB_ENTITY = "lost_research_job"
 
 
 def trading_blocking_critical_filter():
@@ -113,12 +115,16 @@ def resolve_notification(db: Session, notification_id: int) -> Notification:
 
 
 def resolve_successful_job_notifications(db: Session, source: str) -> int:
-    """Close prior critical incidents only after the same job succeeds again."""
+    """Close prior critical incidents only after the same job succeeds again.
+
+    The same success closes the job's "lost with its process" records
+    (app/tasks/research_worker.py): the run that covers the loss has happened.
+    """
     notifications = (
         db.query(Notification)
         .filter(
             Notification.category == "scheduled_job",
-            Notification.severity == "critical",
+            or_(Notification.severity == "critical", Notification.entity_type == LOST_RESEARCH_JOB_ENTITY),
             Notification.status == "open",
             Notification.source == source,
         )

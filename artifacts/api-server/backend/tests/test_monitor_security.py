@@ -195,6 +195,30 @@ class MonitorSecurityTests(unittest.TestCase):
         self.assertEqual(result["details"]["compact_workers"], ["paper-core@host"])
         self.assertTrue(result["details"]["compact_queue_coverage"])
 
+    def test_worker_evidence_accepts_the_compact_pool_with_a_separate_research_worker(self):
+        # The hosted layout: paper-core no longer consumes learning; paper-research does.
+        core = (deployment_monitor.GENERAL_WORKER_QUEUES - {"learning"}) | {
+            "intraday_market_data", "research_market_data", "scalp_research", "monitoring", "learning_fast"}
+        inspector = MagicMock()
+        inspector.ping.return_value = {"paper-core@host": {"ok": "pong"}, "paper-research@host": {"ok": "pong"}}
+        inspector.active_queues.return_value = {
+            "paper-core@host": [{"name": name} for name in core],
+            "paper-research@host": [{"name": "learning"}],
+        }
+        with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):
+            result = deployment_monitor._check_celery_workers()
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["details"]["compact_workers"], ["paper-core@host"])
+        self.assertEqual(result["details"]["missing_general_queues"], [])
+
+        # Without the research worker nothing consumes learning, and that blocks.
+        inspector.ping.return_value = {"paper-core@host": {"ok": "pong"}}
+        inspector.active_queues.return_value = {"paper-core@host": [{"name": name} for name in core]}
+        with patch.object(deployment_monitor.celery_app.control, "inspect", return_value=inspector):
+            result = deployment_monitor._check_celery_workers()
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["details"]["missing_general_queues"], ["learning"])
+
     def test_schedule_requires_governed_learning_jobs_not_only_legacy_jobs(self):
         schedule = dict(deployment_monitor.celery_app.conf.beat_schedule)
         del schedule["scheduled-stock-challenger-retraining"]

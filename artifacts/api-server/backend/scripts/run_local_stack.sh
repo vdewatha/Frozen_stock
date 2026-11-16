@@ -104,13 +104,13 @@ if [[ "${PAPER_WORKERS_ENABLED:-true}" == "true" ]]; then
       done
     ) &
     pids+=("$!")
-    general_queues="default,market_data,learning,paper_trading,risk"
+    general_queues="default,market_data,paper_trading,risk"
     general_queues+=",${routed_only_queues}"
   else
     # Beat owns monitoring and routes stock-monitoring-job to the monitoring
     # queue, so a local worker must consume it or no snapshots are written.
     echo "PAPER_DIRECT_MONITOR_LOOP is not true; Celery beat runs stock-monitoring-job."
-    general_queues="default,market_data,learning,paper_trading,risk,monitoring"
+    general_queues="default,market_data,paper_trading,risk,monitoring"
     general_queues+=",${routed_only_queues}"
   fi
 
@@ -139,6 +139,18 @@ if [[ "${PAPER_WORKERS_ENABLED:-true}" == "true" ]]; then
     --hostname=general@%h \
     --queues="$general_queues" \
     --concurrency=2 &
+  pids+=("$!")
+
+  # Research lane, as in the hosted layout (src/production-server.ts): the
+  # learning queue has a worker of its own, so a long backtest cannot hold the
+  # general worker's processes. One task at a time, in a process that exits
+  # when the task ends and stops itself above PAPER_RESEARCH_MAX_MEMORY_MB
+  # (app/tasks/research_worker.py; default 2048, 0 switches the cap off).
+  python3.11 -m celery -A app.tasks.celery_app:celery_app worker \
+    --loglevel=INFO \
+    --hostname=paper-research@%h \
+    --queues=learning \
+    --pool=prefork --concurrency=1 --prefetch-multiplier=1 --max-tasks-per-child=1 &
   pids+=("$!")
 
   PYTHONPATH=. python3.11 scripts/run_beat_with_lease.py &
