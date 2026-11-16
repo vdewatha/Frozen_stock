@@ -1,0 +1,109 @@
+name: Load scenario
+
+# Manual only. This workflow measures and uploads a report; it is not a
+# required check, nothing depends on it, and it never touches the deployed app:
+# the database is a service container on the runner and the Redis is private.
+on:
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Seconds of load per run (60 or more)
+        default: "180"
+      kill_after_seconds:
+        description: Seconds into each run at which the core worker is killed
+        default: "60"
+      runs:
+        description: Back-to-back runs (two shows whether the numbers repeat)
+        default: "2"
+
+concurrency:
+  group: load-scenario
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  load-scenario:
+    name: Load scenario
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: artifacts/api-server/backend
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      LOAD_DURATION_SECONDS: ${{ inputs.duration_seconds }}
+      LOAD_KILL_AFTER_SECONDS: ${{ inputs.kill_after_seconds }}
+      LOAD_RUNS: ${{ inputs.runs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: artifacts/api-server/backend/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Install redis-server
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q redis-server
+          sudo systemctl stop redis-server
+          sudo systemctl disable redis-server
+          redis-server --version
+      - name: Run the scenario
+        run: |
+          case "$LOAD_RUNS" in
+            1|2|3|4|5) ;;
+            *) echo "runs must be between 1 and 5" >&2; exit 2 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/load-scenario"
+          for run in $(seq 1 "$LOAD_RUNS"); do
+            LOAD_RUN_DIR="$RUNNER_TEMP/load-scenario/run-$run" \
+            LOAD_REPORT="$RUNNER_TEMP/load-scenario/report-$run.json" \
+              bash scripts/run_load_scenario.sh
+          done
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "## Load scenario"
+            echo
+            if [ -f "$RUNNER_TEMP/load-scenario/report-2.json" ]; then
+              echo "Runs 1 and 2 side by side:"
+              echo
+              python scripts/report_load_scenario.py --compare \
+                "$RUNNER_TEMP/load-scenario/report-1.json" "$RUNNER_TEMP/load-scenario/report-2.json" \
+                | sed -e '1a ---|---|---'
+            elif [ -f "$RUNNER_TEMP/load-scenario/report-1.json" ]; then
+              echo '```json'
+              python -c "import json,sys; r=json.load(open(sys.argv[1])); print(json.dumps({k: r[k] for k in ('coverage','queue_delay','lock_waits','memory','recovery')}, indent=2))" \
+                "$RUNNER_TEMP/load-scenario/report-1.json"
+              echo '```'
+            else
+              echo "No report was written."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload reports and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-scenario
+          path: ${{ runner.temp }}/load-scenario
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,356 @@
+{
+  "config": {
+    "broker_latency_ms": 150,
+    "drain_seconds": 15,
+    "duration_seconds": 180,
+    "feed_latency_ms": 100,
+    "intraday_interval_seconds": 5.0,
+    "intraday_symbols": 10,
+    "kill_after_seconds": 60,
+    "kill_worker": "paper-core",
+    "probe_interval_seconds": 5.0,
+    "probe_queues": [
+      "learning_fast",
+      "market_data",
+      "research_market_data"
+    ],
+    "reconcile_interval_seconds": 10.0,
+    "research_ballast_mb": 0,
+    "research_jobs": 10,
+    "research_sweeps_per_job": 12,
+    "research_symbols": 6,
+    "restart_delay_seconds": 2.0,
+    "sample_interval_seconds": 1.0,
+    "signal_hold_ms": 50,
+    "signal_interval_seconds": 5.0,
+    "signal_lock_timeout_ms": 3000
+  },
+  "coverage": {
+    "complete": true,
+    "measured": {
+      "lock_waits": true,
+      "memory": true,
+      "queue_delay": true,
+      "recovery": true
+    },
+    "missing": []
+  },
+  "elapsed_seconds": 195.0,
+  "environment": {
+    "cpu_count": 10,
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "postgres": "17.5",
+    "python": "3.11.17"
+  },
+  "layout": {
+    "paper-broker": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "broker_reconciliation"
+    },
+    "paper-core": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "default,market_data,intraday_market_data,research_market_data,scalp_research,learning,learning_fast,paper_trading,risk,monitoring"
+    },
+    "paper-fast": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "paper_trading,risk,monitoring,learning_fast"
+    },
+    "paper-intraday": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "intraday_market_data"
+    }
+  },
+  "live_trading": false,
+  "lock_waits": {
+    "by_wait_event": {
+      "transactionid": 5
+    },
+    "longest_wait_seconds": 0.252,
+    "max_idle_in_transaction": 2,
+    "max_sessions": 11,
+    "max_waiting_sessions": 1,
+    "postgres_deadlocks": 0,
+    "samples": 194,
+    "samples_failed": 0,
+    "samples_with_a_waiting_session": 5,
+    "sqlstate_counts": {
+      "40P01": 0,
+      "55P03": 0,
+      "by_task": {},
+      "other": {}
+    }
+  },
+  "memory": {
+    "peak_total_mb": 726.5,
+    "processes": {
+      "paper-broker": {
+        "first_mb": 163.9,
+        "last_mb": 174.8,
+        "mean_mb": 174.6,
+        "peak_mb": 174.8,
+        "samples": 194
+      },
+      "paper-core": {
+        "first_mb": 162.9,
+        "last_mb": 179.7,
+        "mean_mb": 183.7,
+        "peak_mb": 202.5,
+        "samples": 192
+      },
+      "paper-fast": {
+        "first_mb": 163.2,
+        "last_mb": 170.3,
+        "mean_mb": 170.2,
+        "peak_mb": 170.3,
+        "samples": 194
+      },
+      "paper-intraday": {
+        "first_mb": 163.7,
+        "last_mb": 173.8,
+        "mean_mb": 173.7,
+        "peak_mb": 174.5,
+        "samples": 194
+      },
+      "redis": {
+        "first_mb": 4.3,
+        "last_mb": 5.4,
+        "mean_mb": 5.2,
+        "peak_mb": 5.4,
+        "samples": 194
+      }
+    },
+    "source": "macos_phys_footprint"
+  },
+  "paper_only": true,
+  "queue_delay": {
+    "broker_reconciliation": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 0.512,
+        "mean": 0.041,
+        "p50": 0.013,
+        "p95": 0.512
+      },
+      "sent": 18,
+      "started": 18
+    },
+    "intraday_market_data": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 0.528,
+        "mean": 0.036,
+        "p50": 0.011,
+        "p95": 0.3
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "learning": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 10,
+        "max": 90.366,
+        "mean": 46.289,
+        "p50": 45.711,
+        "p95": 90.366
+      },
+      "sent": 10,
+      "started": 10
+    },
+    "learning_fast": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 25.083,
+        "mean": 0.729,
+        "p50": 0.012,
+        "p95": 0.538
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "market_data": {
+      "expired_before_start": 0,
+      "never_started": 1,
+      "oldest_unstarted_wait_seconds": 174.975,
+      "seconds": {
+        "count": 35,
+        "max": 74.6,
+        "mean": 26.287,
+        "p50": 25.085,
+        "p95": 69.79
+      },
+      "sent": 36,
+      "started": 35
+    },
+    "paper_trading": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 0.503,
+        "mean": 0.028,
+        "p50": 0.013,
+        "p95": 0.039
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "research_market_data": {
+      "expired_before_start": 0,
+      "never_started": 1,
+      "oldest_unstarted_wait_seconds": 174.97,
+      "seconds": {
+        "count": 35,
+        "max": 79.599,
+        "mean": 27.885,
+        "p50": 25.581,
+        "p95": 74.744
+      },
+      "sent": 36,
+      "started": 35
+    }
+  },
+  "recovery": {
+    "first_task_started_seconds": 9.99,
+    "heartbeat_key": "celery:worker:heartbeat:paper-core@<host>",
+    "heartbeat_restored_seconds": 10.0,
+    "heartbeat_ttl_at_kill_ms": 25245,
+    "killed_at": 1794856103.09048,
+    "killed_pid": 35165,
+    "new_pid": 35285,
+    "process_restarted_seconds": 2.04,
+    "signal": "SIGKILL",
+    "status": "recovered",
+    "tasks_in_flight_at_kill": [
+      "load_scenario.research",
+      "load_scenario.research"
+    ],
+    "tasks_lost_at_kill": [
+      "load_scenario.research",
+      "load_scenario.research"
+    ],
+    "tasks_redelivered_after_kill": [],
+    "worker": "paper-core"
+  },
+  "report": "load_scenario",
+  "schema": "load_scenario_20261116190648_35131",
+  "started_at": "2026-11-16T19:07:23.028813+00:00",
+  "tasks": {
+    "load_scenario.broker_reconciliation": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 18
+      },
+      "result_status": {
+        "complete": 18
+      },
+      "runtime_seconds": {
+        "count": 18,
+        "max": 2.364,
+        "mean": 1.152,
+        "p50": 0.985,
+        "p95": 2.364
+      },
+      "sent": 18,
+      "started": 18,
+      "started_not_finished": 0
+    },
+    "load_scenario.intraday_import": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 36
+      },
+      "result_status": {
+        "complete": 36
+      },
+      "runtime_seconds": {
+        "count": 36,
+        "max": 4.669,
+        "mean": 1.27,
+        "p50": 0.81,
+        "p95": 3.346
+      },
+      "sent": 36,
+      "started": 36,
+      "started_not_finished": 0
+    },
+    "load_scenario.probe": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 106
+      },
+      "result_status": {
+        "complete": 106
+      },
+      "runtime_seconds": {
+        "count": 106,
+        "max": 0.795,
+        "mean": 0.045,
+        "p50": 0.02,
+        "p95": 0.206
+      },
+      "sent": 108,
+      "started": 106,
+      "started_not_finished": 0
+    },
+    "load_scenario.research": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 8
+      },
+      "result_status": {
+        "complete": 8
+      },
+      "runtime_seconds": {
+        "count": 8,
+        "max": 29.827,
+        "mean": 23.24,
+        "p50": 19.744,
+        "p95": 29.827
+      },
+      "sent": 10,
+      "started": 10,
+      "started_not_finished": 2
+    },
+    "load_scenario.signal_pass": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 36
+      },
+      "result_status": {
+        "complete": 36
+      },
+      "runtime_seconds": {
+        "count": 36,
+        "max": 0.894,
+        "mean": 0.379,
+        "p50": 0.164,
+        "p95": 0.869
+      },
+      "sent": 36,
+      "started": 36,
+      "started_not_finished": 0
+    }
+  }
+}

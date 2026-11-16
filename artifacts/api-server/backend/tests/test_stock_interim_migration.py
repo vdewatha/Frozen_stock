@@ -14,6 +14,8 @@ from sqlalchemy.engine import make_url
 from app.core.config import settings
 from app.db.session import engine
 
+pytestmark = pytest.mark.postgres
+
 
 def test_populated_interim_stock_schema_repairs_through_head_with_audit_triggers():
     if engine.dialect.name != "postgresql":

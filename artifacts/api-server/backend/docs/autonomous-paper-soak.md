@@ -15,7 +15,8 @@ The soak must use:
 - one API process;
 - exactly one Celery beat process holding the Redis lease;
 - one worker listening only to `intraday_market_data`;
-- one general worker listening to `default,market_data,learning,paper_trading,risk`;
+- one general worker listening to `default,market_data,learning,paper_trading,risk`
+  and `learning_fast,broker_reconciliation,research_market_data`;
 - the independent stock watchdog.
 
 The existing risk limits, model policy, holdout policy, feed entitlement, and

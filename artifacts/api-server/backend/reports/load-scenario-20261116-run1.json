@@ -1,0 +1,359 @@
+{
+  "config": {
+    "broker_latency_ms": 150,
+    "drain_seconds": 15,
+    "duration_seconds": 180,
+    "feed_latency_ms": 100,
+    "intraday_interval_seconds": 5.0,
+    "intraday_symbols": 10,
+    "kill_after_seconds": 60,
+    "kill_worker": "paper-core",
+    "probe_interval_seconds": 5.0,
+    "probe_queues": [
+      "learning_fast",
+      "market_data",
+      "research_market_data"
+    ],
+    "reconcile_interval_seconds": 10.0,
+    "research_ballast_mb": 0,
+    "research_jobs": 10,
+    "research_sweeps_per_job": 12,
+    "research_symbols": 6,
+    "restart_delay_seconds": 2.0,
+    "sample_interval_seconds": 1.0,
+    "signal_hold_ms": 50,
+    "signal_interval_seconds": 5.0,
+    "signal_lock_timeout_ms": 3000
+  },
+  "coverage": {
+    "complete": true,
+    "measured": {
+      "lock_waits": true,
+      "memory": true,
+      "queue_delay": true,
+      "recovery": true
+    },
+    "missing": []
+  },
+  "elapsed_seconds": 195.5,
+  "environment": {
+    "cpu_count": 10,
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "postgres": "17.5",
+    "python": "3.11.17"
+  },
+  "layout": {
+    "paper-broker": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "broker_reconciliation"
+    },
+    "paper-core": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "default,market_data,intraday_market_data,research_market_data,scalp_research,learning,learning_fast,paper_trading,risk,monitoring"
+    },
+    "paper-fast": {
+      "concurrency": 2,
+      "pool": "threads",
+      "queues": "paper_trading,risk,monitoring,learning_fast"
+    },
+    "paper-intraday": {
+      "concurrency": 1,
+      "pool": "threads",
+      "queues": "intraday_market_data"
+    }
+  },
+  "live_trading": false,
+  "lock_waits": {
+    "by_wait_event": {
+      "advisory": 7,
+      "extend": 2,
+      "transactionid": 8
+    },
+    "longest_wait_seconds": 0.966,
+    "max_idle_in_transaction": 3,
+    "max_sessions": 11,
+    "max_waiting_sessions": 1,
+    "postgres_deadlocks": 0,
+    "samples": 188,
+    "samples_failed": 0,
+    "samples_with_a_waiting_session": 17,
+    "sqlstate_counts": {
+      "40P01": 0,
+      "55P03": 0,
+      "by_task": {},
+      "other": {}
+    }
+  },
+  "memory": {
+    "peak_total_mb": 709.0,
+    "processes": {
+      "paper-broker": {
+        "first_mb": 163.4,
+        "last_mb": 174.8,
+        "mean_mb": 174.6,
+        "peak_mb": 174.8,
+        "samples": 188
+      },
+      "paper-core": {
+        "first_mb": 164.0,
+        "last_mb": 175.9,
+        "mean_mb": 171.6,
+        "peak_mb": 183.9,
+        "samples": 187
+      },
+      "paper-fast": {
+        "first_mb": 164.1,
+        "last_mb": 170.8,
+        "mean_mb": 170.6,
+        "peak_mb": 170.8,
+        "samples": 188
+      },
+      "paper-intraday": {
+        "first_mb": 163.3,
+        "last_mb": 174.1,
+        "mean_mb": 173.9,
+        "peak_mb": 174.8,
+        "samples": 188
+      },
+      "redis": {
+        "first_mb": 4.7,
+        "last_mb": 5.6,
+        "mean_mb": 5.3,
+        "peak_mb": 5.6,
+        "samples": 188
+      }
+    },
+    "source": "macos_phys_footprint"
+  },
+  "paper_only": true,
+  "queue_delay": {
+    "broker_reconciliation": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 18,
+        "max": 1.539,
+        "mean": 0.302,
+        "p50": 0.209,
+        "p95": 1.539
+      },
+      "sent": 18,
+      "started": 18
+    },
+    "intraday_market_data": {
+      "expired_before_start": 4,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 32,
+        "max": 37.21,
+        "mean": 1.697,
+        "p50": 0.032,
+        "p95": 4.549
+      },
+      "sent": 36,
+      "started": 32
+    },
+    "learning": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 10,
+        "max": 120.368,
+        "mean": 67.562,
+        "p50": 71.156,
+        "p95": 120.368
+      },
+      "sent": 10,
+      "started": 10
+    },
+    "learning_fast": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 2.274,
+        "mean": 0.293,
+        "p50": 0.026,
+        "p95": 1.741
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "market_data": {
+      "expired_before_start": 0,
+      "never_started": 1,
+      "oldest_unstarted_wait_seconds": 185.482,
+      "seconds": {
+        "count": 35,
+        "max": 93.595,
+        "mean": 40.76,
+        "p50": 42.19,
+        "p95": 88.738
+      },
+      "sent": 36,
+      "started": 35
+    },
+    "paper_trading": {
+      "expired_before_start": 0,
+      "never_started": 0,
+      "oldest_unstarted_wait_seconds": null,
+      "seconds": {
+        "count": 36,
+        "max": 1.543,
+        "mean": 0.152,
+        "p50": 0.02,
+        "p95": 0.637
+      },
+      "sent": 36,
+      "started": 36
+    },
+    "research_market_data": {
+      "expired_before_start": 0,
+      "never_started": 1,
+      "oldest_unstarted_wait_seconds": 185.481,
+      "seconds": {
+        "count": 35,
+        "max": 98.304,
+        "mean": 42.574,
+        "p50": 40.98,
+        "p95": 93.743
+      },
+      "sent": 36,
+      "started": 35
+    }
+  },
+  "recovery": {
+    "first_task_started_seconds": 11.65,
+    "heartbeat_key": "celery:worker:heartbeat:paper-core@<host>",
+    "heartbeat_restored_seconds": 11.68,
+    "heartbeat_ttl_at_kill_ms": 23336,
+    "killed_at": 1794855864.104125,
+    "killed_pid": 34787,
+    "new_pid": 34982,
+    "process_restarted_seconds": 2.55,
+    "signal": "SIGKILL",
+    "status": "recovered",
+    "tasks_in_flight_at_kill": [
+      "load_scenario.research",
+      "load_scenario.research"
+    ],
+    "tasks_lost_at_kill": [
+      "load_scenario.research",
+      "load_scenario.research"
+    ],
+    "tasks_redelivered_after_kill": [],
+    "worker": "paper-core"
+  },
+  "report": "load_scenario",
+  "schema": "load_scenario_20261116190236_34607",
+  "started_at": "2026-11-16T19:03:23.994261+00:00",
+  "tasks": {
+    "load_scenario.broker_reconciliation": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 18
+      },
+      "result_status": {
+        "complete": 18
+      },
+      "runtime_seconds": {
+        "count": 18,
+        "max": 5.757,
+        "mean": 1.833,
+        "p50": 1.548,
+        "p95": 5.757
+      },
+      "sent": 18,
+      "started": 18,
+      "started_not_finished": 0
+    },
+    "load_scenario.intraday_import": {
+      "expired_before_start": 4,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 32
+      },
+      "result_status": {
+        "complete": 31,
+        "skipped": 1
+      },
+      "runtime_seconds": {
+        "count": 32,
+        "max": 14.036,
+        "mean": 2.68,
+        "p50": 1.122,
+        "p95": 12.78
+      },
+      "sent": 36,
+      "started": 32,
+      "started_not_finished": 0
+    },
+    "load_scenario.probe": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 106
+      },
+      "result_status": {
+        "complete": 106
+      },
+      "runtime_seconds": {
+        "count": 106,
+        "max": 2.842,
+        "mean": 0.167,
+        "p50": 0.018,
+        "p95": 0.886
+      },
+      "sent": 108,
+      "started": 106,
+      "started_not_finished": 0
+    },
+    "load_scenario.research": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 8
+      },
+      "result_status": {
+        "complete": 8
+      },
+      "runtime_seconds": {
+        "count": 8,
+        "max": 40.999,
+        "mean": 25.817,
+        "p50": 18.962,
+        "p95": 40.999
+      },
+      "sent": 10,
+      "started": 10,
+      "started_not_finished": 2
+    },
+    "load_scenario.signal_pass": {
+      "expired_before_start": 0,
+      "failed": {},
+      "finished": {
+        "SUCCESS": 36
+      },
+      "result_status": {
+        "complete": 36
+      },
+      "runtime_seconds": {
+        "count": 36,
+        "max": 2.875,
+        "mean": 0.727,
+        "p50": 0.292,
+        "p95": 2.119
+      },
+      "sent": 36,
+      "started": 36,
+      "started_not_finished": 0
+    }
+  }
+}

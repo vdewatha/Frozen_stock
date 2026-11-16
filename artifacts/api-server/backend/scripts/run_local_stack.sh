@@ -74,6 +74,13 @@ if [[ "${PAPER_WORKERS_ENABLED:-true}" == "true" ]]; then
   # does this from the Node gateway). A crashed loop is relaunched here instead
   # of stopping the whole stack; the loop itself never mutates watchdog or
   # recovery state on failure, so recovery stays fail-closed meanwhile.
+  # Tasks are routed to these queues too (app/tasks/celery_app.py). Without a
+  # local consumer the fast learning jobs (trade attribution, news discovery,
+  # self-healing), the five-minute broker reconciliation and the research
+  # collections were published and never ran. The general worker takes them,
+  # as the hosted layout's core worker does.
+  routed_only_queues="learning_fast,broker_reconciliation,research_market_data"
+
   if [[ "${PAPER_DIRECT_MONITOR_LOOP:-false}" == "true" ]]; then
     (
       monitor_pid=""
@@ -98,11 +105,13 @@ if [[ "${PAPER_WORKERS_ENABLED:-true}" == "true" ]]; then
     ) &
     pids+=("$!")
     general_queues="default,market_data,learning,paper_trading,risk"
+    general_queues+=",${routed_only_queues}"
   else
     # Beat owns monitoring and routes stock-monitoring-job to the monitoring
     # queue, so a local worker must consume it or no snapshots are written.
     echo "PAPER_DIRECT_MONITOR_LOOP is not true; Celery beat runs stock-monitoring-job."
     general_queues="default,market_data,learning,paper_trading,risk,monitoring"
+    general_queues+=",${routed_only_queues}"
   fi
 
   # Keep the one-minute poll independent from daily imports and feature jobs.
