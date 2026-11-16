@@ -68,6 +68,29 @@ registration can never drift from what was frozen.
    at the checkpoint and at the verdict sample.  The markdown table of each
    recorded review is what gets appended to the report's "Reviews" section.
 
+5. **Closure** (``close_candidate`` / ``closures``).  A candidate whose stop
+   rule has triggered is closed by the review that records it; an operator
+   can close one with a stated reason (``close_candidate_by_number``).  A
+   closure is one append-only ``forward_experiment`` / ``close`` audit row,
+   and that row is the state: not the strategy's status (a resume rewrites a
+   pause) and not the marker in its parameters (an overlay replaces
+   parameters wholesale).  It survives a restart and a reseed because nothing
+   rewrites audit rows.  There is no reopen.
+
+   * a ``rule_row`` candidate (the row exists to run the experiment) takes no
+     new entries from then on: the ledger refuses every buy bound to the row
+     (``entry_block_for``, the authority, on every reservation and again at
+     dispatch) and the signal cycle records its BUYs as observed
+     (``entry_blocks``, one read a cycle).  Nothing is sold: the row stays in
+     the cycle so its open lots keep their tested exits, and the weekly
+     ``settle_closures`` retires it once it holds none;
+   * a ``tag_row`` candidate (a reading on a row that trades on its own
+     account) closes its sample only.  The host row is not the experiment's
+     to change, and it is released to its normal governance.
+
+   A closed candidate's sample stops at the closure: trades decided before
+   it still count when they close, nothing decided after it does.
+
 Paper only.  Nothing here sizes, places or authorises an order; the rows
 trade exactly as exploration candidates already do, and a verdict only makes a
 candidate eligible for the normal forward-trial promotion gates.
@@ -96,9 +119,18 @@ UTC = timezone.utc
 EVENT = "forward_experiment"
 ACTION_REGISTER = "register"
 ACTION_REVIEW = "review"
+ACTION_CLOSE = "close"
+ACTION_ANNUL = "annul"  # reserved: the last close / annul row of a candidate wins; nothing writes one today
+CLOSE_KINDS = ("stop_rule", "verdict_failed", "operator_closure")
+OPERATOR_CLOSE_KINDS = ("verdict_failed", "operator_closure")
+GOVERNANCE_EVENT = "strategy_governance"
+RETIRE_ACTION = "retire_closed_forward_experiment"
+MARKER_CLOSURE_KEYS = ("closed_at", "closure_kind", "entries_blocked", "released_at")
 PARAMETER_KEY = "forward_experiment"
 SPEC_FILE = Path(__file__).with_name("data") / "forward-experiments-20261110.json"
 SPEC_SHA256 = "0a87603dfa1ba05343d47a000484c2b3ee310d1203c9f0cde814038e1a84b439"
+# Specs registered before the admission requirement (experiment_admission.py); their terms are not re-judged.
+GRANDFATHERED_SPECS = frozenset({SPEC_SHA256})
 SPEC_REPORT = "reports/local-sweep-20261110/forward-experiments.md"
 SPEC_JSON = "reports/local-sweep-20261110/forward-experiments.json"
 FROZEN_AT = "2026-11-10"
@@ -311,11 +343,17 @@ def register_forward_experiments(db: Session, *, now: Optional[datetime] = None,
     now = now or datetime.now(UTC)
     spec = load_spec()
     done = {payload["sweep_id"]: payload for payload in registrations(db)}
-    registered, created, reused, already, mismatched = [], [], [], [], []
+    registered, created, reused, already, mismatched, refused = [], [], [], [], [], []
     for candidate in spec["candidates"]:
         sweep_id = candidate["sweep_id"]
         if sweep_id in done:
             already.append(sweep_id)
+            continue
+        admission = _admission(db, candidate)
+        if admission is not None and not admission["admitted"]:
+            refused.append({"sweep_id": sweep_id, "candidate": candidate["candidate"], "reasons": admission["reasons"],
+                            "years_to_verdict": admission["estimate"].get("years_to_verdict")})
+            logger.warning("forward experiment %s not registered: %s", sweep_id, "; ".join(admission["reasons"]))
             continue
         row, mechanism, was_created, mismatch = _bind(db, candidate, now=now)
         if mismatch is not None or row is None:
@@ -337,13 +375,309 @@ def register_forward_experiments(db: Session, *, now: Optional[datetime] = None,
         (created if was_created else reused).append(row.strategy_type)
     if registered:
         db.flush()
-    return {"registered": registered, "rows_created": created, "rows_reused": reused, "already_registered": already,
-            "mismatched": mismatched, "spec_sha256": SPEC_SHA256, "paper_only": True}
+    out = {"registered": registered, "rows_created": created, "rows_reused": reused, "already_registered": already,
+           "mismatched": mismatched, "spec_sha256": SPEC_SHA256, "paper_only": True}
+    if refused:
+        out["refused"] = refused
+    return out
+
+
+def _admission(db: Session, candidate: Mapping) -> Optional[dict]:
+    """The admission decision for a candidate of a spec frozen after the requirement existed; None when grandfathered.
+
+    The 2026-11-10 spec keeps its original terms: its candidates were
+    registered before any admission requirement and are never refused here.
+    Any later spec (another ``SPEC_SHA256``) must pass
+    ``experiment_admission.check_forward_candidate`` before a candidate binds.
+    """
+    from app.services import experiment_admission
+
+    if SPEC_SHA256 in GRANDFATHERED_SPECS or not experiment_admission.enabled():
+        return None
+    number = int(candidate["candidate"])
+    decision = experiment_admission.check_forward_candidate(
+        {**candidate, "verdict_sample": VERDICT_SAMPLE.get(number)})
+    experiment_admission.record(db, decision)
+    return decision
 
 
 def is_registered_row(parameters: Optional[Mapping]) -> bool:
-    """A row bound to a frozen forward experiment (never retired by the discovery re-grade)."""
-    return isinstance((parameters or {}).get(PARAMETER_KEY), Mapping)
+    """A row bound to a frozen forward experiment (never retired by the discovery re-grade).
+
+    A row whose candidates are all closed is released once it no longer needs
+    the protection: a tag row at its closure, a rule row when it is retired
+    flat (until then a re-grade must not take it out of the cycle while its
+    open lots still need their exits).
+    """
+    marker = (parameters or {}).get(PARAMETER_KEY)
+    return isinstance(marker, Mapping) and not marker.get("released_at")
+
+
+# ------------------------------------------------------------------ closures
+
+class ForwardExperimentError(ValueError):
+    """A closure request that cannot be recorded (unknown candidate, bad reason)."""
+
+
+def closures(db: Session) -> dict[str, dict]:
+    """Every candidate that is closed now, by sweep id (the last close / annul row of a candidate wins)."""
+    rows = db.execute(select(AuditLog.id, AuditLog.action, AuditLog.payload)
+                      .where(AuditLog.event_type == EVENT, AuditLog.action.in_((ACTION_CLOSE, ACTION_ANNUL)))
+                      .order_by(AuditLog.id)).all()
+    return _closure_state(rows)
+
+
+def _closure_state(rows: Iterable) -> dict[str, dict]:
+    state: dict[str, dict] = {}
+    for audit_id, action, payload in rows:
+        payload = dict(payload or {})
+        sweep_id = payload.get("sweep_id")
+        if not sweep_id:
+            continue
+        if action == ACTION_CLOSE:
+            payload.setdefault("audit_id", audit_id)
+            state[str(sweep_id)] = payload
+        else:
+            state.pop(str(sweep_id), None)
+    return state
+
+
+def _closed_at(closure: Optional[Mapping]) -> Optional[datetime]:
+    value = (closure or {}).get("closed_at")
+    if not value:
+        return None
+    stamp = datetime.fromisoformat(str(value))
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
+
+
+def _kind_text(kind: Any) -> str:
+    return {"stop_rule": "stop rule", "verdict_failed": "verdict failed", "operator_closure": "operator closure"}.get(
+        str(kind), str(kind))
+
+
+def block_reason(closure: Mapping) -> str:
+    return (f"forward experiment {closure.get('candidate')} is closed ({_kind_text(closure.get('reason_kind'))}, "
+            f"{str(closure.get('closed_at'))[:10]}): no new entries; open lots keep their exits")
+
+
+def entry_blocks(db: Session) -> dict[int, str]:
+    """``{strategy_id: reason}`` for every row a closure stops entering (one read; the signal cycle's view)."""
+    out: dict[int, str] = {}
+    for closure in closures(db).values():
+        if closure.get("entries_blocked") and closure.get("strategy_id") is not None:
+            out.setdefault(int(closure["strategy_id"]), block_reason(closure))
+    return out
+
+
+def entry_block_for(db: Session, strategy_id: Optional[int]) -> Optional[str]:
+    """Why a buy bound to this strategy is refused, read fresh from the audit rows (the ledger's authority).
+
+    Keyed on the strategy id of the close row, never on the row's status or
+    parameters, so a resume, a re-admission or a parameter overlay cannot
+    reopen a closed candidate.
+    """
+    if strategy_id is None:
+        return None
+    rows = db.execute(select(AuditLog.id, AuditLog.action, AuditLog.payload)
+                      .where(AuditLog.event_type == EVENT, AuditLog.entity_type == "strategy",
+                             AuditLog.entity_id == int(strategy_id),
+                             AuditLog.action.in_((ACTION_CLOSE, ACTION_ANNUL)))
+                      .order_by(AuditLog.id)).all()
+    for closure in _closure_state(rows).values():
+        if closure.get("entries_blocked"):
+            return block_reason(closure)
+    return None
+
+
+def open_lots(db: Session, row: Strategy) -> dict:
+    """The row's own open paper lots and entries still in flight: ``{"lots": [...], "pending_entries": n}``."""
+    from app.models.stock_paper import StockPaperOrder, StockPaperPosition
+    from app.services.stock_paper_autotrader import _strategy_lots
+    from app.services.stock_paper_ledger import NONTERMINAL_ORDER_STATUSES
+
+    pending = db.query(StockPaperOrder.id).filter(
+        StockPaperOrder.strategy_id == row.id, StockPaperOrder.side == "buy",
+        StockPaperOrder.status.in_(NONTERMINAL_ORDER_STATUSES | {"uncertain_submission"})).count()
+    symbols = sorted({symbol for (symbol,) in db.query(StockPaperOrder.symbol).filter(
+        StockPaperOrder.strategy_id == row.id, StockPaperOrder.side == "buy").distinct()})
+    lots: list[dict] = []
+    if symbols:
+        type_by_id = {sid: slug for sid, slug in db.query(Strategy.id, Strategy.strategy_type).all()}
+        held = db.query(StockPaperPosition).filter(StockPaperPosition.symbol.in_(symbols),
+                                                   StockPaperPosition.quantity > 0).all()
+        for position in held:
+            quantity = _strategy_lots(db, position.account_id, position.symbol, type_by_id)["holdings"].get(
+                row.strategy_type)
+            if quantity is not None and quantity > 0:
+                lots.append({"symbol": position.symbol, "quantity": str(quantity)})
+    return {"lots": sorted(lots, key=lambda lot: lot["symbol"]), "pending_entries": int(pending)}
+
+
+def _open_lots_or_unknown(db: Session, row: Optional[Strategy]) -> Optional[dict]:
+    if row is None:
+        return {"lots": [], "pending_entries": 0}
+    try:
+        return open_lots(db, row)
+    except Exception as exc:  # a read that fails must never look like "flat"
+        logger.warning("forward experiments: open lots of %s unreadable: %s", row.strategy_type, exc.__class__.__name__)
+        return None
+
+
+def closure_summary(closure: Optional[Mapping]) -> Optional[dict]:
+    if not closure:
+        return None
+    return {key: closure.get(key) for key in ("candidate", "sweep_id", "strategy_id", "strategy_type", "mechanism",
+                                              "reason_kind", "reasons", "closed_at", "closed_by", "entries_blocked",
+                                              "review_number", "audit_id")}
+
+
+def _closure_terms(registration: Mapping, *, reason_kind: str, reasons: Iterable[str], now: datetime, actor: str,
+                   review_number: Optional[int]) -> dict:
+    mechanism = registration.get("mechanism")
+    blocked = mechanism == "rule_row"
+    return {
+        "candidate": int(registration["candidate"]), "sweep_id": registration["sweep_id"],
+        "strategy_id": registration.get("strategy_id"), "strategy_type": registration.get("strategy_type"),
+        "mechanism": mechanism, "tag_reading": registration.get("tag_reading"),
+        "reason_kind": reason_kind, "reasons": [str(reason) for reason in reasons], "closed_at": now.isoformat(),
+        "closed_by": actor, "review_number": review_number, "entries_blocked": blocked,
+        "enforcement": ("no new entries on the row: the ledger refuses every buy bound to it and the signal cycle "
+                        "records its BUYs as observed; open lots keep their tested exits and the row is retired once "
+                        "it holds none" if blocked else
+                        "tag-and-compare: the sample is closed; the host row trades on its own account and is not "
+                        "changed"),
+        "sample": "trades decided before the closure count when they close; nothing decided after it does",
+        "reopen": "none", "spec_sha256": SPEC_SHA256, "paper_only": True, "live_authorized": False,
+    }
+
+
+def close_candidate(db: Session, registration: Mapping, *, reason_kind: str, reasons: Iterable[str],
+                    now: Optional[datetime] = None, actor: str = "system", review_number: Optional[int] = None,
+                    review_audit_id: Optional[int] = None) -> dict:
+    """Close one registered candidate once: the audit row, the marker mirror and a notification."""
+    from app.services.audit import lock_audit_chain
+    from app.services.notifications import create_notification
+
+    if reason_kind not in CLOSE_KINDS:
+        raise ForwardExperimentError(f"reason_kind must be one of {', '.join(CLOSE_KINDS)}")
+    reasons = [str(reason).strip() for reason in reasons if str(reason).strip()]
+    if not reasons:
+        raise ForwardExperimentError("a closure needs a stated reason")
+    now = now or datetime.now(UTC)
+    # Two closers (the weekly review and an operator) must not both write: take
+    # the audit writer's lock first, then look.
+    lock_audit_chain(db)
+    db.flush()
+    existing = closures(db).get(str(registration["sweep_id"]))
+    if existing is not None:
+        return {"status": "already_closed", "closure": closure_summary(existing)}
+    payload = _closure_terms(registration, reason_kind=reason_kind, reasons=reasons, now=now, actor=actor,
+                             review_number=review_number)
+    strategy_id = payload["strategy_id"]
+    row = db.get(Strategy, int(strategy_id)) if strategy_id is not None else None
+    payload["review_audit_id"] = review_audit_id
+    payload["row_status_at_closure"] = row.current_status if row is not None else None
+    payload["open_at_closure"] = _open_lots_or_unknown(db, row) if payload["entries_blocked"] else None
+    audit = write_audit_log(
+        db, event_type=EVENT, entity_type="strategy", entity_id=int(strategy_id) if strategy_id is not None else None,
+        action=ACTION_CLOSE, status="closed",
+        message=(f"forward experiment {payload['candidate']} ({payload['sweep_id']}) closed: "
+                 f"{_kind_text(reason_kind)}; {'; '.join(reasons)}"[:1000]),
+        payload=payload)
+    db.flush()
+    sync_closure_markers(db)
+    create_notification(
+        db, category="strategy_governance", severity="warning", source="forward_experiments",
+        title=f"Forward experiment {payload['candidate']} closed",
+        message=(f"{payload['strategy_type']}: {_kind_text(reason_kind)} ({'; '.join(reasons)}). "
+                 + ("New entries are off; open lots keep their exits." if payload["entries_blocked"]
+                    else "The sample is closed; the host row is unchanged."))[:1000],
+        entity_type="strategy", entity_id=int(strategy_id) if strategy_id is not None else None,
+        payload=closure_summary({**payload, "audit_id": audit.id}))
+    return {"status": "closed", "closure": closure_summary({**payload, "audit_id": audit.id})}
+
+
+def close_candidate_by_number(db: Session, candidate: int, *, reason: str, reason_kind: str = "operator_closure",
+                              actor: str = "operator", now: Optional[datetime] = None) -> dict:
+    """An operator's closure of one candidate, with its reason on the record (the stop rule closes at the review)."""
+    if reason_kind not in OPERATOR_CLOSE_KINDS:
+        raise ForwardExperimentError(f"reason_kind must be one of {', '.join(OPERATOR_CLOSE_KINDS)}")
+    if len((reason or "").strip()) < 10:
+        raise ForwardExperimentError("a closure needs a stated reason of at least 10 characters")
+    registration = next((r for r in registrations(db) if int(r["candidate"]) == int(candidate)), None)
+    if registration is None:
+        raise ForwardExperimentError(f"forward experiment {candidate} is not registered")
+    return close_candidate(db, registration, reason_kind=reason_kind, reasons=[reason.strip()], now=now, actor=actor)
+
+
+def sync_closure_markers(db: Session) -> list[str]:
+    """Mirror the closures onto the bound rows' markers; the audit rows stay the state.  Idempotent."""
+    closed = closures(db)
+    by_row: dict[int, list[dict]] = {}
+    for registration in registrations(db):
+        if registration.get("strategy_id") is not None:
+            by_row.setdefault(int(registration["strategy_id"]), []).append(registration)
+    changed = []
+    for strategy_id, bound in by_row.items():
+        row = db.get(Strategy, strategy_id)
+        marker = (row.parameters or {}).get(PARAMETER_KEY) if row is not None else None
+        if not isinstance(marker, Mapping):
+            continue
+        want = {key: value for key, value in marker.items() if key not in MARKER_CLOSURE_KEYS}
+        mine = [closed.get(str(registration.get("sweep_id"))) for registration in bound]
+        if all(mine):  # a row is closed only when every candidate bound to it is
+            last = max(mine, key=lambda closure: str(closure.get("closed_at")))
+            blocked = any(closure.get("entries_blocked") for closure in mine)
+            want.update({"closed_at": last.get("closed_at"), "closure_kind": last.get("reason_kind"),
+                         "entries_blocked": blocked})
+            if not blocked or row.current_status == "retired":
+                want["released_at"] = last.get("closed_at")
+        if want != dict(marker):
+            params = dict(row.parameters or {})
+            params[PARAMETER_KEY] = want
+            row.parameters = params
+            changed.append(row.strategy_type)
+    if changed:
+        db.flush()
+    return changed
+
+
+def settle_closures(db: Session, *, now: Optional[datetime] = None) -> dict:
+    """Retire each closed rule row once it holds no lot and has no entry in flight (audited, once)."""
+    now = now or datetime.now(UTC)
+    closed = closures(db)
+    open_candidates: dict[int, int] = {}
+    for registration in registrations(db):
+        if registration.get("strategy_id") is not None and str(registration.get("sweep_id")) not in closed:
+            sid = int(registration["strategy_id"])
+            open_candidates[sid] = open_candidates.get(sid, 0) + 1
+    retired, winding_down, seen = [], [], set()
+    for closure in closed.values():
+        strategy_id = closure.get("strategy_id")
+        if not closure.get("entries_blocked") or strategy_id is None or int(strategy_id) in seen:
+            continue
+        seen.add(int(strategy_id))
+        row = db.get(Strategy, int(strategy_id))
+        if row is None or row.current_status == "retired" or open_candidates.get(int(strategy_id)):
+            continue
+        held = _open_lots_or_unknown(db, row)
+        if held is None or held["lots"] or held["pending_entries"]:
+            winding_down.append({"candidate": closure.get("candidate"), "strategy_type": row.strategy_type,
+                                 "open": held})
+            continue
+        old_status, row.current_status = row.current_status, "retired"
+        write_audit_log(
+            db, event_type=GOVERNANCE_EVENT, entity_type="strategy", entity_id=row.id, action=RETIRE_ACTION,
+            status="complete",
+            message=(f"forward experiment {closure.get('candidate')} was closed on "
+                     f"{str(closure.get('closed_at'))[:10]} and {row.strategy_type} holds no lot; retired."),
+            payload={"old_status": old_status, "new_status": "retired", "candidate": closure.get("candidate"),
+                     "sweep_id": closure.get("sweep_id"), "closure_audit_id": closure.get("audit_id"),
+                     "retired_at": now.isoformat(), "paper_only": True})
+        retired.append(row.strategy_type)
+    if retired:
+        db.flush()
+    return {"retired": retired, "winding_down": winding_down, "markers": sync_closure_markers(db)}
 
 
 # ------------------------------------------------------------- forward sample
@@ -410,14 +744,31 @@ def _signal_readings(db: Session, signal_ids: Iterable[int]) -> dict[int, Option
     return {row.id: readings_of(row.features) for row in rows}
 
 
-def round_trip_trades(db: Session, strategy_type: str, *, since: datetime) -> list[dict]:
-    """Closed paper round trips of the row since ``since`` (entry decision on or after it), as trade records."""
+def _signal_times(db: Session, signal_ids: Iterable[int]) -> dict[int, datetime]:
+    ids = sorted({int(i) for i in signal_ids if i})
+    if not ids:
+        return {}
+    return {signal_id: _utc(when) for signal_id, when in db.execute(
+        select(StrategySignal.id, StrategySignal.signal_time).where(StrategySignal.id.in_(ids))).all() if when}
+
+
+def round_trip_trades(db: Session, strategy_type: str, *, since: datetime,
+                      until: Optional[datetime] = None) -> list[dict]:
+    """Closed paper round trips of the row since ``since`` (entry decision on or after it), as trade records.
+
+    ``until`` is a candidate's closure: a trip decided before it counts when
+    it closes (an entry already at the broker fills and is the candidate's),
+    one decided after it is not the candidate's trade.
+    """
     from app.services.trade_attribution import current_attributions
 
     rows = [row for row in current_attributions(db, since=since, sources=ROUND_TRIP_SOURCES,
                                                 strategy_types=[strategy_type])
             if _utc(row.opened_at) >= since]
     lineage = {row.id: ((row.detail or {}).get("lineage") or {}).get("signal_id") for row in rows}
+    if until is not None:
+        decided = _signal_times(db, lineage.values())
+        rows = [row for row in rows if decided.get(lineage[row.id] or 0, _utc(row.opened_at)) < until]
     readings = _signal_readings(db, lineage.values())
     out = []
     for row in sorted(rows, key=lambda r: (_utc(r.opened_at), r.id)):
@@ -451,7 +802,7 @@ def _is_buy_decision(signal: StrategySignal) -> bool:
 
 
 def shadow_signal_trades(db: Session, row: Strategy, *, since: datetime, now: datetime,
-                         loader: Optional[Callable] = None) -> list[dict]:
+                         loader: Optional[Callable] = None, until: Optional[datetime] = None) -> list[dict]:
     """The row's BUY decisions since ``since``, scored as the paper path would have traded them.
 
     One hypothetical trade per (symbol, decision bar): entry at the next
@@ -465,9 +816,11 @@ def shadow_signal_trades(db: Session, row: Strategy, *, since: datetime, now: da
     from app.services.strategies import rules as rule_language
     from app.services.strategy_execution_policy import exit_policy_for
 
-    signals = db.scalars(select(StrategySignal).where(StrategySignal.strategy_id == row.id,
-                                                      StrategySignal.signal_time >= since.replace(tzinfo=None))
-                         .order_by(StrategySignal.signal_time, StrategySignal.id)).all()
+    query = select(StrategySignal).where(StrategySignal.strategy_id == row.id,
+                                         StrategySignal.signal_time >= since.replace(tzinfo=None))
+    if until is not None:  # a closed candidate's sample ends at its closure
+        query = query.where(StrategySignal.signal_time < until.astimezone(UTC).replace(tzinfo=None))
+    signals = db.scalars(query.order_by(StrategySignal.signal_time, StrategySignal.id)).all()
     decisions: dict[tuple[str, str], StrategySignal] = {}
     for signal in signals:
         if not _is_buy_decision(signal):
@@ -541,18 +894,19 @@ def history_vix_tag(decision_date: str) -> Optional[bool]:
 
 
 def candidate_trades(db: Session, registration: Mapping, *, now: datetime,
-                     loader: Optional[Callable] = None) -> dict:
+                     loader: Optional[Callable] = None, closure: Optional[Mapping] = None) -> dict:
     """The candidate's forward sample: ``{"trades", "excluded", "sample_source", "coverage"}``."""
     row = db.get(Strategy, int(registration["strategy_id"]))
     since = _registered_at(registration) or now
+    until = _closed_at(closure)
     if row is None:
         return {"trades": [], "excluded": [], "sample_source": "missing_row", "coverage": {}, "row_status": None}
     if row.current_status == SHADOW_STATUS:
-        trades, meta = _split_meta(shadow_signal_trades(db, row, since=since, now=now, loader=loader))
+        trades, meta = _split_meta(shadow_signal_trades(db, row, since=since, now=now, loader=loader, until=until))
         source = "shadow_signals_scored"
     else:
-        trades, meta = round_trip_trades(db, row.strategy_type, since=since), {"decisions": None, "open": 0,
-                                                                              "unscorable": 0}
+        trades, meta = (round_trip_trades(db, row.strategy_type, since=since, until=until),
+                        {"decisions": None, "open": 0, "unscorable": 0})
         source = "closed_round_trips"
     tag = registration.get("tag_reading")
     excluded: list[dict] = []
@@ -912,6 +1266,10 @@ def _spy_and_irx(frames: Callable) -> tuple[Optional[pd.DataFrame], Optional[pd.
     return spy, irx
 
 
+def _closed_status(closure: Mapping, trades: int) -> str:
+    return f"closed {str(closure.get('closed_at'))[:10]} ({_kind_text(closure.get('reason_kind'))}), final n = {trades}"
+
+
 def build_review(db: Session, *, now: Optional[datetime] = None, loader: Optional[Callable] = None,
                  measured: Optional[Mapping] = None, inputs: Optional[Mapping] = None) -> dict:
     """The live reading of every registered candidate (nothing is written)."""
@@ -927,11 +1285,13 @@ def build_review(db: Session, *, now: Optional[datetime] = None, loader: Optiona
         inputs = vs.current_inputs(db)
     candidates = []
     pooled_trades: list[dict] = []
+    closed = closures(db)
     for registration in registrations(db):
         number = int(registration["candidate"])
         frozen = registration.get("frozen") or {}
         symbols = list(frozen.get("symbols") or [])
-        sample = candidate_trades(db, registration, now=now, loader=loader)
+        closure = closed.get(str(registration["sweep_id"]))
+        sample = candidate_trades(db, registration, now=now, loader=loader, closure=closure)
         trades = sample["trades"]
         acting = acting_cost(measured, yardstick.classes_of(symbols))
         verdict_sample = int((registration.get("sample") or {}).get("verdict_sample") or VERDICT_SAMPLE.get(number, 800))
@@ -943,7 +1303,14 @@ def build_review(db: Session, *, now: Optional[datetime] = None, loader: Optiona
                  "sample_source": sample["sample_source"], "coverage": sample["coverage"],
                  "excluded_by_tag": len(sample["excluded"]), "registered_at": registration.get("registered_at"),
                  "description": frozen.get("description"), "gate": frozen.get("gate"), "universe": frozen.get("universe"),
-                 "symbols_covered": sorted({t["symbol"] for t in trades}), **block}
+                 "symbols_covered": sorted({t["symbol"] for t in trades}), **block,
+                 "closure": closure_summary(closure), "open_lots": None}
+        if closure is not None:
+            entry["status"] = _closed_status(closure, entry["trades"])
+            if closure.get("entries_blocked"):
+                strategy_id = registration.get("strategy_id")
+                entry["open_lots"] = _open_lots_or_unknown(
+                    db, db.get(Strategy, int(strategy_id)) if strategy_id is not None else None)
         if number in POOLED["candidates"]:
             pooled_trades.extend(trades)
         if registration.get("tag_reading") == "vix_above_20" and number == 6:
@@ -1017,7 +1384,9 @@ def review_due(review: Mapping, last: Optional[Mapping], *, now: datetime) -> di
     Quarterly from the first paper trade and never before 2027-02-10; then
     every 91 days after the last recorded review; and at the checkpoint and
     the verdict sample of any candidate (a crossing since the last review);
-    and when candidate 6's two-year clock elapses.
+    and when candidate 6's two-year clock elapses; and whenever a candidate's
+    stop rule is triggered and the candidate is not closed yet (the review
+    that records it closes it).  A closed candidate calls for nothing.
     """
     today = now.astimezone(UTC).date()
     reasons = []
@@ -1035,6 +1404,8 @@ def review_due(review: Mapping, last: Optional[Mapping], *, now: datetime) -> di
     previous = {int(c["candidate"]): c for c in (last or {}).get("candidates") or []}
     for candidate in review.get("candidates") or []:
         number = int(candidate["candidate"])
+        if candidate.get("closure"):
+            continue
         progress, before = candidate["progress"], (previous.get(number) or {}).get("progress") or {}
         if progress["checkpoint_reached"] and not before.get("checkpoint_reached"):
             reasons.append(f"candidate {number} reached its checkpoint ({CHECKPOINT} trades)")
@@ -1043,7 +1414,7 @@ def review_due(review: Mapping, last: Optional[Mapping], *, now: datetime) -> di
         verdict = candidate.get("verdict") or {}
         if verdict.get("two_year_clock_elapsed") and not ((previous.get(number) or {}).get("verdict") or {}).get("two_year_clock_elapsed"):
             reasons.append(f"candidate {number}: the two-year clock elapsed")
-        if candidate["stop_rule"]["triggered"] and not ((previous.get(number) or {}).get("stop_rule") or {}).get("triggered"):
+        if candidate["stop_rule"]["triggered"]:
             reasons.append(f"candidate {number}: the stop rule triggered")
     return {"due": bool(reasons), "reasons": reasons, "first_paper_trade": first,
             "next_quarterly": (max(FIRST_REVIEW_NOT_BEFORE, date.fromisoformat(first) + timedelta(days=REVIEW_INTERVAL_DAYS)).isoformat()
@@ -1064,14 +1435,37 @@ def record_review(db: Session, *, now: Optional[datetime] = None, reason: str = 
     if not due["due"] and not force:
         return {"status": "not_due", **due}
     number = len(recorded_reviews(db)) + 1
+    # The stop rule is pre-registered: the review that records a trigger closes
+    # the candidate, in the same transaction.  The review row carries the
+    # closure it causes, and the close row cites the review.
+    registered = {str(r["sweep_id"]): r for r in registrations(db)}
+    closing = []
+    for candidate in review["candidates"]:
+        registration = registered.get(str(candidate["sweep_id"]))
+        if registration is None or candidate.get("closure") or not candidate["stop_rule"]["triggered"]:
+            continue
+        terms = _closure_terms(registration, reason_kind="stop_rule", reasons=candidate["stop_rule"]["reasons"],
+                               now=now, actor="forward_experiments_review", review_number=number)
+        candidate["closure"] = closure_summary(terms)
+        candidate["status"] = _closed_status(terms, candidate["trades"])
+        closing.append((registration, candidate))
     payload = {**review, "review_number": number, "reason": reason if force and not due["due"] else "; ".join(due["reasons"]) or reason,
                "forced": bool(force and not due["due"]), "markdown": render_markdown(review, number=number)}
-    write_audit_log(db, event_type=EVENT, entity_type="forward_experiments", action=ACTION_REVIEW, status="recorded",
-                    message=(f"forward experiments review {number}: "
-                             + "; ".join(f"c{c['candidate']} n={c['trades']}" for c in review["candidates"])),
-                    payload=payload)
+    audit = write_audit_log(db, event_type=EVENT, entity_type="forward_experiments", action=ACTION_REVIEW,
+                            status="recorded",
+                            message=(f"forward experiments review {number}: "
+                                     + "; ".join(f"c{c['candidate']} n={c['trades']}" for c in review["candidates"])),
+                            payload=payload)
     db.flush()
-    return {"status": "recorded", "review_number": number, "reasons": due["reasons"], "forced": payload["forced"]}
+    closed = []
+    for registration, candidate in closing:
+        outcome = close_candidate(db, registration, reason_kind="stop_rule", reasons=candidate["stop_rule"]["reasons"],
+                                  now=now, actor="forward_experiments_review", review_number=number,
+                                  review_audit_id=audit.id)
+        if outcome["status"] == "closed":
+            closed.append(int(candidate["candidate"]))
+    return {"status": "recorded", "review_number": number, "reasons": due["reasons"], "forced": payload["forced"],
+            "closed": closed}
 
 
 # --------------------------------------------------------------- rendering
@@ -1117,7 +1511,8 @@ def render_markdown(review: Mapping, *, number: int) -> str:
                 f"{_fmt(acting.get('win_rate'), 2)} | {_fmt(acting.get('mean_hold_sessions'), 1)} | {q} | "
                 f"{_fmt(ew.get('max_drawdown'), 3)} | {_fmt(passive.get('passive_excess_t'), 2)} / {_fmt(passive.get('residual_t'), 2)} | "
                 f"{e.get('verdict')} | {progress.get('trades')}/{progress.get('verdict_sample')} (checkpoint {progress.get('checkpoint')}) | "
-                f"{'TRIGGERED' if (block.get('stop_rule') or {}).get('triggered') else 'no'} | {block.get('status')} |")
+                f"{'CLOSED' if block.get('closure') else 'TRIGGERED' if (block.get('stop_rule') or {}).get('triggered') else 'no'} | "
+                f"{block.get('status')} |")
 
     for candidate in review.get("candidates") or []:
         extra = f"{candidate.get('strategy_type')} / {candidate.get('sample_source')} ({candidate.get('mechanism')})"
@@ -1137,8 +1532,17 @@ def render_markdown(review: Mapping, *, number: int) -> str:
                          f"unknown-reading trades {candidate['buckets']['vix_unknown']['trades']}; "
                          f"reading disagreements with the VIX history {candidate.get('coverage', {}).get('reading_disagreements')}; "
                          f"decision: {v['decision']}.")
-        if candidate["stop_rule"]["triggered"]:
-            lines.append(f"Candidate {candidate['candidate']}: STOP RULE TRIGGERED ({'; '.join(candidate['stop_rule']['reasons'])}); close it.")
+        closure = candidate.get("closure")
+        if closure:
+            held = candidate.get("open_lots")
+            lots = "open lots not read" if held is None else f"{len(held['lots'])} open lot(s) keep their exits"
+            lines.append(f"Candidate {candidate['candidate']}: CLOSED {str(closure.get('closed_at'))[:10]} "
+                         f"({_kind_text(closure.get('reason_kind'))}: {'; '.join(closure.get('reasons') or [])}); "
+                         + (f"new entries disabled; {lots}." if closure.get("entries_blocked")
+                            else "the sample is closed; the host row is unchanged."))
+        elif candidate["stop_rule"]["triggered"]:
+            lines.append(f"Candidate {candidate['candidate']}: STOP RULE TRIGGERED ({'; '.join(candidate['stop_rule']['reasons'])}); "
+                         f"the next recorded review closes it.")
     lines.append("")
     return "\n".join(lines)
 
@@ -1155,12 +1559,15 @@ def forward_experiments_view(db: Session, *, now: Optional[datetime] = None) -> 
     review = build_review(db, now=now)
     recorded = recorded_reviews(db)
     last = recorded[0] if recorded else None
+    closed = closures(db)
     return {"status": "registered", "spec": {"report": SPEC_REPORT, "json": SPEC_JSON, "sha256": SPEC_SHA256,
                                               "frozen_at": FROZEN_AT},
             "terms": TERMS, "mutation_paused": True,
-            "registrations": [{k: r.get(k) for k in ("candidate", "sweep_id", "strategy_type", "strategy_id", "mechanism",
-                                                      "tag_reading", "row_created", "registered_at", "code_commit",
-                                                      "sample")} for r in registered],
+            "registrations": [{**{k: r.get(k) for k in ("candidate", "sweep_id", "strategy_type", "strategy_id",
+                                                          "mechanism", "tag_reading", "row_created", "registered_at",
+                                                          "code_commit", "sample")},
+                               "closure": closure_summary(closed.get(str(r["sweep_id"])))} for r in registered],
+            "closures": [closure_summary(c) for c in closed.values()],
             "review": review, "schedule": review_due(review, last, now=now),
             "recorded_reviews": [{k: r.get(k) for k in ("audit_id", "review_number", "reviewed_at", "reason", "forced")}
                                  for r in recorded],

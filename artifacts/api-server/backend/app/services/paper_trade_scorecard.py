@@ -790,10 +790,11 @@ def exploration_line(db: Session, closed: list[dict], open_rows: list[dict], *, 
 
 
 def forward_experiments_line(db: Session, registered: list[dict], lots: list) -> dict:
-    from app.services.forward_experiments import FIRST_REVIEW_NOT_BEFORE
+    from app.services.forward_experiments import FIRST_REVIEW_NOT_BEFORE, closure_summary, closures
 
     if not registered:
         return {"status": "not_registered", "first_review_not_before": FIRST_REVIEW_NOT_BEFORE.isoformat()}
+    closed_by_sweep = closures(db)
     out = []
     for reg in registered:
         strategy_id = reg.get("strategy_id")
@@ -806,11 +807,13 @@ def forward_experiments_line(db: Session, registered: list[dict], lots: list) ->
         mine = [lot for lot in lots if lot.strategy_id == strategy_id and lot.quantity > 0
                 and (since_at is None or (lot.entered_at is not None and _utc(lot.entered_at) >= since_at))]
         closed = sum(1 for lot in mine if lot.closed)
+        closure = closure_summary(closed_by_sweep.get(str(reg.get("sweep_id"))))
         verdict_sample = (reg.get("sample") or {}).get("verdict_sample")
         out.append({"candidate": reg.get("candidate"), "strategy_type": reg.get("strategy_type"),
                     "strategy_id": strategy_id, "mechanism": reg.get("mechanism"),
                     "tag_reading": reg.get("tag_reading"), "status": row.current_status if row else None,
-                    "registered_at": since, "entries": len(mine), "closed_trades": closed, "verdict_sample": verdict_sample})
+                    "registered_at": since, "entries": len(mine), "closed_trades": closed, "verdict_sample": verdict_sample,
+                    "closure": closure, "winding_down": (len(mine) - closed) if closure else None})
     return {"status": "available", "candidates": out,
             "first_review_not_before": FIRST_REVIEW_NOT_BEFORE.isoformat(),
             "note": ("Pre-registered and frozen; judged only at a scheduled review. A trading row's sample is its "
@@ -971,9 +974,16 @@ def _books_markdown(books: dict) -> list[str]:
         lines.append(f"- Forward experiments (the only verdicts; first review no earlier than "
                      f"{forward['first_review_not_before']}):")
         for row in forward["candidates"]:
+            closure = row.get("closure")
+            ended = ""
+            if closure:
+                kind = str(closure.get("reason_kind") or "").replace("_", " ")
+                ended = (f"; closed {str(closure.get('closed_at'))[:10]} ({kind}), "
+                         + (f"entries off, {row.get('winding_down') or 0} winding down"
+                            if closure.get("entries_blocked") else "sample closed, host row unchanged"))
             lines.append(f"  - #{row['candidate']} {row['strategy_type']} ({row['status']}): "
                          f"{row['entries']} entries, {row['closed_trades']} closed; "
-                         f"verdict sample {row['verdict_sample']}")
+                         f"verdict sample {row['verdict_sample']}{ended}")
     else:
         lines.append(f"- Forward experiments: {forward.get('reason') or forward.get('status')}")
     return lines + [""]

@@ -1118,13 +1118,21 @@ def ensure_strategy_lineup(db: Session) -> dict:
 
 
 def register_forward_experiments_once(db: Session) -> dict:
-    """Idempotent registration of the frozen forward experiments; a failure never stops the seed."""
-    from app.services.forward_experiments import register_forward_experiments
+    """Idempotent registration of the frozen forward experiments; a failure never stops the seed.
+
+    Runs in a savepoint: a failure undoes only this step, never the lineup
+    steps the same seed pass has not committed yet.  A closed candidate stays
+    closed across a reseed (its close audit row is the state); the marker on
+    its row is re-mirrored from that row here.
+    """
+    from app.services.forward_experiments import register_forward_experiments, sync_closure_markers
 
     try:
-        return register_forward_experiments(db)
+        with db.begin_nested():
+            result = register_forward_experiments(db)
+            result["closure_markers"] = sync_closure_markers(db)
+        return result
     except Exception as exc:  # the seed must finish; the view shows "unregistered"
-        db.rollback()
         return {"status": "failed", "error": f"{exc.__class__.__name__}: {exc}"[:200]}
 
 

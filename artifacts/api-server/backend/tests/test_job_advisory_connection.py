@@ -1,4 +1,5 @@
 import os
+import time
 from hashlib import sha256
 from uuid import uuid4
 from unittest.mock import patch
@@ -8,6 +9,8 @@ from sqlalchemy import create_engine, text, event
 from sqlalchemy.orm import sessionmaker
 
 from app.tasks import jobs
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.mark.parametrize("event_name", ["before_cursor_execute", "after_cursor_execute"])
@@ -27,7 +30,14 @@ def test_uncertain_acquisition_discards_connection_without_executing_work(event_
         with patch.object(jobs, "SessionLocal", sessionmaker(bind=engine)), patch.object(jobs, "create_notification"):
             with pytest.raises(RuntimeError, match="confirmation unavailable"):
                 jobs._run_job(name, lambda db: pytest.fail("Work executed with uncertain lock"))
-        assert observer.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": key}), "Uncertain acquisition leaked a lock"
+        # The server frees the discarded connection's lock when its process
+        # exits, just after the client closes the socket; allow that a moment.
+        deadline = time.monotonic() + 10
+        while not (free := observer.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": key})):
+            if time.monotonic() > deadline:
+                break
+            time.sleep(0.05)
+        assert free, "Uncertain acquisition leaked a lock"
         observer.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
     finally:
         observer.close()
@@ -81,6 +91,11 @@ def test_job_lock_stays_on_owned_connection_across_commits(fail, cleanup, caplog
                     jobs._run_job(name, work)
             else:
                 assert jobs._run_job(name, work)["status"] == "complete"
+        # A discarded connection's lock is freed when its server process exits,
+        # just after the client closes the socket; allow that a moment.
+        deadline = time.monotonic() + 10
+        while cleanup != "normal" and not available() and time.monotonic() < deadline:
+            time.sleep(0.05)
         assert available(), "Job leaked its advisory lock on a borrowed pooled connection"
         assert "private-driver-error" not in caplog.text
         if cleanup != "normal":

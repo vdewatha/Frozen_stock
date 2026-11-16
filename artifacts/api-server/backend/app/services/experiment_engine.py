@@ -113,6 +113,7 @@ import hashlib
 import json
 import logging
 import math
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -489,6 +490,27 @@ def _parse(value: Optional[str]) -> Optional[datetime]:
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
 
+LESSON_IDS_KEPT = 60
+
+
+def lesson_identity(lesson: Mapping) -> dict:
+    """An id for the evidence a lesson stands on, so its experiment, change and verdict can be traced to it.
+
+    A loss lesson is identified by what failed, where, and the losing trades
+    behind it (``attribution_ids``); a gate-cost or shadow lesson, which has
+    no trades of its own, by the record it was read from.  The id changes when
+    the evidence does, which is the point: an experiment names the evidence it
+    was run on, not just the cause.
+    """
+    ids = sorted(int(value) for value in lesson.get("attribution_ids") or [])
+    basis = ids or [lesson.get(key) for key in ("template", "candidate", "gate", "count", "trades", "first_seen",
+                                                "last_seen")]
+    signature = json.dumps([lesson.get("strategy_type"), lesson.get("cause"), basis], sort_keys=True, default=str)
+    return {"lesson_id": hashlib.sha256(signature.encode()).hexdigest()[:12],
+            "lesson_attribution_ids": ids[-LESSON_IDS_KEPT:],
+            "lesson_source": "trade_attribution" if ids else "ledger"}
+
+
 def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, now: datetime,
                      history: Iterable[dict], cooldown_days: int, max_experiments: int,
                      frozen: Iterable[str] = (), shadow: Iterable[str] = (),
@@ -540,7 +562,7 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
                     key = (BOOK, template.name)
                     candidate = {"strategy_type": BOOK, "template": template.name, "trigger": trigger,
                                  "lesson_count": int(lesson["count"]), "lesson_scope": lesson["strategy_type"],
-                                 "lesson": lesson.get("lesson")}
+                                 "lesson": lesson.get("lesson"), **lesson_identity(lesson)}
                     if key not in wanted or wanted[key]["lesson_count"] < candidate["lesson_count"]:
                         wanted[key] = candidate
                     acted = True
@@ -572,7 +594,7 @@ def plan_experiments(lessons: Iterable[dict], strategies: Mapping[str, Any], *, 
                 key = (target, template.name)
                 candidate = {"strategy_type": target, "template": template.name, "trigger": trigger,
                              "lesson_count": int(lesson["count"]), "lesson_scope": lesson["strategy_type"],
-                             "lesson": lesson.get("lesson")}
+                             "lesson": lesson.get("lesson"), **lesson_identity(lesson)}
                 if named is not None:
                     candidate["shadow_candidate"] = lesson.get("candidate")
                 if key not in wanted or wanted[key]["lesson_count"] < candidate["lesson_count"]:
@@ -1108,6 +1130,43 @@ def _active_rules(db: Session) -> dict:
         return {}
 
 
+def apply_admission(db: Session, plan: dict, attributions: Iterable, *, now: datetime) -> dict:
+    """Drop planned experiments that cannot reach their forward verdict in a useful time (experiment_admission.py).
+
+    An experiment whose change would be adopted is then judged on the
+    strategy's next ``experiment_verdict_min_trades`` paper trades; at the
+    strategy's own recent trade rate that must fit the admission limit.  A
+    refused experiment is reported under ``skipped`` with its numbers and one
+    that does not fit this run's compute budget under ``deferred``.  A check
+    that cannot run changes nothing.
+    """
+    from app.services import experiment_admission as admission
+
+    if not admission.enabled() or not plan["planned"]:
+        return plan
+    try:
+        rates = admission.trade_rates(attributions, now=now)
+        inputs = admission.measured_inputs(db)
+        known = admission.latest_decisions(db)
+    except Exception as exc:
+        db.rollback()
+        logger.warning("experiment engine: admission check unavailable: %s", exc.__class__.__name__)
+        return plan
+    kept, skipped, deferred, spent = [], list(plan["skipped"]), list(plan["deferred"]), 0.0
+    for item in plan["planned"]:
+        decision = admission.check_engine(item, rates, inputs=inputs, compute_spent_minutes=spent, book=BOOK)
+        admission.record(db, decision, known=known, now=now)
+        if decision["admitted"]:
+            spent += decision["compute_minutes"]
+            kept.append(item)
+        elif decision["decision"] == "deferred":
+            deferred.append({**item, "reason": decision["reasons"][0]})
+        else:
+            skipped.append({**item, "reason": "admission: " + "; ".join(decision["reasons"]),
+                            "admission": decision["estimate"]})
+    return {**plan, "planned": kept, "skipped": skipped, "deferred": deferred}
+
+
 def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader=None, earnings_loader=None,
                           vix_loader=None, simulate=None, breadth_loader=None, book_candidates=None) -> dict:
     """Weekly pass: plan from the repeating failures, replay, decide, adopt (paper only)."""
@@ -1129,8 +1188,10 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                             cooldown_days=settings.experiment_engine_cooldown_days,
                             max_experiments=settings.experiment_engine_max_experiments,
                             frozen=learning["frozen"], shadow=learning["shadow"], statuses=learning["statuses"])
+    plan = apply_admission(db, plan, attributions, now=now)
     experiments, adopted, errors = [], [], []
     history = None
+    run_started = time.monotonic()
     calibration = _calibration_factor(db)
     prior = prior_trials_by_strategy(experiment_history(db))
     injected = loader is not None   # a caller-supplied loader means no network for the T-bill history either
@@ -1192,6 +1253,7 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
             template = TEMPLATE_BY_NAME[item["template"]]
             book = template.kind == "book"
             strategy = None if book else strategies[item["strategy_type"]]
+            started = time.monotonic()
             try:
                 if not frames or spy is None:
                     raise RuntimeError("no price history to replay: " + _history_problem(history))
@@ -1216,6 +1278,14 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                 db.rollback()
                 errors.append({**item, "error": f"{exc.__class__.__name__}: {exc}"})
                 continue
+            # What the experiment was run on and what it cost (learning_trace.py):
+            # the lesson's evidence id and losing trades, and this experiment's
+            # own replay time (the shared history load is in the run summary).
+            experiment.update({"lesson_id": item.get("lesson_id"), "lesson": item.get("lesson"),
+                               "lesson_attribution_ids": item.get("lesson_attribution_ids") or [],
+                               "lesson_source": item.get("lesson_source"),
+                               "cost": {"seconds": round(time.monotonic() - started, 3),
+                                        "setups": len(experiment.get("rows") or {}), "symbols": len(frames)}})
             experiment.update({"trigger": item["trigger"], "lesson_count": item["lesson_count"],
                                "lesson_scope": item["lesson_scope"], "ran_at": _iso(now),
                                "symbols": len(frames), "missing_symbols": missing, "universe": universe_summary,
@@ -1258,6 +1328,9 @@ def run_experiment_engine(db: Session, *, now: Optional[datetime] = None, loader
                "learning_set": {"active": sorted(name for name in strategies if name not in learning["shadow"]),
                                 "shadow": sorted(learning["shadow"]), "frozen": sorted(learning["frozen"])},
                "history": history,
+               "cost": {"seconds": round(time.monotonic() - run_started, 3),
+                        "experiment_seconds": round(sum((e.get("cost") or {}).get("seconds") or 0.0
+                                                        for e in experiments), 3)},
                "adoption_enabled": settings.experiment_engine_adoption_enabled,
                "calibration_factor": calibration}
     write_audit_log(db, event_type=EVENT, entity_type="experiment_engine", action=ACTION_RUN, status="complete",

@@ -19,7 +19,7 @@ from tests.test_paper_research_accounting import ledger, reviewed_ledger, ready
 NOW = datetime(2026, 9, 29, 15, tzinfo=timezone.utc)
 
 
-@pytest.fixture(params=["sqlite", "postgresql"])
+@pytest.fixture(params=["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)])
 def engine(request, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "allow_live_trading", False)
     monkeypatch.setattr(settings, "active_paper_broker", "alpaca_paper")

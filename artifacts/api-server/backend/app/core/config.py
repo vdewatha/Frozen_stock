@@ -518,6 +518,15 @@ class Settings(BaseSettings):
     # guard killed that run on 2026-11-10, so production turns it off and the
     # full-history research runs locally (scripts/local_sweep.py).
     strategy_discovery_point_in_time: Optional[bool] = None
+    # Admission requirement for new experiments (experiment_admission.py): a
+    # new rule row, engine experiment or forward-spec candidate starts only if
+    # it can reach its verdict within this many years under favourable inputs,
+    # its family is not closed in the hypothesis register, and the run has
+    # compute left.  The six experiments frozen on 2026-11-10 are unaffected.
+    experiment_admission_enabled: bool = True
+    experiment_admission_max_years: float = Field(default=2.0, gt=0, le=50)
+    experiment_admission_compute_minutes: float = Field(default=60.0, gt=0, le=1440)
+    experiment_admission_minutes_per_experiment: float = Field(default=2.0, ge=0, le=120)
     experiment_verdict_min_trades: int = Field(default=20, ge=5, le=500)
     experiment_verdict_max_trades: int = Field(default=60, ge=5, le=1000)
     # Which forward judge acts on an adopted change (verdict_stats.py):

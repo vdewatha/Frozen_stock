@@ -2083,11 +2083,15 @@ def yardstick_job() -> dict:
 def forward_experiments_review_job() -> dict:
     """Weekly (Saturday, after the yardstick): append a review of the frozen forward experiments when the schedule calls for one (paper only)."""
     def work(db):
-        from app.services.forward_experiments import record_review
+        from app.services.forward_experiments import record_review, settle_closures
 
+        # A closed candidate's row is retired once it holds no lot; a review
+        # that records a triggered stop rule closes the candidate.
+        settled = settle_closures(db)
+        db.commit()
         result = record_review(db)
         db.commit()
-        return {"job": "forward_experiments_review_job", **result, "live_authorized": False}
+        return {"job": "forward_experiments_review_job", **result, "settled": settled, "live_authorized": False}
 
     return _run_job("forward_experiments_review_job", work)
 

@@ -70,6 +70,8 @@
 .page-tabs { display: flex; gap: 25px; overflow-x: auto; border-bottom: 1px solid #dfe5e8; margin: -5px 0 28px; }
 .page-tabs a { white-space: nowrap; font-size: 13px; color: #778188; border-bottom: 2px solid transparent; padding: 14px 0; }
 .page-tabs a.selected { color: #166a52; font-weight: 600; border-color: #258d70; }
+.page-tabs button { white-space: nowrap; font-size: 13px; color: #778188; background: none; border: 0; border-bottom: 2px solid transparent; padding: 14px 0; cursor: pointer; }
+.page-tabs button[aria-pressed="true"] { color: #166a52; font-weight: 600; border-color: #258d70; }
 .page-panels { display: grid; gap: 28px; min-width: 0; }
 .short-monitor { display: grid; gap: 28px; min-width: 0; }
 .short-monitor-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid #dfe5e8; }
