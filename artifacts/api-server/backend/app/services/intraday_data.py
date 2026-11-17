@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, text
+from sqlalchemy import func, insert as sa_insert, text, tuple_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -301,7 +301,7 @@ def _fetch_alpaca_sip_bars(symbol: str, start: datetime, end: datetime) -> list[
 BAR_WRITER_LOCK_NAMESPACE = 724191033
 
 
-def _serialize_bar_writers(db: Session, symbol: str, provider: str) -> None:
+def _serialize_bar_writers(db: Session, symbols, provider: str) -> None:
     """One writer at a time per symbol and provider, until this transaction ends (PostgreSQL only).
 
     An upsert reads the stored minutes, updates the ones it found and then
@@ -311,32 +311,26 @@ def _serialize_bar_writers(db: Session, symbol: str, provider: str) -> None:
     just inserted, and PostgreSQL killed one of them (seen in the PostgreSQL
     CI job on 2026-11-16).  No ordering of rows fixes two statements that
     cross; taking this lock before the read does, and it means each writer
-    reads what the previous one committed.  The lock is held for one symbol's
-    short write and nothing else is held while waiting for it.
+    reads what the previous one committed.
+
+    ``symbols`` is one symbol or several.  Several are locked with one
+    statement, in sorted order, so two writers of overlapping symbol sets
+    queue instead of deadlocking, and the scheduled import pays one round
+    trip for its whole universe instead of one a symbol.
     """
     if db.bind is None or db.bind.dialect.name != "postgresql":
         return
-    db.execute(text("SELECT pg_advisory_xact_lock(:namespace, hashtext(:key))"),
-               {"namespace": BAR_WRITER_LOCK_NAMESPACE, "key": f"{provider}:{symbol}"})
+    keys = sorted({f"{provider}:{symbol}" for symbol in ([symbols] if isinstance(symbols, str) else symbols)})
+    if not keys:
+        return
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, hashtext(key)) "
+             "FROM (SELECT unnest(CAST(:keys AS text[])) AS key ORDER BY 1) AS ordered"),
+        {"namespace": BAR_WRITER_LOCK_NAMESPACE, "keys": keys},
+    )
 
 
-def upsert_intraday_bars(
-    db: Session,
-    symbol: str,
-    bars: list[dict],
-    *,
-    ingested_at: datetime | None = None,
-    provider: str | None = None,
-    feed_class: str | None = None,
-    verify_entitlement: bool = False,
-    persisted_minutes: list[datetime] | None = None,
-) -> dict:
-    """Store completed regular-session bars idempotently.
-
-    ``persisted_minutes``, when given, receives the opening minute of every
-    bar stored under the resolved provider, so a caller can update its own
-    view of the stored minutes without querying again.
-    """
+def _resolve_bar_provenance(provider: str | None, feed_class: str | None) -> tuple[str, str]:
     # Resolve provenance at call time so a configured provider change cannot
     # leave persisted bars tagged with the provider active at import time.
     provider = provider or settings.active_market_data_provider.strip().lower()
@@ -346,8 +340,11 @@ def upsert_intraday_bars(
         ("alpaca_delayed_sip", "sip_delayed"),
     }:
         raise ValueError("Unsupported intraday provenance")
-    symbol = _symbol(symbol)
-    observed_at = _aware_utc(ingested_at or datetime.now(UTC))
+    return provider, feed_class
+
+
+def _prepare_bars(bars: list[dict], *, observed_at: datetime, provider: str) -> dict:
+    """Parse and filter one symbol's provider bars: completed regular-session minutes only, deduplicated."""
     parsed: list[tuple[datetime, dict]] = []
     for raw in bars:
         opened_at, values = _parse_bar(raw)
@@ -361,96 +358,115 @@ def upsert_intraday_bars(
         if opened_at + BAR_CADENCE + LATE_TRADE_ALLOWANCE > observed_at:
             continue
         parsed.append((opened_at, values))
-
     timestamps = [timestamp for timestamp, _ in parsed]
-    duplicate_count = len(timestamps) - len(set(timestamps))
-    out_of_order = timestamps != sorted(timestamps)
-    deduplicated = {timestamp: values for timestamp, values in parsed}
-    _serialize_bar_writers(db, symbol, provider)
+    return {
+        "bars": {timestamp: values for timestamp, values in parsed},
+        "duplicate_bars": len(timestamps) - len(set(timestamps)),
+        "out_of_order": timestamps != sorted(timestamps),
+    }
+
+
+BAR_INSERT_CHUNK = 2000  # 13 columns a row stays far below PostgreSQL's 65,535 bind parameters
+
+
+def _store_bars(
+    db: Session,
+    bars_by_symbol: dict[str, dict[datetime, dict]],
+    *,
+    provider: str,
+    feed_class: str,
+    observed_at: datetime,
+    verify_entitlement: bool,
+) -> None:
+    """Persist prepared bars of one or many symbols with a fixed number of statements; never commits.
+
+    One read of the stored rows, one update re-verifying the unchanged ones,
+    one insert of the new ones (and one update per corrected bar, which is
+    rare).  The caller holds the writer lock (``_serialize_bar_writers``).
+    """
+    wanted = {(symbol, opened_at) for symbol, bars in bars_by_symbol.items() for opened_at in bars}
+    if not wanted:
+        return
+    symbols = sorted({symbol for symbol, _ in wanted})
+    minutes = sorted({opened_at for _, opened_at in wanted})
     existing_rows = (
         db.query(IntradayBar)
         .filter(
-            IntradayBar.symbol == symbol,
+            IntradayBar.symbol.in_(symbols),
             IntradayBar.timeframe == "1m",
             IntradayBar.provider == provider,
-            IntradayBar.opened_at.in_(list(deduplicated)),
+            IntradayBar.opened_at.in_(minutes),
         )
         .all()
     )
-    existing_by_timestamp = {
-        _aware_utc(row.opened_at): row
+    existing = {
+        (row.symbol, _aware_utc(row.opened_at)): row
         for row in existing_rows
+        if (row.symbol, _aware_utc(row.opened_at)) in wanted
     }
-    new_rows = []
+    new_rows: list[dict] = []
     # Unchanged re-fetched bars only need fresh entitlement evidence. Refresh
     # them with one statement: the newest-window poll re-reads an hour of bars
     # per symbol every minute, and row-by-row updates cost ~2,600 round trips
     # a minute across the paper universe.
-    reverified: list[datetime] = []
-    for opened_at, values in sorted(deduplicated.items()):
-        provenance = {
-            **values,
-            "provider": provider,
-            "feed_class": feed_class,
-            "exchange_timestamp": opened_at,
-            "ingested_at": observed_at,
-        }
-        if verify_entitlement:
-            # Only a successful authenticated provider request may refresh
-            # entitlement evidence. Fixtures and direct imports cannot do so.
-            provenance["last_verified_at"] = observed_at
-        row = existing_by_timestamp.get(opened_at)
-        if row:
-            # Re-fetching identical research data must not erase when it became
-            # known. Corrections retain the new observation time, never the old one.
-            if (provider in {"alpaca_iex", "alpaca_sip", "alpaca_delayed_sip"}
-                    and row.feed_class == feed_class
-                    and all(getattr(row, key) == value for key, value in values.items())
-                    and row.exchange_timestamp is not None
-                    and _aware_utc(row.exchange_timestamp) == opened_at):
-                if verify_entitlement:
-                    reverified.append(opened_at)
-                    set_committed_value(row, "last_verified_at", observed_at)
-                continue
-            for key, value in provenance.items():
-                setattr(row, key, value)
-        else:
-            new_rows.append(
-                IntradayBar(symbol=symbol, timeframe="1m", opened_at=opened_at, **provenance)
-            )
+    reverified: list[tuple[str, datetime]] = []
+    for symbol in symbols:
+        for opened_at, values in sorted(bars_by_symbol[symbol].items()):
+            provenance = {
+                **values,
+                "provider": provider,
+                "feed_class": feed_class,
+                "exchange_timestamp": opened_at,
+                "ingested_at": observed_at,
+            }
+            if verify_entitlement:
+                # Only a successful authenticated provider request may refresh
+                # entitlement evidence. Fixtures and direct imports cannot do so.
+                provenance["last_verified_at"] = observed_at
+            row = existing.get((symbol, opened_at))
+            if row:
+                # Re-fetching identical research data must not erase when it became
+                # known. Corrections retain the new observation time, never the old one.
+                if (provider in {"alpaca_iex", "alpaca_sip", "alpaca_delayed_sip"}
+                        and row.feed_class == feed_class
+                        and all(getattr(row, key) == value for key, value in values.items())
+                        and row.exchange_timestamp is not None
+                        and _aware_utc(row.exchange_timestamp) == opened_at):
+                    if verify_entitlement:
+                        reverified.append((symbol, opened_at))
+                        set_committed_value(row, "last_verified_at", observed_at)
+                    continue
+                for key, value in provenance.items():
+                    setattr(row, key, value)
+            else:
+                new_rows.append({"symbol": symbol, "timeframe": "1m", "opened_at": opened_at, **provenance})
     if reverified:
+        reverified_symbols = {symbol for symbol, _ in reverified}
+        condition = (
+            IntradayBar.opened_at.in_([opened_at for _, opened_at in reverified])
+            if len(reverified_symbols) == 1
+            else tuple_(IntradayBar.symbol, IntradayBar.opened_at).in_(reverified)
+        )
         db.query(IntradayBar).filter(
-            IntradayBar.symbol == symbol,
+            IntradayBar.symbol.in_(sorted(reverified_symbols)),
             IntradayBar.timeframe == "1m",
             IntradayBar.provider == provider,
-            IntradayBar.opened_at.in_(reverified),
+            condition,
         ).update({"last_verified_at": observed_at}, synchronize_session=False)
-    if new_rows:
-        # Two scheduled collectors can legitimately fetch the same completed
-        # minute at the same time.  The pre-query above avoids normal updates,
-        # but it cannot prevent a race between separate PostgreSQL sessions.
-        # Let the database enforce the unique key atomically so a duplicate
-        # observation remains a successful idempotent ingestion.
-        if db.bind is not None and db.bind.dialect.name == "postgresql":
-            values = [
-                {
-                    "symbol": row.symbol,
-                    "timeframe": row.timeframe,
-                    "opened_at": row.opened_at,
-                    "open": row.open,
-                    "high": row.high,
-                    "low": row.low,
-                    "close": row.close,
-                    "volume": row.volume,
-                    "provider": row.provider,
-                    "feed_class": row.feed_class,
-                    "exchange_timestamp": row.exchange_timestamp,
-                    "ingested_at": row.ingested_at,
-                    "last_verified_at": row.last_verified_at,
-                }
-                for row in new_rows
-            ]
-            statement = pg_insert(IntradayBar).values(values)
+    if not new_rows:
+        return
+    # Two scheduled collectors can legitimately fetch the same completed
+    # minute at the same time.  The pre-query above avoids normal updates,
+    # but it cannot prevent a race between separate PostgreSQL sessions.
+    # Let the database enforce the unique key atomically so a duplicate
+    # observation remains a successful idempotent ingestion.
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        columns = ("symbol", "timeframe", "opened_at", "open", "high", "low", "close", "volume", "provider",
+                   "feed_class", "exchange_timestamp", "ingested_at", "last_verified_at")
+        for offset in range(0, len(new_rows), BAR_INSERT_CHUNK):
+            chunk = [{column: row.get(column) for column in columns}
+                     for row in new_rows[offset:offset + BAR_INSERT_CHUNK]]
+            statement = pg_insert(IntradayBar).values(chunk)
             excluded = statement.excluded
             statement = statement.on_conflict_do_update(
                 constraint="uq_intraday_bar_provider",
@@ -470,15 +486,42 @@ def upsert_intraday_bars(
                 },
             )
             db.execute(statement)
-        else:
-            db.add_all(new_rows)
+    else:
+        # One multi-row statement here too (SQLite has one writer, so no conflict handling is needed).
+        db.execute(sa_insert(IntradayBar), new_rows)
+
+
+def upsert_intraday_bars(
+    db: Session,
+    symbol: str,
+    bars: list[dict],
+    *,
+    ingested_at: datetime | None = None,
+    provider: str | None = None,
+    feed_class: str | None = None,
+    verify_entitlement: bool = False,
+    persisted_minutes: list[datetime] | None = None,
+) -> dict:
+    """Store completed regular-session bars idempotently.
+
+    ``persisted_minutes``, when given, receives the opening minute of every
+    bar stored under the resolved provider, so a caller can update its own
+    view of the stored minutes without querying again.
+    """
+    provider, feed_class = _resolve_bar_provenance(provider, feed_class)
+    symbol = _symbol(symbol)
+    observed_at = _aware_utc(ingested_at or datetime.now(UTC))
+    prepared = _prepare_bars(bars, observed_at=observed_at, provider=provider)
+    _serialize_bar_writers(db, symbol, provider)
+    _store_bars(db, {symbol: prepared["bars"]}, provider=provider, feed_class=feed_class,
+                observed_at=observed_at, verify_entitlement=verify_entitlement)
     db.commit()
     if persisted_minutes is not None and provider == MARKET_DATA_PROVIDER:
-        persisted_minutes.extend(sorted(deduplicated))
+        persisted_minutes.extend(sorted(prepared["bars"]))
     return {
-        "rows_imported": len(deduplicated),
-        "duplicate_bars": duplicate_count,
-        "out_of_order": out_of_order,
+        "rows_imported": len(prepared["bars"]),
+        "duplicate_bars": prepared["duplicate_bars"],
+        "out_of_order": prepared["out_of_order"],
     }
 
 
@@ -505,6 +548,32 @@ class _MinuteIndex:
         )
         self.present = {_aware_utc(item.opened_at) for item in rows}
         self.present |= _verified_no_trade_minutes(db, symbol, start, end)
+
+    @classmethod
+    def load_many(cls, db: Session, symbols: list[str], start: datetime, end: datetime) -> dict[str, "_MinuteIndex"]:
+        """Every symbol's index from two queries (bars, verified no-trade minutes) instead of two a symbol."""
+        present: dict[str, set[datetime]] = {symbol: set() for symbol in symbols}
+        if symbols:
+            for symbol, opened_at in (
+                db.query(IntradayBar.symbol, IntradayBar.opened_at)
+                .filter(
+                    IntradayBar.symbol.in_(symbols),
+                    IntradayBar.timeframe == "1m",
+                    IntradayBar.provider == MARKET_DATA_PROVIDER,
+                    IntradayBar.opened_at >= start,
+                    IntradayBar.opened_at < end,
+                )
+                .all()
+            ):
+                present[symbol].add(_aware_utc(opened_at))
+            for symbol, minutes in _verified_no_trade_minutes_many(db, symbols, start, end).items():
+                present[symbol] |= minutes
+        out = {}
+        for symbol, minutes in present.items():
+            index = cls.__new__(cls)
+            index.start, index.end, index.present = start, end, minutes
+            out[symbol] = index
+        return out
 
     def covers(self, start: datetime, end: datetime) -> bool:
         return self.start <= start and end <= self.end
@@ -566,12 +635,23 @@ def _verified_no_trade_minutes(
     These minutes are excluded from gap accounting only; they are never bars
     and never reach research, training or execution price readers.
     """
-    if MARKET_DATA_FEED_CLASS not in NO_TRADE_VERIFIABLE_FEEDS:
-        return set()
+    return _verified_no_trade_minutes_many(db, [symbol], start, end).get(symbol, set())
+
+
+def _verified_no_trade_minutes_many(
+    db: Session,
+    symbols: list[str],
+    start: datetime,
+    end: datetime,
+) -> dict[str, set[datetime]]:
+    """``_verified_no_trade_minutes`` for several symbols with one query."""
+    out: dict[str, set[datetime]] = {symbol: set() for symbol in symbols}
+    if MARKET_DATA_FEED_CLASS not in NO_TRADE_VERIFIABLE_FEEDS or not symbols:
+        return out
     rows = (
-        db.query(IntradayNoTradeInterval.opened_at)
+        db.query(IntradayNoTradeInterval.symbol, IntradayNoTradeInterval.opened_at)
         .filter(
-            IntradayNoTradeInterval.symbol == symbol,
+            IntradayNoTradeInterval.symbol.in_(symbols),
             IntradayNoTradeInterval.timeframe == "1m",
             IntradayNoTradeInterval.provider == MARKET_DATA_PROVIDER,
             IntradayNoTradeInterval.feed_class == MARKET_DATA_FEED_CLASS,
@@ -580,7 +660,9 @@ def _verified_no_trade_minutes(
         )
         .all()
     )
-    return {_aware_utc(item.opened_at) for item in rows}
+    for symbol, opened_at in rows:
+        out.setdefault(symbol, set()).add(_aware_utc(opened_at))
+    return out
 
 
 def record_verified_no_trade_minutes(
@@ -610,6 +692,21 @@ def record_verified_no_trade_minutes(
     Session-open and session-close edges, the newest minutes of the feed and
     any longer run remain missing.
     """
+    window = _no_trade_window(query_start, query_end, provider=provider, feed_class=feed_class)
+    if window is None:
+        return []
+    created = _record_no_trade_many(
+        db, [_symbol(symbol)], window, query_start=query_start, query_end=query_end,
+        observed_at=observed_at, provider=provider, feed_class=feed_class,
+    )
+    db.commit()
+    return created.get(_symbol(symbol), [])
+
+
+def _no_trade_window(
+    query_start: datetime, query_end: datetime, *, provider: str, feed_class: str
+) -> tuple[datetime, datetime, datetime, datetime] | None:
+    """``(session_open, session_close, start, end)`` a no-trade check covers, or None when none may be marked."""
     max_run = settings.intraday_no_trade_max_run_minutes
     if (
         max_run <= 0
@@ -617,24 +714,40 @@ def record_verified_no_trade_minutes(
         or provider != MARKET_DATA_PROVIDER
         or feed_class != MARKET_DATA_FEED_CLASS
     ):
-        return []
-    symbol = _symbol(symbol)
-    observed_at = _aware_utc(observed_at)
-    query_start = _aware_utc(query_start)
-    query_end = _aware_utc(query_end)
+        return None
+    query_start, query_end = _aware_utc(query_start), _aware_utc(query_end)
     bounds = session_bounds(query_start.astimezone(NY).date())
     if bounds is None:
-        return []
+        return None
     session_open, session_close = bounds
-    start = max(query_start, session_open)
-    end = min(query_end, session_close)
+    start, end = max(query_start, session_open), min(query_end, session_close)
     if end <= start:
-        return []
+        return None
+    return session_open, session_close, start, end
+
+
+def _record_no_trade_many(
+    db: Session,
+    symbols: list[str],
+    window: tuple[datetime, datetime, datetime, datetime],
+    *,
+    query_start: datetime,
+    query_end: datetime,
+    observed_at: datetime,
+    provider: str,
+    feed_class: str,
+) -> dict[str, list[str]]:
+    """The no-trade check for several symbols sharing one window: two reads and one insert; never commits."""
+    session_open, session_close, start, end = window
+    observed_at, query_start, query_end = _aware_utc(observed_at), _aware_utc(query_start), _aware_utc(query_end)
+    max_run = settings.intraday_no_trade_max_run_minutes
     span = BAR_CADENCE * (max_run + 1)
-    bar_rows = (
-        db.query(IntradayBar.opened_at, IntradayBar.last_verified_at)
+    all_bars: dict[str, set[datetime]] = {symbol: set() for symbol in symbols}
+    verified_bars: dict[str, set[datetime]] = {symbol: set() for symbol in symbols}
+    for symbol, opened_at, last_verified_at in (
+        db.query(IntradayBar.symbol, IntradayBar.opened_at, IntradayBar.last_verified_at)
         .filter(
-            IntradayBar.symbol == symbol,
+            IntradayBar.symbol.in_(symbols),
             IntradayBar.timeframe == "1m",
             IntradayBar.provider == provider,
             IntradayBar.feed_class == feed_class,
@@ -642,17 +755,14 @@ def record_verified_no_trade_minutes(
             IntradayBar.opened_at < min(session_close, end + span),
         )
         .all()
-    )
-    verified_bars = {
-        _aware_utc(row.opened_at)
-        for row in bar_rows
-        if row.last_verified_at is not None
-    }
-    all_bars = {_aware_utc(row.opened_at) for row in bar_rows}
+    ):
+        all_bars[symbol].add(_aware_utc(opened_at))
+        if last_verified_at is not None:
+            verified_bars[symbol].add(_aware_utc(opened_at))
     markers = (
         db.query(IntradayNoTradeInterval)
         .filter(
-            IntradayNoTradeInterval.symbol == symbol,
+            IntradayNoTradeInterval.symbol.in_(symbols),
             IntradayNoTradeInterval.timeframe == "1m",
             IntradayNoTradeInterval.provider == provider,
             IntradayNoTradeInterval.opened_at >= start,
@@ -660,53 +770,55 @@ def record_verified_no_trade_minutes(
         )
         .all()
     )
-    marked = set()
+    marked: dict[str, set[datetime]] = {symbol: set() for symbol in symbols}
     for marker in markers:
         opened_at = _aware_utc(marker.opened_at)
-        if opened_at in all_bars:
+        if opened_at in all_bars.get(marker.symbol, set()):
             # A late real bar always supersedes a no-trade marker.
             db.delete(marker)
         else:
-            marked.add(opened_at)
+            marked.setdefault(marker.symbol, set()).add(opened_at)
 
     confirmed_before = observed_at - NO_TRADE_CONFIRMATION_DELAY
-    created: list[str] = []
+    created: dict[str, list[str]] = {symbol: [] for symbol in symbols}
     pending: list[dict] = []
-    cursor = start
-    while cursor < end:
-        if cursor in all_bars or cursor in marked or cursor + BAR_CADENCE > confirmed_before:
+    for symbol in symbols:
+        bars, verified, already = all_bars[symbol], verified_bars[symbol], marked[symbol]
+        cursor = start
+        while cursor < end:
+            if cursor in bars or cursor in already or cursor + BAR_CADENCE > confirmed_before:
+                cursor += BAR_CADENCE
+                continue
+            previous_bar = cursor - BAR_CADENCE
+            while previous_bar >= session_open and previous_bar not in bars and cursor - previous_bar <= span:
+                previous_bar -= BAR_CADENCE
+            next_bar = cursor + BAR_CADENCE
+            while next_bar < session_close and next_bar not in bars and next_bar - cursor <= span:
+                next_bar += BAR_CADENCE
+            run_minutes = int((next_bar - previous_bar) / BAR_CADENCE) - 1
+            if (
+                previous_bar in verified
+                and next_bar in verified
+                and 1 <= run_minutes <= max_run
+            ):
+                pending.append(
+                    {
+                        "symbol": symbol,
+                        "timeframe": "1m",
+                        "opened_at": cursor,
+                        "provider": provider,
+                        "feed_class": feed_class,
+                        "reason": "provider_returned_no_bar",
+                        "verified_at": observed_at,
+                        "query_start": query_start,
+                        "query_end": query_end,
+                        "previous_bar_at": previous_bar,
+                        "next_bar_at": next_bar,
+                        "run_minutes": run_minutes,
+                    }
+                )
+                created[symbol].append(cursor.isoformat())
             cursor += BAR_CADENCE
-            continue
-        previous_bar = cursor - BAR_CADENCE
-        while previous_bar >= session_open and previous_bar not in all_bars and cursor - previous_bar <= span:
-            previous_bar -= BAR_CADENCE
-        next_bar = cursor + BAR_CADENCE
-        while next_bar < session_close and next_bar not in all_bars and next_bar - cursor <= span:
-            next_bar += BAR_CADENCE
-        run_minutes = int((next_bar - previous_bar) / BAR_CADENCE) - 1
-        if (
-            previous_bar in verified_bars
-            and next_bar in verified_bars
-            and 1 <= run_minutes <= max_run
-        ):
-            pending.append(
-                {
-                    "symbol": symbol,
-                    "timeframe": "1m",
-                    "opened_at": cursor,
-                    "provider": provider,
-                    "feed_class": feed_class,
-                    "reason": "provider_returned_no_bar",
-                    "verified_at": observed_at,
-                    "query_start": query_start,
-                    "query_end": query_end,
-                    "previous_bar_at": previous_bar,
-                    "next_bar_at": next_bar,
-                    "run_minutes": run_minutes,
-                }
-            )
-            created.append(cursor.isoformat())
-        cursor += BAR_CADENCE
     if pending:
         if db.bind is not None and db.bind.dialect.name == "postgresql":
             # Concurrent collectors may verify the same minute; the first
@@ -718,7 +830,6 @@ def record_verified_no_trade_minutes(
             )
         else:
             db.add_all(IntradayNoTradeInterval(**values) for values in pending)
-    db.commit()
     return created
 
 
@@ -936,6 +1047,105 @@ def _latest_completed_window(observed_at: datetime) -> tuple[datetime, datetime]
     return max(today_bounds[0], completed_through - INTRADAY_BACKFILL_WINDOW), completed_through
 
 
+def _store_newest_window(
+    db: Session,
+    symbols: list[str],
+    prefetched: dict[str, tuple[list[dict], int, bool]],
+    window: tuple[datetime, datetime],
+    *,
+    observed_at: datetime,
+    timed,
+) -> dict[str, tuple[dict, list[datetime], list[str]]]:
+    """Store the newest window of every prefetched symbol in one transaction.
+
+    The scheduled import polls this window for the whole universe every
+    minute.  Storing it symbol by symbol cost about 13 round trips a symbol
+    (lock, read, update, insert, commit, then the no-trade reads, insert and
+    commit): on the hosted database, where a round trip is about 0.1 s, a
+    47-symbol run took 84-102 s (2026-11-16), longer than the minute it is
+    scheduled for, so every other run was skipped and the feed aged towards
+    the point where every symbol fails readiness.  Here the same work is one
+    lock statement, one read, one update, one insert, two no-trade reads,
+    one no-trade insert and one commit for all symbols together.
+
+    Returns ``{symbol: (persisted, stored minutes, newly verified no-trade
+    minutes)}`` in the shape the per-symbol path produces.  A symbol whose
+    bars cannot be parsed is left out, so the per-symbol path reports it as
+    before; any database failure rolls back and returns ``{}``, so the whole
+    run falls back to the per-symbol path rather than losing the minute.
+    """
+    provider, feed_class = _resolve_bar_provenance(None, None)
+    prepared: dict[str, dict] = {}
+    for symbol in symbols:
+        if symbol not in prefetched:
+            continue
+        try:
+            prepared[symbol] = _prepare_bars(prefetched[symbol][0], observed_at=observed_at, provider=provider)
+        except Exception:
+            continue  # the per-symbol path raises the same error and reports this symbol
+    if not prepared:
+        return {}
+    window_start, window_end = window
+    try:
+        timed("store", lambda: (
+            _serialize_bar_writers(db, list(prepared), provider),
+            _store_bars(db, {symbol: item["bars"] for symbol, item in prepared.items()}, provider=provider,
+                        feed_class=feed_class, observed_at=observed_at, verify_entitlement=True),
+        ))
+        no_trade_window = _no_trade_window(window_start, window_end, provider=provider, feed_class=feed_class)
+        verified = {}
+        if no_trade_window is not None:
+            verified = timed("no_trade", _record_no_trade_many, db, sorted(prepared), no_trade_window,
+                             query_start=window_start, query_end=window_end, observed_at=observed_at,
+                             provider=provider, feed_class=feed_class)
+        timed("store", db.commit)
+    except Exception as exc:
+        db.rollback()
+        print(f"intraday import: batched store failed ({exc.__class__.__name__}); storing symbol by symbol",
+              flush=True)
+        return {}
+    out = {}
+    for symbol, item in prepared.items():
+        stored = sorted(item["bars"]) if provider == MARKET_DATA_PROVIDER else []
+        persisted = {"rows_imported": len(item["bars"]), "duplicate_bars": item["duplicate_bars"],
+                     "out_of_order": item["out_of_order"]}
+        out[symbol] = (persisted, stored, verified.get(symbol, []))
+    return out
+
+
+def _latest_bars(db: Session, symbols: list[str], since: datetime) -> dict[str, IntradayBar | None]:
+    """Each symbol's newest stored bar: one bounded query, then one query per symbol it did not answer."""
+    out: dict[str, IntradayBar | None] = {}
+    if symbols:
+        newest = (
+            db.query(IntradayBar.symbol, func.max(IntradayBar.opened_at).label("opened_at"))
+            .filter(
+                IntradayBar.symbol.in_(symbols),
+                IntradayBar.timeframe == "1m",
+                IntradayBar.provider == MARKET_DATA_PROVIDER,
+                IntradayBar.opened_at >= since,
+            )
+            .group_by(IntradayBar.symbol)
+            .subquery()
+        )
+        for row in (
+            db.query(IntradayBar)
+            .join(newest, (IntradayBar.symbol == newest.c.symbol) & (IntradayBar.opened_at == newest.c.opened_at))
+            .filter(IntradayBar.timeframe == "1m", IntradayBar.provider == MARKET_DATA_PROVIDER)
+            .all()
+        ):
+            out[row.symbol] = row
+    for symbol in symbols:
+        if symbol not in out:  # nothing in the last two sessions: look further back, as before
+            out[symbol] = (
+                db.query(IntradayBar)
+                .filter_by(symbol=symbol, timeframe="1m", provider=MARKET_DATA_PROVIDER)
+                .order_by(IntradayBar.opened_at.desc())
+                .first()
+            )
+    return out
+
+
 def ingest_intraday(
     db: Session,
     symbols: list[str] | None = None,
@@ -1011,9 +1221,19 @@ def ingest_intraday(
         index_day = _previous_session(index_day)
     index_start = session_bounds(index_day)[0]
     index_end = observed_at + timedelta(days=1)
+    try:
+        indexes = timed("index", _MinuteIndex.load_many, db, processing_order, index_start, index_end)
+    except Exception:
+        db.rollback()
+        indexes = {}  # each symbol loads its own below, as before
+    batched: dict[str, tuple[dict, list[datetime], list[str]]] = {}
+    if latest_window is not None and prefetched:
+        batched = _store_newest_window(db, processing_order, prefetched, latest_window,
+                                       observed_at=observed_at, timed=timed)
+    pending_latest: list[tuple[str, dict]] = []
     for symbol in processing_order:
         try:
-            index = timed("index", _MinuteIndex, db, symbol, index_start, index_end)
+            index = indexes.get(symbol) or timed("index", _MinuteIndex, db, symbol, index_start, index_end)
             windows: list[tuple[datetime, datetime]] = []
             target_ranges: list[tuple[datetime, datetime]] = []
             today_bounds = session_bounds(local_now.date())
@@ -1071,7 +1291,14 @@ def ingest_intraday(
                 if window_index >= len(windows):
                     break
                 window_start, window_end = windows[window_index]
-                if window_index == 0 and (window_start, window_end) == latest_window and (
+                from_batch = (
+                    batched.get(symbol)
+                    if window_index == 0 and (window_start, window_end) == latest_window
+                    else None
+                )
+                if from_batch is not None:
+                    rows, duplicates, out_of_order = prefetched[symbol]
+                elif window_index == 0 and (window_start, window_end) == latest_window and (
                     symbol in prefetched or prefetch_rate_limited is not None
                 ):
                     if prefetch_rate_limited is not None:
@@ -1086,28 +1313,32 @@ def ingest_intraday(
                             break
                         backfill_budget -= 1
                     rows, duplicates, out_of_order = timed("fetch", _fetch_bars, symbol, window_start, window_end)
-                stored: list[datetime] = []
-                persisted = timed(
-                    "store", upsert_intraday_bars,
-                    db, symbol, rows, ingested_at=observed_at, verify_entitlement=True,
-                    persisted_minutes=stored,
-                )
-                index.add(stored)
-                # The authenticated request above succeeded (failures raise),
-                # so bar-less closed minutes in this window are provider
-                # answers, not transport gaps. Only short, bracketed runs on a
-                # partial-venue feed are recorded; outages stay missing.
-                configured_provider = settings.active_market_data_provider.strip().lower()
-                newly_verified = timed(
-                    "no_trade", record_verified_no_trade_minutes,
-                    db,
-                    symbol,
-                    window_start,
-                    window_end,
-                    observed_at=observed_at,
-                    provider=configured_provider,
-                    feed_class="iex" if configured_provider == "alpaca_iex" else "sip",
-                )
+                if from_batch is not None:
+                    persisted, stored, newly_verified = from_batch
+                    index.add(stored)
+                else:
+                    stored = []
+                    persisted = timed(
+                        "store", upsert_intraday_bars,
+                        db, symbol, rows, ingested_at=observed_at, verify_entitlement=True,
+                        persisted_minutes=stored,
+                    )
+                    index.add(stored)
+                    # The authenticated request above succeeded (failures raise),
+                    # so bar-less closed minutes in this window are provider
+                    # answers, not transport gaps. Only short, bracketed runs on a
+                    # partial-venue feed are recorded; outages stay missing.
+                    configured_provider = settings.active_market_data_provider.strip().lower()
+                    newly_verified = timed(
+                        "no_trade", record_verified_no_trade_minutes,
+                        db,
+                        symbol,
+                        window_start,
+                        window_end,
+                        observed_at=observed_at,
+                        provider=configured_provider,
+                        feed_class="iex" if configured_provider == "alpaca_iex" else "sip",
+                    )
                 index.add(datetime.fromisoformat(minute) for minute in newly_verified)
                 verified_no_trade.extend(newly_verified)
                 saved["rows_imported"] += persisted["rows_imported"]
@@ -1132,28 +1363,17 @@ def ingest_intraday(
                 missing,
                 target_ranges + windows,
             )
-            latest = (
-                db.query(IntradayBar)
-                .filter_by(
-                    symbol=symbol,
-                    timeframe="1m",
-                    provider=MARKET_DATA_PROVIDER,
-                )
-                .order_by(IntradayBar.opened_at.desc())
-                .first()
-            )
-            bar_close = _aware_utc(latest.opened_at) + BAR_CADENCE if latest else None
-            results.append(
-                {
+            result = {
                     "symbol": symbol,
                     "status": "incomplete" if missing else "complete",
                     "rows_imported": saved["rows_imported"],
                     "provider": MARKET_DATA_PROVIDER,
                     "feed_class": MARKET_DATA_FEED_CLASS,
                     "data_mode": "real-time",
-                    "exchange_timestamp": _aware_utc(latest.exchange_timestamp).isoformat() if latest else None,
+                    # Filled below from one query for every symbol.
+                    "exchange_timestamp": None,
                     "ingestion_timestamp": observed_at.isoformat(),
-                    "latency_seconds": (observed_at - bar_close).total_seconds() if bar_close else None,
+                    "latency_seconds": None,
                     "missing_intervals": missing,
                     "deferred_window": deferred_window,
                     "oldest_unresolved_interval": oldest_unresolved_interval,
@@ -1162,8 +1382,9 @@ def ingest_intraday(
                     "out_of_order": provider_out_of_order or saved["out_of_order"],
                     "failure_class": "incomplete_data" if missing else None,
                     "unavailable_reason": "Missing completed regular-session intervals" if missing else None,
-                }
-            )
+            }
+            results.append(result)
+            pending_latest.append((symbol, result))
         except Exception as exc:
             failure_class, reason = _provider_failure(exc)
             results.append(
@@ -1177,6 +1398,13 @@ def ingest_intraday(
                     "unavailable_reason": reason,
                 }
             )
+    if pending_latest:
+        latest_by_symbol = timed("latest", _latest_bars, db, [symbol for symbol, _ in pending_latest], index_start)
+        for symbol, result in pending_latest:
+            latest = latest_by_symbol.get(symbol)
+            if latest is not None:
+                result["exchange_timestamp"] = _aware_utc(latest.exchange_timestamp).isoformat()
+                result["latency_seconds"] = (observed_at - (_aware_utc(latest.opened_at) + BAR_CADENCE)).total_seconds()
     position = {symbol: index for index, symbol in enumerate(selected)}
     results.sort(key=lambda row: position.get(row["symbol"], len(position)))
     total = time.monotonic() - run_started
