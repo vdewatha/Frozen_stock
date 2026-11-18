@@ -324,6 +324,8 @@ class Settings(BaseSettings):
     # retries after the broker rejected an entry.
     paper_max_entries_per_symbol_per_day: int = Field(default=3, ge=1, le=20)
     paper_entry_reject_retry_minutes: int = Field(default=30, ge=0, le=390)
+    # Wait before re-sending an exit sell the broker rejected (a new key each time, capped by SELL_RETRY_LIMIT).
+    paper_exit_reject_retry_minutes: int = Field(default=5, ge=0, le=390)
     # News symbol discovery (news_discovery.py): Alpaca news admits up to
     # ``news_discovery_max_symbols`` listed stocks outside the execution
     # universe for ``news_discovery_admit_days``. The strategies still decide

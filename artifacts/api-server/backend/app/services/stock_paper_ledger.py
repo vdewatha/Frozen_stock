@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone, timedelta
-from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_DOWN, ROUND_FLOOR
 import hashlib
 import json
 import logging
@@ -882,6 +882,19 @@ def _activity_classification(raw: dict) -> str:
 def _price_tick(price: Decimal) -> Decimal:
     # Alpaca accepts at most two decimals at or above $1 and four below.
     return Decimal("0.01") if price >= 1 else Decimal("0.0001")
+
+
+def broker_limit_price(side: str, price: Decimal) -> Decimal:
+    """``price`` on a tick Alpaca accepts, rounded toward the marketable side.
+
+    Alpaca rejects a limit with more than two decimals at or above $1 (four
+    below) as HTTP 422, code 42210000. A decision price on a half cent
+    (a quote midpoint such as 656.335) used to go out unrounded, so 11 of 200
+    orders were rejected (a QQQ protective stop on 2026-11-17 among them).
+    A buy rounds up and a sell down, so rounding never makes an order less
+    likely to fill; it moves the price by less than one tick.
+    """
+    return price.quantize(_price_tick(price), rounding=ROUND_CEILING if side == "buy" else ROUND_FLOOR)
 
 
 def build_exit_plan(reference_price: Decimal, *, stop_loss_pct: Any, take_profit_pct: Any) -> dict | None:
@@ -3471,6 +3484,10 @@ def reserve_stock_paper_order(db: Session, *, symbol: str, side: str, quantity: 
     bookkeeping only and changes no sell-quantity or committed-sell check.
     """
     side, symbol = side.lower(), symbol.strip().upper()
+    if isinstance(reference_price, Decimal) and reference_price.is_finite() and reference_price > 0:
+        # Store the price the broker will accept, so the row, the reserved
+        # cash and the submitted limit all agree (a retry rounds the same way).
+        reference_price = broker_limit_price(side, reference_price)
     prefix = PROBE_CLIENT_PREFIX if source == PROBE_SOURCE else "sp-"
     client_order_id = prefix + hashlib.sha256(idempotency_key.encode()).hexdigest()[:45]
 
@@ -3900,10 +3917,13 @@ def dispatch_reserved_order(db: Session, order_id: int, gateway: AlpacaPaperGate
     elif not recovery_flatten and order.source not in ALLOWED_ORDER_SOURCES:
         raise StockPaperError("Reserved order source is not approved")
     payload = {"symbol": order.symbol, "qty": str(order.quantity), "side": order.side,
-               "type": order.order_type, "time_in_force": order.time_in_force, "limit_price": str(order.limit_price),
+               "type": order.order_type, "time_in_force": order.time_in_force,
                "client_order_id": order.client_order_id}
-    if order.order_type == "market":
-        payload.pop("limit_price")  # a market order carries no limit; the decision price stays on the row
+    if order.order_type != "market":
+        # A market order carries no limit; the decision price stays on the row.
+        # Rows reserved elsewhere (a recovery flatten at the broker's current
+        # price) can carry a sub-penny price, so the tick is enforced here too.
+        payload["limit_price"] = str(broker_limit_price(order.side, order.limit_price))
     if (order.order_class or "simple") != "simple":
         if order.order_class not in ENTRY_EXIT_ORDER_CLASSES or order.side != "buy":
             raise StockPaperError("Reserved order has an unsupported order class")
