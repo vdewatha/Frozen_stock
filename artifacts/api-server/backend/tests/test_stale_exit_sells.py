@@ -12,7 +12,8 @@ import app.models  # noqa: F401  register all tables
 from app.db.base import Base
 from app.models.stock_paper import StockPaperAccount, StockPaperOrder
 from app.services import entry_protections, stock_paper_autotrader as autotrader
-from app.services.stock_paper_ledger import StockPaperError, active_paper_broker_name, cancel_aged_open_exits
+from app.services.stock_paper_ledger import (StockPaperError, active_paper_broker_name, broker_limit_price,
+                                            cancel_aged_open_exits)
 
 UTC = timezone.utc
 NOW = datetime(2026, 11, 5, 16, 40, tzinfo=UTC)  # 11:40 New York
@@ -110,3 +111,34 @@ def test_a_reissued_signal_sell_keeps_its_strategy_in_the_scorecard():
         client_order_id=entry_protections._client_order_id(entry_protections.sell_retry_key(base, 2)),
         created_at=NOW, submitted_at=NOW, submission_attempted_at=NOW)
     assert _ExitAttribution(["rsi_mean_reversion"]).classify(order) == ("sell_signal", "rsi_mean_reversion")
+
+
+def test_a_rejected_exit_is_reissued_under_the_next_key_after_the_wait(db):
+    # 2026-11-17: a QQQ protective stop was rejected at 10:36 ET and its retry
+    # reused the key at a new price, refused as "Idempotency key was already
+    # used for a different order" on every cycle until the close.
+    base = "scheduled-paper:2026-11-05:AAPL:protective_stop:sell"
+    _order(db, "r1", status="rejected", minutes_ago=2, updated_at=NOW - timedelta(minutes=2))
+    with patch.object(autotrader.settings, "paper_exit_reject_retry_minutes", 5):
+        with pytest.raises(StockPaperError, match="rejected the last exit sell in AAPL at 11:38 ET"):
+            autotrader._sell_key(db, 1, "AAPL", base, NOW)
+        assert autotrader._sell_key(db, 1, "AAPL", base, NOW + timedelta(minutes=4)) == base + ":retry1"
+    with patch.object(autotrader.settings, "paper_exit_reject_retry_minutes", 0):
+        assert autotrader._sell_key(db, 1, "AAPL", base, NOW) == base + ":retry1"
+
+
+def test_rejected_and_cancelled_exits_share_the_retry_limit(db):
+    for n in range(entry_protections.SELL_RETRY_LIMIT):
+        _order(db, f"c{n}", status="cancelled")
+    _order(db, "r", status="rejected", minutes_ago=30, updated_at=NOW - timedelta(minutes=30))
+    with pytest.raises(StockPaperError, match="re-issued"):
+        autotrader._sell_key(db, 1, "AAPL", "scheduled-paper:2026-11-05:AAPL:x:sell", NOW)
+
+
+@pytest.mark.parametrize(("side", "price", "sent"), [
+    ("buy", "656.335", "656.34"), ("sell", "656.335", "656.33"),
+    ("buy", "60.15", "60.15"), ("sell", "100", "100.00"),
+    ("buy", "0.123456", "0.1235"), ("sell", "0.123456", "0.1234"),
+])
+def test_limit_prices_round_toward_the_marketable_side(side, price, sent):
+    assert str(broker_limit_price(side, Decimal(price))) == sent

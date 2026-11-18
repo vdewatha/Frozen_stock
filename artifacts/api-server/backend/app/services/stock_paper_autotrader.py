@@ -518,29 +518,47 @@ def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
+EXIT_RETRY_STATUSES = CANCELLED_ORDER_STATUSES | {"rejected"}
+
+
 def _sell_key(db: Session, account_id: int, symbol: str, base: str, now: datetime) -> str:
     """The idempotency key for this session's next app-side exit sell.
 
-    ``cancel_aged_open_exits`` cancels an exit that rested unfilled; the next
-    one needs a fresh client order id, numbered by how many autonomous exit
-    sells for the symbol were cancelled this session. While one is pending the
-    count, and so the key, is unchanged (and the pending-sell guards skip).
+    ``cancel_aged_open_exits`` cancels an exit that rested unfilled, and the
+    broker can reject one; the next one needs a fresh client order id,
+    numbered by how many autonomous exit sells for the symbol ended that way
+    this session. While one is pending the count, and so the key, is
+    unchanged (and the pending-sell guards skip).
+
+    A rejected sell used to keep its key, so its retry (at a new price) was
+    refused as "Idempotency key was already used for a different order" on
+    every cycle until the close: a QQQ protective stop rejected at 10:36 ET on
+    2026-11-17 could not be re-sent all afternoon. A rejection now advances
+    the key after ``paper_exit_reject_retry_minutes``, inside the same
+    ``SELL_RETRY_LIMIT``.
     """
     day_start = datetime.combine(now.astimezone(ET).date(), datetime.min.time(), tzinfo=ET).astimezone(UTC)
-    attempt = db.query(StockPaperOrder).filter(
+    ended = db.query(StockPaperOrder).filter(
         StockPaperOrder.account_id == account_id,
         StockPaperOrder.symbol == symbol,
         StockPaperOrder.side == "sell",
         StockPaperOrder.leg_role.is_(None),
         StockPaperOrder.source.in_({SCHEDULED_SOURCE, EXPLORATION_SOURCE}),
-        StockPaperOrder.status.in_(CANCELLED_ORDER_STATUSES),
+        StockPaperOrder.status.in_(EXIT_RETRY_STATUSES),
         StockPaperOrder.created_at >= day_start,
-    ).count()
+    ).all()
+    attempt = len(ended)
     if attempt > SELL_RETRY_LIMIT:
         raise StockPaperError(
             f"exit sell for {symbol} was re-issued {SELL_RETRY_LIMIT} times this session without filling; "
             "the broker-side exit re-arm keeps protecting it"
         )
+    wait = timedelta(minutes=settings.paper_exit_reject_retry_minutes)
+    rejected = [_aware(row.updated_at or row.created_at) for row in ended if row.status == "rejected"]
+    if rejected and wait and now - max(rejected) < wait:
+        raise StockPaperError(
+            f"the broker rejected the last exit sell in {symbol} at {max(rejected).astimezone(ET):%H:%M} ET; "
+            f"retry after {settings.paper_exit_reject_retry_minutes} minutes")
     return sell_retry_key(base, attempt)
 
 

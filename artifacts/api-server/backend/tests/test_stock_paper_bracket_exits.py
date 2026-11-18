@@ -187,6 +187,43 @@ class BracketLedgerTests(unittest.TestCase):
             with self.assertRaisesRegex(StockPaperError, "whole-share"):
                 self.reserve_entry(db, signal, quantity=Decimal("1.5"))
 
+    def test_a_half_cent_entry_price_is_sent_on_a_valid_tick(self):
+        # 2026-11-17: limits such as 656.335 went out unrounded and Alpaca
+        # rejected them (HTTP 422, 42210000). A buy rounds up to the cent.
+        with Session(self.engine) as db, ExitStack() as stack:
+            self.gates(stack)
+            _strategy, signal = self.seed(db)
+            price = Decimal("100.335")
+            order = reserve_stock_paper_order(
+                db, symbol="SPY", side="buy", quantity=Decimal("2"), reference_price=price,
+                idempotency_key="half-cent-entry", source=EXPLORATION_SOURCE, signal_id=signal.id,
+                exit_plan=build_exit_plan(price, stop_loss_pct="0.03", take_profit_pct="0.03"),
+            )
+            self.assertEqual(order.limit_price, Decimal("100.34"))
+            # A retry with the same decision price finds its own reservation.
+            again = reserve_stock_paper_order(
+                db, symbol="SPY", side="buy", quantity=Decimal("2"), reference_price=price,
+                idempotency_key="half-cent-entry", source=EXPLORATION_SOURCE, signal_id=signal.id,
+                exit_plan=build_exit_plan(price, stop_loss_pct="0.03", take_profit_pct="0.03"),
+            )
+            self.assertEqual(again.id, order.id)
+            gateway = BracketGateway()
+            dispatch_reserved_order(db, order.id, gateway)
+            self.assertEqual(gateway.payloads[0]["limit_price"], "100.34")
+
+    def test_a_sub_penny_row_reserved_elsewhere_is_rounded_at_dispatch(self):
+        # A recovery flatten stores the broker's current price, which can be
+        # sub-penny; dispatch enforces the tick whatever reserved the row.
+        with Session(self.engine) as db, ExitStack() as stack:
+            self.gates(stack)
+            _strategy, signal = self.seed(db)
+            order = self.reserve_entry(db, signal)
+            order.limit_price = Decimal("100.12345")
+            db.commit()
+            gateway = BracketGateway()
+            dispatch_reserved_order(db, order.id, gateway)
+            self.assertEqual(gateway.payloads[0]["limit_price"], "100.13")
+
     def test_bracket_payload_shape_and_legs_persisted_with_strategy(self):
         with Session(self.engine) as db:
             strategy, parent, gateway = self.submit_entry(db)
