@@ -14,6 +14,7 @@ import {
   clerkProxyMiddleware,
   getClerkProxyHost,
 } from "./middlewares/clerkProxyMiddleware";
+import { probeHealth } from "./health-probe";
 import { installNonBlockingStdio, logRelayStats } from "./log-relay";
 import { createStderrRouter } from "./log-lines";
 import { startResourceGuard } from "./resource-guard";
@@ -591,46 +592,37 @@ function runMigration(attempt = 1): void {
 
 function waitForBackendHealth(attempt = 1): void {
   if (stopping || backendReady || !python) return;
-  const probe = httpRequest(
-    `${internalTarget}/api/health`,
-    { method: "GET", timeout: 1000 },
-    (response) => {
-      let body = "";
-      response.setEncoding("utf8");
-      response.on("data", (chunk: string) => {
-        if (body.length < 512) body += chunk;
-      });
-      response.on("end", () => {
-      let health: { routes_ready?: boolean; route_error?: string } = {};
-      try {
-        health = JSON.parse(body) as typeof health;
-      } catch {
-        // Keep retrying until the child returns a complete JSON health record.
-      }
-      if (response.statusCode === 200 && health.routes_ready === true) {
-        backendReady = true;
-        startupState = "ready";
-        startupError = undefined;
-        startPaperWorkers();
-        startBackendLivenessMonitor();
-        return;
-      }
-        lastBackendProbeError =
-          `status=${response.statusCode} routes_ready=${String(health.routes_ready ?? false)}` +
-          `${health.route_error ? ` route_error=${health.route_error}` : ""}` +
-          ` body=${body.trim() || "<empty>"}`;
-        console.error(`Internal FastAPI health probe failed: ${lastBackendProbeError}`);
+  // probeHealth reports exactly once on every path, so each attempt either
+  // marks the API ready or schedules the next one (see health-probe.ts).
+  probeHealth(`${internalTarget}/api/health`, 1000, (result) => {
+    if (!result.ok) {
+      lastBackendProbeError = `request=${result.error}`;
+      console.error(`Internal FastAPI health probe errored: ${lastBackendProbeError}`);
       retryBackendHealth(attempt);
-      });
-    },
-  );
-  probe.on("error", (error) => {
-    lastBackendProbeError = `request=${error.message}`;
-    console.error(`Internal FastAPI health probe errored: ${lastBackendProbeError}`);
+      return;
+    }
+    const { statusCode, body } = result;
+    let health: { routes_ready?: boolean; route_error?: string } = {};
+    try {
+      health = JSON.parse(body) as typeof health;
+    } catch {
+      // Keep retrying until the child returns a complete JSON health record.
+    }
+    if (statusCode === 200 && health.routes_ready === true) {
+      backendReady = true;
+      startupState = "ready";
+      startupError = undefined;
+      startPaperWorkers();
+      startBackendLivenessMonitor();
+      return;
+    }
+    lastBackendProbeError =
+      `status=${statusCode} routes_ready=${String(health.routes_ready ?? false)}` +
+      `${health.route_error ? ` route_error=${health.route_error}` : ""}` +
+      ` body=${body.trim() || "<empty>"}`;
+    console.error(`Internal FastAPI health probe failed: ${lastBackendProbeError}`);
     retryBackendHealth(attempt);
   });
-  probe.on("timeout", () => probe.destroy());
-  probe.end();
 }
 
 function retryBackendHealth(attempt: number): void {
